@@ -1,10 +1,14 @@
 package oci
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"helm.sh/helm/v4/pkg/registry"
 )
 
 func TestPickSemverTag(t *testing.T) {
@@ -66,8 +70,21 @@ func TestPickSemverTag(t *testing.T) {
 			name:  "helm chart tags map underscore build metadata",
 			tags:  []string{"1.0.0_build.1", "1.0.0_build.2", "1.0.1"},
 			expr:  ">=1.0.0 <1.0.1",
-			media: helmChartLayerMediaType,
+			media: registry.ChartLayerMediaType,
 			want:  "1.0.0_build.1",
+		},
+		{
+			name:  "helm chart ties preserve registry order",
+			tags:  []string{"1.0.0_build.2", "1.0.0_build.1"},
+			expr:  ">=1.0.0",
+			media: registry.ChartLayerMediaType,
+			want:  "1.0.0_build.2",
+		},
+		{
+			name: "other media retains build metadata",
+			tags: []string{"1.0.0+build.1", "1.0.0_build.2"},
+			expr: ">=1.0.0",
+			want: "1.0.0+build.1",
 		},
 		{
 			name:    "no match returns error",
@@ -189,29 +206,6 @@ func TestOCIRevision(t *testing.T) {
 	}
 }
 
-func TestVersionedURL(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		base string
-		ref  manifest.OCIRepositoryRef
-		want string
-	}{
-		{"digest wins over tag", "ghcr.io/x", manifest.OCIRepositoryRef{Tag: "v1", Digest: "sha256:abc"}, "ghcr.io/x@sha256:abc"},
-		{"tag when no digest", "ghcr.io/x", manifest.OCIRepositoryRef{Tag: "v1"}, "ghcr.io/x:v1"},
-		{"bare base when empty ref", "ghcr.io/x", manifest.OCIRepositoryRef{}, "ghcr.io/x"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := versionedURL(tc.base, tc.ref)
-			if got != tc.want {
-				t.Errorf("versionedURL(%q, %+v) = %q, want %q", tc.base, tc.ref, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestVersionTag(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -235,23 +229,45 @@ func TestVersionTag(t *testing.T) {
 	}
 }
 
-func TestShouldResolveOCISemver(t *testing.T) {
+func TestResolveRef_SemverPrecedence(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		ref  manifest.OCIRepositoryRef
-		want bool
+		want manifest.OCIRepositoryRef
+		list bool
 	}{
-		{"semver only resolves", manifest.OCIRepositoryRef{SemVer: ">=1.0"}, true},
-		{"semver wins over tag", manifest.OCIRepositoryRef{SemVer: ">=1.0", Tag: "1.0.0"}, true},
-		{"digest suppresses semver", manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"}, false},
-		{"tag only does not resolve", manifest.OCIRepositoryRef{Tag: "1.0.0"}, false},
+		{"semver only resolves", manifest.OCIRepositoryRef{SemVer: ">=1.0"}, manifest.OCIRepositoryRef{Tag: "1.2.0"}, true},
+		{"semver wins over tag", manifest.OCIRepositoryRef{SemVer: ">=1.0", Tag: "1.0.0"}, manifest.OCIRepositoryRef{Tag: "1.2.0"}, true},
+		{"digest suppresses semver", manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"}, manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0"}, false},
+		{"tag only does not resolve", manifest.OCIRepositoryRef{Tag: "1.0.0"}, manifest.OCIRepositoryRef{Tag: "1.0.0"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := shouldResolveOCISemver(tc.ref); got != tc.want {
-				t.Errorf("shouldResolveOCISemver(%+v) = %v, want %v", tc.ref, got, tc.want)
+			var listed atomic.Bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !tc.list || r.URL.Path != "/v2/chart/tags/list" {
+					t.Errorf("unexpected registry request: %s", r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				listed.Store(true)
+				_, _ = w.Write([]byte(`{"name":"chart","tags":["1.0.0","1.2.0"]}`))
+			}))
+			t.Cleanup(srv.Close)
+			repo := &manifest.OCIRepository{URL: "oci://" + strings.TrimPrefix(srv.URL, "http://") + "/chart"}
+			client, err := newRepoClient(repo, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.PlainHTTP = true
+			got, err := resolveRef(t.Context(), client, repo, tc.ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want || listed.Load() != tc.list {
+				t.Errorf("resolveRef = %+v, listed = %t; want %+v, %t", got, listed.Load(), tc.want, tc.list)
 			}
 		})
 	}

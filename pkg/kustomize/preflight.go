@@ -55,7 +55,7 @@ var remoteFetchClient = func() *http.Client {
 const remoteResourcePrefix = ".flate-remote-"
 
 // preflightRemoteResources walks every kustomization file under subPath in the
-// render's private in-memory fs and pre-resolves remote `resources:` entries so
+// render's private in-memory fs and pre-resolves remote resources so
 // kustomize.Build sees only local (in-fs) files — never invoking its built-in
 // `exec.Command("git", "fetch", ...)` / HTTP fallback (which would reach the
 // real network/disk, outside the fs sandbox, on a 10s+ timeout for a broken
@@ -72,7 +72,7 @@ const remoteResourcePrefix = ".flate-remote-"
 // reconcile failure rather than a silent missing resource.
 // The injected return reports whether any remote resource or git base was
 // pre-fetched into the in-memory layer. When true the build reads inputs the
-// disk read-set can't capture, so RenderFlux must not cache that render.
+// source read set can't capture, so RenderFlux must not cache that render.
 func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) (injected bool, err error) {
 	walkErr := memFS.Walk(subPath, func(path string, info os.FileInfo, werr error) error {
 		if werr != nil {
@@ -98,7 +98,7 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS files
 }
 
 // rewriteURLResources rewrites URL entries in one kustomization file via
-// yaml.Node node-level editing. Node-level editing modifies ONLY the resources
+// yaml.Node node-level editing. Node-level editing modifies only reference
 // sequence entries that match HTTP/HTTPS URLs (or git bases); every other byte
 // in the file (comments, key ordering, anchors, block-vs-flow style) survives
 // the round-trip intact, which a decode-to-map-and-remarshal pass would destroy.

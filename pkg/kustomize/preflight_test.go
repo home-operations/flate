@@ -167,7 +167,7 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -372,7 +372,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := NewTreeCache()
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Label: root, SubPath: ".", Spec: demoRawSpec})
+			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
 			if err != nil || !strings.Contains(string(out), "name: remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}

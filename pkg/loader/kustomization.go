@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -37,14 +38,23 @@ type documentReader struct {
 func (r *documentReader) mountSources(s *store.Store) {
 	for _, obj := range s.ListObjects(manifest.KindGitRepository) {
 		art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
-		if !ok || art.FS == nil || art.LocalPath == "" {
+		if !ok || art.LocalPath == "" {
 			continue
 		}
 		if r.views == nil {
 			r.views = map[string]fs.FS{}
 		}
 		r.views[art.LocalPath] = art.FS
+		if art.FS == nil {
+			r.views[art.LocalPath] = unavailableSource{}
+		}
 	}
+}
+
+type unavailableSource struct{}
+
+func (unavailableSource) Open(string) (fs.File, error) {
+	return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
 }
 
 var workingFiles = os.DirFS("/")

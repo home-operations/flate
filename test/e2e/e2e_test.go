@@ -189,6 +189,68 @@ stringData: {greeting: hello-from-secret}
 	}
 }
 
+func TestE2E_MissingLocalInputDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, manifest, diagnostic string
+	}{
+		{
+			name: "resource",
+			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: probe, namespace: flux-system}
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef: {kind: GitRepository, name: flux-system}
+`,
+			diagnostic: "resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist",
+		},
+		{
+			name: "chart",
+			manifest: `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: probe, namespace: flux-system}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./charts/nochart
+      sourceRef: {kind: GitRepository, name: flux-system}
+`,
+			diagnostic: "chart not found at charts/nochart",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: https://fixture.invalid/cluster.git}
+`)
+			testutil.WriteFile(t, dir, "probe.yaml", tc.manifest)
+			if tc.name == "resource" {
+				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [missing.yaml]\n")
+			}
+			_, stderr, code := runCLIBuffers("build", "all", "--path", dir,
+				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			if code != 1 {
+				t.Fatalf("got exit %d, want 1:\n%s", code, stderr)
+			}
+			if !strings.Contains(stderr, tc.diagnostic) {
+				t.Errorf("missing diagnostic %q:\n%s", tc.diagnostic, stderr)
+			}
+			for _, unwanted := range []string{dir, "flux error: input error", "stat chart"} {
+				if strings.Contains(stderr, unwanted) {
+					t.Errorf("diagnostic contains %q:\n%s", unwanted, stderr)
+				}
+			}
+			if tc.name == "chart" && strings.Count(stderr, tc.diagnostic) != 1 {
+				t.Errorf("duplicated chart diagnostic:\n%s", stderr)
+			}
+		})
+	}
+}
+
 func TestE2E_MalformedChartCRD(t *testing.T) {
 	for _, tc := range []struct {
 		name string

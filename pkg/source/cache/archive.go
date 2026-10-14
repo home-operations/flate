@@ -137,13 +137,9 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tar: %w", err)
 		}
-		safe, err := safepath.SafeJoin(filepath.Join(string(filepath.Separator), "flate-archive"), h.Name, true)
+		name, err := safepath.ArchiveName(h.Name)
 		if err != nil {
 			return nil, err
-		}
-		name := strings.TrimPrefix(filepath.ToSlash(safe), "/flate-archive/")
-		if filepath.ToSlash(safe) == "/flate-archive" {
-			name = "."
 		}
 		total += pos.offset - header
 		if h.Size > maxExtractedBytes-total {

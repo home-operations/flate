@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -20,7 +21,7 @@ type Fetcher struct{}
 
 // Fetch implements source.TypedFetcher[*manifest.ExternalArtifact].
 // Wrapped via source.Wrap at orchestrator registration.
-func (*Fetcher) Fetch(_ context.Context, ea *manifest.ExternalArtifact) (*store.SourceArtifact, error) {
+func (*Fetcher) Fetch(ctx context.Context, ea *manifest.ExternalArtifact) (*store.SourceArtifact, error) {
 	if ea.ArtifactURL == "" {
 		return nil, fmt.Errorf(
 			"ExternalArtifact %s/%s requires status.artifact to be populated for offline use — "+
@@ -36,10 +37,15 @@ func (*Fetcher) Fetch(_ context.Context, ea *manifest.ExternalArtifact) (*store.
 			ea.Namespace, ea.Name, ea.ArtifactURL,
 		)
 	}
+	input, err := source.NewLocalFS(ctx, localPath)
+	if err != nil {
+		return nil, err
+	}
 	return &store.SourceArtifact{
 		Kind:      manifest.KindExternalArtifact,
 		URL:       ea.ArtifactURL,
 		LocalPath: localPath,
+		FS:        input,
 		Revision:  ea.Revision,
 		Digest:    ea.Digest,
 	}, nil

@@ -30,7 +30,7 @@ import (
 type Controller struct {
 	*base.Controller
 
-	// Trees shares secure disk roots, remote fetches and persisted renders.
+	// Trees shares remote fetches and persisted renders.
 	Trees *kustomize.TreeCache
 
 	// WipeSecrets controls whether Secret cleartext is wiped when
@@ -138,7 +138,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
-	source, applyIgnore, err := c.resolveSource(ks)
+	source, applyIgnore, err := c.resolveSource(ks, level)
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents})
+	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
+		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents,
+	})
 	if err != nil {
 		return err
 	}
@@ -295,20 +297,9 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	return deps
 }
 
-// resolveSource returns the source artifact and whether
-// source-controller's default file exclusions must be applied when the tree is
-// materialized for the build.
-//
-// applyIgnore is true exactly for working-tree / self-referential sources:
-// the bootstrap GitRepository alias and overrideSelfReferentialGitRepositories,
-// which expose the user's raw working tree and never passed through a fetcher's
-// artifact filtering. Every real fetcher (git, OCI, bucket) already ran
-// source.ApplyIgnore on the LocalPath it publishes and records a Revision or
-// Digest, so those are materialized as-is (applyIgnore=false); re-filtering them
-// would be redundant and, for buckets, wrong (defaults vs no-defaults). The
-// working-tree aliases are the only artifacts that set neither Revision nor
-// Digest, which is precisely the signal.
-func (c *Controller) resolveSource(ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
+// resolveSource retains source-controller ignore shaping for working-tree aliases.
+// Acquired immutable views already carry their fetcher's policy.
+func (c *Controller) resolveSource(ks *manifest.Kustomization, level manifest.DrainLevel) (*store.SourceArtifact, bool, error) {
 	srcID := ks.SourceID()
 	if srcID.Kind == "" || srcID.Name == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
@@ -334,6 +325,12 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization) (*store.SourceArt
 		return nil, false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())
 	}
 	if sa, ok := art.(*store.SourceArtifact); ok {
+		if sa.FS == nil {
+			if level == manifest.DrainNone {
+				return nil, false, &depwait.ErrBlocked{Deps: []manifest.NamedResource{srcID}}
+			}
+			return nil, false, fmt.Errorf("%w: source %s artifact content unavailable", manifest.ErrObjectNotFound, srcID)
+		}
 		return sa, sa.Digest == "" && sa.Revision == "", nil
 	}
 	return nil, false, fmt.Errorf("%w: unsupported source artifact type %T for %s",

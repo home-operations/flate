@@ -13,22 +13,15 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// TestLoadChart_CoalescesConcurrentFirstLoad verifies that N parallel
-// LoadChart calls for the same chart issue exactly one loader.Load.
-// Without the per-path keylock, every concurrent first-loader saw an
-// empty cache and parsed the tgz independently — wasted CPU.
-//
-// The post-condition is that every caller's `*chart.Chart` aliases the
-// same underlying Templates/Raw/Files (which loader.Load produced
-// once), even though each caller receives a fresh outer pointer (the
-// per-render clone defended against ProcessDependencies mutation). We
-// assert the alias via Templates pointer-identity — Templates is one
-// of the immutable slices preserved across cloneChartForRender.
+// Concurrent cold loads MUST share parsed chart content while cloning fields
+// mutated by Helm for each caller. Template pointer identity proves coalescing.
 func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
+	const goroutines = 16
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
 name: mychart
@@ -45,8 +38,12 @@ description: test
 	st := store.New()
 	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
 	st.AddObject(gr)
+	input, err := source.NewLocalFS(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: input, LocalPath: dir,
 	})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 
@@ -60,7 +57,6 @@ description: test
 		},
 	}
 
-	const goroutines = 16
 	var (
 		wg        sync.WaitGroup
 		pointers  = make(chan *chart.Chart, goroutines)
@@ -71,7 +67,7 @@ description: test
 	for range goroutines {
 		wg.Go(func() {
 			startGate.Wait()
-			res, err := cli.LoadChart(context.Background(), hr)
+			res, err := cli.LoadChart(t.Context(), hr)
 			if err != nil {
 				errs.Add(1)
 				t.Errorf("LoadChart: %v", err)
@@ -99,7 +95,7 @@ description: test
 		// per-render clone), but the Templates slice header — one of
 		// the immutable, aliased fields — must point at the same
 		// backing array as the canonical's. A different backing array
-		// would mean loader.Load fired more than once.
+		// would mean the chart was parsed more than once.
 		if len(p.Templates) != len(canonical.Templates) {
 			t.Errorf("Templates length divergence — first-load coalesce broken (got %d, want %d)",
 				len(p.Templates), len(canonical.Templates))
@@ -127,11 +123,15 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+	input, err := source.NewLocalFS(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	st := store.New()
 	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: input, LocalPath: dir,
 	})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 
@@ -226,7 +226,7 @@ dependencies:
 	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 

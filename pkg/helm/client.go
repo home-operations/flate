@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
-	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/chart/v2/util"
 
 	"github.com/home-operations/flate/internal/diskcache"
@@ -37,21 +36,8 @@ type Client struct {
 	// construction.
 	resolver SourceResolver
 
-	// chartCache memoizes parsed *chart.Chart by on-disk path. Helm's
-	// loader.Load reparses the entire tgz on every call — for repos
-	// where many HelmReleases share a base chart (e.g. bjw-s
-	// app-template referenced by 30+ HRs), the same chart was being
-	// re-parsed once per HR. The cache entry includes the file's
-	// (mtime, size) at load time so a mutable OCI tag re-pushed under
-	// the same name-version pair invalidates correctly — writeAtomic
-	// overwrites the same path, but the new mtime trips the check
-	// and the next LoadChart re-parses. Without this, every call to
-	// LoadChart serves the stale in-memory *chart.Chart.
-	//
-	// chartLoadLocks serializes first-time loads per-path so N parallel
-	// reconciles of the same chart issue exactly one loader.Load
-	// (thundering-herd coalesce); the rest hit the populated cache.
-	// Distinct paths still parse in parallel.
+	// Charts are shared by immutable content pin or mutable origin coordinates.
+	// Existing per-key locks coalesce loads; each caller receives a private clone.
 	chartMu        sync.RWMutex
 	chartCache     map[string]chartCacheEntry
 	chartLoadLocks *keylock.KeyMap[string]
@@ -94,16 +80,8 @@ type Client struct {
 	templateCache *templateCache
 }
 
-// chartCacheEntry pairs the parsed chart with the (mtime, size) of
-// the on-disk tgz at load time. A mismatch on a subsequent lookup
-// means the file was overwritten (mutable tag re-push, manual
-// edit) and the cache entry is stale.
-//
-// fingerprint is the content-addressed digest of
-// the chart's loader.Load inputs — computed once at cache-fill
-// time and reused on every subsequent LoadChart hit. The template-
-// output cache mixes it into its own key so a stale chart never
-// serves a different chart's render.
+// Mutable chart entries retain the archive or Chart.yaml (mtime, size) validity
+// contract. Immutable entries reuse their pin; fingerprints key rendered output.
 type chartCacheEntry struct {
 	immutable   bool
 	chart       *chart.Chart
@@ -161,7 +139,7 @@ func DefaultClientOptions() ClientOptions {
 
 // NewClient constructs a Client backed by the supplied Layout with
 // project-wide defaults (DefaultClientOptions). helm.Client reads
-// already-fetched charts off disk and composes no cache paths of its own —
+// already-fetched charts through FS and composes no source cache paths of its own:
 // chart bytes live in the shared source.Cache (the content-addressed
 // <root>/blobs/sha256/ store, so identical chart bytes dedup across
 // HelmRepositories and embedders), populated by the source controller.
@@ -241,131 +219,95 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 	return r.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
 }
 
-// LocateChart returns a chart path within a local source artifact.
-// The artifact owner controls the path's lifetime.
-func (c *Client) LocateChart(hr *manifest.HelmRelease) (string, error) {
+// LoadChart caches immutable charts by content pin and mutable charts by origin.
+func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
 	if hr == nil {
-		return "", errors.New("nil HelmRelease")
+		return ChartLoadResult{}, errors.New("nil HelmRelease")
 	}
 	switch hr.Chart.RepoKind {
-	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact:
-		return c.locateLocalChart(hr)
-	case manifest.KindOCIRepository, manifest.KindHelmChart:
-		art := c.resolveLocalSource(hr)
-		if art == nil || art.LocalPath == "" {
-			return "", fmt.Errorf("%w: %s %s artifact not available for HelmRelease %s",
-				manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
-		}
-		name, err := chartPathInFS(os.DirFS(art.LocalPath))
-		return filepath.Join(art.LocalPath, name), err
+	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact,
+		manifest.KindOCIRepository, manifest.KindHelmChart:
 	case manifest.KindHelmRepository, "":
-		// HelmRepository charts are materialized into a synthetic HelmChart
-		// by the orchestrator's HR controller before render (see
-		// materializeHelmChartSource), reaching LocateChart as KindHelmChart
-		// above. Hitting this case means LocateChart ran on an
-		// un-materialized HelmRepository chart — unsupported; embedders must
-		// render through the orchestrator (or pre-synthesize a HelmChart).
-		return "", fmt.Errorf("%w: HelmRepository chart %s reached LocateChart unmaterialized — render via the orchestrator",
+		return ChartLoadResult{}, fmt.Errorf("%w: HelmRepository chart %s reached LoadChart unmaterialized: render via the orchestrator",
 			manifest.ErrInput, hr.Chart.RepoFullName())
+	default:
+		return ChartLoadResult{}, fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.RepoKind)
 	}
-	return "", fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.RepoKind)
-}
-
-// LoadChart caches immutable acquired charts by generation and local charts by path.
-func (c *Client) LoadChart(ctx context.Context, hr *manifest.HelmRelease) (ChartLoadResult, error) {
-	var location string
-	var err error
 	art := c.resolveLocalSource(hr)
-	var input fs.FS
-	if art != nil {
-		input = art.FS
+	if art == nil || art.FS == nil {
+		return ChartLoadResult{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
+			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
-	if input != nil {
-		if art.Key == "" {
-			return ChartLoadResult{}, fmt.Errorf("%w: source artifact has no identity", manifest.ErrInput)
-		}
-		switch hr.Chart.RepoKind {
-		case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
-			location = path.Clean(hr.Chart.Name)
-		default:
-			location, err = chartPathInFS(input)
-		}
-	} else {
-		location, err = c.LocateChart(hr)
+	input, _, err := source.ReadView(ctx, art.FS, false)
+	if err != nil {
+		return ChartLoadResult{}, err
+	}
+	var location string
+	switch hr.Chart.RepoKind {
+	case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
+		location = path.Clean(hr.Chart.Name)
+	default:
+		location, err = chartPathInFS(input)
 	}
 	if err != nil {
 		return ChartLoadResult{}, err
 	}
-	cacheKey := location
-	if input != nil {
-		cacheKey = art.Key + "\x00" + location
+	cacheKey := ""
+	if art.Key != "" {
+		cacheKey = "pin\x00" + art.Key + "\x00" + location
+	} else if art.LocalPath != "" {
+		cacheKey = "local\x00" + art.LocalRoot + "\x00" + art.LocalPath + "\x00" + location
 	}
-	path := location
-
+	label := location
+	if art.LocalPath != "" {
+		label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
+	}
 	needsFingerprint := c.templateCache != nil || len(hr.ChartValuesFiles) > 0
-	if ch, fp, ok := c.lookupCachedChart(cacheKey); ok && (!needsFingerprint || fp != "") {
-		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
+	if ch, fp, ok := c.lookupCachedChart(cacheKey, input, location); ok && (!needsFingerprint || fp != "") {
+		return ChartLoadResult{Path: label, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
-
-	// Coalesce parallel first-loads of the same chart so N concurrent
-	// reconciles of the same base chart (bjw-s app-template referenced
-	// by 30+ HRs, podinfo across multiple test envs) issue exactly one
-	// loader.Load instead of N. Distinct paths still parse in parallel.
-	release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
-	if err != nil {
-		return ChartLoadResult{}, err
+	if cacheKey != "" {
+		release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
+		if err != nil {
+			return ChartLoadResult{}, err
+		}
+		defer release()
 	}
-	defer release()
-
-	// Re-check under the per-path lock — another goroutine may have
-	// populated the cache while we waited.
-	ch, fp, cached := c.lookupCachedChart(cacheKey)
+	// Re-check validity under the existing load lock, including fingerprint fill.
+	ch, fp, cached := c.lookupCachedChart(cacheKey, input, location)
 	if cached && (!needsFingerprint || fp != "") {
-		return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
+		return ChartLoadResult{Path: label, Chart: cloneChartForRender(ch), Fingerprint: fp}, nil
 	}
-
 	if !cached {
-		if input != nil {
-			ch, err = loadFSChart(input, location)
-		} else {
-			ch, err = loader.Load(path)
+		var missing bool
+		ch, missing, err = loadFSChart(input, location)
+		if missing {
+			return ChartLoadResult{}, err
 		}
 	}
 	if err != nil {
-		if input == nil {
-			_ = os.Remove(path)
-		}
 		if _, ok := errors.AsType[chart.ValidationError](err); ok {
 			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
-		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", path, err)
+		return ChartLoadResult{}, fmt.Errorf("load chart %s: %w", label, err)
 	}
-	// Fingerprinting is needed only for template or values caching. A shared
-	// chart loaded without either can acquire its fingerprint under this path lock.
 	var fingerprint string
 	if needsFingerprint {
 		fingerprint = chartFingerprint(ch)
 	}
-	mtime, size, ok := int64(0), int64(0), input != nil
-	if input == nil {
-		mtime, size, ok = chartCacheFingerprint(path)
+	mtime, size, valid := int64(0), int64(0), art.Key != ""
+	if !valid {
+		mtime, size, valid = chartCacheFingerprint(input, location)
 	}
-	if ok {
+	if cacheKey != "" && valid {
 		c.chartMu.Lock()
 		c.chartCache[cacheKey] = chartCacheEntry{
-			immutable:   input != nil,
-			chart:       ch,
-			mtime:       mtime,
-			size:        size,
+			immutable: art.Key != "", chart: ch, mtime: mtime, size: size,
 			fingerprint: fingerprint,
 		}
 		c.chartMu.Unlock()
 	}
-	// Hand the caller a clone — helm's Install.RunWithContext invokes
-	// chartutil.ProcessDependencies which mutates Chart.Values and the
-	// per-Dependency Enabled flags. Sharing the cached pointer races
-	// across concurrent renders.
-	return ChartLoadResult{Path: path, Chart: cloneChartForRender(ch), Fingerprint: fingerprint}, nil
+	return ChartLoadResult{Path: label, Chart: cloneChartForRender(ch), Fingerprint: fingerprint}, nil
 }
 
 // cloneChartForRender returns a shallow copy of src with the fields
@@ -413,19 +355,10 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 	return &out
 }
 
-// lookupCachedChart returns the cached chart only when the on-disk
-// file's (mtime, size) still match the values captured at load time.
-// A mismatch (mutable OCI tag re-pushed, manual edit) returns false
-// so the caller re-parses. A missing or unstattable path also
-// returns false — the caller will surface that via loader.Load.
-//
-// The second return is the chart's content-addressed fingerprint
-// (computed once at cache fill); the template-output cache mixes
-// it into its own key so a stale chart never serves a different
-// chart's render.
-func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
+// Mutable lookups validate the current FS at the chart's relative location.
+func (c *Client) lookupCachedChart(key string, input fs.FS, location string) (*chart.Chart, string, bool) {
 	c.chartMu.RLock()
-	entry, ok := c.chartCache[path]
+	entry, ok := c.chartCache[key]
 	c.chartMu.RUnlock()
 	if !ok {
 		return nil, "", false
@@ -433,7 +366,7 @@ func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
 	if entry.immutable {
 		return entry.chart, entry.fingerprint, true
 	}
-	mtime, size, ok := chartCacheFingerprint(path)
+	mtime, size, ok := chartCacheFingerprint(input, location)
 	if !ok {
 		return nil, "", false
 	}
@@ -443,22 +376,17 @@ func (c *Client) lookupCachedChart(path string) (*chart.Chart, string, bool) {
 	return entry.chart, entry.fingerprint, true
 }
 
-// chartCacheFingerprint returns the (mtime, size) tuple flate uses
-// to detect chart-content changes under a stable path. For a tgz
-// chart the file's own stat is the source of truth; for a directory
-// chart the directory mtime is filesystem-dependent and doesn't move
-// when sub-files change, so stat Chart.yaml — the file loader.Load
-// actually parses to derive the chart identity — instead. Returns
-// ok=false when neither is reachable.
-func chartCacheFingerprint(path string) (mtime, size int64, ok bool) {
-	info, err := os.Stat(path)
+// Directory charts retain Chart.yaml validity; template-only changes are outside
+// this metadata contract. Archives use their own metadata.
+func chartCacheFingerprint(input fs.FS, location string) (mtime, size int64, ok bool) {
+	info, err := fs.Stat(input, location)
 	if err != nil {
 		return 0, 0, false
 	}
 	if !info.IsDir() {
 		return info.ModTime().UnixNano(), info.Size(), true
 	}
-	cy, err := os.Stat(filepath.Join(path, util.ChartfileName))
+	cy, err := fs.Stat(input, path.Join(location, util.ChartfileName))
 	if err != nil {
 		return 0, 0, false
 	}

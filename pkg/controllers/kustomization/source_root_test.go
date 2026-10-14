@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -61,7 +62,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 	}
 	s.AddObject(bootstrap)
 	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo",
+		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo", FS: fstest.MapFS{},
 	})
 
 	c := New(s, nil, nil, false)
@@ -74,7 +75,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 			// render's `patches:` block.
 		},
 	}
-	got, _, err := c.resolveSource(ks)
+	got, _, err := c.resolveSource(ks, manifest.DrainNone)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	}
 	s.AddObject(gitrepo)
 	s.SetArtifact(gitrepo.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file:///external", LocalPath: "/external",
+		Kind: manifest.KindGitRepository, URL: "file:///external", LocalPath: "/external", FS: fstest.MapFS{},
 	})
 	// Seed bootstrap too — the fallback must not preempt the explicit ref.
 	bootstrap := &manifest.GitRepository{
@@ -102,7 +103,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 	}
 	s.AddObject(bootstrap)
 	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo",
+		Kind: manifest.KindGitRepository, URL: "file:///repo", LocalPath: "/repo", FS: fstest.MapFS{},
 	})
 
 	c := New(s, nil, nil, false)
@@ -111,7 +112,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		Path:      "./app",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	}
-	got, _, err := c.resolveSource(ks)
+	got, _, err := c.resolveSource(ks, manifest.DrainNone)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 		Name: "foo", Namespace: "flux-system",
 		Path: "./app",
 	}
-	_, _, err := c.resolveSource(ks)
+	_, _, err := c.resolveSource(ks, manifest.DrainNone)
 	if err == nil {
 		t.Fatalf("expected error when bootstrap source is absent")
 	}

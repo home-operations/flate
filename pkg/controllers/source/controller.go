@@ -121,13 +121,13 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 	id := obj.Named()
 	// Dispatcher ownership guarantees a fetcher for this kind.
 	fetcher := c.Fetchers[id.Kind]
-	// Existence short-circuit: a source we already fetched in this run
-	// stays fetched. Idempotent re-AddObject (e.g. a parent KS
-	// re-emitting a stamped copy) returns without touching the network.
-	// Read once; the coalescer guarantees no concurrent reconcile of
-	// the same id, so an existing artifact is stable across this call.
-	if c.Store.GetArtifact(id) != nil {
-		return nil
+	// Available content survives idempotent re-emission. Released pins must
+	// reacquire normally and publish a Ready transition to wake content consumers.
+	if art, ok := c.Store.GetArtifact(id).(*store.SourceArtifact); ok {
+		if art.FS != nil {
+			return nil
+		}
+		c.Store.UpdateStatus(id, store.StatusPending, "acquiring source content")
 	}
 
 	// SetPendingUnlessReady, not a raw UpdateStatus: the artifact gate above

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
@@ -16,7 +17,11 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (git.CloneOptions, er
 	if repo.SecretRef == nil {
 		return opts, nil
 	}
-	if isSSHURL(repo.URL) {
+	endpoint, err := transport.NewEndpoint(repo.URL)
+	if err != nil {
+		return opts, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, gitID(repo), err)
+	}
+	if endpoint.Protocol == "ssh" {
 		return opts, nil
 	}
 	if f.Secrets == nil {
@@ -40,7 +45,7 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (git.CloneOptions, er
 	if crt == "" && key == "" && ca == "" {
 		return opts, nil
 	}
-	_, err := source.BuildTLSConfig(crt, key, ca)
+	_, err = source.BuildTLSConfig(crt, key, ca)
 	if err != nil {
 		return opts, fmt.Errorf("%s: secretRef %s/%s: %w",
 			gitID(repo), repo.Namespace, repo.SecretRef.Name, err)

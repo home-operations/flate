@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -92,24 +94,33 @@ func reconcileNode(t *testing.T, c *Controller, id manifest.NamedResource, drain
 }
 
 func TestController_FetchesAndStoresArtifact(t *testing.T) {
-	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "u", LocalPath: "/tmp"}}
+	const content = "source artifact bytes"
+	f := &fakeFetcher{artifact: &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "u", LocalPath: "/tmp", Key: "pin",
+		FS: fstest.MapFS{"source.txt": {Data: []byte(content)}},
+	}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
-
-	repo := &manifest.GitRepository{
-		Name: "r", Namespace: "ns",
-		URL: "https://example/r.git",
-	}
+	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 	st.AddObject(repo)
 
-	info := dispatchToFixpoint(t, c, st, repo.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if f.calls != 1 {
-		t.Errorf("expected 1 fetch call, got %d", f.calls)
-	}
-	if art := st.GetArtifact(repo.Named()); art == nil {
-		t.Errorf("expected artifact set")
+	for _, phase := range []string{"initial", "reacquired"} {
+		t.Run(phase, func(t *testing.T) {
+			if phase == "reacquired" {
+				pin := *f.artifact
+				pin.FS = nil
+				st.SetArtifact(repo.Named(), &pin)
+			}
+			if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady {
+				t.Fatalf("status = %+v, want StatusReady", info)
+			}
+			art, ok := st.GetArtifact(repo.Named()).(*store.SourceArtifact)
+			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" {
+				t.Fatalf("artifact = %+v, want readable source with original identity", art)
+			}
+			if got, err := fs.ReadFile(art.FS, "source.txt"); err != nil || string(got) != content {
+				t.Fatalf("artifact bytes = %q, error = %v, want %q", got, err, content)
+			}
+		})
 	}
 }
 

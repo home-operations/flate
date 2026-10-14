@@ -183,6 +183,10 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 			t.Cleanup(func() { slog.SetDefault(previous) })
+			d.cfg.Path = root
+			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			_, err := d.overrideSelfReferentialGitRepositories(t.Context(), root)
 			if tc.fail {
 				if !errors.Is(err, manifest.ErrFlux) || st.GetArtifact(repository.Named()) != nil {
@@ -215,12 +219,10 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			} else if artifact.FS == nil || artifact.Key == "" || artifact.URL != repository.URL {
 				t.Fatalf("committed artifact did not use supplied cache: %+v", artifact)
 			}
-			var content []byte
-			if artifact.FS != nil {
-				content, err = fs.ReadFile(artifact.FS, "value.txt")
-			} else {
-				content, err = os.ReadFile(filepath.Join(artifact.LocalPath, "value.txt"))
+			if artifact.FS == nil || tc.head && artifact.Key != "" {
+				t.Fatal("local admission violated the FS/Key state contract")
 			}
+			content, err := fs.ReadFile(artifact.FS, "value.txt")
 			if tc.sparse && !tc.head {
 				if !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("sparse source retained excluded file: %q, %v", content, err)
@@ -266,6 +268,10 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			d := discoverer{cfg: Config{
 				Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			}}
+			d.cfg.Path = root
+			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
@@ -304,7 +310,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	repository.Reference = &manifest.GitRepositoryRef{Commit: "invalid"}
 	st.AddObject(repository)
 	d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
-	if _, err := d.seedBootstrapSource(); err != nil {
+	if _, err := d.seedBootstrapSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
@@ -360,6 +366,10 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		st := store.New()
 		st.AddObject(repository)
 		d := discoverer{cfg: Config{Store: st, SelfURLs: []string{repository.URL}}}
+		d.cfg.Path = root
+		if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}

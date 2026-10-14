@@ -3,9 +3,11 @@ package helmrelease
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 	"time"
 
@@ -238,7 +240,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 						close(sourceStarted)
 						<-sourceRelease
 						if tc.status == store.StatusReady {
-							st.SetArtifact(id, &store.SourceArtifact{})
+							st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{}})
 						}
 						st.UpdateStatus(id, tc.status, "source finished")
 						return schedule.OutcomeTerminal, nil, false
@@ -428,7 +430,7 @@ data:
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	st.UpdateStatus(src.Named(), store.StatusReady, "")
 	st.AddObject(&manifest.ConfigMap{
@@ -549,7 +551,7 @@ data:
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	st.UpdateStatus(src.Named(), store.StatusReady, "")
 	st.AddObject(&manifest.ConfigMap{
@@ -606,7 +608,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	st.UpdateStatus(src.Named(), store.StatusReady, "")
 	hr := &manifest.HelmRelease{
@@ -1052,7 +1054,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	st.UpdateStatus(src.Named(), store.StatusReady, "")
 
@@ -1094,8 +1096,9 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	c.ReconcileNode(context.Background(), hr.Named(), 0)
 
 	mu.Lock()
-	defer mu.Unlock()
-	if sawPending {
+	pending := sawPending
+	mu.Unlock()
+	if pending {
 		t.Error("no-op re-reconcile of an already-Ready HelmRelease transiently downgraded it to Pending (the quiescence-race window)")
 	}
 	if info, _ := st.GetStatus(hr.Named()); info.Status != store.StatusReady {
@@ -1119,9 +1122,41 @@ func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T)
 }
 
 func TestController_ChartAndValuesPrerequisites(t *testing.T) {
+	t.Run("repository", func(t *testing.T) {
+		c, st := newTestController(t, nil)
+		repo := &manifest.HelmRepository{Name: "charts", Namespace: "apps"}
+		st.AddObject(repo)
+		st.UpdateStatus(repo.Named(), store.StatusReady, "resolved")
+		hr := &manifest.HelmRelease{
+			Name: "app", Namespace: "apps",
+			HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{Chart: "app", SourceRef: helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: repo.Name}},
+			}},
+			Chart: manifest.HelmChart{RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace},
+		}
+		for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainForce} {
+			if err := c.awaitChartSource(t.Context(), hr, level); err != nil {
+				t.Fatalf("repository required content: %v", err)
+			}
+		}
+	})
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}}
 	st.AddObject(&manifest.OCIRepository{Name: "chart", Namespace: "apps"})
+	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}
+	st.UpdateStatus(id, store.StatusReady, "released")
+	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
+	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(t.Context(), hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
+		t.Fatalf("released source did not block on acquisition: %v", blocked)
+	}
+	if err := c.awaitChartSource(t.Context(), hr, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+		t.Fatalf("released source at fixpoint: %v", err)
+	}
+	st.UpdateStatus(id, store.StatusReady, store.SkippedPrefix+"missing credentials")
+	assert.Equal(t, errors.Is(c.awaitChartSource(t.Context(), hr, manifest.DrainNone), manifest.ErrSourceSkipped), true)
+	st.SetArtifact(id, &store.SourceArtifact{Key: "pin", FS: fstest.MapFS{}})
+	st.UpdateStatus(id, store.StatusReady, "reacquired")
+	assert.Equal(t, c.awaitChartSource(t.Context(), hr, manifest.DrainNone), nil)
 	st.UpdateStatus(manifest.NamedResource{Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, store.StatusPending, "fetching")
 	_, blocked := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(t.Context(), hr, manifest.DrainNone))
 	assert.Equal(t, blocked, true)

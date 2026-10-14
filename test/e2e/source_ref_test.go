@@ -27,6 +27,7 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -413,7 +414,17 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 			} else {
 				testutil.WriteFile(t, root, secondPath+"/extra.yaml", "metadata: {name: second\n")
 			}
-			_, secondError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, secondPath))
+			inputStore := store.New()
+			if tt.unreadable {
+				input, err := source.NewLocalFS(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				obj := &manifest.GitRepository{Name: tt.sourceName, Namespace: "flux-system"}
+				inputStore.AddObject(obj)
+				inputStore.SetArtifact(obj.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
+			}
+			_, secondError := loader.New(inputStore).Load(t.Context(), filepath.Join(root, secondPath))
 			if tt.unreadable && secondError == nil {
 				t.Skip("OS or current user permits reading a file with no permissions")
 			}

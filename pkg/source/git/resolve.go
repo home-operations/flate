@@ -60,7 +60,7 @@ func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumb
 		case ref.SemVer != "":
 			return resolveSemver(repo, ref.SemVer)
 		case ref.Tag != "":
-			return lookupTag(repo, ref.Tag)
+			return lookupReference(repo, plumbing.NewTagReferenceName(ref.Tag))
 		case ref.Branch != "":
 			return lookupBranch(repo, ref.Branch)
 		}
@@ -104,10 +104,6 @@ func validateCommitBranch(repo *git.Repository, commit plumbing.Hash, branch str
 		return fmt.Errorf("commit %s is not reachable from branch %q", commit, branch)
 	}
 	return nil
-}
-
-func lookupTag(repo *git.Repository, name string) (plumbing.Hash, error) {
-	return lookupReference(repo, plumbing.NewTagReferenceName(name))
 }
 
 func lookupBranch(repo *git.Repository, name string) (plumbing.Hash, error) {

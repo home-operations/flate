@@ -5,6 +5,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
+	"os"
 	"testing"
 )
 
@@ -54,7 +55,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 			b.Run(fmt.Sprintf("cache_%t/disabled_%t", cache, disabled), func(b *testing.B) {
 				st, hr, dir := ociRenderFixture(b)
 				const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
 				clientOpts := ClientOptions{}
 				if cache {
 					clientOpts.TemplateCacheBytes = 1 << 20
@@ -81,7 +82,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir})
+	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
 	cli, err := NewClient(cacheroot.New(b.TempDir()))
 	if err != nil {
 		b.Fatal(err)

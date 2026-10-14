@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"os"
 	"sync"
 	"testing"
 )
@@ -22,7 +23,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				hr.ChartRef = nil
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, LocalPath: dir})
+			st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
 			cli, err := NewClient(cacheroot.New(t.TempDir()))
 			if err != nil {
 				t.Fatal(err)
@@ -52,7 +53,7 @@ func TestLoadChart_ValuesContentWithoutTemplateCache(t *testing.T) {
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	var previous string
 	for i, dir := range []string{first, second} {
-		st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir})
+		st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
 		loaded, err := cli.LoadChart(t.Context(), hr)
 		if err != nil {
 			t.Fatal(err)
@@ -71,7 +72,7 @@ func TestLoadChart_ValuesContentWithoutTemplateCache(t *testing.T) {
 
 func TestLoadChart_SharedChartAcquiresValuesFingerprint(t *testing.T) {
 	st, hr, dir := ociRenderFixture(t)
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir})
+	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
 	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
 	if err != nil {
 		t.Fatal(err)

@@ -1,20 +1,8 @@
 package kustomize
 
-// readset.go records exactly which on-disk inputs a single RenderFlux build
-// reads, so a later run can validate a cached render by replaying those reads:
-// if every recorded file's content, every listed directory's entries, and every
-// probed path's node kind still match, the inputs are unchanged and the cached
-// output is still valid. Because the input set is captured from the build's
-// actual reads (not guessed from the spec), it is sound across the cases a naive
-// subtree hash misses: `..`-escaping resources, transitive components, and files
-// added to or removed from an auto-scanned directory.
-//
-// Only disk-layer reads are recorded. The in-memory overlay holds the generated
-// kustomization.yaml — already captured by the cache key, which hashes the Flux
-// spec — and, in the uncacheable remote-resource case, pre-fetched content (that
-// build bypasses the cache; see RenderFlux). An unexpected read the recorder
-// can't represent sets bypass, disabling caching for that render rather than
-// risking a stale hit.
+// Read sets contain only source inputs observed through treeFS's root-relative
+// constraints. Generated overlay content belongs to the render key; injected
+// remote content prevents persistence because it has no local input identity.
 
 import (
 	"cmp"
@@ -63,11 +51,10 @@ func hashEntries(entries []string) string {
 type readSet struct {
 	root string // source root; recorded paths are stored relative to it
 
-	mu     sync.Mutex
-	files  map[string]string   // relpath -> sha256(content), or "" when the read errored
-	dirs   map[string]string   // relpath -> sha256(sorted child names)
-	nodes  map[string]nodeKind // relpath -> kind, for paths only probed (not read/listed)
-	bypass bool                // an uninstrumentable read occurred — do not cache
+	mu    sync.Mutex
+	files map[string]string   // relpath -> sha256(content), or "" when the read errored
+	dirs  map[string]string   // relpath -> sha256(sorted child names)
+	nodes map[string]nodeKind // relpath -> kind, for paths only probed (not read/listed)
 }
 
 func newReadSet(root string) *readSet {
@@ -80,8 +67,7 @@ func newReadSet(root string) *readSet {
 }
 
 // rel converts an absolute path the overlay saw into a slash-relative path under
-// root. A path outside root (shouldn't happen under the secure FS) is reported
-// not-ok so the caller can bypass.
+// root. treeFS rejects escaping paths before observing source content.
 func (rs *readSet) rel(abs string) (string, bool) {
 	r, err := filepath.Rel(rs.root, abs)
 	if err != nil || safepath.Escaped(r) {
@@ -93,7 +79,6 @@ func (rs *readSet) rel(abs string) (string, bool) {
 func (rs *readSet) recordFile(abs string, content []byte, readErr error) {
 	rel, ok := rs.rel(abs)
 	if !ok {
-		rs.markBypass()
 		return
 	}
 	h := ""
@@ -108,7 +93,6 @@ func (rs *readSet) recordFile(abs string, content []byte, readErr error) {
 func (rs *readSet) recordDir(abs string, entries []string) {
 	rel, ok := rs.rel(abs)
 	if !ok {
-		rs.markBypass()
 		return
 	}
 	h := hashEntries(entries)
@@ -120,24 +104,11 @@ func (rs *readSet) recordDir(abs string, entries []string) {
 func (rs *readSet) recordNode(abs string, kind nodeKind) {
 	rel, ok := rs.rel(abs)
 	if !ok {
-		rs.markBypass()
 		return
 	}
 	rs.mu.Lock()
 	rs.nodes[rel] = kind
 	rs.mu.Unlock()
-}
-
-func (rs *readSet) markBypass() {
-	rs.mu.Lock()
-	rs.bypass = true
-	rs.mu.Unlock()
-}
-
-func (rs *readSet) bypassed() bool {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	return rs.bypass
 }
 
 // fileEntry / nodeEntry are the serialized, sorted snapshot the disk cache

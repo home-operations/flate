@@ -15,7 +15,6 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -45,10 +44,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 			request.MaxAge = sourcecache.Forever
 		}
 	}
-	h, err := source.CacheKeyHash([]string{request.URL, request.Ref, "remote-base-v1"}, 32)
-	if err != nil {
-		return nil, err
-	}
+	h := manifest.Fingerprint([3]string{request.URL, request.Ref, "remote-base-v1"})
 	key := sourcecache.GitKey{ID: "git-base-" + h, Ref: cmp.Or(request.Ref, "HEAD")}
 	var input *gittree.FS
 	generation, err := f.Cache.Git(ctx, key, request.MaxAge, func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {

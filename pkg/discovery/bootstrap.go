@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -12,7 +13,7 @@ import (
 // seedBootstrapSource publishes a synthetic GitRepository pointing at
 // the working tree's repo root — the anchor for spec.path resolution
 // when a Kustomization carries no explicit sourceRef.
-func (d *discoverer) seedBootstrapSource() (string, error) {
+func (d *discoverer) seedBootstrapSource(ctx context.Context) (string, error) {
 	abs, err := ResolveScanPath(d.cfg.Path)
 	if err != nil {
 		return "", err
@@ -28,16 +29,19 @@ func (d *discoverer) seedBootstrapSource() (string, error) {
 			root = r
 		}
 	}
+	input, err := source.NewLocalFS(ctx, root)
+	if err != nil {
+		return "", err
+	}
 	id := manifest.BootstrapSourceID
 	// Always seed the artifact + status: even if the user authored a
 	// GitRepository at this id (the `flux bootstrap` pattern), the
 	// canonical reference for spec.path resolution is the local
 	// working tree, not whatever URL the manifest declares. The
-	// artifact is the load-bearing piece — downstream consumers read
-	// LocalPath, not spec.url.
+	// artifact supplies content before consumers and indexes are built.
 	d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
 		Kind: manifest.KindGitRepository,
-		URL:  "file://" + root, LocalPath: root,
+		URL:  "file://" + root, LocalPath: root, FS: input,
 	})
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap")
 	// Only publish the synthetic object when no user-authored
@@ -154,6 +158,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 		d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
 			Kind: manifest.KindGitRepository,
 			URL:  "file://" + repoRoot, LocalPath: repoRoot,
+			FS: d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).FS,
 		})
 		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
 		slog.Debug("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
@@ -174,6 +179,7 @@ func (d *discoverer) publishBootstrapAlias(id manifest.NamedResource, repoRoot s
 	d.cfg.Store.AddObject(obj)
 	d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
 		Kind: id.Kind, URL: url, LocalPath: repoRoot,
+		FS: d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).FS,
 	})
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias")
 	slog.Debug("discovery: aliased bootstrap source",

@@ -51,32 +51,38 @@ func chartPathInFS(input fs.FS) (string, error) {
 	return selected, nil
 }
 
-func loadFSChart(input fs.FS, name string) (*chart.Chart, error) {
+// The second result identifies an absent requested location, never a read failure
+// within an existing chart.
+func loadFSChart(input fs.FS, name string) (*chart.Chart, bool, error) {
 	info, err := fs.Stat(input, name)
 	if err != nil {
-		return nil, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, true, fmt.Errorf("%w: chart not found at %s", manifest.ErrInput, name)
+		}
+		return nil, false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
 	}
 	if !info.IsDir() {
 		r, err := input.Open(name)
 		if err != nil {
-			return nil, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
+			return nil, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
 		}
 		ch, loadErr := loader.LoadArchive(r)
-		return ch, errors.Join(loadErr, r.Close())
+		return ch, false, errors.Join(loadErr, r.Close())
 	}
 	input, err = fs.Sub(input, name)
 	if err != nil {
-		return nil, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
+		return nil, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
 	}
 	rules, err := chartIgnoreRules(input)
 	if err != nil {
-		return nil, fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
+		return nil, false, fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
 	}
 	files, err := chartFilesInFS(input, rules)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
+		return nil, false, fmt.Errorf("%w: %w", manifest.ErrInput, err)
 	}
-	return loader.LoadFiles(files)
+	ch, err := loader.LoadFiles(files)
+	return ch, false, err
 }
 
 func chartIgnoreRules(input fs.FS) (*ignore.Rules, error) {

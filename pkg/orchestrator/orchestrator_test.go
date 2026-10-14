@@ -1591,8 +1591,13 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 				if err := os.Remove(filepath.Join(root, "apps/kustomization.yaml")); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink("z-broken.yaml", filepath.Join(root, "apps/z-broken.yaml")); err != nil {
-					t.Fatal(err)
+				file := filepath.Join(root, "apps/z-broken.yaml")
+				testutil.WriteFile(t, root, "apps/z-broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unreadable}\n")
+				if err := os.Chmod(file, 0); err != nil {
+					t.Skipf("cannot make file unreadable: %v", err)
+				}
+				if _, err := os.ReadFile(file); err == nil {
+					t.Skip("OS or current user permits reading a file with no permissions")
 				}
 			} else {
 				cfg.PathOrig = filepath.Join(root, "baseline-loop")

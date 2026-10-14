@@ -32,12 +32,13 @@ data:
 		"metadata":   map[string]any{"name": "small", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
 	}
+	input := localSource(b, src)
 	ctx := context.Background()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
+		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -60,6 +61,7 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 	cache := NewTreeCache()
 	cache.SetRenderCache(b.TempDir(), 1<<30)
 	req := RenderRequest{
+		Source:  localSource(b, src),
 		Label:   src,
 		SubPath: "app",
 		Spec: map[string]any{
@@ -131,12 +133,13 @@ data:
 		"metadata":   map[string]any{"name": "deep", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
 	}
+	input := localSource(b, src)
 	ctx := context.Background()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
+		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -160,6 +163,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	}
 
 	cache := NewTreeCache()
+	input := localSource(b, src)
 	ctx := context.Background()
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -174,7 +178,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
-			out, err := RenderFlux(ctx, cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec})
+			out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec})
 			if err != nil {
 				b.Fatalf("RenderFlux: %v", err)
 			}

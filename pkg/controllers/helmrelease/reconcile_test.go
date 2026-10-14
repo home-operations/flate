@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -66,7 +67,7 @@ data:
 			original := hr.Clone()
 			st.AddObject(src)
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: revision, Digest: digest,
+				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: revision, Digest: digest,
 			})
 			st.UpdateStatus(src.Named(), store.StatusReady, "recorded artifact")
 			st.AddObject(hr)
@@ -97,7 +98,7 @@ data:
 			}
 			sharedPrefix := digest[:len(digest)-1] + "9"
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + sharedPrefix, Digest: sharedPrefix,
+				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + sharedPrefix, Digest: sharedPrefix,
 			})
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("shared-prefix digest reconcile: %+v", info)
@@ -111,7 +112,7 @@ data:
 			}
 			const next = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + next, Digest: next,
+				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + next, Digest: next,
 			})
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("changed digest reconcile: %+v", info)
@@ -128,7 +129,7 @@ data:
 				t.Fatal("changed digest reused controller fingerprint")
 			}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "latest@" + next, Digest: next,
+				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "latest@" + next, Digest: next,
 			})
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("changed revision reconcile: %+v", info)
@@ -141,7 +142,7 @@ data:
 				t.Fatalf("same visible version changed output (-want +got):\n%s", diff)
 			}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "invalid", Digest: next,
+				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "invalid", Digest: next,
 			})
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusFailed {
 				t.Fatalf("invalid changed revision bypassed validation: %+v", info)
@@ -309,7 +310,7 @@ data: {greeting: hi}
 `)
 					src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
 					st.AddObject(src)
-					st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8", Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"})
+					st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8", Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"})
 					st.UpdateStatus(src.Named(), store.StatusReady, "")
 					doc := map[string]any{
 						"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,

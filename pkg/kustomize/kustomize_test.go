@@ -21,7 +21,7 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := RenderFlux(ctx, cache, RenderRequest{Label: t.TempDir(), ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	_, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
@@ -129,7 +129,7 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 
 	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
@@ -189,7 +189,7 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "owner-name", "namespace": "owner-ns"},
@@ -233,7 +233,7 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache := NewTreeCache()
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "infra", "namespace": "flux-system"},
@@ -263,7 +263,7 @@ func TestRenderFlux_OwnerLabels_ClusterScoped(t *testing.T) {
 	})
 	spec := ksDoc(nil)
 	spec["metadata"] = map[string]any{"name": "infra"}
-	out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, SubPath: ".", Spec: spec})
+	out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec})
 	if err != nil {
 		t.Fatal(err)
 	}

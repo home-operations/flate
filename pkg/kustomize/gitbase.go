@@ -225,10 +225,8 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 	if err := input.upper.Mount(filepath.ToSlash(rel), artifact.FS); err != nil {
 		return "", err
 	}
-	if input.rec != nil {
-		input.rec.markBypass()
-		input.rec = nil
-	}
+	// Mounted remote reads MUST NOT be attributed to local source inputs.
+	input.rec = nil
 	if input.bases == nil {
 		input.bases = make(map[string]string)
 	}

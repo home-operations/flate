@@ -175,3 +175,16 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 		t.Fatalf("interval=%v", stub.got.Interval.Duration)
 	}
 }
+
+func TestSyntheticChartName_PersistedIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, repo, chart, url, version, want string }{
+		{"normal", "repo", "chart", "https://charts.example/chart.tgz", "1.2.3", "repo-chart-c09ce75"},
+		{"digest", "repo", "chart", "https://charts.example/chart.tgz", "sha256:abc", "repo-chart-293cc48"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := syntheticChartName(tc.repo, tc.chart, tc.url, tc.version); got != tc.want {
+				t.Fatalf("name = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

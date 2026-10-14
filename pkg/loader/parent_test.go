@@ -176,7 +176,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	// home-kubernetes is aliased to the working tree (LocalPath == repoRoot).
 	s.SetArtifact(
 		manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"},
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot},
+		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, FS: os.DirFS(repoRoot), LocalPath: repoRoot},
 	)
 
 	prefixes := loaderFixture(s, nil).Claims(repoRoot)

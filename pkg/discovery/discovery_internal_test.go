@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -35,7 +36,12 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repository.Name, Namespace: repository.Namespace},
 			}
 			cm := &manifest.ConfigMap{Name: "dirty", Namespace: "flux-system"}
-			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir()}
+			localPath := t.TempDir()
+			input, err := source.NewLocalFS(t.Context(), localPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: localPath, FS: input}
 			d := discoverer{
 				cfg: Config{Store: st}, loader: discoveryLoaderForTest(st),
 				resolvedSources: map[manifest.NamedResource]*manifest.GitRepository{other.Named(): other},

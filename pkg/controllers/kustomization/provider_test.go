@@ -2,6 +2,7 @@ package kustomization
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -64,7 +65,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${MISSING}'}\n")
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root})
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root})
 	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(), false)
 	c.Configure(Options{StrictSubstitutions: true})
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))

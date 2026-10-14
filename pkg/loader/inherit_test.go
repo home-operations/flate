@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -89,7 +90,7 @@ spec:
 				if tc.pinned {
 					artifact := t.TempDir()
 					testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: []\n")
-					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, LocalPath: artifact})
+					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, FS: os.DirFS(artifact), LocalPath: artifact})
 					l.documents.read(filepath.Join(artifact, "apps"))
 				}
 				for _, scan := range tc.scans {

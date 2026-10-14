@@ -2,6 +2,7 @@ package helm_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ data:
 	}
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 
 	cli, err := helm.NewClient(cacheroot.New(t.TempDir()))

@@ -112,7 +112,7 @@ func Materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, 
 				continue
 			}
 			if entry.Mode == filemode.Dir {
-				dir, err := safepath.SafeJoin(root, name, true)
+				dir, err := safepath.SafeJoin(root, name)
 				if err != nil {
 					return err
 				}
@@ -211,7 +211,7 @@ func (r *serializedObjectReader) blobBytes(hash plumbing.Hash, name string) ([]b
 // MkdirAll here. The executable bit is preserved from
 // filemode.Executable.
 func writeEntry(objects *serializedObjectReader, entry object.TreeEntry, root, name string) error {
-	dst, err := safepath.SafeJoin(root, name, true)
+	dst, err := safepath.SafeJoin(root, name)
 	if err != nil {
 		return err
 	}

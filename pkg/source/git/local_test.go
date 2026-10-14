@@ -92,6 +92,9 @@ func TestResolveLocal_References(t *testing.T) {
 			if artifact == nil || artifact.Revision != tc.want.String() || artifact.URL != repository.URL {
 				t.Fatalf("artifact = %+v, want revision %s", artifact, tc.want)
 			}
+			if artifact.FS == nil || (artifact.Key == "") != (tc.want == b) {
+				t.Fatalf("FS/Key state did not distinguish HEAD from committed content: %+v", artifact)
+			}
 			if (artifact.LocalPath == root) != (tc.want == b) {
 				t.Fatalf("unexpected artifact path %q", artifact.LocalPath)
 			}

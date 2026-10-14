@@ -9,8 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
-	"path/filepath"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,28 +44,44 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		if obj.Err != nil {
 			return ocispec.Descriptor{}, obj.Err
 		}
-		if !strings.HasSuffix(obj.Key, "/") {
-			entries = append(entries, obj)
-		}
+		entries = append(entries, obj)
 	}
 	slices.SortFunc(entries, func(a, b minio.ObjectInfo) int { return cmp.Compare(a.Key, b.Key) })
-	names := make([]string, len(entries))
+	names := make([]string, 0, len(entries))
 	h := sha256.New()
-	for i, e := range entries {
-		if e.Size < 0 || e.Size > maxObjectBytes {
-			return ocispec.Descriptor{}, fmt.Errorf("bucket object %q exceeds 1 GiB extract limit", e.Key)
+	for _, e := range entries {
+		// Validate both coordinates before prefix stripping or marker omission.
+		if _, err := safepath.ArchiveName(e.Key); err != nil {
+			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q: %w", e.Key, err)
 		}
-		rel := strings.TrimPrefix(strings.TrimPrefix(e.Key, b.Prefix), "/")
+		rel, matched := strings.CutPrefix(e.Key, b.Prefix)
+		if !matched {
+			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q does not match prefix %q: %w", e.Key, b.Prefix, fs.ErrInvalid)
+		}
+		if b.Prefix != "" && !strings.HasSuffix(b.Prefix, "/") {
+			rel, _ = strings.CutPrefix(rel, "/")
+		}
 		if rel == "" {
-			rel = filepath.Base(e.Key)
+			rel = path.Base(e.Key)
 		}
-		safe, err := safepath.SafeJoin("/flate-archive", rel, false)
+		name, err := safepath.ArchiveName(rel)
 		if err != nil {
 			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q: %w", e.Key, err)
 		}
-		names[i] = strings.TrimPrefix(filepath.ToSlash(safe), "/flate-archive/")
+		if strings.HasSuffix(e.Key, "/") {
+			continue
+		}
+		if name == "." {
+			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q is a non-directory root: %w", e.Key, fs.ErrInvalid)
+		}
+		if e.Size < 0 || e.Size > maxObjectBytes {
+			return ocispec.Descriptor{}, fmt.Errorf("bucket object %q exceeds 1 GiB extract limit", e.Key)
+		}
+		entries[len(names)] = e
+		names = append(names, name)
 		_, _ = fmt.Fprintf(h, "%s %s\n", e.Key, e.ETag)
 	}
+	entries = entries[:len(names)]
 	step := chunkBytes
 	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return e.Size > chunkBytes }); i >= 0 {
 		probe := &bucketChunk{object: &entries[i], size: 1}

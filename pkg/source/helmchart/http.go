@@ -27,10 +27,7 @@ import (
 )
 
 func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string) (*store.SourceArtifact, error) {
-	h, err := source.CacheKeyHash([]any{r.URL, chartName, version, helmRepoAuthIdentity(r), r.PassCredentials}, 32)
-	if err != nil {
-		return nil, err
-	}
+	h := manifest.Fingerprint([5]any{r.URL, chartName, version, helmRepoAuthIdentity(r), r.PassCredentials})
 	key := cache.BlobKey{ID: "blob-chart-" + h}
 	maxAge := r.Interval.Duration
 	if f.disableChartDigestTracking && isExactSemver(version) {
@@ -75,10 +72,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 }
 
 func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository) (*repo.IndexFile, error) {
-	h, err := source.CacheKeyHash([]any{r.URL, helmRepoAuthIdentity(r), r.PassCredentials}, 32)
-	if err != nil {
-		return nil, err
-	}
+	h := manifest.Fingerprint([3]any{r.URL, helmRepoAuthIdentity(r), r.PassCredentials})
 	release, err := f.indexLocks.Acquire(ctx, h)
 	if err != nil {
 		return nil, err

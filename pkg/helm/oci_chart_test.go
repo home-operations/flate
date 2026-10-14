@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -77,7 +78,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			for i, release := range []*manifest.HelmRelease{hr, hrB} {
 				digest := []string{digestA, digestB}[i]
 				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: release.Chart.RepoName},
-					&store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
+					&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			}
 			originals := []*manifest.HelmRelease{hr.Clone(), hrB.Clone()}
 			ts := task.NewBounded(2)
@@ -125,7 +126,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 					t.Fatalf("release mutated (-want +got):\n%s", diff)
 				}
 			}
-			canonical := cli.chartCache[dir].chart
+			canonical := cli.chartCache["local\x00\x00"+dir+"\x00."].chart
 			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
 				t.Fatal("parallel renders mutated canonical metadata")
 			}
@@ -144,7 +145,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 			st, hr, dir := ociRenderFixture(t)
 			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
-				&store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
+				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			cli, err := NewClient(cacheroot.New(t.TempDir()))
 			if err != nil {
 				t.Fatal(err)

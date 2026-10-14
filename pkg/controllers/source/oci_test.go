@@ -24,7 +24,7 @@ import (
 )
 
 func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
-	for _, name := range []string{"stale global credentials", "corrupt global config"} {
+	for _, name := range []string{"stale global credentials", "unrelated global credentials", "corrupt global config"} {
 		t.Run(name, func(t *testing.T) {
 			const user, pass = "alice", "hunter2"
 			configBytes := []byte(`{}`)
@@ -60,6 +60,9 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			config := filepath.Join(t.TempDir(), "config.json")
 			staleAuth := base64.StdEncoding.EncodeToString([]byte(user + ":stale"))
 			configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, staleAuth)
+			if name == "unrelated global credentials" {
+				configJSON = fmt.Sprintf(`{"auths":{"quay.io":{"auth":%q}}}`, staleAuth)
+			}
 			if name == "corrupt global config" {
 				configJSON = `{"auths":`
 			}
@@ -71,10 +74,16 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = cache.Close() })
+			lookups := make(chan struct{}, 2)
+			release := make(chan struct{})
 			f := &oci.Fetcher{
 				Cache: cache, RegistryConfig: config,
 				Secrets: func(ns, name string) *manifest.Secret {
 					sec, _ := st.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
+					if sec == nil {
+						lookups <- struct{}{}
+						<-release
+					}
 					return sec
 				},
 			}
@@ -102,6 +111,10 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 					}
 				})
 			}
+			for range 2 {
+				<-lookups
+			}
+			close(release)
 			ts.BlockTillDone()
 			if got := requests.Load(); got != 0 {
 				t.Fatalf("requests before Secret render = %d, want 0", got)

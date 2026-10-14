@@ -89,10 +89,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 	if repo.Reference != nil {
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
-	h, err := source.CacheKeyHash([]any{repo.URL, authIdentity(repo), gitCacheKey(repo, refLabel, sourceignore.RulesVersion), f.Depth}, 32)
-	if err != nil {
-		return nil, err
-	}
+	h := manifest.Fingerprint([4]any{repo.URL, authIdentity(repo), gitCacheKey(repo, refLabel, sourceignore.RulesVersion), f.Depth})
 	key := sourcecache.GitKey{ID: "source-git-" + h, Ref: refLabel, RecurseSubmodules: repo.RecurseSubmodules}
 	maxAge := repo.Interval.Duration
 	if canUseCachedGitSlot(repo.Reference) {
@@ -250,27 +247,19 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) error {
 	if repo.URL == "" {
 		return fmt.Errorf("%w: %s missing url", manifest.ErrInput, gitID(repo))
 	}
-	if f.RestrictSchemes && !gitSchemeAllowed(repo.URL) {
-		return fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
-			manifest.ErrInput, gitID(repo), repo.URL)
+	if f.RestrictSchemes {
+		endpoint, err := transport.NewEndpoint(repo.URL)
+		if err != nil {
+			return fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, gitID(repo), err)
+		}
+		// Restricted scp-style remotes require an explicit user.
+		ssh := endpoint.Protocol == "ssh" && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
+		if endpoint.Protocol != "https" && !ssh {
+			return fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
+				manifest.ErrInput, gitID(repo), repo.URL)
+		}
 	}
 	return nil
-}
-
-// gitSchemeAllowed reports whether url uses a remote transport safe for an
-// untrusted render: https, ssh, or scp-style (user@host:path → SSH). It
-// blocks file:// (local repo read, #743), git:// (plaintext), http://, and
-// bare filesystem paths.
-func gitSchemeAllowed(url string) bool {
-	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "ssh://") {
-		return true
-	}
-	// scp-style git@host:path carries no "://" scheme: a ':' before any '/'
-	// with a '@' in the host part. go-git routes this over SSH.
-	if i := strings.IndexAny(url, ":/"); i >= 0 && url[i] == ':' && strings.Contains(url[:i], "@") {
-		return true
-	}
-	return false
 }
 
 func gitRefLabel(ref manifest.GitRepositoryRef) string {
@@ -298,7 +287,7 @@ func gitCacheKey(repo *manifest.GitRepository, refLabel, rulesVersion string) st
 		RecurseSubmodules: repo.RecurseSubmodules,
 		RulesVersion:      rulesVersion,
 	}
-	h, _ := source.CacheKeyHash(payload, 32)
+	h := manifest.Fingerprint(payload)
 	return refLabel + "#opts:" + h
 }
 

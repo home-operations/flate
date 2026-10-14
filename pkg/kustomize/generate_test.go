@@ -1,45 +1,45 @@
 package kustomize
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
-	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
-	"github.com/home-operations/flate/pkg/source/sourceignore"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/store"
 )
 
-// testTreeFS keeps construction writes private over a secure disk input.
-func testTreeFS(t *testing.T, root string) filesys.FileSystem {
+func localSource(t testing.TB, root string) *store.SourceArtifact {
 	t.Helper()
-	disk, err := fluxfilesys.MakeFsOnDiskSecure(root)
+	input, err := source.NewLocalFS(t.Context(), root)
 	if err != nil {
-		t.Fatalf("secure fs: %v", err)
+		t.Fatal(err)
 	}
-	return newTreeFS(diskInput{FileSystem: disk, root: root, info: make(map[string]fs.FileInfo)}, root, nil)
+	return &store.SourceArtifact{LocalPath: root, FS: input}
 }
 
-// testIgnoreTreeFS is testTreeFS with the source-controller ignore
-// matcher loaded from root in front of the disk layer — the working-tree
-// (applyIgnore) view RenderFlux builds against.
+func testTreeFS(t *testing.T, root string) filesys.FileSystem {
+	t.Helper()
+	input, _, err := source.ReadView(t.Context(), localSource(t, root).FS, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newTreeFS(input, root, nil)
+}
+
 func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
-	disk, err := fluxfilesys.MakeFsOnDiskSecure(root)
+	input, _, err := source.ReadView(t.Context(), localSource(t, root).FS, true)
 	if err != nil {
-		t.Fatalf("secure fs: %v", err)
+		t.Fatal(err)
 	}
-	matcher, err := sourceignore.New(root, nil, true)
-	if err != nil {
-		t.Fatalf("matcher: %v", err)
-	}
-	return newTreeFS(diskInput{FileSystem: newIgnoreFS(disk, root, matcher), root: root, info: make(map[string]fs.FileInfo)}, root, nil)
+	return newTreeFS(input, root, nil)
 }
 
 // These tests pin flate's in-memory generateManifest to flux's real on-disk

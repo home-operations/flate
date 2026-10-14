@@ -197,24 +197,30 @@ func TestFetcher_RestrictSchemesAllowsRemoteURLs(t *testing.T) {
 	}
 }
 
-func TestGitSchemeAllowed(t *testing.T) {
+func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 	cases := map[string]bool{
 		"https://github.com/o/r":    true,
 		"ssh://git@github.com/o/r":  true,
 		"git@github.com:o/r.git":    true, // scp-style → SSH
 		"user@host.xz:path/to/repo": true,
+		"host.xz:path/to/repo":      false,
 		"file:///srv/repo":          false,
 		"git://github.com/o/r":      false,
 		"http://github.com/o/r":     false,
 		"/bare/local/path":          false,
 		"./relative":                false,
+		"./a@b":                     false,
 		"ssh-but-not-scheme://x":    false, // not the ssh:// prefix
 		"":                          false,
 	}
 	for url, want := range cases {
-		if got := gitSchemeAllowed(url); got != want {
-			t.Errorf("gitSchemeAllowed(%q) = %v, want %v", url, got, want)
-		}
+		t.Run(url, func(t *testing.T) {
+			f := &Fetcher{RestrictSchemes: true}
+			err := f.validateRepo(&manifest.GitRepository{URL: url})
+			if want && err != nil || !want && !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("allowed = %t, validateRepo = %v", want, err)
+			}
+		})
 	}
 }
 

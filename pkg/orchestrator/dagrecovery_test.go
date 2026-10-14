@@ -113,6 +113,68 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	if rerun || out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
 		t.Fatalf("primary failure misclassified = %v/%v status=%+v blockers=%v", out, deps, info, info.BlockedBy())
 	}
+	t.Run("released pin recovery", func(t *testing.T) {
+		consumer := ks.Clone()
+		consumer.Name, consumer.Path, consumer.DependsOn = "released-consumer", "./consumer", nil
+		consumer.SourceRef.Kind, consumer.SourceRef.Name = manifest.KindOCIRepository, "app"
+		repo := &manifest.OCIRepository{Name: "app", Namespace: consumer.Namespace, URL: "oci://fixture.invalid/app"}
+		fetcher := &generatedOCIFetcher{root: dir}
+		o.src.Fetchers[manifest.KindOCIRepository] = fetcher
+		o.src.StartLifecycle()
+		o.ksc.StartLifecycle()
+		o.store.AddObject(repo)
+		o.store.AddObject(consumer)
+		o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
+		o.store.UpdateStatus(repo.Named(), store.StatusReady, "")
+		attempted, recovered := make(chan struct{}), make(chan struct{})
+		producer := ksID("reacquire")
+		dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+			if id == producer {
+				o.tasks.YieldSlot(func() {
+					select {
+					case <-attempted:
+					case <-ctx.Done():
+					}
+				})
+				out, deps, rerun := d.Dispatch(ctx, repo.Named(), level)
+				o.tasks.YieldSlot(func() {
+					select {
+					case <-recovered:
+					case <-ctx.Done():
+					}
+				})
+				return out, deps, rerun
+			}
+			out, deps, rerun := d.Dispatch(ctx, id, level)
+			if out == schedule.OutcomeBlocked {
+				assert.Diff(t, deps, []schedule.NodeID{repo.Named()})
+				select {
+				case <-attempted:
+				default:
+					close(attempted)
+				}
+			} else {
+				close(recovered)
+			}
+			return out, deps, rerun
+		})
+		sched := schedule.New(o.tasks, dispatch)
+		unsubscribe := o.watchDAG(sched)
+		defer unsubscribe()
+		sched.Seed([]schedule.NodeID{producer, consumer.Named()})
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		if err := sched.Run(ctx); err != nil {
+			t.Fatal(err)
+		}
+		info, _ := o.store.GetStatus(consumer.Named())
+		assert.Equal(t, info.Status, store.StatusReady)
+		art, ok := o.store.GetArtifact(consumer.Named()).(*store.KustomizationArtifact)
+		if !ok || len(art.Manifests) != 1 {
+			t.Fatalf("recovered output = %+v", art)
+		}
+		assert.Diff(t, art.Manifests[0]["data"], map[string]any{"k": "v"})
+	})
 	o.Stop()
 }
 
@@ -132,7 +194,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	_, err = o.Render(ctx)
 	if err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -36,15 +37,14 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*sto
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
 			"SecretRef or --registry-config credentials")
 	}
-	configPath, cleanup, err := f.resolveRegistryConfig(ctx, repo)
+	credStore, err := f.resolveRegistryConfig(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
-	return f.fetchWithRegistryConfig(ctx, repo, configPath)
+	return f.fetchWithCredentials(ctx, repo, credStore)
 }
 
-func (f *Fetcher) fetchWithRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, configPath string) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store) (*store.SourceArtifact, error) {
 	tlsCfg, err := f.resolveTLS(repo)
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (f *Fetcher) fetchWithRegistryConfig(ctx context.Context, repo *manifest.OC
 	if err != nil {
 		return nil, err
 	}
-	client, err := newRepoClient(repo, configPath, tlsCfg, proxy)
+	client, err := newRepoClient(repo, credStore, tlsCfg, proxy)
 	if err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"io/fs"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -12,12 +11,10 @@ import (
 	"time"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
-	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/api/resmap"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -38,9 +35,10 @@ var BuildMutex sync.Mutex
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
 type RenderRequest struct {
-	// Source is authoritative; nil selects the disk input at Label.
+	// Source.FS supplies content; nil Source or FS is unavailable.
+	// Empty Source.Key denotes mutable content validated on every cache hit.
 	Source *store.SourceArtifact
-	// ApplyIgnore filters path-only aliases with source-controller exclusions.
+	// ApplyIgnore selects source-controller exclusions for admitted local aliases.
 	ApplyIgnore bool
 	// Label mounts source content in kyaml; empty uses Source.LocalPath.
 	Label string
@@ -60,42 +58,17 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if req.Source == nil {
-		req.Source = &store.SourceArtifact{LocalPath: req.Label}
-	}
-	if req.Source.FS == nil && req.Source.Key != "" {
+	if req.Source == nil || req.Source.FS == nil {
 		return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
 	}
-	if req.Source.FS != nil && req.Source.Key == "" {
-		return nil, fmt.Errorf("%w: source artifact has no identity", manifest.ErrInput)
+	lower, ignoreKey, err := source.ReadView(ctx, req.Source.FS, req.ApplyIgnore)
+	if err != nil {
+		return nil, err
 	}
-	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath)
-	var disk filesys.FileSystem
-	ignoreKey := ""
-	if lower == nil {
-		if root == "" {
-			return nil, fmt.Errorf("%w: empty source root", manifest.ErrInput)
-		}
-		dr, err := cache.diskRootFor(root)
-		if err != nil {
-			return nil, err
-		}
-		disk, root = dr.diskFS, dr.root
-		if req.ApplyIgnore {
-			ig, err := dr.ignored()
-			if err != nil {
-				return nil, err
-			}
-			disk, ignoreKey = ig.fs, ig.key
-		}
-		lower = diskInput{FileSystem: disk, root: root, info: make(map[string]fs.FileInfo)}
-	} else {
-		root = cmp.Or(root, string(filepath.Separator)+"flate-source")
-		var err error
-		root, err = filepath.Abs(root)
-		if err != nil {
-			return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
-		}
+	root := cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
 	key := ""
 	if cache.render != nil {
@@ -106,7 +79,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	}
 	if rc := cache.render; rc != nil && key != "" {
 		if snap, output, ok := rc.get(key); ok {
-			if disk == nil {
+			if req.Source.Key != "" {
 				return output, nil
 			}
 			if snap.stillValidFS(lower) {
@@ -118,11 +91,11 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if cache.render != nil && key != "" {
 		rec = newReadSet(root)
 	}
-	var diskRec *readSet
-	if disk != nil {
-		diskRec = rec
+	var mutableRec *readSet
+	if req.Source.Key == "" {
+		mutableRec = rec
 	}
-	memFS := newTreeFS(lower, root, diskRec)
+	memFS := newTreeFS(lower, root, mutableRec)
 	spec, _ := req.Spec["spec"].(map[string]any)
 	interval, _ := spec["interval"].(string)
 	memFS.maxAge, _ = time.ParseDuration(interval)
@@ -189,17 +162,15 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
-	// Persist for the next run, unless the build consumed inputs the disk
-	// read-set can't validate: pre-fetched remote content (injected) or a read
-	// outside the source root (rec.bypassed).
-	if rec != nil && !injected && !rec.bypassed() {
+	// Remote inputs have no identity in the source read set.
+	if rec != nil && !injected {
 		cache.render.put(key, rec.snapshot(), out)
 	}
 	return out, nil
 }
 
 // renderKeyVersion MUST change whenever rendered bytes or cache framing change.
-const renderKeyVersion = "render-fs-v3"
+const renderKeyVersion = "render-fs-v4"
 
 // renderKey includes source options and the immutable content pin. Alias
 // content is validated by the read set rather than a whole-checkout hash.
@@ -211,59 +182,6 @@ func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) st
 		Ignore     string
 		Version    string
 	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion})
-}
-
-// diskRoot holds the per-sourceRoot invariants RenderFlux reuses across every
-// Kustomization that targets the same root: the symlink-resolved absolute root
-// and its secure on-disk FS. diskFS is an immutable fsSecure value over a
-// stateless MakeFsOnDisk, so it is safe to share read-only across goroutines.
-// ignored lazily derives the working-tree view — diskFS behind the
-// source-controller ignore matcher loaded from root — plus the .sourceignore
-// fingerprint that keys it; built once per root because loading the matcher
-// walks the whole tree.
-type diskRoot struct {
-	root    string
-	diskFS  filesys.FileSystem
-	ignored func() (ignoredRoot, error)
-}
-
-type ignoredRoot struct {
-	fs  filesys.FileSystem
-	key string
-}
-
-// diskRootFor returns the cached diskRoot for sourceRoot, computing and
-// memoizing it on first use. The (EvalSymlinks, MakeFsOnDiskSecure) pair it
-// performs is a pure function of sourceRoot, so the result is shared across the
-// run's renders of that root. Errors are not cached — they are rare and the
-// caller wants each to surface — and carry the same wrapping the inline path
-// used. Keyed by the raw input sourceRoot (already validated non-empty).
-func (c *TreeCache) diskRootFor(sourceRoot string) (*diskRoot, error) {
-	if v, ok := c.diskRoots.Load(sourceRoot); ok {
-		return v.(*diskRoot), nil
-	}
-	resolved := sourceRoot
-	if r, err := filepath.EvalSymlinks(sourceRoot); err == nil {
-		resolved = r
-	}
-	diskFS, err := fluxfilesys.MakeFsOnDiskSecure(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("kustomize: secure fs %s: %w", resolved, err)
-	}
-	dr := &diskRoot{root: resolved, diskFS: diskFS}
-	dr.ignored = sync.OnceValues(func() (ignoredRoot, error) {
-		matcher, err := sourceignore.New(resolved, nil, true)
-		if err != nil {
-			return ignoredRoot{}, err
-		}
-		key, err := sourceignore.Fingerprint(resolved)
-		if err != nil {
-			return ignoredRoot{}, err
-		}
-		return ignoredRoot{fs: newIgnoreFS(diskFS, resolved, matcher), key: key}, nil
-	})
-	actual, _ := c.diskRoots.LoadOrStore(sourceRoot, dr)
-	return actual.(*diskRoot), nil
 }
 
 // applyCommonMetadata merges spec.commonMetadata.labels and

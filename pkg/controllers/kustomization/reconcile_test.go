@@ -2,7 +2,9 @@ package kustomization
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -12,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -41,7 +44,7 @@ data: {greeting: hi}
 	}
 	s.AddObject(bootstrap)
 	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + root, LocalPath: root,
+		Kind: manifest.KindGitRepository, URL: "file://" + root, FS: os.DirFS(root), LocalPath: root,
 	})
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
@@ -534,5 +537,22 @@ data: {greeting: hi}
 				t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v", output, info, art)
 			}
 		})
+	}
+}
+
+func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
+	c, st, root := newControllerWithFixture(t)
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", Contents: map[string]any{}}
+	st.AddObject(ks)
+	if info := dispatchToFixpoint(t, c, st, ks.Named()); info.Status != store.StatusReady {
+		t.Fatalf("first reconcile: %+v", info)
+	}
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Key: "released"})
+	_, _, err := c.resolveSource(ks, manifest.DrainNone)
+	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != manifest.BootstrapSourceID {
+		t.Fatalf("released pin did not wait for source acquisition: %v", err)
+	}
+	if _, _, err := c.resolveSource(ks, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+		t.Fatalf("unavailable content at fixpoint: %v", err)
 	}
 }

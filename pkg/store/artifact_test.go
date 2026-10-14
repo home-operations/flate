@@ -3,6 +3,7 @@ package store
 import (
 	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -27,6 +28,13 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	s.SetArtifact(id, mk("other"))
 	if events != 2 {
 		t.Fatalf("changed Key did not fire: %d", events)
+	}
+	for _, text := range []string{"old", "new"} {
+		s.SetArtifact(id, &SourceArtifact{LocalPath: "label", FS: fstest.MapFS{"file": {Data: []byte(text)}}})
+		got, err := fs.ReadFile(s.GetArtifact(id).(*SourceArtifact).FS, "file")
+		if err != nil || string(got) != text {
+			t.Fatalf("mutable source bytes = %q, %v; want %q", got, err, text)
+		}
 	}
 }
 

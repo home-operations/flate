@@ -34,10 +34,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
 	}
-	h, err := source.CacheKeyHash([]any{repo.URL, ref, authIdentity(repo), f.RegistryConfig, repo.Insecure, repo.LayerSelector, ignore, sourceignore.RulesVersion}, 32)
-	if err != nil {
-		return nil, err
-	}
+	h := manifest.Fingerprint([8]any{repo.URL, ref, authIdentity(repo), f.RegistryConfig, repo.Insecure, repo.LayerSelector, ignore, sourceignore.RulesVersion})
 	id := "source-oci-" + h
 	maxAge := repo.Interval.Duration
 	if ref.Digest != "" {
@@ -66,6 +63,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
 	case sourcev1.OCILayerExtract:
+		var err error
 		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, maxAge, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
@@ -79,7 +77,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 }
 
 func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, ref manifest.OCIRepositoryRef) (manifest.OCIRepositoryRef, error) {
-	if !shouldResolveOCISemver(ref) {
+	if ref.Digest != "" || ref.SemVer == "" {
 		return ref, nil
 	}
 	tag, err := resolveOCISemver(ctx, client, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))

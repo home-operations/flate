@@ -25,7 +25,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 		Name: "pinned", Namespace: "flux-system", TargetNamespace: "apps", Path: "./apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: sourceID.Kind, Name: sourceID.Name, Namespace: sourceID.Namespace},
 	})
-	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir})
+	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, FS: os.DirFS(artifactDir), LocalPath: artifactDir})
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "configMapGenerator:\n- name: dirty\n  literals: [value=dirty]\n")

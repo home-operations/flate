@@ -13,6 +13,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/helmchart"
@@ -429,6 +430,18 @@ func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRele
 			return err
 		}
 	}
+	for _, dep := range deps {
+		if dep.Kind == manifest.KindHelmRepository {
+			continue
+		}
+		art, _ := c.Store.GetArtifact(dep.NamedResource).(*store.SourceArtifact)
+		if art == nil || art.FS == nil {
+			if level == manifest.DrainNone {
+				return &depwait.ErrBlocked{Deps: []manifest.NamedResource{dep.NamedResource}}
+			}
+			return fmt.Errorf("%w: chart source %s artifact content unavailable", manifest.ErrObjectNotFound, dep.NamedResource)
+		}
+	}
 	return nil
 }
 
@@ -438,7 +451,7 @@ func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRele
 // standalone HelmChart CR for the source controller to have fetched. We
 // synthesize one, register it (so the source controller fetches the chart —
 // with retry — into the Store), and repoint hr.Chart at it. After this, the
-// chart-source depwait and LocateChart route through the HelmChart path; the
+// chart-source depwait and LoadChart route through the HelmChart path; the
 // chart pull happens once through the single source path rather than inline.
 //
 // Returns (hr, true) when it repointed the chart to a synthetic HelmChart;
@@ -449,7 +462,7 @@ func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRele
 // already-fetched artifact and AddObject of the same synthetic id is a no-op
 // re-emit.
 func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
-	// RepoKind "" defaults to HelmRepository (see LocateChart dispatch).
+	// RepoKind "" defaults to HelmRepository (see LoadChart dispatch).
 	if hr.Chart.RepoKind != "" && hr.Chart.RepoKind != manifest.KindHelmRepository {
 		return hr, false
 	}

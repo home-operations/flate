@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -220,7 +222,7 @@ func TestWalkBucket_Faults(t *testing.T) {
 					t.Fatalf("HTTP fault: %v, want status %d", err, want)
 				}
 			case "hostile":
-				if !strings.Contains(err.Error(), "escapes target directory") {
+				if !errors.Is(err, fs.ErrInvalid) {
 					t.Fatalf("path fault: %v", err)
 				}
 			case "short":
@@ -235,6 +237,74 @@ func TestWalkBucket_Faults(t *testing.T) {
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("deadline identity: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestWalkBucket_ArchiveNames(t *testing.T) {
+	cases := []struct {
+		name, prefix, key, want string
+		invalid                 bool
+	}{
+		{name: "delimiter", prefix: "a", key: "a/x", want: "x"},
+		{name: "slash prefix", prefix: "a/", key: "a/x", want: "x"},
+		{name: "literal prefix", prefix: "a", key: "abc", want: "bc"},
+		{name: "exact key fallback", prefix: "a/x", key: "a/x", want: "x"},
+		{name: "raw traversal laundered by prefix", prefix: "a/..", key: "a/../x", invalid: true},
+		{name: "file root", key: ".", invalid: true},
+		{name: "unmatched prefix", prefix: "a", key: "b/x", invalid: true},
+		{name: "invalid derived name", prefix: "ab", key: "ab../x", invalid: true},
+		{name: "directory marker", key: "dir/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gets atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("list-type") != "" {
+					if got := r.URL.Query().Get("prefix"); got != tc.prefix {
+						t.Errorf("listing prefix=%q, want %q", got, tc.prefix)
+					}
+					_, _ = fmt.Fprintf(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType><Contents><Key>%s</Key><Size>1</Size><ETag>"x"</ETag></Contents></ListBucketResult>`, url.QueryEscape(tc.key))
+					return
+				}
+				gets.Add(1)
+				w.Header().Set("Content-Length", "1")
+				w.Header().Set("ETag", `"x"`)
+				w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
+				_, _ = io.WriteString(w, "x")
+			}))
+			defer srv.Close()
+			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var data bytes.Buffer
+			_, err = walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data", Prefix: tc.prefix}, &data)
+			if tc.invalid {
+				if !errors.Is(err, fs.ErrInvalid) || gets.Load() != 0 || data.Len() != 0 {
+					t.Fatalf("err=%v gets=%d bytes=%d, want invalid name before reads or headers", err, gets.Load(), data.Len())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := tar.NewReader(&data)
+			if tc.want != "" {
+				h, err := tr.Next()
+				if err != nil || h.Name != tc.want {
+					t.Fatalf("header=%v err=%v, want %q", h, err, tc.want)
+				}
+				body, err := io.ReadAll(tr)
+				if err != nil || string(body) != "x" || gets.Load() != 1 {
+					t.Fatalf("body=%q err=%v gets=%d", body, err, gets.Load())
+				}
+			} else if gets.Load() != 0 {
+				t.Fatalf("directory marker triggered %d reads", gets.Load())
+			}
+			if _, err := tr.Next(); !errors.Is(err, io.EOF) {
+				t.Fatalf("archive end: %v", err)
 			}
 		})
 	}

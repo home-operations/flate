@@ -13,6 +13,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -90,21 +91,24 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 			}
 		},
 	}
-	repo := &manifest.GitRepository{
-		Name: "g", Namespace: "ns",
-		URL:       "https://github.com/x/y.git",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
-	auth, err := f.resolveAuth(repo)
-	if err != nil {
-		t.Fatalf("resolveAuth: %v", err)
-	}
-	basic, ok := auth.(*githttp.BasicAuth)
-	if !ok {
-		t.Fatalf("got %T, want *BasicAuth", auth)
-	}
-	if basic.Username != "alice" || basic.Password != "hunter2" {
-		t.Errorf("credentials lost: %+v", basic)
+	for _, url := range []string{
+		"https://github.com/x/y.git",
+		"http://example.com/x@y",
+		"./a@b",
+	} {
+		t.Run(url, func(t *testing.T) {
+			auth, err := f.resolveAuth(gitRepoWithSecret("g", url, "creds"))
+			if err != nil {
+				t.Fatalf("resolveAuth: %v", err)
+			}
+			basic, ok := auth.(*githttp.BasicAuth)
+			if !ok {
+				t.Fatalf("got %T, want *BasicAuth", auth)
+			}
+			if basic.Username != "alice" || basic.Password != "hunter2" {
+				t.Errorf("credentials lost: %+v", basic)
+			}
+		})
 	}
 }
 
@@ -183,40 +187,36 @@ func TestFetcher_SecretRefMissingGetter(t *testing.T) {
 	}
 }
 
-func TestSshUserFromURL(t *testing.T) {
-	cases := map[string]string{
-		"git@github.com:owner/repo.git":    "git",
-		"ssh://buildbot@example.com/r.git": "buildbot",
-		"ssh://@example.com/r.git":         "git",
-		"https://github.com/x/y.git":       "git", // not actually SSH, but tests default
-		"":                                 "git",
+func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for url, want := range cases {
-		if got := sshUserFromURL(url); got != want {
-			t.Errorf("sshUserFromURL(%q) = %q, want %q", url, got, want)
-		}
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestIsSSHURL(t *testing.T) {
-	yes := []string{
-		"git@github.com:o/r.git",
-		"ssh://git@example.com/r",
-	}
-	no := []string{
-		"https://github.com/o/r.git",
-		"http://example.com/r",
-		"file:///tmp/r",
-	}
-	for _, u := range yes {
-		if !isSSHURL(u) {
-			t.Errorf("isSSHURL(%q) = false, want true", u)
-		}
-	}
-	for _, u := range no {
-		if isSSHURL(u) {
-			t.Errorf("isSSHURL(%q) = true, want false", u)
-		}
+	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{StringData: map[string]any{"identity": string(pem.EncodeToMemory(block))}}
+	}}
+	for _, tc := range []struct{ url, user string }{
+		{"git@github.com:owner/repo.git", "git"},
+		{"ssh://buildbot@example.com/r.git", "buildbot"},
+		{"ssh://@example.com/r.git", "git"},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			auth, err := f.resolveAuth(gitRepoWithSecret("g", tc.url, "creds"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys, ok := auth.(*gitssh.PublicKeys)
+			if !ok {
+				t.Fatalf("got %T, want SSH keys", auth)
+			}
+			if keys.User != tc.user || keys.HostKeyCallback == nil {
+				t.Fatalf("SSH user = %q, want %q; host callback = %v", keys.User, tc.user, keys.HostKeyCallback != nil)
+			}
+		})
 	}
 }
 

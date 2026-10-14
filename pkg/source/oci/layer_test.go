@@ -6,61 +6,44 @@ import (
 	"compress/gzip"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestPickLayer(t *testing.T) {
-	layers := []ocispec.Descriptor{
-		{MediaType: "application/vnd.unknown"},
-		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"},
-		{MediaType: "application/octet-stream"},
-	}
+func TestPickLayer_Selection(t *testing.T) {
+	unknown := ocispec.Descriptor{MediaType: "application/vnd.unknown", Data: []byte("unknown")}
+	chart := ocispec.Descriptor{MediaType: registry.ChartLayerMediaType, Data: []byte("chart")}
+	prov := ocispec.Descriptor{MediaType: registry.ProvLayerMediaType, Data: []byte("provenance")}
+	layers := []ocispec.Descriptor{unknown, chart, prov}
 	cases := []struct {
 		name     string
+		layers   []ocispec.Descriptor
 		selector *manifest.OCILayerSelector
-		wantMT   string
+		want     ocispec.Descriptor
 		wantOK   bool
 	}{
-		{"nil selector picks first", nil, "application/vnd.unknown", true},
-		{"empty mediaType picks first", &manifest.OCILayerSelector{}, "application/vnd.unknown", true},
+		{name: "nil selector picks first", layers: layers, want: unknown, wantOK: true},
+		{name: "empty mediaType picks first", layers: layers, selector: &manifest.OCILayerSelector{}, want: unknown, wantOK: true},
 		{
-			"matches helm chart",
-			&manifest.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"},
-			"application/vnd.cncf.helm.chart.content.v1.tar+gzip",
-			true,
+			name: "matches helm chart", layers: layers,
+			selector: &manifest.OCILayerSelector{MediaType: registry.ChartLayerMediaType}, want: chart, wantOK: true,
 		},
-		{
-			"unmatched",
-			&manifest.OCILayerSelector{MediaType: "application/missing"},
-			"", false,
-		},
+		{name: "unmatched", layers: layers, selector: &manifest.OCILayerSelector{MediaType: "application/missing"}},
+		{name: "provenance first", layers: []ocispec.Descriptor{prov, chart}, want: chart, wantOK: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := pickLayer(layers, tc.selector)
+			got, ok := pickLayer(tc.layers, tc.selector)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}
-			if ok && got.MediaType != tc.wantMT {
-				t.Errorf("mediaType = %q, want %q", got.MediaType, tc.wantMT)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("selected layer (-want +got):\n%s", diff)
 			}
 		})
-	}
-}
-
-func TestPickLayer_ProvenanceFirstSkipped(t *testing.T) {
-	layers := []ocispec.Descriptor{
-		{MediaType: "application/vnd.cncf.helm.chart.provenance.v1.prov"},
-		{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"},
-	}
-	got, ok := pickLayer(layers, nil)
-	if !ok {
-		t.Fatal("pickLayer returned ok=false")
-	}
-	if got.MediaType != "application/vnd.cncf.helm.chart.content.v1.tar+gzip" {
-		t.Errorf("mediaType = %q, want the content layer (provenance must be skipped)", got.MediaType)
 	}
 }
 

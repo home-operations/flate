@@ -217,6 +217,8 @@ func isSemverConstraint(version string) bool {
 	return err == nil
 }
 
+const syntheticChartHashHexLength = 7
+
 // syntheticChartName derives the stable <helmrepo>-<chart>-<short hash>
 // identity shared by the synthetic HelmChart (Synthesize) and the synthetic
 // OCIRepository (synthesizeOCIRepository) for one chart served by a
@@ -227,5 +229,5 @@ func isSemverConstraint(version string) bool {
 // not name), so for it the name is mainly log readability.
 func syntheticChartName(repoName, chartName, chartURL, version string) string {
 	sum := sha256.Sum256([]byte(chartURL + "@" + version))
-	return repoName + "-" + chartName + "-" + hex.EncodeToString(sum[:])[:7]
+	return repoName + "-" + chartName + "-" + hex.EncodeToString(sum[:])[:syntheticChartHashHexLength]
 }

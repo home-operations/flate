@@ -859,7 +859,7 @@ spec:
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					out, stderr, code := runCLI(t, append([]string{"diff", "hr", tc.name}, flags...)...)
-					if code != tc.code || !strings.Contains(stderr, "sibling") || !strings.Contains(stderr, "chart not found") {
+					if code != tc.code || !strings.Contains(stderr, "sibling") || !strings.Contains(stderr, "charts/missing") {
 						t.Fatalf("diff hr %s: exit %d, want %d; stderr: %s", tc.name, code, tc.code, stderr)
 					}
 					if tc.code == 0 {

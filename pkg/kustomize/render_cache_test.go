@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -30,14 +31,15 @@ var demoRawSpec = map[string]any{
 // recorded input invalidates it so the re-render reflects the change.
 func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	root := writeTree(t, map[string]string{
-		"kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\n",
+		"kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\npatches:\n  - path: patch.yaml\n",
+		"patch.yaml":         "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {patched: v1}\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
 	})
 	cache := NewTreeCache()
 	cache.SetRenderCache(t.TempDir(), 1<<30)
 	ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -47,17 +49,13 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 
 	// Prove the next call is a real HIT (returns stored bytes, skips krusty) by
 	// tampering the cached output and confirming it comes back verbatim.
-	dr, err := cache.diskRootFor(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := renderKey(demoRawSpec, dr.root, ".", "")
+	key := renderKey(demoRawSpec, root, ".", "")
 	snap, _, ok := cache.render.get(key)
 	if !ok {
 		t.Fatal("first render did not populate the cache")
 	}
 	cache.render.put(key, snap, []byte("SENTINEL\n"))
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -71,7 +69,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out3, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	out3, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("post-edit render: %v", err)
 	}
@@ -81,6 +79,12 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	if !strings.Contains(string(out3), "k: v2") {
 		t.Errorf("re-render should reflect the edit; got %s", out3)
 	}
+	testutil.WriteFile(t, root, "patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {patched: v2}\n")
+	out4, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
+	if err != nil || !strings.Contains(string(out4), "patched: v2") {
+		t.Fatalf("consumed patch edit replayed stale output: %s, %v", out4, err)
+	}
+
 }
 
 // TestRenderFlux_SourceignoreContentInvalidates is the regression for the
@@ -100,7 +104,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	cache.SetRenderCache(cacheDir, 1<<30)
 	ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -116,7 +120,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 
 	cache = NewTreeCache()
 	cache.SetRenderCache(cacheDir, 1<<30)
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -140,7 +144,7 @@ func TestRenderFlux_DisabledCacheUnchanged(t *testing.T) {
 
 	rootA := writeTree(t, files)
 	plain := NewTreeCache()
-	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Source: localSource(t, rootA), Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("plain render: %v", err)
 	}
@@ -148,7 +152,7 @@ func TestRenderFlux_DisabledCacheUnchanged(t *testing.T) {
 	rootB := writeTree(t, files)
 	cached := NewTreeCache()
 	cached.SetRenderCache(t.TempDir(), 1<<30)
-	outCached, err := RenderFlux(ctx, cached, RenderRequest{Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	outCached, err := RenderFlux(ctx, cached, RenderRequest{Source: localSource(t, rootB), Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("cached render: %v", err)
 	}
@@ -199,21 +203,54 @@ func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 }
 
 func TestRenderFlux_RemoteNotCached(t *testing.T) {
-	var version atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote-v%d}\n", version.Load())
-	}))
-	t.Cleanup(srv.Close)
-	root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(srv.URL + "/cm.yaml")})
-	cacheDir := t.TempDir()
-	for _, v := range []int64{1, 2} {
-		version.Store(v)
-		cache := NewTreeCache()
-		cache.SetRenderCache(cacheDir, 1<<20)
-		out, err := RenderFlux(t.Context(), cache, RenderRequest{Label: root, SubPath: ".", Spec: demoRawSpec})
-		if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: remote-v%d", v)) {
-			t.Fatalf("remote version %d: %s, %v", v, out, err)
-		}
+	for _, origin := range []string{"http", "git", "nested-mount"} {
+		t.Run(origin, func(t *testing.T) {
+			var version atomic.Int64
+			remoteBody := func() string {
+				name := fmt.Sprintf("remote-v%d", version.Load())
+				return cmYAML(name)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, remoteBody())
+			}))
+			t.Cleanup(srv.Close)
+			const gitURL = "https://example.invalid/o/r.git"
+			ref := srv.URL + "/remote.yaml"
+			remoteFiles := map[string]string{}
+			if origin != "http" {
+				ref = gitURL + "//remote?ref=main"
+				remoteFiles["remote/kustomization.yaml"] = "resources: [cm.yaml]\n"
+			}
+			kustomization := "resources: [local.yaml, " + fmt.Sprintf("%q", ref) + "]\n"
+			if origin == "nested-mount" {
+				remoteFiles["outer/nested/kustomization.yaml"] = kustomization
+				remoteFiles["outer/nested/local.yaml"] = cmYAML("local")
+				remoteFiles["outer/kustomization.yaml"] = "resources: [nested]\n"
+				kustomization = "resources: [" + gitURL + "//outer?ref=main]\n"
+			}
+			root := writeTree(t, map[string]string{
+				"kustomization.yaml": kustomization,
+				"local.yaml":         cmYAML("local"),
+			})
+			cacheDir := t.TempDir()
+			for _, v := range []int64{1, 2} {
+				version.Store(v)
+				remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
+				cache := NewTreeCache()
+				cache.SetRenderCache(cacheDir, 1<<20)
+				remote := memoryTree(t, remoteFiles)
+				cache.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest) (*store.SourceArtifact, error) {
+					if req.URL != gitURL {
+						t.Errorf("unexpected git URL %q", req.URL)
+					}
+					return &store.SourceArtifact{FS: remote, Key: fmt.Sprintf("pin-%d", v)}, nil
+				})
+				out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
+				if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: remote-v%d", v)) {
+					t.Fatalf("remote version %d: %s, %v", v, out, err)
+				}
+			}
+		})
 	}
 }
 
@@ -232,7 +269,7 @@ func TestRenderKey_VersionedSalt(t *testing.T) {
 		SubPath    string
 		Ignore     string
 		Version    string
-	}{demoRawSpec, root, ".", "", "render-fs-v3"})
+	}{demoRawSpec, root, ".", "", "render-fs-v4"})
 	if got := renderKey(demoRawSpec, root, ".", ""); got != want {
 		t.Errorf("render key salt changed: got %s, want %s", got, want)
 	}
@@ -241,7 +278,7 @@ func TestRenderKey_VersionedSalt(t *testing.T) {
 			cacheDir := t.TempDir()
 			cache := NewTreeCache()
 			cache.SetRenderCache(cacheDir, 1<<20)
-			req := RenderRequest{Label: root, SubPath: ".", Spec: demoRawSpec}
+			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 			key := oldKey
 			if origin == "artifact" {
 				req.Source = &store.SourceArtifact{Key: "pin", FS: memoryTree(t, files)}

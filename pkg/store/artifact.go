@@ -51,10 +51,12 @@ type SourceArtifact struct {
 	// Its Kustomizations retain ownership there even when LocalPath is cached.
 	LocalRoot string
 
-	// Key identifies pinned content, source options, authentication and shaping rules.
-	// A nonempty Key without FS denotes unavailable content, never a disk input.
+	// Key pins immutable content, source options, authentication and shaping rules.
+	// Empty Key with FS denotes mutable content requiring cache validation.
+	// Nonempty Key without FS requires acquisition before reading.
 	Key string
-	// FS is immutable source content. When set, LocalPath is only an ownership label.
+	// FS supplies acquired content; LocalPath and LocalRoot are coordinates only.
+	// Nil FS is unavailable or existence-only, regardless of Key or LocalPath.
 	FS fs.FS
 }
 
@@ -189,7 +191,7 @@ func sameArtifact(prev, next Artifact) bool {
 	if !aok || !bok || (a.FS == nil && b.FS == nil) {
 		return reflect.DeepEqual(prev, next)
 	}
-	if (a.FS == nil) != (b.FS == nil) {
+	if (a.FS == nil) != (b.FS == nil) || a.Key == "" || b.Key == "" {
 		return false
 	}
 	ac, bc := *a, *b

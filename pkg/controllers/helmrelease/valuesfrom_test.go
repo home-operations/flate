@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -40,7 +41,7 @@ data:
 			src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 			st.AddObject(src)
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
-				Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+				Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 			})
 			st.UpdateStatus(src.Named(), store.StatusPending, "fetching")
 			if tc.waitValues {

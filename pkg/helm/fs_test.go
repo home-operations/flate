@@ -11,16 +11,19 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 )
 
 func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
@@ -53,7 +56,7 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 				t.Cleanup(func() { _ = listener.Close() })
 			}
 			want, wantErr := loader.LoadDir(root)
-			got, gotErr := loadFSChart(os.DirFS(root), ".")
+			got, _, gotErr := loadFSChart(os.DirFS(root), ".")
 			if irregular {
 				if wantErr == nil || gotErr == nil {
 					t.Fatalf("irregular: upstream=%v FS=%v", wantErr, gotErr)
@@ -119,12 +122,6 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 			}
 			continue
 		}
-		if key == "" {
-			if !errors.Is(err, manifest.ErrInput) {
-				t.Fatalf("missing key: %v", err)
-			}
-			continue
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -167,7 +164,7 @@ func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
 	if _, err := loader.LoadDir(root); err == nil {
 		t.Fatal("Helm accepted oversized fixture")
 	}
-	if _, err := loadFSChart(input, "."); !errors.Is(err, manifest.ErrInput) {
+	if _, _, err := loadFSChart(input, "."); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("oversized FS chart lacks input classification: %v", err)
 	}
 }
@@ -193,7 +190,10 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 		"ignore":   {"chart/.helmignore": {Data: []byte("**\n")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := loadFSChart(input, "chart")
+			_, missing, err := loadFSChart(input, "chart")
+			if missing != (name == "missing") {
+				t.Fatalf("missing location = %v for %s: %v", missing, name, err)
+			}
 			if name == "archive" {
 				if err == nil {
 					t.Fatal("invalid archive must return an error")
@@ -210,5 +210,61 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 				t.Fatalf("invalid chart lacks input classification: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
+	st := store.New()
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	label := t.TempDir()
+	testutil.WriteFile(t, label, "Chart.yaml", "apiVersion: v2\nname: host\nversion: 1.0.0\n")
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoName: "chart", RepoNamespace: "n"}}
+	st.SetArtifact(manifest.NamedResource{Kind: hr.Chart.RepoKind, Namespace: "n", Name: "chart"},
+		&store.SourceArtifact{LocalPath: label, Key: "pin"})
+	if _, err := cli.LoadChart(t.Context(), hr); !errors.Is(err, manifest.ErrObjectNotFound) {
+		t.Fatalf("released content used host chart: %v", err)
+	}
+}
+
+func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
+	root := t.TempDir()
+	input, err := source.NewLocalFS(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := store.New()
+	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	id := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "n", Name: "chart"}
+	st.SetArtifact(id, &store.SourceArtifact{LocalPath: root, FS: input})
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: id.Kind, RepoNamespace: id.Namespace, RepoName: id.Name}}
+	for i, version := range []string{"1.0.0", "2.0.0"} {
+		ch := minimalChart()
+		ch.Metadata.Name = "chart"
+		ch.Metadata.Version = version
+		archivePath, err := chartutil.Save(ch, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(archivePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		testutil.WriteFile(t, root, "chart.tgz", string(data))
+		stamp := time.Unix(int64(i+1), 0)
+		if err := os.Chtimes(filepath.Join(root, "chart.tgz"), stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := cli.LoadChart(t.Context(), hr)
+		if err != nil || loaded.Chart.Metadata.Version != version {
+			t.Fatalf("archive change replayed stale chart: %+v, %v", loaded.Chart, err)
+		}
 	}
 }

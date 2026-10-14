@@ -236,10 +236,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := source.CacheKeyHash([]any{"https://charts.example.invalid", "demo", "0.1.0", source.AuthIdentityFromRefs("demo", nil, nil), false}, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := manifest.Fingerprint([5]any{"https://charts.example.invalid", "demo", "0.1.0", source.AuthIdentityFromRefs("demo", nil, nil), false})
 	r, _, err := c.Blob(t.Context(), sourcecache.BlobKey{ID: "blob-chart-" + h}, time.Hour, func(w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(archive.Bytes())
 		return ocispec.Descriptor{Digest: digest.FromBytes(archive.Bytes()), Size: int64(archive.Len()), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err

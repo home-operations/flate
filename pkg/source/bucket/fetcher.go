@@ -50,10 +50,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	if b.Ignore != nil {
 		ignore = *b.Ignore
 	}
-	h, err := source.CacheKeyHash([]any{endpoint, secure, b.BucketName, b.Prefix, b.Region, authIdentity(b), ignore, sourceignore.RulesVersion}, 32)
-	if err != nil {
-		return nil, err
-	}
+	h := manifest.Fingerprint([8]any{endpoint, secure, b.BucketName, b.Prefix, b.Region, authIdentity(b), ignore, sourceignore.RulesVersion})
 	key := cache.ArchiveKey{ID: "source-bucket-" + h, Ignore: ignore}
 	input, desc, err := f.Cache.Acquire(ctx, key, b.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) {
 		return walkBucket(ctx, client, b, w)

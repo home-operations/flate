@@ -87,7 +87,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// sweep, or depwait's lazy-promotion fallback.
 	l.Options.DiscoveryOnly = true
 	d := &discoverer{cfg: cfg, loader: l}
-	repoRoot, err := d.seedBootstrapSource()
+	repoRoot, err := d.seedBootstrapSource(ctx)
 	if err != nil {
 		return nil, err
 	}

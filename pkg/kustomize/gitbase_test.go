@@ -226,7 +226,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	cache := NewTreeCache()
 	withFakeGitBase(t, cache, worktree, nil)
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -255,7 +255,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	cache := NewTreeCache()
 	withFakeGitBase(t, cache, worktree, nil)
 
-	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},

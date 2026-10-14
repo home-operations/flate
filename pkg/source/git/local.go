@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -29,6 +30,7 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		return nil, nil
 	}
 	var repo *git.Repository
+	var local fs.FS
 	var head plumbing.Hash
 	opened := false
 	type resolution struct {
@@ -88,7 +90,14 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 			return nil, localError(repository, r.err)
 		}
 		if r.hash == head {
-			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String()}
+			if local == nil {
+				input, err := source.NewLocalFS(ctx, root)
+				if err != nil {
+					return nil, localError(repository, err)
+				}
+				local = input
+			}
+			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String(), FS: local}
 			continue
 		}
 		if repository.RecurseSubmodules {
@@ -113,10 +122,7 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		if err != nil {
 			return nil, localError(repository, err)
 		}
-		key, err := source.CacheKeyHash([]string{identity, r.hash.String(), gitCacheKey(repository, r.hash.String(), sourceignore.RulesVersion)}, 32)
-		if err != nil {
-			return nil, localError(repository, err)
-		}
+		key := manifest.Fingerprint([3]string{identity, r.hash.String(), gitCacheKey(repository, r.hash.String(), sourceignore.RulesVersion)})
 		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: filepath.Join(filepath.Dir(identity), ".flate-sources", key), Revision: r.hash.String(), Key: "local-git-" + key, FS: input}
 		artifacts[repository.Named()] = artifact
 	}

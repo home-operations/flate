@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -25,7 +26,7 @@ func (f *generatedOCIFetcher) Fetch(_ context.Context, obj manifest.BaseManifest
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.root, Digest: "sha256:fixture"}, nil
+	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.root, Digest: "sha256:fixture", Key: "fixture", FS: os.DirFS(f.root)}, nil
 }
 
 func TestRender_DeferredOCIArtifactRoot(t *testing.T) {

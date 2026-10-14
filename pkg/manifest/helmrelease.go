@@ -219,7 +219,7 @@ type HelmChartLookup func(namespace, name string) *HelmChartSource
 // when the HelmChart CRD has no spec.version, we need RepoKind to flip
 // from KindHelmChart to the underlying real source (HelmRepository /
 // OCIRepository / GitRepository) so downstream chart loading can
-// dispatch. Without it, LocateChart would see RepoKind=HelmChart and
+// dispatch. Without it, LoadChart would see RepoKind=HelmChart and
 // fall through with an "unsupported chart repo kind" error.
 func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {

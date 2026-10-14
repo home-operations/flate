@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -306,7 +307,7 @@ func benchLocalChartResolver(b *testing.B, name, namespace, dir string) SourceRe
 	gr := &manifest.GitRepository{Name: name, Namespace: namespace}
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 	return NewStoreSourceResolver(st)
 }

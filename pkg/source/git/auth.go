@@ -1,8 +1,8 @@
 package git
 
 import (
+	"cmp"
 	"fmt"
-	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -12,9 +12,8 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// resolveAuth turns repo.SecretRef into a go-git AuthMethod. Returns
-// nil auth (anonymous) when no secret is configured, matching the
-// pre-auth behavior. For HTTPS URLs the secret may carry either
+// resolveAuth returns anonymous auth when no secret is configured.
+// For HTTPS URLs the secret may carry either
 // (username, password) or (bearerToken); for SSH URLs the secret
 // carries `identity` (PEM private key) and an optional `password`.
 func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMethod, error) {
@@ -28,7 +27,11 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 	if sec == nil {
 		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
 	}
-	if isSSHURL(repo.URL) {
+	endpoint, err := transport.NewEndpoint(repo.URL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, gitID(repo), err)
+	}
+	if endpoint.Protocol == "ssh" {
 		identity, _, _ := sec.Value("identity")
 		if identity == "" || manifest.HasValuePlaceholder(identity) {
 			// Empty covers both missing-key and PLACEHOLDER-wiped values
@@ -37,8 +40,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 			return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing 'identity' for SSH auth")
 		}
 		password, _, _ := sec.Value("password")
-		user := sshUserFromURL(repo.URL)
-		auth, err := gitssh.NewPublicKeys(user, []byte(identity), password)
+		auth, err := gitssh.NewPublicKeys(cmp.Or(endpoint.User, "git"), []byte(identity), password)
 		if err != nil {
 			return nil, fmt.Errorf("%s: parse SSH identity: %w", gitID(repo), err)
 		}
@@ -67,23 +69,4 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMetho
 		return nil, err
 	}
 	return &githttp.BasicAuth{Username: username, Password: password}, nil
-}
-
-// isSSHURL detects a git SSH URL. Covers both `ssh://user@host/repo`
-// and the scp-like `user@host:repo` form Flux GitRepository specs
-// commonly use; rejects http(s):// URLs that happen to contain `@`
-// (e.g. embedded basic-auth credentials).
-func isSSHURL(url string) bool {
-	return strings.HasPrefix(url, "ssh://") ||
-		(strings.Contains(url, "@") && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://"))
-}
-
-// sshUserFromURL extracts the SSH user from "user@host:repo" or
-// "ssh://user@host/repo" forms. Defaults to "git" when absent.
-func sshUserFromURL(url string) string {
-	u := strings.TrimPrefix(url, "ssh://")
-	if user, _, found := strings.Cut(u, "@"); found && user != "" {
-		return user
-	}
-	return "git"
 }

@@ -15,10 +15,7 @@ import (
 
 // fakeOCIFetcher always returns a populated SourceArtifact so we can
 // exercise the change-filter / source-controller interplay without
-// hitting the network. The LocalPath points back at the working tree
-// so kustomize render against the OCI artifact resolves to local
-// files (the test fixture has an empty kustomization.yaml under the
-// path; kustomize accepts an empty resources list).
+// hitting the network. FS exposes the fixed working-tree fixture content.
 type fakeOCIFetcher struct{ localPath string }
 
 func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
@@ -27,6 +24,8 @@ func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*stor
 		URL:       "oci://example.test/homepage-config",
 		LocalPath: f.localPath,
 		Revision:  "test",
+		Key:       "test",
+		FS:        os.DirFS(f.localPath),
 	}, nil
 }
 

@@ -1,6 +1,5 @@
-// Package source is the SDK adapter for Flux's source-controller CRs.
-// It exposes per-kind Fetcher implementations (one per source type)
-// plus a content-addressed disk Cache that all fetchers write into.
+// Package source defines SDK contracts and shared helpers for Flux sources.
+// Per-kind fetchers acquire immutable artifacts through pkg/source/cache.
 //
 // Adding a new source kind:
 //
@@ -15,9 +14,6 @@ package source
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -117,20 +113,6 @@ func ErrUnsupportedProvider(kind, namespace, name, got, want, hint string) error
 // identifier used for cache slots and auth scopes.
 func QualifiedName(kind, namespace, name string) string {
 	return kind + " " + namespace + "/" + name
-}
-
-// CacheKeyHash marshals v to JSON, sha256-hashes the bytes, and returns
-// the hex of the first n bytes — the shared cache-key fingerprint used
-// by the per-kind fetchers. Exported so subpackages (git, oci) can reuse
-// one implementation; each caller picks its own width (n) and decides how
-// to treat a marshal error.
-func CacheKeyHash(v any, n int) (string, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:n]), nil
 }
 
 // SecretGetter resolves a Secret CR by namespace + name. Fetchers

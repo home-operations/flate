@@ -74,9 +74,6 @@ func treeError(op, name string, err error) error {
 }
 
 func (t *treeFS) mount(name string) string {
-	if d, ok := t.lower.(diskInput); ok {
-		return d.mounted(name)
-	}
 	return toKyaml(t.root, name, filepath.Separator)
 }
 
@@ -143,7 +140,7 @@ func (t *treeFS) mark(rel string) {
 }
 
 func (t *treeFS) probe(name, rel string) {
-	if t.rec == nil || t.modified(rel) {
+	if t.rec == nil || !fs.ValidPath(rel) || t.modified(rel) {
 		return
 	}
 	info, err := fs.Stat(t.lower, rel)

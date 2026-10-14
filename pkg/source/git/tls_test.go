@@ -453,6 +453,8 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	}{
 		{name: "anonymous"},
 		{name: "ssh", url: "ssh://git@example.com/x.git", secret: "tls", data: map[string]any{"ca.crt": "invalid"}},
+		{name: "scp", url: "git@example.com:x.git", secret: "tls", data: map[string]any{"ca.crt": "invalid"}},
+		{name: "git-at-path", url: "git://h/x@y", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "auth-only", secret: "tls", data: map[string]any{"username": "alice", "password": "p"}},
 		{name: "ca.crt", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "caFile", secret: "tls", data: map[string]any{"caFile": ca}, wantCA: ca},

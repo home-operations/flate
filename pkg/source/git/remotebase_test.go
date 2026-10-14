@@ -4,10 +4,12 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
@@ -103,19 +105,23 @@ func TestFetchRemoteBase_HashNeverExpires(t *testing.T) {
 }
 
 func TestFetchRemoteBase_HEAD(t *testing.T) {
-	src := t.TempDir()
+	src := filepath.Join(t.TempDir(), "a@b")
 	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "head-content"})
 	head := mustHead(t, src)
 
-	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "", MaxAge: time.Hour})
-	if err != nil {
-		t.Fatalf("FetchRemoteBase HEAD: %v", err)
+	for _, url := range []string{"file://" + src, src} {
+		t.Run(url, func(t *testing.T) {
+			f := newRemoteBaseFetcher(t)
+			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, MaxAge: time.Hour})
+			if err != nil {
+				t.Fatalf("FetchRemoteBase HEAD: %v", err)
+			}
+			if art.Revision != head {
+				t.Errorf("HEAD revision = %q, want %q", art.Revision, head)
+			}
+			assertWorktree(t, art.FS, "kustomization.yaml", "head-content")
+		})
 	}
-	if art.Revision != head {
-		t.Errorf("HEAD revision = %q, want %q", art.Revision, head)
-	}
-	assertWorktree(t, art.FS, "kustomization.yaml", "head-content")
 }
 
 func TestFetchRemoteBase_CacheHit(t *testing.T) {
@@ -151,10 +157,15 @@ func TestFetchRemoteBase_RequiresMirrorAndCache(t *testing.T) {
 	}
 }
 
-func TestFetchRemoteBase_MissingURL(t *testing.T) {
-	f := newRemoteBaseFetcher(t)
-	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "", Ref: "v1", MaxAge: time.Hour})
-	if !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("want ErrInput for empty url, got %v", err)
+func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
+	for _, url := range []string{"", "./a@b", "file:///a@b", "http://h/x@y"} {
+		t.Run(url, func(t *testing.T) {
+			// The uninitialized cache panics if acquisition precedes validation.
+			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
+			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1", MaxAge: time.Hour})
+			if !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("want ErrInput before acquisition, got %v", err)
+			}
+		})
 	}
 }

@@ -13,21 +13,17 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
+	"github.com/home-operations/flate/pkg/source"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
 // allowlistIgnore is the mono-repo .sourceignore shape from #936: exclude
 // everything at the root, re-include the manifest directories.
 const allowlistIgnore = "# Exclude all\n/*\n# Include manifest directories\n!/clusters/\n!/charts/x/\n"
 
-func testIgnoreFS(t *testing.T, root string) ignoreFS {
+func testIgnoreFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
-	matcher, err := sourceignore.New(root, nil, true)
-	if err != nil {
-		t.Fatalf("matcher: %v", err)
-	}
-	disk := testTreeFS(t, root).(*treeFS).lower.(diskInput).FileSystem
-	return newIgnoreFS(disk, root, matcher).(ignoreFS)
+	return testIgnoreTreeFS(t, root)
 }
 
 func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
@@ -67,7 +63,7 @@ func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 			if got := ig.Exists(p); got != tc.visible {
 				t.Errorf("Exists = %v, want %v", got, tc.visible)
 			}
-			isDir := ig.disk.IsDir(p)
+			isDir := testTreeFS(t, root).IsDir(p)
 			if got := ig.IsDir(p); got != (tc.visible && isDir) {
 				t.Errorf("IsDir = %v, want %v", got, tc.visible && isDir)
 			}
@@ -139,21 +135,21 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	}
 
 	t.Run("spec.path excluded", func(t *testing.T) {
-		_, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: true, SubPath: "bundles/common", Spec: spec("./bundles/common")})
+		_, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "bundles/common", Spec: spec("./bundles/common")})
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not a directory") {
 			t.Fatalf("expected the excluded spec.path to be reported missing, got %v", err)
 		}
 	})
 
 	t.Run("kustomization base excluded", func(t *testing.T) {
-		_, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: true, SubPath: "clusters/dev/app", Spec: spec("./clusters/dev/app")})
+		_, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/app", Spec: spec("./clusters/dev/app")})
 		if err == nil || !strings.Contains(err.Error(), "bundles/common") {
 			t.Fatalf("expected the build to fail resolving the excluded base, got %v", err)
 		}
 	})
 
 	t.Run("allowlisted path renders", func(t *testing.T) {
-		out, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: true, SubPath: "clusters/dev/ok", Spec: spec("./clusters/dev/ok")})
+		out, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/ok", Spec: spec("./clusters/dev/ok")})
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -163,7 +159,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	})
 
 	t.Run("fetched artifact not refiltered", func(t *testing.T) {
-		out, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: false, SubPath: "bundles/common", Spec: spec("./bundles/common")})
+		out, err := RenderFlux(ctx, NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "bundles/common", Spec: spec("./bundles/common")})
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -187,28 +183,24 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 	cache.SetRenderCache(t.TempDir(), 1<<30)
 	ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
 	if strings.Contains(string(out1), "name: b") {
 		t.Fatalf("b.yaml should be excluded; got %s", out1)
 	}
-	dr, err := cache.diskRootFor(root)
+	_, ignoreKey, err := source.ReadView(t.Context(), localSource(t, root).FS, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ig, err := dr.ignored()
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := renderKey(demoRawSpec, dr.root, ".", ig.key)
+	key := renderKey(demoRawSpec, root, ".", ignoreKey)
 	snap, _, ok := cache.render.get(key)
 	if !ok {
 		t.Fatal("first render did not populate the cache")
 	}
 	cache.render.put(key, snap, []byte("SENTINEL\n"))
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -244,7 +236,7 @@ configMapGenerator:
 				files[".sourceignore"] = *tc.ignore
 			}
 			root := writeTree(t, files)
-			out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Label: root, ApplyIgnore: true, SubPath: "app", Spec: ksDoc(map[string]any{"path": "./app"})})
+			out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "app", Spec: ksDoc(map[string]any{"path": "./app"})})
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "logo.png") {
 					t.Fatalf("expected excluded image to fail the build, got %v", err)

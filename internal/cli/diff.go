@@ -203,13 +203,10 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (or
 		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
 	}
 	defer cleanup()
-	// Each side is a Tree: its scan entry point (Path) plus the source
-	// root (RepoRoot) that its spec.path values resolve against. The CLI
-	// resolves each root via the .git default (repoRootOf); RenderTrees
-	// reconciles each side changed-only against the other tree's root.
+	// RenderTrees compares each scan entry against the other tree's source root.
 	base, head, runErr := orchestrator.RenderTrees(ctx,
-		orchestrator.Tree{RepoRoot: c.baselineRoot(), Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
-		orchestrator.Tree{RepoRoot: repoRootOf(c.path), Path: c.path},
+		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
+		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path},
 		buildOrchCfg(*c, *h))
 	return base, head, runErr
 }

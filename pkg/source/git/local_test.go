@@ -18,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/storage"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -150,13 +151,20 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	}
 	parent, _, _, _ := localFixture(t)
 	child := filepath.Join(parent, "exported")
-	if err := os.Mkdir(child, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	got, err := ResolveLocal(t.Context(), child, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})})
-	if err != nil || len(got) != 0 {
-		t.Fatalf("borrowed parent store: %v, %v", got, err)
-	}
+	assert.Equal(t, os.Mkdir(child, 0o750), nil)
+	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
+	got, err := ResolveLocal(t.Context(), child, []*manifest.GitRepository{repository})
+	assert.Equal(t, err, nil)
+	assert.Equal(t, len(got), 0)
+	testutil.WriteFile(t, parent, ".git/config", "[invalid\n")
+	got, err = ResolveLocal(t.Context(), child, []*manifest.GitRepository{repository})
+	assert.Equal(t, err, nil)
+	assert.Equal(t, len(got), 0)
+	assert.Equal(t, os.RemoveAll(filepath.Join(parent, ".git")), nil)
+	assert.Equal(t, os.Symlink(".git", filepath.Join(parent, ".git")), nil)
+	got, err = ResolveLocal(t.Context(), child, []*manifest.GitRepository{repository})
+	assert.Equal(t, err, nil)
+	assert.Equal(t, len(got), 0)
 }
 
 func TestResolveLocal_RejectsNilSource(t *testing.T) {
@@ -290,24 +298,24 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 }
 
 func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
-	for _, kind := range []string{"tag-target", "head", "store", "tree", "tree-tag", "recursive-tree-tag"} {
+	for _, kind := range []string{"tag-target", "head", "store", "config", "lookup", "tree", "tree-tag", "recursive-tree-tag"} {
 		t.Run(kind, func(t *testing.T) {
 			root, repo, a, _ := localFixture(t)
 			ref := manifest.GitRepositoryRef{Tag: "v1.0.0"}
 			switch kind {
 			case "tag-target":
-				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), plumbing.NewHash(strings.Repeat("f", 40)))); err != nil {
-					t.Fatal(err)
-				}
+				assert.Equal(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), plumbing.NewHash(strings.Repeat("f", 40)))), nil)
 			case "head":
-				if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("f", 40)))); err != nil {
-					t.Fatal(err)
+				assert.Equal(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("f", 40)))), nil)
+			case "config":
+				testutil.WriteFile(t, root, ".git/config", "[invalid\n")
+			case "store", "lookup":
+				assert.Equal(t, os.RemoveAll(filepath.Join(root, ".git")), nil)
+				if kind == "lookup" {
+					assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
+				} else {
+					testutil.WriteFile(t, root, ".git", "corrupt gitdir")
 				}
-			case "store":
-				if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
-					t.Fatal(err)
-				}
-				testutil.WriteFile(t, root, ".git", "corrupt gitdir")
 			case "tree", "tree-tag", "recursive-tree-tag":
 				commit, err := repo.CommitObject(a)
 				if err != nil {
@@ -315,23 +323,19 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 				}
 				commit.TreeHash = plumbing.NewHash(strings.Repeat("f", 40))
 				encoded := repo.Storer.NewEncodedObject()
-				if err := commit.Encode(encoded); err != nil {
-					t.Fatal(err)
-				}
+				assert.Equal(t, commit.Encode(encoded), nil)
 				hash, err := repo.Storer.SetEncodedObject(encoded)
-				if err != nil {
-					t.Fatal(err)
-				}
+				assert.Equal(t, err, nil)
 				if kind == "tree" {
 					ref = manifest.GitRepositoryRef{Commit: hash.String()}
-				} else if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(ref.Tag), hash)); err != nil {
-					t.Fatal(err)
+				} else {
+					assert.Equal(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(ref.Tag), hash)), nil)
 				}
 			}
 			repository := localSource(ref)
 			repository.RecurseSubmodules = kind == "recursive-tree-tag"
 			repository.SparseCheckout = []string{"apps"}
-			if got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}); !errors.Is(err, manifest.ErrInput) || got != nil {
+			if got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || got != nil {
 				t.Fatalf("corruption became fallback: %v, %v", got, err)
 			}
 		})

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/home-operations/flate/internal/assert"
@@ -471,11 +472,26 @@ func TestResolveScanPath_SymlinkResolved(t *testing.T) {
 	}
 }
 
-func TestFindRepoRoot_NoGitFallsBack(t *testing.T) {
+func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	if got := discovery.FindRepoRoot(dir); got != dir {
-		t.Errorf("FindRepoRoot(%q) = %q; expected unchanged when no .git ancestor", dir, got)
+	for _, layout := range []string{"absent", "empty git directory"} {
+		t.Run(layout, func(t *testing.T) {
+			dir := t.TempDir()
+			if layout == "empty git directory" {
+				if err := os.Mkdir(filepath.Join(dir, ".git"), 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := store.New()
+			result, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st})
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifact := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			if result.RepoRoot != dir || artifact.LocalPath != dir {
+				t.Errorf("no-repository roots = %q, %q; want %q", result.RepoRoot, artifact.LocalPath, dir)
+			}
+		})
 	}
 }
 
@@ -583,12 +599,13 @@ spec:
 func TestRun_LeavesUnmatchedInTreeGitRepository(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "config"), `[core]
-	repositoryformatversion = 0
-[remote "origin"]
-	url = git@github.com:Example/home-ops.git
-`)
-	testutil.WriteFileAt(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"git@github.com:Example/home-ops.git"}}); err != nil {
+		t.Fatal(err)
+	}
 
 	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "flux", "shared-infra.yaml"), `---
 apiVersion: source.toolkit.fluxcd.io/v1

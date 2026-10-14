@@ -495,9 +495,6 @@ spec:
 func writeCustomSourceDiffFixture(t *testing.T, sourceURL string) (current, orig string) {
 	t.Helper()
 	current = t.TempDir()
-	if got := repoRootOf(current); got != current {
-		t.Fatalf("fixture inherited a parent repository: %q", got)
-	}
 	testutil.WriteFile(t, current, "flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: home-kubernetes, namespace: gitops-system}
@@ -534,16 +531,8 @@ metadata: {name: second, namespace: apps}
 data: {greeting: hi}
 `)
 	orig = t.TempDir()
-	if got := repoRootOf(orig); got != orig {
-		t.Fatalf("snapshot inherited a parent repository: %q", got)
-	}
 	copyTree(t, current, orig)
-	testutil.WriteFile(t, current, ".git/config", `[core]
-  repositoryformatversion = 0
-[remote "origin"]
-  url = git@github.com:example/home-ops.git
-`)
-	testutil.WriteFile(t, current, ".git/HEAD", "ref: refs/heads/main\n")
+	writeBaselineGit(t, current, "git@github.com:example/home-ops.git")
 	return current, orig
 }
 

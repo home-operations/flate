@@ -59,7 +59,7 @@ type Config struct {
 	// RepoRoot is the source root that Kustomization spec.path values
 	// resolve against. Supplied explicitly by SDK consumers rendering
 	// extracted trees that have no .git; the CLI defaults it to the .git
-	// ancestor of Path. Empty ⇒ the .git walk (FindRepoRoot) runs,
+	// ancestor of Path. Empty ⇒ repository lookup runs,
 	// preserving local behavior.
 	RepoRoot string
 	// SelfURLs are the remote URL(s) this tree represents, for

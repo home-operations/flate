@@ -30,9 +30,6 @@ func writeNamedScopeFixture(t *testing.T) string {
 	if _, err := git.PlainInit(root, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := repoRootOf(filepath.Join(root, "cluster")); got != root {
-		t.Fatalf("fixture root = %s, want %s", got, root)
-	}
 	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
 	testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
 	testutil.WriteFile(t, root, "cluster/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2

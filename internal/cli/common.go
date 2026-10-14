@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/go-git/go-git/v5"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -41,9 +39,8 @@ const (
 type commonFlags struct {
 	path     string
 	pathOrig string
-	// The materialized --base tree carries no .git, so its source root
-	// is threaded explicitly. Snapshots without .git use the live tree's
-	// remote URLs for self-referential aliasing.
+	// Extracted baseline trees need explicit source roots and identity.
+	pathRoot             string
 	pathOrigRoot         string
 	pathOrigSelfURLs     []string
 	base                 string
@@ -275,74 +272,42 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	}
 }
 
-// resolveBaseline runs baseline.AutoResolve when the user opted into
-// changed-only mode via --base, mutates c.pathOrig to the synthetic
-// materialized path, and returns a tempdir-cleanup func.
+// resolveBaseline resolves source roots and baseline identity, materializing
+// --base when requested. autoFallback requires an automatically selected
+// baseline when neither --path-orig nor --base is set.
 //
-// autoFallback toggles the "fire even when both flags are empty" case
-// — true for `flate diff` (which always needs a baseline; bare
-// command auto-detects via the merge-base ladder); false for
-// build/get/test (where bare command means "no baseline, full tree",
-// and changed-only mode is opt-in via --base or --path-orig).
-//
-// Mutual exclusion with --path-orig is enforced here so every caller
-// gets the same error message.
-//
-// Returns a cleanup func that callers MUST defer — it removes the
-// materialized baseline tempdir. Previously cleanup was bound to
-// `context.AfterFunc(ctx, ...)`, but ctx cancels on SIGINT
-// concurrently with orchestrator goroutines that may still be
-// reading under PathOrig (helm/kustomize/go-git filesystem reads
-// aren't all ctx-aware), producing ENOENT noise in the shutdown
-// error tail. Caller-defer'd cleanup runs after the orchestrator
-// has finished (or panicked through) the read path, eliminating
-// the race.
-//
-// Callers receive a no-op when no materialization happened (no
-// --base / no autoFallback / explicit --path-orig).
+// Callers MUST defer cleanup until all readers have drained: cancellation can
+// precede filesystem reads finishing beneath a temporary baseline tree.
 func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (func(), error) {
 	noop := func() {}
+	c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs = "", "", nil
 	if c.pathOrig != "" && c.base != "" {
 		return noop, errors.New("--path-orig and --base are mutually exclusive")
 	}
-	if c.pathOrig != "" {
-		c.pathOrigSelfURLs = nil
-		root, side := c.baselineRoot(), "baseline tree"
-		if _, err := os.Stat(filepath.Join(root, ".git")); errors.Is(err, os.ErrNotExist) {
-			// Snapshots without git metadata inherit the current source identity.
-			root, side = repoRootOf(c.path), "working tree"
-		} else if err != nil {
-			return noop, fmt.Errorf("baseline: stat baseline tree git metadata: %w", err)
-		}
-		repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{
-			EnableDotGitCommonDir: true,
-		})
-		if side == "working tree" && errors.Is(err, git.ErrRepositoryNotExists) {
-			return noop, nil
-		}
-		if err != nil {
-			return noop, fmt.Errorf("baseline: open %s: %w", side, err)
-		}
-		cfg, err := repo.Config()
-		if err != nil {
-			return noop, fmt.Errorf("baseline: read %s git config: %w", side, err)
-		}
-		for _, remote := range cfg.Remotes {
-			c.pathOrigSelfURLs = append(c.pathOrigSelfURLs, remote.URLs...)
-		}
-		slices.Sort(c.pathOrigSelfURLs)
+	if c.pathOrig == "" && c.base == "" && !autoFallback {
 		return noop, nil
 	}
-	if c.base == "" && !autoFallback {
-		// No opt-in and no fallback semantics — leave c.pathOrig empty
-		// so the orchestrator runs in full-tree mode (the build/get/test
-		// default).
-		return noop, nil
+	current, original := c.path, c.pathOrig
+	for _, path := range []*string{&original, &current} {
+		if *path == "" {
+			continue
+		}
+		resolved, err := discovery.ResolveScanPath(*path)
+		if err != nil {
+			return noop, err
+		}
+		*path = resolved
 	}
-	res, err := baseline.AutoResolve(ctx, c.path, c.base, cacheroot.New(c.resolveCacheRoot()))
+	if original != "" {
+		var err error
+		c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs, err = baseline.ResolvePaths(ctx, current, original)
+		return noop, err
+	}
+	res, err := baseline.AutoResolve(ctx, current, c.base, cacheroot.New(c.resolveCacheRoot()))
 	if err != nil {
 		return noop, err
 	}
+	c.pathRoot = res.RepoRoot
 	c.pathOrig = res.PathOrig
 	// The materialized baseline has no .git: pass its repo root + the live
 	// tree's remotes explicitly so the baseline side anchors spec.path and
@@ -356,42 +321,11 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	return func() { _ = os.RemoveAll(res.TempDir) }, nil
 }
 
-// baselineRoot is the baseline side's source root: the materialized
-// --base tree root when resolveBaseline set it, else the .git default of
-// an explicit --path-orig. Empty when there's no baseline (full-tree mode).
-func (c *commonFlags) baselineRoot() string {
-	if c.pathOrigRoot != "" {
-		return c.pathOrigRoot
-	}
-	return repoRootOf(c.pathOrig)
-}
-
-// repoRootOf resolves path to its source root the way discovery defaults
-// RepoRoot: the .git ancestor of the resolved path, or the path itself
-// when there's no .git. Empty in → empty out. This is the CLI's
-// .git-based default for the explicit RepoRoot / baseline PathOrig the
-// core now consumes — the changed-only core no longer infers a root or
-// "widens" to a .git ancestor itself; the CLI resolves it here and passes
-// it in.
-func repoRootOf(path string) string {
-	if path == "" {
-		return ""
-	}
-	abs, err := discovery.ResolveScanPath(path)
-	if err != nil {
-		return path
-	}
-	return discovery.FindRepoRoot(abs)
-}
-
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path: c.path,
-		// PathOrig carries the baseline's REPO ROOT for change detection
-		// (change.Detect diffs root-to-root): the materialized --base tree
-		// root, or the .git default of an explicit --path-orig. Replaces
-		// the core's old .git "widen" heuristic.
-		PathOrig:                   c.baselineRoot(),
+		Path:                       c.path,
+		RepoRoot:                   c.pathRoot,
+		PathOrig:                   c.pathOrigRoot,
 		HelmOptions:                c.helmOptions(h),
 		DisableChartDigestTracking: h.disableChartDigestTracking,
 		WipeSecrets:                true,

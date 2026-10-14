@@ -16,13 +16,17 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/cas"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
 // Result describes a materialized baseline tree on disk.
 type Result struct {
+	// RepoRoot is the source repository root acquired while resolving the baseline.
+	RepoRoot string
 	// PathOrig is the path the caller should use as the synthetic
 	// --path-orig: <TempDir>/<rel> where rel is the user's --path
 	// relative to the git repo root.
@@ -78,9 +82,19 @@ type resolution struct {
 // Errors carry the suggested next flag so the user knows whether to
 // pass --base=<rev> or --path-orig=<dir>.
 func AutoResolve(ctx context.Context, path, base string, layout cacheroot.Layout) (*Result, error) {
-	repo, repoRoot, err := openRepo(path)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
+	}
+	repoRoot, repo, err := gitrepo.Locate(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
+	}
+	if repo == nil {
+		return nil, fmt.Errorf("%w: --path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", manifest.ErrInput, path)
+	}
+	selfURLs, err := gitrepo.RemoteURLs(repo)
+	if err != nil {
+		selfURLs = nil
 	}
 	// Validate path is inside the repo early, before any expensive work.
 	rel, err := relToRepo(repoRoot, path)
@@ -104,29 +118,58 @@ func AutoResolve(ctx context.Context, path, base string, layout cacheroot.Layout
 		pathOrig = filepath.Join(dir, rel)
 	}
 	return &Result{
+		RepoRoot:   repoRoot,
 		PathOrig:   pathOrig,
 		TempDir:    dir,
 		Persistent: persistent,
 		Rev:        shortRev(r.Hash),
 		Source:     r.Source,
-		SelfURLs:   repoRemoteURLs(repo),
+		SelfURLs:   selfURLs,
 	}, nil
 }
 
-// repoRemoteURLs returns the working tree's configured remote URLs (raw).
-// Used to populate Result.SelfURLs so the caller can hand the baseline
-// render the same self-referential-source identity the live tree has —
-// the materialized baseline carries no .git to read them back from.
-func repoRemoteURLs(repo *git.Repository) []string {
-	cfg, err := repo.Config()
+// ResolvePaths selects source roots and the original tree's remote identity.
+// Only an absent original repository selects the current repository's identity.
+// The original path must be non-empty.
+func ResolvePaths(ctx context.Context, current, original string) (currentRoot, originalRoot string, selfURLs []string, err error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", nil, fmt.Errorf("%w: baseline: resolve paths: %w", manifest.ErrInput, err)
+	}
+	originalRoot, err = filepath.Abs(original)
 	if err != nil {
-		return nil
+		return "", "", nil, fmt.Errorf("%w: baseline: resolve baseline tree path: %w", manifest.ErrInput, err)
 	}
-	var urls []string
-	for _, remote := range cfg.Remotes {
-		urls = append(urls, remote.URLs...)
+	root, originalRepo, err := gitrepo.Locate(originalRoot)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("%w: baseline: locate baseline tree: %w", manifest.ErrInput, err)
 	}
-	return urls
+	if root != "" {
+		originalRoot = root
+	}
+	if originalRepo != nil {
+		selfURLs, err = gitrepo.RemoteURLs(originalRepo)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("%w: baseline: read baseline tree remotes: %w", manifest.ErrInput, err)
+		}
+	}
+	currentRoot, err = filepath.Abs(current)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("%w: baseline: resolve working tree path: %w", manifest.ErrInput, err)
+	}
+	root, repo, err := gitrepo.Locate(currentRoot)
+	if err != nil && originalRepo == nil {
+		return "", "", nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
+	}
+	if root != "" {
+		currentRoot = root
+	}
+	if originalRepo == nil && repo != nil {
+		selfURLs, err = gitrepo.RemoteURLs(repo)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("%w: baseline: read working tree remotes: %w", manifest.ErrInput, err)
+		}
+	}
+	return currentRoot, originalRoot, selfURLs, nil
 }
 
 // materializeAt produces the baseline tree on disk for hash and
@@ -197,45 +240,6 @@ func relToRepo(repoRoot, path string) (string, error) {
 		return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
 	}
 	return rel, nil
-}
-
-// GitRepoRoot returns the .git ancestor of path, or "" when none
-// exists. Exposed so callers can branch on "is this a git repo" before
-// calling AutoResolve. Renamed from FindRepoRoot to disambiguate from
-// `discovery.FindRepoRoot` which has different fallback semantics
-// (returns p unchanged when no .git exists, rather than "").
-func GitRepoRoot(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return ""
-	}
-	for cur := abs; ; {
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
-			return cur
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
-}
-
-// openRepo opens the git repo containing path. Returns the *Repository
-// and the repo root (the directory containing .git).
-//
-// EnableDotGitCommonDir is what makes a linked worktree work: its gitdir
-// holds only HEAD and index, so every ref lookup needs the common dir.
-func openRepo(path string) (*git.Repository, string, error) {
-	root := GitRepoRoot(path)
-	if root == "" {
-		return nil, "", fmt.Errorf("--path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", path)
-	}
-	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
-	if err != nil {
-		return nil, "", fmt.Errorf("open git repo at %q: %w", root, err)
-	}
-	return repo, root, nil
 }
 
 // resolve picks the baseline commit for the given repo. When base is

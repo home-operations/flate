@@ -1,34 +1,86 @@
 package discovery
 
-import "testing"
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
 
-// TestSelfRemotes_ExplicitURLsOverrideGitConfig confirms an SDK consumer
-// rendering an extracted tree (no .git/config) can supply the repo's
-// remote URLs via Config.SelfURLs — they are normalized the same way the
-// .git fallback would be, so self-referential GitRepository aliasing fires
-// without a working tree.
-func TestSelfRemotes_ExplicitURLsOverrideGitConfig(t *testing.T) {
-	d := &discoverer{cfg: Config{SelfURLs: []string{
-		"git@github.com:Owner/Repo.git", // canonicalizes to github.com/owner/repo
-		"not-a-remote",                  // rejected by normalizeGitURL → dropped
-	}}}
-	// repoRoot points nowhere real; with SelfURLs set it must NOT be read.
-	got := d.selfRemotes("/nonexistent")
-	if _, ok := got["github.com/owner/repo"]; !ok {
-		t.Errorf("explicit SelfURL not normalized into the set: %v", got)
-	}
-	if len(got) != 1 {
-		t.Errorf("expected exactly the one valid remote; got %v", got)
+	"github.com/go-git/go-git/v5"
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
+	for _, identity := range []string{"ancestor", "explicit", "inferred"} {
+		t.Run(identity, func(t *testing.T) {
+			parent := discoveryRefFixture(t)
+			testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/parent/repo.git\n")
+			root := filepath.Join(parent, "child")
+			testutil.WriteFile(t, root, "scan.yaml", "")
+			d := &discoverer{cfg: Config{Path: root, RepoRoot: root, Store: store.New()}}
+			want := "github.com/parent/repo"
+			wantRoot := root
+			if identity == "inferred" {
+				d.cfg.RepoRoot = ""
+				wantRoot = parent
+			}
+			if identity == "explicit" {
+				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
+				d.cfg.SelfURLs = []string{"git@github.com:Owner/Repo.git", "not-a-remote"}
+				want = "github.com/owner/repo"
+			}
+			got, err := d.seedBootstrapSource(t.Context())
+			assert.Equal(t, err, nil)
+			assert.Equal(t, got, wantRoot)
+			assert.Diff(t, d.remotes, map[string]struct{}{want: {}})
+			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			assert.Equal(t, artifact.LocalPath, wantRoot)
+			if artifact.FS == nil {
+				t.Fatal("bootstrap source has no admitted filesystem")
+			}
+			if identity == "inferred" {
+				content, err := fs.ReadFile(artifact.FS, "value.txt")
+				assert.Equal(t, err, nil)
+				assert.Equal(t, string(content), "dirty")
+			}
+		})
 	}
 }
 
-// TestSelfRemotes_EmptyFallsBackToGitConfig confirms the empty-SelfURLs
-// path is byte-identical to reading the working tree (here: a non-repo
-// path yields nil, the same as readWorkingTreeRemotes).
-func TestSelfRemotes_EmptyFallsBackToGitConfig(t *testing.T) {
-	d := &discoverer{cfg: Config{}}
-	if got := d.selfRemotes(t.TempDir()); got != nil {
-		t.Errorf("no SelfURLs + non-repo path should yield nil (git fallback); got %v", got)
+func TestSeedBootstrapSource_NoRepository(t *testing.T) {
+	for _, kind := range []string{"absent", "gitfile", "config", "lookup"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "scan.yaml", "admitted\n")
+			d := &discoverer{cfg: Config{Path: root, Store: store.New()}}
+			switch kind {
+			case "gitfile":
+				testutil.WriteFile(t, root, ".git", "gitdir: missing\n")
+			case "config":
+				_, err := git.PlainInit(root, false)
+				assert.Equal(t, err, nil)
+				testutil.WriteFile(t, root, ".git/config", "[invalid\n")
+			case "lookup":
+				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
+			}
+			got, err := d.seedBootstrapSource(t.Context())
+			assert.Equal(t, len(d.remotes), 0)
+			assert.Equal(t, err, nil)
+			assert.Equal(t, got, root)
+			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			assert.Equal(t, artifact.Kind, manifest.KindGitRepository)
+			assert.Equal(t, artifact.URL, "file://"+root)
+			assert.Equal(t, artifact.LocalPath, root)
+			if artifact.FS == nil {
+				t.Fatal("bootstrap source has no admitted filesystem")
+			}
+			content, err := fs.ReadFile(artifact.FS, "scan.yaml")
+			assert.Equal(t, err, nil)
+			assert.Equal(t, string(content), "admitted\n")
+		})
 	}
 }
 

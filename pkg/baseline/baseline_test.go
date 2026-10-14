@@ -2,6 +2,7 @@ package baseline
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,34 +15,28 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
-// TestAutoResolve_ExplicitBase pins the --base=<rev> escape hatch: an
-// explicit rev bypasses the auto-detection ladder and the named commit
-// becomes the baseline.
+// An explicit base bypasses the auto-detection ladder.
 func TestAutoResolve_ExplicitBase(t *testing.T) {
 	dir := t.TempDir()
 	commitA := initRepoWithFile(t, dir, "a.yaml", "original")
-	commitB := writeAndCommit(t, dir, "a.yaml", "updated")
+	writeAndCommit(t, dir, "a.yaml", "updated")
 
 	res, err := AutoResolve(context.Background(), dir, commitA.String(), cacheroot.Layout{})
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(res.TempDir) }()
-	if !strings.HasPrefix(res.Source, "explicit --base=") {
-		t.Errorf("Source = %q, want prefix 'explicit --base='", res.Source)
-	}
+	assert.Equal(t, strings.HasPrefix(res.Source, "explicit --base="), true)
+	assert.Equal(t, res.RepoRoot, dir)
 	got, err := os.ReadFile(filepath.Join(res.TempDir, "a.yaml"))
-	if err != nil {
-		t.Fatalf("read materialized: %v", err)
-	}
-	if string(got) != "original" {
-		t.Errorf("materialized a.yaml = %q, want %q (should be commitA's tree, not HEAD's)", got, "original")
-	}
-	_ = commitB
+	assert.Equal(t, err, nil)
+	assert.Equal(t, string(got), "original")
 }
 
 // TestAutoResolve_SelfURLsCarryRemotes pins that Result.SelfURLs carries the
@@ -75,6 +70,27 @@ func TestAutoResolve_SelfURLsCarryRemotes(t *testing.T) {
 	// The materialized tree must NOT carry a synthetic .git anymore.
 	if _, err := os.Stat(filepath.Join(res.TempDir, ".git")); !os.IsNotExist(err) {
 		t.Errorf("materialized baseline must have no .git marker; stat err = %v", err)
+	}
+}
+
+func TestResolvePaths_AncestorLookupError(t *testing.T) {
+	for _, side := range []string{"original", "current"} {
+		t.Run(side, func(t *testing.T) {
+			parent := t.TempDir()
+			assert.Equal(t, os.Symlink(".git", filepath.Join(parent, ".git")), nil)
+			child := filepath.Join(parent, "exported")
+			assert.Equal(t, os.Mkdir(child, 0o750), nil)
+			current, original := t.TempDir(), child
+			if side == "current" {
+				current, original = original, current
+			}
+
+			currentRoot, originalRoot, selfURLs, err := ResolvePaths(t.Context(), current, original)
+			assert.Equal(t, err, nil)
+			assert.Equal(t, currentRoot, current)
+			assert.Equal(t, originalRoot, original)
+			assert.Equal(t, len(selfURLs), 0)
+		})
 	}
 }
 
@@ -290,23 +306,18 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 	}
 }
 
-// TestAutoResolve_NoGit: a path that isn't inside a .git ancestor must
-// error with a message naming the alternative flags.
 func TestAutoResolve_NoGit(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(dir, "f.yaml"), "x")
-	_, err := AutoResolve(context.Background(), dir, "", cacheroot.Layout{})
-	if err == nil {
-		t.Fatal("expected error for non-git path")
+	_, err := AutoResolve(t.Context(), dir, "", cacheroot.Layout{})
+	if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not inside a git working tree") {
+		t.Fatalf("error = %v, want input error suggesting --path-orig / --base", err)
 	}
-	if !strings.Contains(err.Error(), "not inside a git working tree") {
-		t.Errorf("error %q: should explain why and suggest --path-orig / --base", err)
-	}
+	assert.Equal(t, os.Symlink(".git", filepath.Join(dir, ".git")), nil)
+	res, err := AutoResolve(t.Context(), dir, "", cacheroot.Layout{})
+	assert.Equal(t, errors.Is(err, manifest.ErrInput) && errors.Is(err, manifest.ErrFlux), true)
+	assert.Equal(t, res == nil, true)
 }
 
-// TestAutoResolve_Shallow: presence of .git/shallow is the CI shallow-
-// clone signal and must produce a distinct error from "no upstream"
-// so users know to set fetch-depth: 0.
 func TestAutoResolve_Shallow(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
@@ -353,8 +364,7 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	initRepoWithFile(t, repoDir, "a.yaml", "x")
-	// Sibling directory, outside the repo. We expect openRepo to find
-	// no .git ancestor for outerDir/sibling, and surface a clear error.
+	// A sibling directory has no containing checkout.
 	sibling := filepath.Join(outerDir, "sibling")
 	if err := os.Mkdir(sibling, 0o750); err != nil {
 		t.Fatal(err)
@@ -519,13 +529,14 @@ func TestMaterialize_PreservesExecutableBit(t *testing.T) {
 	}
 }
 
-// TestAutoResolve_LinkedWorktree pins auto-resolution inside a linked
-// worktree. Opened without the common dir, no ref resolves at all and
-// the ladder never gets past HEAD.
+// Linked metadata must open through the common directory.
 func TestAutoResolve_LinkedWorktree(t *testing.T) {
 	mainDir := t.TempDir()
 	baseCommit := initRepoWithFile(t, mainDir, "a.yaml", "base")
 	repo := openHelper(t, mainDir)
+	const remoteURL = "https://example.invalid/upstream.git"
+	_, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{remoteURL}})
+	assert.Equal(t, err, nil)
 	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "main"), baseCommit)
 	headCommit := writeAndCommit(t, mainDir, "a.yaml", "new")
 	setRef(t, repo, plumbing.NewBranchReferenceName("feature"), headCommit)
@@ -537,16 +548,11 @@ func TestAutoResolve_LinkedWorktree(t *testing.T) {
 		t.Fatalf("AutoResolve in linked worktree: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(res.TempDir) }()
-	if res.Source != "merge-base with origin/main" {
-		t.Errorf("Source = %q, want 'merge-base with origin/main'", res.Source)
-	}
+	assert.Diff(t, res.SelfURLs, []string{remoteURL})
+	assert.Equal(t, res.Source, "merge-base with origin/main")
 	got, err := os.ReadFile(filepath.Join(res.TempDir, "a.yaml"))
-	if err != nil {
-		t.Fatalf("read materialized: %v", err)
-	}
-	if string(got) != "base" {
-		t.Errorf("materialized a.yaml = %q, want %q (the baseline tree)", got, "base")
-	}
+	assert.Equal(t, err, nil)
+	assert.Equal(t, string(got), "base")
 }
 
 // TestAutoResolve_ShallowLinkedWorktree: the shallow marker lives in the

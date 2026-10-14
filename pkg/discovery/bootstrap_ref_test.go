@@ -178,7 +178,10 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				repository.SparseCheckout = []string{"apps"}
 			}
 			st.AddObject(repository)
-			d := discoverer{cfg: Config{Store: st, SelfURLs: []string{repository.URL}}}
+			d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			var logs bytes.Buffer
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -266,9 +269,8 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			}
 			st.AddObject(ks)
 			d := discoverer{cfg: Config{
-				Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
+				Path: root, RepoRoot: root, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			}}
-			d.cfg.Path = root
 			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -365,8 +367,7 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		}
 		st := store.New()
 		st.AddObject(repository)
-		d := discoverer{cfg: Config{Store: st, SelfURLs: []string{repository.URL}}}
-		d.cfg.Path = root
+		d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 		if _, err := d.seedBootstrapSource(t.Context()); err != nil {
 			t.Fatal(err)
 		}

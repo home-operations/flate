@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -19,8 +20,8 @@ import (
 
 // Result summarizes what discovery hydrated into the store.
 type Result struct {
-	// RepoRoot is the resolved working-tree anchor (with .git ancestor
-	// walk + symlink resolution applied).
+	// RepoRoot is the resolved working-tree anchor with repository lookup
+	// and symlink resolution applied.
 	RepoRoot string
 	// Index contains the immutable static discovery facts consumed by rendering.
 	Index *manifest.DiscoveryIndex
@@ -48,9 +49,8 @@ type Config struct {
 	// RepoRoot is the source root that Kustomization spec.path values
 	// resolve against (the GitRepository artifact root). Supplied
 	// explicitly by SDK consumers rendering extracted trees that have no
-	// .git; the CLI defaults it to the .git ancestor of Path. Empty ⇒
-	// fall back to the .git walk (FindRepoRoot), preserving local
-	// behavior. Path must sit at or under RepoRoot.
+	// .git; empty uses the repository containing Path or Path itself
+	// when there is no repository. Path must sit at or under RepoRoot.
 	RepoRoot string
 	// SelfURLs are the remote URL(s) this tree represents. A user-authored
 	// GitRepository matching one is the cluster pulling itself: no ref or
@@ -127,7 +127,6 @@ type discoverer struct {
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]*manifest.GitRepository
 	remotes         map[string]struct{}
-	remotesLoaded   bool
 	hasPins         bool
 }
 
@@ -184,7 +183,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				}
 				repo, ok := d.cfg.Store.Get[*manifest.GitRepository](id)
 				if ok && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
-					if _, match := d.selfRemotes(repoRoot)[normalizeGitURL(repo.URL)]; match {
+					if _, match := d.remotes[normalizeGitURL(repo.URL)]; match {
 						d.loader.ApplyNamespaces(repoRoot)
 						break
 					}
@@ -316,4 +315,54 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]
 	}
 	*total += n
 	return nil
+}
+
+// ResolveScanPath normalizes a user-supplied --path / --path-orig:
+// absolute, with symlinks resolved. Without symlink resolution
+// filepath.WalkDir doesn't follow root-level symlinks, producing an
+// empty manifest set without any error indication — a footgun.
+func ResolveScanPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return abs, nil
+		}
+		return "", fmt.Errorf("resolve --path %q: %w", p, err)
+	}
+	return resolved, nil
+}
+
+// stripDotSlash strips leading `./` / `/` / bare `.` segments from a
+// Flux spec.path so it can be joined against repoRoot without
+// re-rooting. `..` is preserved — the caller validates traversal via
+// pathUnderRoot.
+func stripDotSlash(p string) string {
+	for {
+		if after, ok := strings.CutPrefix(p, "./"); ok {
+			p = after
+			continue
+		}
+		if after, ok := strings.CutPrefix(p, "/"); ok {
+			p = after
+			continue
+		}
+		if p == "." {
+			return ""
+		}
+		return p
+	}
+}
+
+// pathUnderRoot reports whether target resolves inside root. Both are
+// trailing-slash normalized so a sibling path with a prefix-matching
+// name (`/repo/apps` vs `/repo/apps-staging`) doesn't get a false
+// positive from raw HasPrefix.
+func pathUnderRoot(target, root string) bool {
+	t := filepath.Clean(target) + string(filepath.Separator)
+	r := filepath.Clean(root) + string(filepath.Separator)
+	return strings.HasPrefix(t, r)
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -35,10 +37,11 @@ func TestComputeChangeSet_FluxExcludedWarning(t *testing.T) {
 func TestIntegration_DiffWidensToRepoRootForSiblingCheckouts(t *testing.T) {
 	origRoot := t.TempDir()
 	currRoot := t.TempDir()
-	// Mark both as separate git checkouts so discovery.FindRepoRoot
-	// picks them up. A bare directory is enough — the source root resolves from discovery metadata.
-	testutil.WriteFile(t, origRoot, filepath.Join(".git", "HEAD"), "ref: refs/heads/main\n")
-	testutil.WriteFile(t, currRoot, filepath.Join(".git", "HEAD"), "ref: refs/heads/main\n")
+	for _, root := range []string{origRoot, currRoot} {
+		if _, err := git.PlainInit(root, false); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Identical Flux bootstrap on both sides — the cluster subdir
 	// content is byte-identical, so a literal subdir-vs-subdir diff
@@ -103,7 +106,7 @@ data:
 	currCluster := filepath.Join(currRoot, "kubernetes/flux")
 
 	// The CLI lifts a subdir --path / --path-orig to its repo root before
-	// reaching the orchestrator (repoRootOf); here we pass the explicit
+	// reaching the orchestrator; here we pass the explicit
 	// roots directly. change.Detect runs root-to-root, so an edit in
 	// kubernetes/apps/foo — outside the scanned flux/ subdir — still
 	// enters the keep set, without any .git-ancestor "widen" heuristic.

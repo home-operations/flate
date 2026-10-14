@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -403,12 +405,14 @@ data: {k: v}
 // bootstrap-sibling over-discovery: a Flux Kustomization commented out of its
 // namespace's kustomization.yaml (a disabled app) that lives inside
 // cluster-apps' rendered tree must NOT be discovered or reconciled — real Flux
-// never deploys it. The entry is scoped to kubernetes/flux (with a .git marker
+// never deploys it. The entry is scoped to kubernetes/flux (with a git checkout
 // so spec.paths resolve against the repo root) so cluster-apps is discovered
 // before its subtree is scanned.
 func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, ".git/HEAD", "ref: refs/heads/main\n") // repo-root anchor
+	if _, err := git.PlainInit(dir, false); err != nil {
+		t.Fatal(err)
+	}
 	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: cluster-apps, namespace: flux-system}
@@ -476,7 +480,7 @@ spec:
 // subdir (kubernetes/flux/cluster), and a repo-root-relative KS spec.path
 // (./kubernetes/apps) renders correctly when RepoRoot is set — the spec.path
 // resolves against RepoRoot, not the collapsed entry-point subdir. Without
-// RepoRoot and no .git, FindRepoRoot falls back to the subdir, ./kubernetes/apps
+// RepoRoot and no repository, discovery falls back to the subdir, ./kubernetes/apps
 // doubles into a nonexistent path, and nothing renders. This is konflate's
 // clusterPath bug; the explicit anchor is what fixes it.
 func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {

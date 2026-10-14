@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"github.com/Masterminds/semver/v3"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
@@ -55,16 +55,18 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		}
 		if !opened {
 			opened = true
-			if _, err := os.Lstat(filepath.Join(root, ".git")); err != nil {
-				if !os.IsNotExist(err) {
-					return nil, localError(repository, err)
-				}
-			} else {
-				var err error
-				repo, err = git.PlainOpenWithOptions(root, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
-				if err != nil {
-					return nil, localError(repository, err)
-				}
+			absoluteRoot, err := filepath.Abs(root)
+			if err != nil {
+				return nil, localError(repository, err)
+			}
+			located, locatedRepo, err := gitrepo.Locate(absoluteRoot)
+			if err != nil {
+				return nil, localError(repository, err)
+			}
+			if located == absoluteRoot {
+				repo = locatedRepo
+			}
+			if repo != nil {
 				headRef, err := repo.Head()
 				if err != nil {
 					return nil, localError(repository, err)

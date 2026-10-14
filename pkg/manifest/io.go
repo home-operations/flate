@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	yaml "go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v4/plugin/limit"
 )
 
 // decodedMapPool recycles top-level map[string]any documents produced
@@ -76,51 +77,42 @@ func ReleaseIfNotRetained(doc map[string]any, obj BaseManifest) {
 }
 
 // DecodeDocs reads zero or more YAML documents from r and returns each
-// as a generic map. Documents that are empty, null, or whose root is not a
-// mapping (a top-level sequence or scalar — i.e. not a Kubernetes manifest)
-// are skipped; only a genuine YAML syntax error aborts.
+// as a generic map. Implicit timestamps retain their scalar text; explicit
+// tags and alias/merge construction use the upstream YAML policy. Empty maps
+// and recoverable LoadErrors are skipped; other errors wrap ErrInput.
 //
-// Decodes directly into map[string]any via the yaml.v4 library — same
-// shape sigs.k8s.io/yaml uses behind real Flux. Letting the library
-// own the walk means YAML 1.2 features (anchors, aliases — including
-// aliases-as-keys, merge keys, tagged scalars) round-trip correctly
-// without a hand-rolled node visitor playing catch-up.
-//
-// Each returned map is drawn from an internal sync.Pool. The loader
-// pipeline returns them via ReleaseIfNotRetained after ParseDoc;
-// external callers that mutate / retain the returned slice should
-// NOT release (the entries are still owned by them).
-//
-// Retained-and-never-released is the CORRECT lifecycle, not a leak: a
-// controller that stores SplitDocs output on a render artifact owns
-// those maps for the run, so they legitimately never return to the
-// pool. Drawing from the pool still pays off — it skips the initial
-// 16-bucket allocation on every Get, retained or not. Deep-copying a
-// retained doc just to recycle the pooled original is net-negative: the
-// copy allocates the whole nested tree, far more than the single map
-// alloc it would recover (see BenchmarkArtifactRetain_Current vs
-// _DeepCopyRelease — the copy path costs more time, memory, and allocs).
+// Returned maps belong to the caller. Release them only when no authoritative
+// document, Contents or render artifact retains them; never copy retained maps
+// merely to recycle the originals.
 func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 	dec := yaml.NewDecoder(r)
+	var priorAliases, priorConstructs, lastAliases, lastConstructs int
+	guard := limit.New()
+	// Node.Load creates a constructor per document; the decoder's alias policy
+	// requires cumulative stream counts, including skipped documents.
+	constructionOption := yaml.WithPlugin(limit.New(limit.AliasFunc(func(aliases, constructs int) error {
+		if constructs == 1 {
+			priorAliases += lastAliases
+			priorConstructs += lastConstructs
+		}
+		lastAliases, lastConstructs = aliases, constructs
+		return guard.CheckAlias(priorAliases+aliases, priorConstructs+constructs)
+	})))
 	var out []map[string]any
 	for {
-		m := getDecodedMap()
-		if err := dec.Decode(&m); err != nil {
+		var node yaml.Node
+		var m map[string]any
+		err := dec.Decode(&node)
+		if err == nil {
+			preserveTimestampStrings(&node)
+			m = getDecodedMap()
+			err = node.Load(&m, constructionOption)
+		}
+		if err != nil {
 			putDecodedMap(m)
 			if errors.Is(err, io.EOF) {
 				return out, nil
 			}
-			// Valid YAML whose root is not a mapping (a top-level sequence or
-			// scalar — e.g. an ansible task file) can't decode into
-			// map[string]any. yaml.v4 records that as a recoverable
-			// *yaml.LoadErrors and the decoder advances past the doc, so the
-			// loop continues with the next one. Such a document simply isn't a
-			// Kubernetes manifest, so skip it like an empty doc rather than
-			// failing the whole file. Decoding into map[string]any, a construct
-			// error can ONLY mean a non-mapping root: every value fits `any`, so
-			// no nested type mismatch is possible. A genuine YAML syntax error
-			// is a single *yaml.LoadError (not the plural *LoadErrors) and so
-			// falls through to the hard error below.
 			if _, ok := errors.AsType[*yaml.LoadErrors](err); ok {
 				continue
 			}
@@ -131,6 +123,16 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			continue
 		}
 		out = append(out, m)
+	}
+}
+
+func preserveTimestampStrings(n *yaml.Node) {
+	if n.Kind == yaml.ScalarNode && n.ShortTag() == "!!timestamp" && n.Style&yaml.TaggedStyle == 0 {
+		n.Tag = "!!str"
+	}
+	// Anchored targets occur in Content; following Alias would revisit them.
+	for _, child := range n.Content {
+		preserveTimestampStrings(child)
 	}
 }
 

@@ -1,6 +1,60 @@
 package manifest
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/home-operations/flate/internal/assert"
+)
+
+func TestDecodeDocs_ScalarValues(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		in      string
+		want    map[string]any
+		wantErr bool
+	}{
+		{
+			name: "implicit date",
+			in:   "date: 2001-01-01\n",
+			want: map[string]any{"date": "2001-01-01"},
+		},
+		{
+			name: "explicit timestamp",
+			in:   "date: !!timestamp 2001-01-01\n",
+			want: map[string]any{"date": time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)},
+		},
+		{
+			name: "anchored date",
+			in:   "date: &date 2001-01-01\ncopy: *date\n",
+			want: map[string]any{"date": "2001-01-01", "copy": "2001-01-01"},
+		},
+		{
+			name: "alias bomb",
+			in: "a: &a [x,x,x,x,x,x,x,x,x,x]\n" +
+				"b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]\n" +
+				"c: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]\n" +
+				"d: [*c,*c,*c,*c,*c,*c,*c,*c,*c,*c]\n",
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docs, err := DecodeDocs(strings.NewReader(tc.in))
+			if tc.wantErr {
+				if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+					t.Fatalf("want input/Flux error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, docs, []map[string]any{tc.want})
+		})
+	}
+}
 
 // TestDecodeDocs_SkipsNonMappingDocs pins the fix for non-manifest YAML noise:
 // a valid YAML document whose root is a sequence or scalar (e.g. an ansible

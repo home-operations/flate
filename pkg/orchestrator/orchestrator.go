@@ -67,17 +67,12 @@ type Config struct {
 	// Supplied explicitly by SDK consumers rendering extracted trees with
 	// no .git/config; empty ⇒ the working tree's .git remotes are read.
 	SelfURLs []string
-	// KRMIgnoreFile, when non-empty, is the gitignore-grammar file read in
-	// place of <Path>/.krmignore for the initial scan of Path; see
-	// discovery.Config.KRMIgnoreFile.
-	KRMIgnoreFile string
 	// PathOrig, when non-empty, switches every command into
 	// changed-only mode: only resources whose source files differ
 	// (plus the sources they reference) get reconciled.
 	PathOrig string
 
-	// HelmOptions tunes templating (skip CRDs/secrets/tests, kube
-	// version, etc.).
+	// HelmOptions tunes templating and kind filtering through SkipKinds.
 	HelmOptions helm.Options
 	// DisableChartDigestTracking selects chart digest tracking for the orchestrator.
 	// Bootstrap assigns HelmOptions.DisableChartDigestTracking and ignores any value
@@ -580,8 +575,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	}
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
-		KRMIgnoreFile: o.cfg.KRMIgnoreFile,
-		Store:         o.store, WipeSecrets: o.cfg.WipeSecrets,
+		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 	})
 	if err != nil {
 		return err

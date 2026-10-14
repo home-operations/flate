@@ -418,7 +418,6 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	}
 	excluded := map[string]string{
 		"DisableChartDigestTracking": "OCI tracking is folded into the loaded chart fingerprint",
-		"SkipSecrets":                "resource filtering occurs downstream of Template",
 		"SkipKinds":                  "resource filtering occurs downstream of Template",
 	}
 	typ := reflect.TypeFor[Options]()

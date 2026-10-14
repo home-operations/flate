@@ -539,17 +539,15 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
 	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{"type":"object","properties":{"name":{"type":"string","pattern":"^valid$"}},"required":["name"]}`)
 	for _, tc := range []struct {
-		name                                                       string
-		install, upgrade, isUpgrade, global, placeholder, wantSkip bool
+		name                                               string
+		install, upgrade, isUpgrade, placeholder, wantSkip bool
 	}{
-		{name: "install enabled, upgrade disabled", install: true, wantSkip: true},
-		{name: "install disabled, upgrade enabled", upgrade: true},
-		{name: "upgrade disabled, install enabled", install: true, isUpgrade: true},
-		{name: "upgrade enabled, install disabled", upgrade: true, isUpgrade: true, wantSkip: true},
+		{name: "install validation disabled, upgrade enabled", install: true, wantSkip: true},
+		{name: "install validation enabled, upgrade disabled", upgrade: true},
+		{name: "upgrade validation enabled, install disabled", install: true, isUpgrade: true},
+		{name: "upgrade validation disabled, install enabled", upgrade: true, isUpgrade: true, wantSkip: true},
 		{name: "nil install"},
 		{name: "nil upgrade", isUpgrade: true},
-		{name: "SDK global install", global: true, wantSkip: true},
-		{name: "SDK global upgrade", isUpgrade: true, global: true, wantSkip: true},
 		{name: "placeholder install", placeholder: true, wantSkip: true},
 		{name: "placeholder upgrade", isUpgrade: true, placeholder: true, wantSkip: true},
 	} {
@@ -567,7 +565,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			if tc.upgrade {
 				hr.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
 			}
-			opts := Options{IsUpgrade: tc.isUpgrade, SkipSchemaValidation: tc.global}
+			opts := Options{IsUpgrade: tc.isUpgrade}
 			values := map[string]any{"name": "invalid"}
 			if tc.placeholder {
 				values["name"] = "..PLACEHOLDER_name.."

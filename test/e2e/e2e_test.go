@@ -160,12 +160,32 @@ func TestE2E_BuildKS(t *testing.T) {
 }
 
 func TestE2E_BuildHR(t *testing.T) {
-	out := runCLI(t, "build", "hr", "--path", copyTree(t, testdataPath(t, "simple")))
-	if !strings.Contains(out, "demo-cm") {
-		t.Errorf("missing rendered HR ConfigMap:\n%s", out)
-	}
-	if !strings.Contains(out, "greeting: hello-from-helm") {
-		t.Errorf("values not applied:\n%s", out)
+	dir := copyTree(t, testdataPath(t, "simple"))
+	testutil.WriteFile(t, dir, "charts/mychart/templates/secret.yaml", `apiVersion: v1
+kind: Secret
+metadata: {name: demo-secret}
+stringData: {greeting: hello-from-secret}
+`)
+	for _, tc := range []struct {
+		name, skip string
+		wantSecret bool
+	}{
+		{name: "secret excluded", skip: "Secret"},
+		{name: "secret included", wantSecret: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runCLIStdout(t, "build", "hr", "--path", dir,
+				"--skip-kinds="+tc.skip, "--concurrency", "2", "--cache-dir", t.TempDir())
+			if !strings.Contains(out, "demo-cm") {
+				t.Errorf("missing rendered HR ConfigMap:\n%s", out)
+			}
+			if !strings.Contains(out, "greeting: hello-from-helm") {
+				t.Errorf("values not applied:\n%s", out)
+			}
+			if got := strings.Contains(out, "kind: Secret"); got != tc.wantSecret {
+				t.Errorf("Secret present=%v, want %v:\n%s", got, tc.wantSecret, out)
+			}
+		})
 	}
 }
 

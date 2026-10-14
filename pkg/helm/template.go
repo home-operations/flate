@@ -169,7 +169,7 @@ func schemaValidationSkipped(opts Options, hr *manifest.HelmRelease, values map[
 	if opts.IsUpgrade {
 		disabled = hr.Upgrade != nil && hr.Upgrade.DisableSchemaValidation
 	}
-	return opts.SkipSchemaValidation || disabled || manifest.ContainsValuePlaceholder(values)
+	return disabled || manifest.ContainsValuePlaceholder(values)
 }
 
 // newInstallAction builds the DryRunClient action.Install that Template

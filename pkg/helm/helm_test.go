@@ -607,7 +607,7 @@ metadata:
 }
 
 func TestOptions_SkipResourceKinds(t *testing.T) {
-	o := Options{SkipCRDs: true, SkipSecrets: true, SkipKinds: []string{"ConfigMap"}}
+	o := Options{SkipCRDs: true, SkipKinds: []string{manifest.KindConfigMap, manifest.KindSecret}}
 	got := o.SkipResourceKinds()
 	want := map[string]bool{"ConfigMap": true, "CustomResourceDefinition": true, "Secret": true}
 	for _, k := range got {

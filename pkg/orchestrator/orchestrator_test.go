@@ -871,13 +871,7 @@ func kindsOf(docs []map[string]any) []string {
 	return out
 }
 
-// TestOrchestrator_Render_AppliesSkipKinds locks the iter-16
-// embed-facing follow-on to #169: HelmOptions.SkipResourceKinds()
-// applies uniformly to BOTH HR and KS docs in Result.Manifests, not
-// just to the CLI emit paths. Without this, an embedder calling
-// orchestrator.New + Render would see HR-rendered Secrets dropped
-// but KS-rendered Secrets retained — the same asymmetry the CLI
-// fix patched at a different layer.
+// Kind filtering MUST apply to Result.Manifests returned to SDK consumers.
 func TestOrchestrator_Render_AppliesSkipKinds(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -908,12 +902,14 @@ stringData: {password: hunter2}
 	o, err := New(Config{
 		Path:        dir,
 		WipeSecrets: true,
-		HelmOptions: helm.Options{SkipSecrets: true},
+		HelmOptions: helm.Options{SkipKinds: []string{manifest.KindSecret}},
+		Concurrency: 2,
+		CacheDir:    t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	res, err := o.Render(t.Context())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -924,10 +920,9 @@ stringData: {password: hunter2}
 	}
 	for _, doc := range mans {
 		if manifest.DocKind(doc) == manifest.KindSecret {
-			t.Errorf("Result.Manifests should not include Secret docs when SkipSecrets=true; got %v", doc)
+			t.Errorf("Result.Manifests should exclude Secret in SkipKinds; got %v", doc)
 		}
 	}
-	// ConfigMap must survive — sanity that the filter only drops Secret.
 	var sawCM bool
 	for _, doc := range mans {
 		if manifest.DocKind(doc) == manifest.KindConfigMap {

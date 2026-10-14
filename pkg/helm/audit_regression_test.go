@@ -67,12 +67,13 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	}
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	hr := newHR()
+	hr.DisableSchemaValidation = true
 	loaded, err := cli.LoadChart(t.Context(), hr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := map[string]any{"unused": func() {}}
-	opts := Options{SkipSchemaValidation: true}
+	opts := Options{}
 	key := computeTemplateKey(loaded.Fingerprint, loaded.Chart, values, opts, hr)
 	cli.templateCache.Put(key, "poisoned cached output")
 	before := cli.templateCache.Size()

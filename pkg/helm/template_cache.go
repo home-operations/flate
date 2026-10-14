@@ -433,25 +433,23 @@ type hashWriter interface {
 // stack frame doesn't dominate the keyer's escape analysis.
 func writeOptionsBlob(h hashWriter, opts Options) {
 	blob, _ := json.Marshal(struct {
-		SkipCRDs             bool     `json:"skip_crds"`
-		SkipTests            bool     `json:"skip_tests"`
-		KubeVersion          string   `json:"kube_version,omitempty"`
-		APIVersions          string   `json:"api_versions,omitempty"`
-		IsUpgrade            bool     `json:"is_upgrade"`
-		NoHooks              bool     `json:"no_hooks"`
-		ShowOnly             []string `json:"show_only,omitempty"`
-		EnableDNS            bool     `json:"enable_dns"`
-		SkipSchemaValidation bool     `json:"skip_schema_validation"`
+		SkipCRDs    bool     `json:"skip_crds"`
+		SkipTests   bool     `json:"skip_tests"`
+		KubeVersion string   `json:"kube_version,omitempty"`
+		APIVersions string   `json:"api_versions,omitempty"`
+		IsUpgrade   bool     `json:"is_upgrade"`
+		NoHooks     bool     `json:"no_hooks"`
+		ShowOnly    []string `json:"show_only,omitempty"`
+		EnableDNS   bool     `json:"enable_dns"`
 	}{
-		SkipCRDs:             opts.SkipCRDs,
-		SkipTests:            opts.SkipTests,
-		KubeVersion:          opts.KubeVersion,
-		APIVersions:          opts.APIVersions,
-		IsUpgrade:            opts.IsUpgrade,
-		NoHooks:              opts.NoHooks,
-		ShowOnly:             opts.ShowOnly,
-		EnableDNS:            opts.EnableDNS,
-		SkipSchemaValidation: opts.SkipSchemaValidation,
+		SkipCRDs:    opts.SkipCRDs,
+		SkipTests:   opts.SkipTests,
+		KubeVersion: opts.KubeVersion,
+		APIVersions: opts.APIVersions,
+		IsUpgrade:   opts.IsUpgrade,
+		NoHooks:     opts.NoHooks,
+		ShowOnly:    opts.ShowOnly,
+		EnableDNS:   opts.EnableDNS,
 	})
 	_, _ = h.Write([]byte("opts:"))
 	_, _ = h.Write(blob)

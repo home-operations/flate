@@ -21,9 +21,6 @@ type Options struct {
 	SkipCRDs bool
 	// SkipTests excludes templates that are helm test hooks.
 	SkipTests bool
-	// SkipSecrets excludes Secret resources from the output. flate
-	// uses placeholder values anyway but stripping makes diffs tidier.
-	SkipSecrets bool
 	// SkipKinds is an arbitrary list of kinds to drop.
 	SkipKinds []string
 
@@ -41,24 +38,14 @@ type Options struct {
 	ShowOnly []string
 	// EnableDNS enables DNS lookups during templating.
 	EnableDNS bool
-	// SkipSchemaValidation opts out of `values.schema.json` validation
-	// for every HR — helm's jsonschema validator recompiles the schema
-	// per render and dominates allocation churn on big repos. The
-	// per-HR placeholder-detection path still kicks in on top of this:
-	// even with this flag false, schema validation is skipped when the
-	// HR values contain a wipe placeholder.
-	SkipSchemaValidation bool
 }
 
 // SkipResourceKinds returns the union of canonical and user-specified
 // kinds to drop from rendered output.
 func (o Options) SkipResourceKinds() []string {
-	out := slices.Grow(slices.Clone(o.SkipKinds), 2)
+	out := slices.Grow(slices.Clone(o.SkipKinds), 1)
 	if o.SkipCRDs {
 		out = append(out, manifest.KindCustomResourceDefinition)
-	}
-	if o.SkipSecrets {
-		out = append(out, manifest.KindSecret)
 	}
 	return out
 }

@@ -300,6 +300,9 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 		return true
 	}
 	v.namespace = cmp.Or(v.namespace, d.Namespace)
+	if v.namespace == "" {
+		v.namespace = w.documents.transformerInjectedNamespace(v.root, v.dir).ns
+	}
 	if _, seen := w.visited[v.graphContext]; seen {
 		return true
 	}

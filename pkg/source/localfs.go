@@ -3,6 +3,7 @@ package source
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -75,12 +76,12 @@ type localFS struct {
 
 // Descriptor calls have ephemeral observations so the descriptor is shareable.
 func (l *localFS) Open(name string) (fs.File, error) {
-	v := &localReadView{root: l.root, dirs: make(map[string]localDirectory)}
+	v := &localReadView{root: l.root}
 	return v.Open(name)
 }
 
 func (l *localFS) Stat(name string) (fs.FileInfo, error) {
-	v := &localReadView{root: l.root, dirs: make(map[string]localDirectory)}
+	v := &localReadView{root: l.root}
 	return v.Stat(name)
 }
 
@@ -142,13 +143,40 @@ func (v *localReadView) directory(name string) ([]fs.DirEntry, error) {
 			kept = append(kept, &localEntry{DirEntry: e})
 		}
 	}
-	v.dirs[name] = localDirectory{entries: kept, err: err}
+	if v.dirs != nil {
+		v.dirs[name] = localDirectory{entries: kept, err: err}
+	}
 	return kept, err
 }
 
 func (v *localReadView) entry(name string) (fs.DirEntry, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrInvalid}
+	}
+	if v.dirs == nil {
+		parent := path.Dir(name)
+		info, err := v.Stat(parent)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			return nil, &fs.PathError{Op: "readdir", Path: parent, Err: fs.ErrInvalid}
+		}
+		info, err = os.Lstat(v.filename(name))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+		}
+		// Denied ancestor searches retain directory-read error coordinates.
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, &fs.PathError{Op: "open", Path: v.filename(parent), Err: errors.Unwrap(err)}
+		}
+		if err != nil {
+			return nil, &fs.PathError{Op: "stat", Path: name, Err: errors.Unwrap(err)}
+		}
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+		}
+		return fs.FileInfoToDirEntry(info), nil
 	}
 	entries, err := v.directory(path.Dir(name))
 	if err != nil {

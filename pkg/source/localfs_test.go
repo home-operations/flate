@@ -35,26 +35,61 @@ func TestLocalFS_Reads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries, err := fs.ReadDir(view, ".")
-	if err != nil || len(entries) != 1 || entries[0].Name() != "regular.txt" {
-		t.Fatalf("admitted entries = %v, %v", entries, err)
-	}
-	for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "socket"} {
-		t.Run(name, func(t *testing.T) {
-			var want error
-			content := "content"
-			if name != "regular.txt" {
-				want, content = fs.ErrNotExist, ""
+	for _, reader := range []struct {
+		name string
+		fs   fs.FS
+	}{{name: "descriptor", fs: input}, {name: "view", fs: view}} {
+		t.Run(reader.name, func(t *testing.T) {
+			entries, err := fs.ReadDir(reader.fs, ".")
+			if err != nil || len(entries) != 1 || entries[0].Name() != "regular.txt" {
+				t.Fatalf("admitted entries = %v, %v", entries, err)
 			}
-			data, err := fs.ReadFile(view, name)
-			if !errors.Is(err, want) || string(data) != content {
-				t.Fatalf("read = %q, %v; want %q, %v", data, err, content, want)
+			for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "socket"} {
+				t.Run(name, func(t *testing.T) {
+					var want error
+					content := "content"
+					if name != "regular.txt" {
+						want, content = fs.ErrNotExist, ""
+					}
+					data, err := fs.ReadFile(reader.fs, name)
+					if !errors.Is(err, want) || string(data) != content {
+						t.Fatalf("read = %q, %v; want %q, %v", data, err, content, want)
+					}
+					if _, err := fs.Stat(reader.fs, name); !errors.Is(err, want) {
+						t.Fatalf("stat = %v; want %v", err, want)
+					}
+				})
 			}
 		})
 	}
+
 }
 
 func TestLocalFS_ReadView(t *testing.T) {
+	t.Run("point_lookup_without_listing", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "siblings")
+		for _, name := range []string{"a", "b"} {
+			testutil.WriteFile(t, dir, name, name)
+		}
+		assert.Equal(t, os.Chmod(dir, 0o111), nil)
+		t.Cleanup(func() { assert.Equal(t, os.Chmod(dir, 0o755), nil) })
+		if _, err := os.ReadDir(dir); err == nil {
+			t.Skip("filesystem permits listing a search-only directory")
+		} else if !errors.Is(err, fs.ErrPermission) {
+			t.Fatal(err)
+		}
+		input, err := NewLocalFS(t.Context(), root)
+		assert.Equal(t, err, nil)
+		for _, name := range []string{"a", "b"} {
+			file := "siblings/" + name
+			data, readErr := fs.ReadFile(input, file)
+			_, statErr := fs.Stat(input, file)
+			if readErr != nil || statErr != nil || string(data) != name {
+				t.Fatalf("point lookup %s = %q, %v, %v", file, data, readErr, statErr)
+			}
+		}
+	})
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".sourceignore", "/*\n!/dir/arrived\n!/hidden/empty/\n")
 	testutil.WriteFile(t, root, "dir/excluded", "excluded")

@@ -9,6 +9,8 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -68,7 +70,10 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	input, err := gittree.AdmitDirectory(t.Context(), root)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(), false)
+	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	assert.NoError(t, err)
+	t.Cleanup(func() { _ = owner.Close() })
+	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(owner), false)
 	c.Configure(Options{StrictSubstitutions: true})
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))
 	if err != nil {

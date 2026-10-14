@@ -17,6 +17,8 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -49,7 +51,10 @@ data: {greeting: hi}
 	s.SetArtifact(bootstrap.Named(), input)
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
-	cache := kustomize.NewTreeCache()
+	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	assert.NoError(t, err)
+	t.Cleanup(func() { _ = owner.Close() })
+	cache := kustomize.NewTreeCache(owner)
 
 	tasks := task.NewBounded(2)
 	c := New(s, tasks, cache, true)

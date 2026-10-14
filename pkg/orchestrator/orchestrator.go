@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -129,11 +128,8 @@ type Config struct {
 	// RegistryConfig is the docker config.json used for OCI auth.
 	RegistryConfig string
 
-	// CacheDir overrides the default on-disk cache root. The default
-	// follows os.UserCacheDir (XDG_CACHE_HOME on Linux, Library/Caches
-	// on macOS, %LocalAppData% on Windows) with a "flate" subdir, so
-	// the cache survives reboots and OS tmpfs cleanups. Falls back to
-	// os.TempDir()/flate-cache only when UserCacheDir errors.
+	// CacheDir selects the source and render cache root. Empty selects memory
+	// backing. The CLI resolves its platform default before calling New.
 	CacheDir string
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
@@ -164,33 +160,6 @@ type Config struct {
 	// Commit-pinned refs always full-clone regardless. See
 	// git.Fetcher.Depth.
 	GitDepth int
-
-	// HelmTemplateCacheBytes caps the in-memory helm template-output
-	// cache. Repeat HRs with identical effective inputs (chart
-	// fingerprint, resolved values, render options) hit the cache and
-	// skip action.Install.RunWithContext — the single largest CPU +
-	// allocation consumer in the codebase. <= 0 disables the cache.
-	// The CLI flag `--helm-template-cache-mb` exposes this in MB
-	// units; embedders pass bytes directly.
-	HelmTemplateCacheBytes int64
-
-	// HelmRenderCacheBytes caps the persistent on-disk helm template-
-	// output cache (Phase 3.4a). Cross-process reuse: repeat `flate
-	// build` / `flate diff` invocations against the same checkout
-	// short-circuit the helm render entirely when the chart
-	// fingerprint + resolved values + opts tuple hits the disk layer.
-	// <= 0 disables disk caching; the in-memory layer (sized by
-	// HelmTemplateCacheBytes) continues to operate independently.
-	// The CLI flag `--helm-render-cache-mb` exposes this in MB
-	// units; embedders pass bytes directly.
-	HelmRenderCacheBytes int64
-
-	// KustomizeRenderCacheBytes caps the persistent on-disk kustomize
-	// render cache. Cross-process reuse: a Kustomization whose recorded
-	// disk inputs are unchanged since a prior run skips krusty entirely
-	// (see pkg/kustomize/render_cache.go). <= 0 disables it. The CLI flag
-	// `--kustomize-render-cache-mb` exposes this in MB; embedders pass bytes.
-	KustomizeRenderCacheBytes int64
 }
 
 // Orchestrator wires controllers and drives reconciliation.
@@ -366,38 +335,8 @@ func New(cfg Config) (*Orchestrator, error) {
 	// transport dials. Inert by default; see Config.RestrictEgress.
 	ssrfguard.Restrict(cfg.RestrictEgress)
 
-	layout := cacheroot.New(cmp.Or(cfg.CacheDir, cacheroot.Default()))
-	helmClientOpts := helm.ClientOptions{
-		TemplateCacheBytes: cfg.HelmTemplateCacheBytes,
-		RenderCacheBytes:   cfg.HelmRenderCacheBytes,
-	}
-	// Only point the disk layer at a concrete path when the persistent
-	// cache is enabled (HelmRenderCacheBytes > 0). Leaving the root
-	// blank when disabled lets the disk-cache constructor short-circuit
-	// without performing any directory layout pre-checks.
-	if cfg.HelmRenderCacheBytes > 0 {
-		helmClientOpts.RenderCacheRoot = layout.RenderHelmCache()
-	}
-	helmClient, err := helm.NewClientWithOptions(layout, helmClientOpts)
-	if err != nil {
-		return nil, err
-	}
-	// The kustomize render cache is now purely in-memory: each source tree is
-	// captured once per run into an immutable byte snapshot, from which every
-	// render derives a private in-memory filesystem (no disk staging). Nothing
-	// to clean up on Stop.
-	treeCache := kustomize.NewTreeCache()
-	if cfg.KustomizeRenderCacheBytes > 0 {
-		treeCache.SetRenderCache(layout.RenderKustomizeCache(), cfg.KustomizeRenderCacheBytes)
-	}
-
 	st := store.New()
 	ts := task.NewBounded(cfg.Concurrency)
-	// Route helm.Client's source-CR lookups straight through the canonical
-	// Store rather than maintaining a duplicate registry the HR controller
-	// would otherwise have to keep in sync via Add* push-API calls.
-	resolver := helm.NewStoreSourceResolver(st)
-	helmClient.SetSourceResolver(resolver)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
 	// concrete Fetch signature stays typed (no per-impl type
@@ -436,8 +375,8 @@ func New(cfg Config) (*Orchestrator, error) {
 		store:    st,
 		tasks:    ts,
 		src:      srcCtrl,
-		ksc:      kustomization.New(st, ts, treeCache, cfg.WipeSecrets),
-		hrc:      helmrelease.New(st, ts, helmClient, cfg.HelmOptions, cfg.WipeSecrets),
+		ksc:      kustomization.New(st, ts, nil, cfg.WipeSecrets),
+		hrc:      helmrelease.New(st, ts, nil, cfg.HelmOptions, cfg.WipeSecrets),
 		rsc:      resourcesetctrl.New(st, ts, cfg.WipeSecrets),
 		depGraph: newDependencyGraph(),
 	}
@@ -579,6 +518,17 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	if o.hrc.Helm == nil {
+		client, err := helm.NewClient(o.cache)
+		if err != nil {
+			return err
+		}
+		client.SetSourceResolver(helm.NewStoreSourceResolver(o.store))
+		o.hrc.Helm = client
+	}
+	if o.ksc.Trees == nil {
+		o.ksc.Trees = kustomize.NewTreeCache(o.cache)
 	}
 	if o.cfg.Input == nil {
 		input, path, err := baseline.AdmitDirectory(ctx, o.cfg.Path, o.cfg.RepoRoot)

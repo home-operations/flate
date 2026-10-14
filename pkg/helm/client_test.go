@@ -5,7 +5,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"os"
@@ -24,7 +23,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
 			st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
-			cli, err := NewClient(cacheroot.New(t.TempDir()))
+			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -38,7 +37,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 	}
 }
 
-func TestLoadChart_ValuesContentWithoutTemplateCache(t *testing.T) {
+func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	st, hr, first := ociRenderFixture(t)
 	hr = hr.Clone()
 	hr.ChartRef = nil
@@ -46,7 +45,7 @@ func TestLoadChart_ValuesContentWithoutTemplateCache(t *testing.T) {
 	second := t.TempDir()
 	writeChartFiles(t, second, "podinfo", "6.15.0")
 	testutil.WriteFile(t, second, "prod.yaml", "marker: second\n")
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +69,10 @@ func TestLoadChart_ValuesContentWithoutTemplateCache(t *testing.T) {
 	}
 }
 
-func TestLoadChart_SharedChartAcquiresValuesFingerprint(t *testing.T) {
+func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	st, hr, dir := ociRenderFixture(t)
 	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +83,7 @@ func TestLoadChart_SharedChartAcquiresValuesFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, loaded.Fingerprint, "")
+	assert.Equal(t, loaded.Fingerprint, chartFingerprint(loaded.Chart))
 	var results [2]ChartLoadResult
 	var failures [2]error
 	var wg sync.WaitGroup

@@ -223,7 +223,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 		"kustomization.yaml": "resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n",
 	})
 
-	cache := NewTreeCache()
+	cache := NewTreeCache(newTestCache(t, ""))
 	withFakeGitBase(t, cache, worktree, nil)
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
@@ -252,7 +252,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	original := "resources:\n  - https://example.com/o/r?ref=v1\n"
 	src := writeTree(t, map[string]string{"kustomization.yaml": original})
 
-	cache := NewTreeCache()
+	cache := NewTreeCache(newTestCache(t, ""))
 	withFakeGitBase(t, cache, worktree, nil)
 
 	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
@@ -450,7 +450,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = sources.Close() })
 			fetcher := &sourcegit.Fetcher{Cache: sources}
-			c := NewTreeCache()
+			c := NewTreeCache(newTestCache(t, ""))
 			var requests []GitBaseRequest
 			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest) (*store.SourceArtifact, error) {
 				requests = append(requests, request)

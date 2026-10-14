@@ -20,6 +20,16 @@ type blobHandle struct {
 	input fileFS
 }
 
+func (b *blobHandle) Close() error {
+	if b.ReadCloser == nil {
+		return nil
+	}
+	err := b.ReadCloser.Close()
+	b.ReadCloser = nil
+	b.input = fileFS{}
+	return err
+}
+
 type fileFS struct {
 	name string
 	size int64

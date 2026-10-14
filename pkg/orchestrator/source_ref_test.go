@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func TestRun_DefaultGitCache(t *testing.T) {
 }
 
 func TestBootstrap_LocalSourceUsesSelectedCache(t *testing.T) {
-	for _, kind := range []string{"configured-directory", "shared-cache"} {
+	for _, kind := range []string{"configured-directory", "injected-disk", "injected-memory"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			repo, err := git.PlainInit(root, false)
@@ -112,16 +113,33 @@ spec:
 			cacheRoot := t.TempDir()
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root,
 				SelfURLs: []string{"git://fixture.invalid/cluster"}, CacheDir: cacheRoot, Concurrency: 2}
-			if kind == "shared-cache" {
-				cacheRoot = t.TempDir()
-				cfg.CacheDir = cacheRoot
+			if kind != "configured-directory" {
+				ownerRoot := ""
+				if kind == "injected-disk" {
+					ownerRoot = t.TempDir()
+				}
+				cfg.Cache, err = sourcecache.New(t.Context(), cacheroot.New(ownerRoot))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = cfg.Cache.Close() })
 			}
 			o, err := New(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(o.Stop)
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
+			}
+			if o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache) {
+				t.Fatal("renderers did not receive the selected cache before discovery")
+			}
+			if cfg.Cache != nil {
+				entries, err := os.ReadDir(cacheRoot)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("injected owner created independent cache backing: entries=%v err=%v", entries, err)
+				}
 			}
 			id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			artifact := o.Store().GetArtifact(id).(*store.SourceArtifact)

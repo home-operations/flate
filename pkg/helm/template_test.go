@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -32,7 +31,7 @@ data:
   port: {{ get .Values.ports (keys .Values.ports | first) | quote }}
 `)
 	values := map[string]any{"ports": map[string]any{"http": 80, "bittorrent": 50413}}
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +84,7 @@ data:
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/crds/widgets.yaml", crd)
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +157,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/crds/a-valid.yaml", cm)
 	testutil.WriteFile(t, dir, "mychart/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +211,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", cm+"---\napiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +244,7 @@ dependencies:
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +286,7 @@ dependencies:
 }
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -337,7 +336,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 // alias, and two different charts (different name OR version) must
 // not alias even with identical valuesFiles.
 func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -368,7 +367,7 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 }
 
 func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +392,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 }
 
 func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +499,7 @@ metadata:
 data:
   version: {{ .Capabilities.KubeVersion.Version | quote }}
 `)
-	cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +551,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 		{name: "placeholder upgrade", isUpgrade: true, placeholder: true, wantSkip: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cli, err := NewClient(cacheroot.New(t.TempDir()))
+			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)
 			}

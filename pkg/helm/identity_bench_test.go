@@ -3,26 +3,25 @@ package helm
 import (
 	"fmt"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"os"
 	"testing"
 )
 
 func BenchmarkLoadChart_Mode(b *testing.B) {
-	for _, cache := range []bool{false, true} {
+	for _, disk := range []bool{false, true} {
 		for _, warm := range []bool{false, true} {
-			b.Run(fmt.Sprintf("cache_%t/warm_%t", cache, warm), func(b *testing.B) {
+			b.Run(fmt.Sprintf("disk_%t/warm_%t", disk, warm), func(b *testing.B) {
 				dir := stageBenchChartDir(b)
-				layout := cacheroot.New(b.TempDir())
+				root := ""
+				if disk {
+					root = b.TempDir()
+				}
+				owner := newTestCache(b, root)
 				resolver := benchLocalChartResolver(b, "chart-repo", "flux-system", dir)
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository}}
 				newClient := func() *Client {
-					opts := ClientOptions{}
-					if cache {
-						opts.TemplateCacheBytes = 1 << 20
-					}
-					cli, err := NewClientWithOptions(layout, opts)
+					cli, err := NewClient(owner)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -50,17 +49,17 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 }
 
 func BenchmarkTemplate_OCIIdentity(b *testing.B) {
-	for _, cache := range []bool{false, true} {
+	for _, disk := range []bool{false, true} {
 		for _, disabled := range []bool{false, true} {
-			b.Run(fmt.Sprintf("cache_%t/disabled_%t", cache, disabled), func(b *testing.B) {
+			b.Run(fmt.Sprintf("disk_%t/disabled_%t", disk, disabled), func(b *testing.B) {
 				st, hr, dir := ociRenderFixture(b)
 				const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
-				clientOpts := ClientOptions{}
-				if cache {
-					clientOpts.TemplateCacheBytes = 1 << 20
+				root := ""
+				if disk {
+					root = b.TempDir()
 				}
-				cli, err := NewClientWithOptions(cacheroot.New(b.TempDir()), clientOpts)
+				cli, err := NewClient(newTestCache(b, root))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -83,7 +82,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
 	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-	cli, err := NewClient(cacheroot.New(b.TempDir()))
+	cli, err := NewClient(newTestCache(b, ""))
 	if err != nil {
 		b.Fatal(err)
 	}

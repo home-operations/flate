@@ -4,13 +4,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestTreeCache_SetGitBaseFetcher confirms the one remaining injected seam wires
 // through (pkg/kustomize cannot import pkg/source/git — import cycle).
 func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
-	c := NewTreeCache()
+	c := NewTreeCache(newTestCache(t, ""))
 	called := false
 	c.SetGitBaseFetcher(func(context.Context, GitBaseRequest) (*store.SourceArtifact, error) {
 		called = true
@@ -23,4 +25,18 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 	if !called {
 		t.Fatal("wired fetcher was not invoked")
 	}
+}
+
+func newTestCache(t testing.TB, root string) *cache.Cache {
+	t.Helper()
+	owner, err := cache.New(t.Context(), cacheroot.New(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return owner
 }

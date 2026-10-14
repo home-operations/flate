@@ -38,7 +38,11 @@ type ArchiveKey struct {
 }
 
 // BlobKey identifies single-file content.
-type BlobKey struct{ ID string }
+type BlobKey struct {
+	ID string
+	// PersistOnly bypasses retained generations when disk backing or build identity is unavailable.
+	PersistOnly bool
+}
 
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
 type Cache struct {
@@ -64,8 +68,10 @@ func (e *CacheError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} 
 
 type acquireKey struct {
 	ArchiveKey
-	archive bool
-	git     *gitRequest
+	archive    bool
+	git        *gitRequest
+	lookupOnly bool
+	transient  bool
 }
 
 type producerError struct{ error }
@@ -85,9 +91,17 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, maxAge time.Duratio
 	return e.fs, e.descriptor, nil
 }
 
-// Blob returns an independent reader over a complete generation.
+// Blob returns an independent reader over a complete generation. A nil producer only looks up
+// a fresh generation; zero maxAge with a producer replaces the generation.
 func (c *Cache) Blob(ctx context.Context, key BlobKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
-	e, err := c.acquire(ctx, acquireKey{ID: key.ID}, maxAge, produce)
+	request := acquireKey{ID: key.ID, lookupOnly: produce == nil}
+	if key.PersistOnly {
+		request.transient = c.store == nil || processIdentity == ""
+		if !request.transient {
+			request.ID = blobID(processIdentity, key.ID)
+		}
+	}
+	e, err := c.acquire(ctx, request, maxAge, produce)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, err
 	}
@@ -100,6 +114,22 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, maxAge time.Duration, pro
 }
 
 func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
+	if key.transient {
+		if err := ctx.Err(); err != nil {
+			return nil, &CacheError{err}
+		}
+		if key.lookupOnly {
+			return nil, &CacheError{errdef.ErrNotFound}
+		}
+		e, err := c.fill(ctx, key, produce)
+		if err != nil {
+			if failure, ok := errors.AsType[*producerError](err); ok {
+				return nil, failure
+			}
+			return nil, &CacheError{err}
+		}
+		return e, nil
+	}
 	id := key.ID
 	release, err := c.locks.Acquire(ctx, id)
 	if err != nil {
@@ -150,12 +180,17 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 		if c.store != nil {
 			now := time.Now()
 			if err := os.Chtimes(c.layout.OCIBlob(e.stored.Digest), now, now); err != nil {
-				c.entries.Store(id, &entry{})
+				if !key.lookupOnly {
+					c.entries.Store(id, &entry{})
+				}
 				return nil, &CacheError{err}
 			}
 		}
 		c.entries.Store(id, e)
 		return e, nil
+	}
+	if key.lookupOnly {
+		return nil, &CacheError{errdef.ErrNotFound}
 	}
 	e, err = c.fill(ctx, key, produce)
 	if err != nil {
@@ -182,7 +217,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 	var tmp *os.File
 	var index *tarFS
 	var h digest.Digester
-	if c.store != nil {
+	if c.store != nil && !key.transient {
 		var err error
 		tmp, err = os.CreateTemp(c.layout.OCI(), "acquire-*")
 		if err != nil {
@@ -226,7 +261,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 		return nil, err
 	}
 	e.resolved = time.Now().UTC()
-	if c.store == nil {
+	if c.store == nil || key.transient {
 		if !key.archive {
 			data := buf.Bytes()
 			e.fs = fileFS{name: "content", size: int64(len(data)), open: func() (io.ReadCloser, error) {

@@ -2,6 +2,7 @@ package helm
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -11,11 +12,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
-	cache := newTemplateCache(1, nil, "")
 	for _, tc := range []struct {
 		name   string
 		values map[string]any
@@ -33,7 +32,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, cache.computeTemplateKey(ChartLoadResult{Fingerprint: "", Chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
+			assert.Equal(t, computeTemplateKey(ChartLoadResult{Fingerprint: "", Chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
 		})
 	}
 }
@@ -62,7 +61,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\n")
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +74,12 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	}
 	values := map[string]any{"unused": func() {}}
 	opts := Options{}
-	key := cli.templateCache.computeTemplateKey(loaded, values, opts, hr)
-	cli.templateCache.Put(key, "poisoned cached output")
-	before := cli.templateCache.Size()
+	assert.Equal(t, computeTemplateKey(loaded, values, opts, hr), "")
 	out, err := cli.Template(t.Context(), hr, values, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out == "poisoned cached output" {
-		t.Fatal("unmarshalable values read a colliding cache entry")
+	if !strings.Contains(out, "kind: ConfigMap") {
+		t.Fatalf("unmarshalable values prevented the render: %s", out)
 	}
-	assert.Equal(t, cli.templateCache.Size(), before)
 }

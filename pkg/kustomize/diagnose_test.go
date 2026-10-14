@@ -43,7 +43,7 @@ func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
 	cmChild(t, root, "b", "shared", "dup")
 	// No apps/kustomization.yaml → RenderFlux synthesizes one over a + b.
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
+	_, err := RenderFlux(context.Background(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
 	if err == nil {
 		t.Fatal("expected a duplicate-id build failure")
 	}
@@ -70,7 +70,7 @@ func TestRenderFlux_DistinctIDs_NoDiagnostic(t *testing.T) {
 	cmChild(t, root, "a", "shared", "a-cm")
 	cmChild(t, root, "b", "shared", "b-cm")
 
-	out, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
+	out, err := RenderFlux(context.Background(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRenderFlux_NonDuplicateError_Unannotated(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
+	_, err := RenderFlux(context.Background(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
 	if err == nil {
 		t.Fatal("expected a build failure")
 	}
@@ -99,7 +99,7 @@ func TestRenderFlux_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
 	cmChild(t, root, "b", "shared", "dup")
 	cmChild(t, root, "c", "shared", "dup")
-	_, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()})
+	_, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()})
 	if err == nil {
 		t.Fatal("expected a build failure")
 	}
@@ -120,7 +120,7 @@ func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 	testutil.WriteFile(t, root, "apps/two.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dup}\ndata: {k: v}\n")
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
+	_, err := RenderFlux(context.Background(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()})
 	if err == nil {
 		t.Fatal("expected a duplicate-id build failure")
 	}
@@ -148,7 +148,7 @@ func TestRenderFlux_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
 		testutil.WriteFile(t, root, dir+"kustomization.yaml", existingKustomization("cm.yaml"))
 		testutil.WriteFile(t, root, dir+"cm.yaml", body.String())
 	}
-	_, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()})
+	_, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()})
 	if err == nil {
 		t.Fatal("expected duplicate-id failure")
 	}

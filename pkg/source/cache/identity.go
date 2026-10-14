@@ -1,4 +1,4 @@
-package diskcache
+package cache
 
 import (
 	"crypto/sha256"
@@ -43,4 +43,9 @@ func buildIdentity(info *debug.BuildInfo) string {
 	}
 	digest := sha256.Sum256([]byte(info.String()))
 	return hex.EncodeToString(digest[:])
+}
+
+func blobID(identity, id string) string {
+	digest := sha256.Sum256([]byte("render-blob-v1\x00" + identity + "\x00" + id))
+	return "render-v1-" + hex.EncodeToString(digest[:])
 }

@@ -48,7 +48,7 @@ func remoteFiles(t *testing.T, fsys filesys.FileSystem, dir string) []string {
 // remote-fetch dedup table (no cross-test cache hits).
 func newPreflightCache(t *testing.T) *TreeCache {
 	t.Helper()
-	return NewTreeCache()
+	return NewTreeCache(newTestCache(t, ""))
 }
 
 // TestPreflightRemoteResources_RewritesSuccessfulFetch confirms the happy
@@ -167,7 +167,7 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	_, err := RenderFlux(context.Background(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -371,7 +371,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			t.Cleanup(func() { remoteFetchClient = client })
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
-			cache := NewTreeCache()
+			cache := NewTreeCache(newTestCache(t, ""))
 			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
 			if err != nil || !strings.Contains(string(out), "name: remote") {
 				t.Fatalf("render: %s, %v", out, err)

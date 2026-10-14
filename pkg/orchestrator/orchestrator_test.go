@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/gofrs/flock"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -26,6 +27,7 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
@@ -171,6 +173,60 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
+	for _, stage := range []string{"before-bootstrap", "input-failure"} {
+		for _, injected := range []bool{false, true} {
+			t.Run(stage+"/injected="+strconv.FormatBool(injected), func(t *testing.T) {
+				root := filepath.Join(t.TempDir(), "cache")
+				cfg := Config{Path: t.TempDir(), CacheDir: root, Concurrency: 2}
+				if injected {
+					owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+					assert.NoError(t, err)
+					t.Cleanup(func() { _ = owner.Close() })
+					cfg.Cache = owner
+				}
+				key := sourcecache.BlobKey{ID: "blob-before-stop"}
+				if cfg.Cache != nil {
+					reader, _, err := cfg.Cache.Blob(t.Context(), key, time.Hour,
+						func(w io.Writer) (ocispec.Descriptor, error) {
+							_, err := io.WriteString(w, "caller-owned")
+							return ocispec.Descriptor{}, err
+						})
+					assert.NoError(t, err)
+					assert.NoError(t, reader.Close())
+				}
+				cfg.Input = &store.SourceArtifact{}
+				o, err := New(cfg)
+				assert.NoError(t, err)
+				if o.hrc.Helm != nil || o.ksc.Trees != nil {
+					t.Fatal("New constructed renderers before selecting their cache owner")
+				}
+				if stage == "input-failure" && !errors.Is(o.Bootstrap(t.Context()), manifest.ErrInput) {
+					t.Fatal("expected Bootstrap input failure")
+				}
+				o.Stop()
+				o.Stop()
+				if injected || stage == "before-bootstrap" {
+					if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("Stop allocated independent cache backing: %v", err)
+					}
+				} else {
+					lock := flock.New(cacheroot.New(root).OCILock())
+					t.Cleanup(func() { _ = lock.Close() })
+					if acquired, err := lock.TryLock(); err != nil || !acquired {
+						t.Fatalf("Stop after Bootstrap failure retained owner lock: acquired=%v err=%v", acquired, err)
+					}
+				}
+				if cfg.Cache != nil {
+					reader, _, err := cfg.Cache.Blob(t.Context(), key, time.Hour, nil)
+					assert.NoError(t, err)
+					assert.NoError(t, reader.Close())
+				}
+			})
+		}
+	}
+}
+
 // TestOrchestrator_WithFetcherAfterBootstrapPanics pins the
 // contract that WithFetcher MUST be called before Bootstrap. A
 // late swap would silently miss any source CR discovery already
@@ -191,12 +247,20 @@ spec:
 `)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: []\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(context.Background()); err != nil {
+	t.Cleanup(o.Stop)
+	if o.hrc.Helm != nil || o.ksc.Trees != nil {
+		t.Fatal("New constructed renderers before selecting their cache owner")
+	}
+	o.WithFetcher(manifest.KindOCIRepository, source.ExistenceFetcher{})
+	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
+	}
+	if _, ok := o.src.Fetchers[manifest.KindOCIRepository].(source.ExistenceFetcher); !ok {
+		t.Fatal("Bootstrap replaced a preinstalled fetcher")
 	}
 
 	defer func() {
@@ -1617,6 +1681,10 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			if err := o.Bootstrap(t.Context()); err == nil {
 				t.Fatal("expected Bootstrap failure")
 			}
+			owner, client, trees := o.cache, o.hrc.Helm, o.ksc.Trees
+			if owner == nil || client == nil || trees == nil {
+				t.Fatal("Bootstrap failure discarded owner or renderer wiring")
+			}
 			assert.Equal(t, o.bootstrapped, false)
 			assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
@@ -1630,6 +1698,9 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			}
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
+			}
+			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees {
+				t.Fatal("Bootstrap retry replaced the selected owner or renderer memos")
 			}
 			assert.Equal(t, o.bootstrapped, true)
 			assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
@@ -1829,13 +1900,18 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				for _, dir := range []string{baseDir, headDir} {
 					testutil.WriteFile(t, dir, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
 				}
+				configuredRoot := t.TempDir()
 				base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
-					Config{Cache: c, CacheDir: root, Concurrency: workers})
+					Config{Cache: c, CacheDir: configuredRoot, Concurrency: workers})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if base.cache != c || head.cache != c {
-					t.Fatal("diff sides have different acquisition owners")
+				if base.cache != c || head.cache != c || base.hrc.Helm == nil || head.hrc.Helm == nil || base.ksc.Trees == nil || head.ksc.Trees == nil {
+					t.Fatal("diff sides did not wire both renderers through the selected owner")
+				}
+				entries, err := os.ReadDir(configuredRoot)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("diff sides created independent cache backing: entries=%v err=%v", entries, err)
 				}
 				reader, _, err = c.Blob(t.Context(), key, time.Hour, produce)
 				if err != nil {

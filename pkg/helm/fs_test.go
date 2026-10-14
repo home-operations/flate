@@ -19,7 +19,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -82,7 +81,7 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 
 func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 	st := store.New()
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +132,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 }
 
 func BenchmarkLoadChart_FSWarm(b *testing.B) {
-	cli, err := NewClient(cacheroot.New(b.TempDir()))
+	cli, err := NewClient(newTestCache(b, ""))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -216,7 +215,7 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 
 func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	st := store.New()
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +237,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := store.New()
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +271,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 
 func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
 	st := store.New()
-	client, err := NewClient(cacheroot.New(t.TempDir()))
+	client, err := NewClient(newTestCache(t, ""))
 	assert.NoError(t, err)
 	client.SetSourceResolver(NewStoreSourceResolver(st))
 	id := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}

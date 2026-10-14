@@ -75,25 +75,6 @@ type commonFlags struct {
 	// cacheDir is resolved lazily via resolveCacheRoot and memoized so
 	// multiple lookups within one invocation return the same value.
 	cacheDir string
-	// helmTemplateCacheMB caps the in-memory helm template-output
-	// cache in megabytes. Default 256; 0 disables. Plumbed through
-	// orchestrator.Config.HelmTemplateCacheBytes into the helm.Client
-	// constructor.
-	helmTemplateCacheMB int
-	// helmRenderCacheMB caps the persistent on-disk helm template-
-	// output cache in megabytes. Default 1024; 0
-	// disables. Plumbed through orchestrator.Config.HelmRenderCacheBytes
-	// into the helm.Client constructor. Cross-process: repeat `flate
-	// build` / `flate diff` runs against the same checkout reuse
-	// previously-rendered manifests instead of re-running
-	// action.Install.RunWithContext.
-	helmRenderCacheMB int
-	// kustomizeRenderCacheMB caps the persistent on-disk kustomize render
-	// cache in megabytes. Default 1024; 0 disables. Plumbed through
-	// orchestrator.Config.KustomizeRenderCacheBytes into the TreeCache.
-	// Cross-process: a Kustomization whose source inputs are unchanged since
-	// a prior run skips krusty entirely.
-	kustomizeRenderCacheMB int
 }
 
 // bindCommon wires the flags every reconcile-running subcommand shares.
@@ -161,23 +142,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...output.Format) {
 	fs.IntVar(&f.gitDepth, "git-depth", 1,
 		"shallow-clone depth for GitRepository sources; 0 = full clone "+
 			"(refs pinned to an explicit commit always full-clone)")
-	// 256 MiB default mirrors helm.DefaultTemplateCacheBytes. 0 disables
-	// the cache entirely (useful in memory-constrained CI or when
-	// debugging the uncached helm render path).
-	fs.IntVar(&f.helmTemplateCacheMB, "helm-template-cache-mb", 256,
-		"size of the in-memory helm template-output cache in megabytes (0 disables)")
-	// 1 GiB default mirrors helm.DefaultRenderCacheBytes. Cross-process:
-	// repeat `flate build`/`flate diff` runs against the same checkout
-	// hit the persistent cache and short-circuit the helm render. 0
-	// disables (useful when debugging the uncached path or in shared
-	// CI runners where disk cost outweighs the rerun savings).
-	fs.IntVar(&f.helmRenderCacheMB, "helm-render-cache-mb", 1024,
-		"size of the persistent on-disk helm template-output cache in megabytes (0 disables)")
-	// 1 GiB default mirrors the helm render cache. Cross-process: a
-	// Kustomization whose source inputs are unchanged since a prior run skips
-	// krusty entirely. 0 disables (debugging the uncached path / disk-constrained CI).
-	fs.IntVar(&f.kustomizeRenderCacheMB, "kustomize-render-cache-mb", 1024,
-		"size of the persistent on-disk kustomize render cache in megabytes (0 disables)")
 }
 
 // listFlags holds flags that are only meaningful for list/get commands.
@@ -352,18 +316,15 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 			MaxWait:  sourceRetryMaxWait,
 			Jitter:   sourceRetryJitter,
 		},
-		GitDepth:                  c.gitDepth,
-		SubstituteFrom:            c.substitutionSources,
-		Substitute:                c.substitutionValues,
-		StrictSubstitutions:       c.strictSubstitutions,
-		AllowMissingSecrets:       c.allowMissingSecrets,
-		AllowMissingCRDs:          c.allowMissingCRDs,
-		ForceGenericProvider:      c.forceGenericProvider,
-		RestrictEgress:            c.restrictEgress,
-		CacheDir:                  c.resolveCacheRoot(),
-		HelmTemplateCacheBytes:    int64(c.helmTemplateCacheMB) << 20,
-		HelmRenderCacheBytes:      int64(c.helmRenderCacheMB) << 20,
-		KustomizeRenderCacheBytes: int64(c.kustomizeRenderCacheMB) << 20,
+		GitDepth:             c.gitDepth,
+		SubstituteFrom:       c.substitutionSources,
+		Substitute:           c.substitutionValues,
+		StrictSubstitutions:  c.strictSubstitutions,
+		AllowMissingSecrets:  c.allowMissingSecrets,
+		AllowMissingCRDs:     c.allowMissingCRDs,
+		ForceGenericProvider: c.forceGenericProvider,
+		RestrictEgress:       c.restrictEgress,
+		CacheDir:             c.resolveCacheRoot(),
 	}
 }
 

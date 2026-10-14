@@ -1,10 +1,14 @@
 package kustomize
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -13,9 +17,12 @@ import (
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"github.com/go-git/go-git/v5/plumbing"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/kustomize/api/resmap"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -77,30 +84,31 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
-	key := ""
-	if cache.render != nil {
-		if req.ApplyIgnore {
-			ignoreKey = "source"
+	if req.ApplyIgnore {
+		ignoreKey = "source"
+	}
+	key := renderKey(req.Spec, root, req.SubPath, ignoreKey)
+	if req.Source.Key != "" {
+		key = manifest.Fingerprint([]string{key, req.Source.Key})
+	}
+	blobKey := sourcecache.BlobKey{ID: key, PersistOnly: true}
+	reader, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Forever, nil)
+	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
+		return nil, fmt.Errorf("kustomize render cache lookup: %w", err)
+	}
+	if err == nil {
+		raw, readErr := io.ReadAll(reader)
+		if err := errors.Join(readErr, reader.Close()); err != nil {
+			return nil, fmt.Errorf("%w: read kustomize render cache: %w", manifest.ErrFlux, err)
 		}
-		key = cache.render.renderKey(req.Spec, root, req.SubPath, ignoreKey)
-		if req.Source.Key != "" {
-			key = manifest.Fingerprint([]string{key, req.Source.Key})
+		snap, output, err := decodeFrame(raw)
+		if err != nil {
+			slog.Debug("kustomize: decode render frame", "err", err)
+		} else if req.Source.Key != "" || snap.stillValidFS(lower) {
+			return output, nil
 		}
 	}
-	if rc := cache.render; rc != nil && key != "" {
-		if snap, output, ok := rc.get(key); ok {
-			if req.Source.Key != "" {
-				return output, nil
-			}
-			if snap.stillValidFS(lower) {
-				return output, nil
-			}
-		}
-	}
-	var rec *readSet
-	if cache.render != nil && key != "" {
-		rec = newReadSet(root)
-	}
+	rec := newReadSet(root)
 	var mutableRec *readSet
 	if req.Source.Key == "" {
 		mutableRec = rec
@@ -173,8 +181,21 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
 	// Remote inputs have no identity in the source read set.
-	if rec != nil && !injected {
-		cache.render.put(key, rec.snapshot(), out)
+	if !injected {
+		frame, err := encodeFrame(rec.snapshot(), out)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode kustomize render frame: %w", manifest.ErrFlux, err)
+		}
+		reader, _, err := cache.owner.Blob(ctx, blobKey, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			_, err := io.Copy(w, bytes.NewReader(frame))
+			return ocispec.Descriptor{}, err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("kustomize render cache publish: %w", err)
+		}
+		if err := reader.Close(); err != nil {
+			return nil, fmt.Errorf("%w: close kustomize render frame: %w", manifest.ErrFlux, err)
+		}
 	}
 	return out, nil
 }
@@ -182,17 +203,16 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 // renderKeyVersion MUST change whenever rendered bytes or cache framing change.
 const renderKeyVersion = "render-fs-v4"
 
-// renderKey includes source options and the immutable content pin. Alias
-// content is validated by the read set rather than a whole-checkout hash.
-func (c *renderCache) renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
+// Mutable source content is validated by the read set rather than a
+// whole-checkout hash; immutable pins are folded into this domain key at lookup.
+func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
 	return manifest.Fingerprint(struct {
 		Spec       map[string]any
 		SourceRoot string
 		SubPath    string
 		Ignore     string
 		Version    string
-		Build      string
-	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion, c.identity})
+	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion})
 }
 
 type sourceRoot struct {

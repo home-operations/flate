@@ -3,6 +3,7 @@ package helm
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -10,16 +11,19 @@ import (
 	"sync"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
+	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/helm/deterministic"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -29,21 +33,14 @@ var envSettings = sync.OnceValue(cli.New)
 
 // Template renders a HelmRelease and returns the rendered manifest as a
 // single YAML string (multiple documents separated by "---" lines).
-//
-// Output is cached by computeTemplateKey when c.templateCache is wired
-// (NewClient's default, sized by ClientOptions.TemplateCacheBytes).
-// Cache hits skip action.Install.RunWithContext — the single largest
-// CPU + allocation consumer in the codebase (cited at ~300 MB on a
-// 200-HR run). Each key folds in every input that affects the
-// rendered bytes (chart content fingerprint, fully-resolved values,
-// render Options, HR-level action.Install fields like ReleaseName,
-// CRDs policy, hooks, post-renderers) so a stale entry never serves
-// a different render.
+// Completed output is persisted through the borrowed cache owner. A hit skips
+// chart cloning and Helm action construction; the key includes all render inputs.
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
-	loaded, err := c.LoadChart(ctx, hr)
+	loaded, err := c.loadChart(ctx, hr)
 	if err != nil {
 		return "", err
 	}
+	var trackedVersion string
 	if hr.UsesDirectOCIRepository() {
 		art := c.resolveLocalSource(hr)
 		if art == nil {
@@ -55,13 +52,50 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
 		if !opts.DisableChartDigestTracking {
-			loaded.Chart.Metadata.Version = version
+			trackedVersion = version
 		}
 		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art, opts.DisableChartDigestTracking)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
 		return "", err
+	}
+
+	if hrValues == nil {
+		hrValues = map[string]any{}
+	}
+
+	// Apply chart valuesFiles BEFORE HR.Values so HR overrides win.
+	// Mirrors helm-controller's CoalesceValues layering: chart defaults
+	// (handled internally by helm) → chart-named valuesFiles → HR.Values.
+	finalValues := hrValues
+	if len(hr.ChartValuesFiles) > 0 {
+		base, err := c.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		if err != nil {
+			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
+		}
+		finalValues = loader.MergeMaps(base, hrValues)
+	}
+
+	key := computeTemplateKey(loaded, finalValues, opts, hr)
+	blobKey := cache.BlobKey{ID: key, PersistOnly: true}
+	if key != "" {
+		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Forever, nil)
+		if err == nil {
+			data, readErr := io.ReadAll(reader)
+			if err := errors.Join(readErr, reader.Close()); err != nil {
+				return "", fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+			}
+			return string(data), nil
+		}
+		if !errors.Is(err, errdef.ErrNotFound) {
+			return "", fmt.Errorf("lookup helm render cache: %w", err)
+		}
+	}
+
+	loaded.Chart = cloneChartForRender(loaded.Chart)
+	if trackedVersion != "" {
+		loaded.Chart.Metadata.Version = trackedVersion
 	}
 
 	cfg := new(action.Configuration)
@@ -81,39 +115,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	)
 
 	inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
-	if hrValues == nil {
-		hrValues = map[string]any{}
-	}
 	inst.SkipSchemaValidation = schemaValidationSkipped(opts, hr, hrValues)
-
-	// Apply chart valuesFiles BEFORE HR.Values so HR overrides win.
-	// Mirrors helm-controller's CoalesceValues layering: chart defaults
-	// (handled internally by helm) → chart-named valuesFiles → HR.Values.
-	finalValues := hrValues
-	if len(hr.ChartValuesFiles) > 0 {
-		base, err := c.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
-		if err != nil {
-			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
-		}
-		finalValues = loader.MergeMaps(base, hrValues)
-	}
-
-	// Output cache: the same (chart fingerprint, finalValues, opts,
-	// hr-fields) tuple deterministically produces the same rendered
-	// manifest. Repeat HRs with the same effective spec hit the cache
-	// and skip inst.RunWithContext — the call cited at ~300 MB of
-	// allocations per 200-HR run. The key folds in every render-
-	// affecting input, so cache hits are byte-identical to the
-	// uncached path (also pinned by an integration test).
-	var key string
-	if c.templateCache != nil {
-		key = c.templateCache.computeTemplateKey(loaded, finalValues, opts, hr)
-		if key != "" {
-			if cached, ok := c.templateCache.Get(key); ok {
-				return cached, nil
-			}
-		}
-	}
 
 	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
 	if err != nil {
@@ -152,7 +154,16 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
 	if key != "" {
-		c.templateCache.Put(key, out)
+		reader, _, err := c.cache.Blob(ctx, blobKey, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			_, err := io.WriteString(w, out)
+			return ocispec.Descriptor{}, err
+		})
+		if err != nil {
+			return "", fmt.Errorf("publish helm render cache: %w", err)
+		}
+		if err := reader.Close(); err != nil {
+			return "", fmt.Errorf("%w: close helm render cache: %w", manifest.ErrFlux, err)
+		}
 	}
 	return out, nil
 }

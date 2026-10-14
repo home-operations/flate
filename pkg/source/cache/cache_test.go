@@ -498,6 +498,31 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 			}
 		})
 	}
+	t.Run("completed blob", func(t *testing.T) {
+		c := newCache(t, "")
+		key := BlobKey{ID: "source-completed-before-cancel"}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		r, _, err := c.Blob(ctx, key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			desc, err := producer([]byte("completed"), ocispec.Descriptor{})(w)
+			cancel()
+			return desc, err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Close(); err != nil {
+			t.Fatal(err)
+		}
+		r, _, err = c.Blob(t.Context(), key, Forever, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		if closeErr := r.Close(); err != nil || closeErr != nil || string(data) != "completed" {
+			t.Fatalf("completed fill: output=%q, read=%v, close=%v", data, err, closeErr)
+		}
+	})
 }
 
 func TestAcquire_UnchangedRefreshRenews(t *testing.T) {

@@ -14,7 +14,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -31,7 +30,7 @@ description: test
 	testutil.WriteFile(t, dir, "mychart/values.yaml", "k: v\n")
 	testutil.WriteFile(t, dir, "mychart/templates/_helpers.tpl", "")
 
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -119,7 +118,7 @@ description: test
 // the path, and an overwrite is invisible.
 func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	dir := t.TempDir()
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -218,7 +217,7 @@ dependencies:
 	testutil.WriteFile(t, dir, "mychart/values.yaml", "k: shared\n")
 	testutil.WriteFile(t, dir, "mychart/templates/_helpers.tpl", "")
 
-	cli, err := NewClient(cacheroot.New(t.TempDir()))
+	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

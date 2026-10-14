@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -95,7 +96,12 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	t.Helper()
 	st := store.New()
 	ts := task.NewBounded(2)
-	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
+	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	hc, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}
@@ -744,7 +750,12 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
-	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
+	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	hc, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}
@@ -832,7 +843,12 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
-	hc, err := helm.NewClient(cacheroot.New(t.TempDir()))
+	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	hc, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}

@@ -13,7 +13,6 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -32,14 +31,11 @@ func BenchmarkOCIChartVersion_DirectReference(b *testing.B) {
 // Each b.Loop iteration runs one Template — the same shape every HR
 // reconcile drives.
 //
-// With the template-output cache wired (NewClient's default) this
-// benchmark exercises the cache HIT path after the first iteration:
-// the first Template call populates the cache, every subsequent one
-// serves from memory. Compare BenchmarkTemplate_AppTemplateChartUncached
-// for the miss-path baseline.
+// A disk owner reuses completed output when build metadata is eligible.
+// Compare BenchmarkTemplate_AppTemplateChartUncached for the memory-owner path.
 func BenchmarkTemplate_AppTemplateChart(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(cacheroot.New(b.TempDir()))
+	cli, err := NewClient(newTestCache(b, b.TempDir()))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
@@ -70,17 +66,13 @@ func BenchmarkTemplate_AppTemplateChart(b *testing.B) {
 	}
 }
 
-// BenchmarkTemplate_AppTemplateChartUncached measures helm.Template
-// on the cache MISS path — TemplateCacheBytes=0 disables the cache
-// so every iteration runs action.Install.RunWithContext end to end.
-// This is the Phase 2.2 baseline; comparing against
-// BenchmarkTemplate_AppTemplateChart (cache hit) quantifies the
-// cache's wall-time + allocation savings on warm renders.
+// BenchmarkTemplate_AppTemplateChartUncached uses a memory owner, so each
+// iteration runs action.Install.RunWithContext without retained completed output.
 func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClientWithOptions(cacheroot.New(b.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+	cli, err := NewClient(newTestCache(b, ""))
 	if err != nil {
-		b.Fatalf("NewClientWithOptions: %v", err)
+		b.Fatalf("NewClient: %v", err)
 	}
 	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
 
@@ -135,7 +127,7 @@ spec:
 				for i := range count {
 					testutil.WriteFile(b, dir, fmt.Sprintf("mychart/crds/%d.yaml", i), crd)
 				}
-				cli, err := NewClientWithOptions(cacheroot.New(b.TempDir()), ClientOptions{TemplateCacheBytes: 0})
+				cli, err := NewClient(newTestCache(b, ""))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -158,14 +150,11 @@ spec:
 // hr.CommonMetadata each iteration. CommonMetadata is applied downstream
 // of Template (the controller's ApplyHRCommonMetadata) and never affects
 // the rendered bytes, so every iteration SHOULD be a cache hit. This
-// quantifies dropping CommonMetadata from the template-output key:
-// before, each distinct CommonMetadata forced a full
-// action.Install.RunWithContext (cache miss); after, they all hit.
-// benchstat against main shows the avoided-render win for HRs that set
-// spec.commonMetadata.
+// uses a disk owner to measure completed-output reuse for differing metadata
+// when build metadata is eligible. CommonMetadata is applied after Template.
 func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(cacheroot.New(b.TempDir()))
+	cli, err := NewClient(newTestCache(b, b.TempDir()))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
@@ -192,8 +181,7 @@ func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 	i := 0
 	for b.Loop() {
 		i++
-		// A distinct CommonMetadata each iteration: a cache MISS on the
-		// pre-fix key (CommonMetadata folded in), a HIT after the fix.
+		// CommonMetadata MUST remain outside the completed-output key.
 		hr.CommonMetadata = &helmv2.CommonMetadata{Labels: map[string]string{"rev": fmt.Sprintf("%d", i)}}
 		out, err := cli.Template(ctx, hr, values, Options{})
 		if err != nil {
@@ -211,7 +199,7 @@ func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 // cost on the cached path.
 func BenchmarkLoadChart_Cached(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(cacheroot.New(b.TempDir()))
+	cli, err := NewClient(newTestCache(b, ""))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}

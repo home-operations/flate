@@ -1,187 +1,17 @@
 package helm
 
 import (
-	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"strconv"
-	"sync"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
-	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/pkg/manifest"
 )
-
-// templateCache is a size-bounded LRU of rendered helm template
-// output. Keyed by computeTemplateKey (chart digest + resolved values
-// + render options + post-renderers), it lets repeat HRs with the
-// same effective inputs skip action.Install.RunWithContext — the
-// single largest CPU + allocation consumer in the codebase
-// (template.go's cited ~300 MB on a 200-HR run).
-//
-// The cache is in-memory only; persistence across `flate` invocations
-// is handled by the disk-backed layer.
-//
-// Eviction is strict LRU bounded by total `limit` bytes (the sum of
-// every entry's value size). On insert we evict from the back of the
-// list until the running total is within the limit; on Get we promote
-// to the front. A nil receiver is a tombstone for "caching disabled"
-// — both Get and Put return cleanly on nil so call sites only need
-// `c.templateCache != nil` guards at the constructor.
-type templateCache struct {
-	mu    sync.Mutex
-	limit int64 // bytes; 0 = disabled
-	size  int64 // current total bytes
-	list  *list.List
-	index map[string]*list.Element
-
-	// disk is the persistent cross-process layer (the shared
-	// diskcache.Store). nil when disk caching is disabled
-	// (RenderCacheBytes <= 0, empty RenderCacheRoot or empty build identity). Get falls through
-	// to disk on memory miss and promotes hits to the in-process LRU; Put
-	// writes through to disk after the in-process insert. The disk layer
-	// is content-addressed so two processes pointing at the same root
-	// share entries safely.
-	disk     *diskcache.Store
-	identity string
-}
-
-// templateEntry is the value type stored in templateCache.list. cost
-// is the byte count we charge against the limit — value's length at
-// insert time, captured so we don't re-len() during eviction (which
-// holds the mutex).
-type templateEntry struct {
-	key   string
-	value string
-	cost  int64
-}
-
-// newTemplateCache disconnects disk persistence for an empty identity.
-// A positive limit retains memory reuse independently of disk eligibility;
-// without either layer the cache MUST be nil. Identified disk-only caches
-// skip memory retention and read/write directly through the Store.
-func newTemplateCache(limitBytes int64, disk *diskcache.Store, identity string) *templateCache {
-	if identity == "" {
-		disk = nil
-	}
-	if limitBytes <= 0 && disk == nil {
-		return nil
-	}
-	return &templateCache{
-		limit:    limitBytes,
-		list:     list.New(),
-		index:    map[string]*list.Element{},
-		disk:     disk,
-		identity: identity,
-	}
-}
-
-// Get returns the cached value for key, promoting the entry to the
-// front of the LRU list. Returns (zero, false) on miss or when c is
-// nil (the "caching disabled" sentinel).
-//
-// On an in-memory miss with a wired disk layer, Get reads through to
-// disk and promotes the hit back into the LRU so subsequent same-
-// process Gets stay fast. Cross-process disk hits incur a decompress
-// read (cheap vs. the helm render they avoid).
-func (c *templateCache) Get(key string) (string, bool) {
-	if c == nil {
-		return "", false
-	}
-	c.mu.Lock()
-	if el, ok := c.index[key]; ok {
-		c.list.MoveToFront(el)
-		v := el.Value.(*templateEntry).value
-		c.mu.Unlock()
-		return v, true
-	}
-	c.mu.Unlock()
-
-	// In-memory miss. Try the disk layer. Reads run unsynchronized —
-	// atomic-rename writes mean we either see the previous complete
-	// payload or the new one, never a torn read.
-	if c.disk == nil {
-		return "", false
-	}
-	raw, ok := c.disk.Get(key)
-	if !ok {
-		return "", false
-	}
-	v := string(raw)
-	// Promote to the in-memory LRU so the second same-process Get
-	// skips the disk read entirely. Reuses putLocked's eviction
-	// accounting — including the "single entry exceeds limit" guard.
-	c.mu.Lock()
-	c.putLocked(key, v)
-	c.mu.Unlock()
-	return v, true
-}
-
-// Put inserts (or replaces) the entry for key. Evicts least-recently-
-// used entries from the back until the running total is within limit.
-// An entry whose own cost exceeds the limit is rejected from the in-
-// memory layer (silently — the alternative is "store but immediately
-// evict on the next Put", which churns the list for no benefit). The
-// disk layer still receives the write — it has its own (much larger)
-// size cap and the oversized-skip heuristic doesn't apply there.
-//
-// nil-receiver no-ops so callers can unconditionally Put after a
-// render without re-checking the constructor wiring.
-func (c *templateCache) Put(key, value string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.putLocked(key, value)
-	c.mu.Unlock()
-	// Write through to the disk layer outside the in-memory lock so
-	// the compress + atomic-write doesn't hold off concurrent Gets. Put
-	// no-ops on a nil disk receiver.
-	if c.disk != nil {
-		c.disk.Put(key, []byte(value))
-	}
-}
-
-// putLocked inserts (or replaces) the in-memory entry for key. Must
-// be called with c.mu held. Pulled out of Put so Get's disk-promote
-// path can reuse the same eviction accounting without duplicating the
-// "oversized rejected", "replacement drops old", and "evict from
-// back" branches.
-func (c *templateCache) putLocked(key, value string) {
-	cost := int64(len(value))
-	// Replacement: drop the old entry first so the size accounting
-	// stays correct (the replacement's cost may differ from the
-	// previous entry's).
-	if el, ok := c.index[key]; ok {
-		c.removeElement(el)
-	}
-	if cost > c.limit {
-		// Single oversized entry — don't try to cache it; evicting
-		// every other entry to make room would thrash the cache for
-		// no payoff (the entry would still be the next eviction
-		// target on the next Put). Skip silently.
-		return
-	}
-	for c.size+cost > c.limit && c.list.Len() > 0 {
-		c.removeElement(c.list.Back())
-	}
-	entry := &templateEntry{key: key, value: value, cost: cost}
-	c.index[key] = c.list.PushFront(entry)
-	c.size += cost
-}
-
-// removeElement drops el from both the list and the index, and
-// decrements the running size. Must be called with c.mu held.
-func (c *templateCache) removeElement(el *list.Element) {
-	entry := el.Value.(*templateEntry)
-	c.list.Remove(el)
-	delete(c.index, entry.key)
-	c.size -= entry.cost
-}
 
 // chartFingerprint returns the hex-encoded sha256 of every input
 // loader.Load consumes for ch (Metadata + Templates + Files + Schema
@@ -209,8 +39,7 @@ func chartFingerprint(ch *chart.Chart) string {
 // an empty key; callers MUST skip cache reads and writes for that render.
 //
 // loaded.Fingerprint is computed by LoadChart; when empty, the chart
-// content is fingerprinted here. The immutable build identity separates
-// persistent output from different renderer builds.
+// content is fingerprinted here. Cache owns persistent build identity isolation.
 //
 // Inputs folded into the key:
 //   - chart fingerprint (Metadata + Templates + Values + Schema + Files —
@@ -254,19 +83,16 @@ func chartFingerprint(ch *chart.Chart) string {
 // finalValues when loaded.Fingerprint is precomputed. A 50 KB values map
 // marshals in ~50 µs — cheap vs. the 5-50 ms render the cache hit
 // avoids.
-func (c *templateCache) computeTemplateKey(
+func computeTemplateKey(
 	loaded ChartLoadResult,
 	finalValues map[string]any,
 	opts Options,
 	hr *manifest.HelmRelease,
 ) string {
 	h := sha256.New()
-	_, _ = h.Write([]byte("build:"))
-	_, _ = h.Write([]byte(c.identity))
-	_, _ = h.Write([]byte{0})
 
 	// Chart fingerprint. Precomputed at LoadChart time when the
-	// template cache is enabled — fall back to a fresh walk when
+	// chart is loaded; fall back to a fresh walk when
 	// callers pass an empty fingerprint (tests, direct compute calls).
 	if loaded.Fingerprint == "" {
 		if !writeChartFingerprint(h, loaded.Chart) {

@@ -4,6 +4,8 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"testing"
 )
@@ -36,4 +38,18 @@ data:
 	}
 	st.AddObject(hr)
 	return st, hr, dir
+}
+
+func newTestCache(t testing.TB, root string) *cache.Cache {
+	t.Helper()
+	owner, err := cache.New(t.Context(), cacheroot.New(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return owner
 }

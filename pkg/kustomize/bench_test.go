@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -25,7 +24,7 @@ data:
   k: v
 `)
 
-	cache := NewTreeCache()
+	cache := NewTreeCache(newTestCache(b, ""))
 
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -59,9 +58,10 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 		testutil.WriteFile(b, src, "app/"+name+".yaml", cmYAML(name))
 	}
 	testutil.WriteFile(b, src, "app/kustomization.yaml", existingKustomization(resources...))
-	cache := NewTreeCache()
-	disk, _ := diskcache.NewStore(b.TempDir(), 1<<30)
-	cache.render = newRenderCache(disk, "test-build")
+	cache := NewTreeCache(newTestCache(b, b.TempDir()))
+	if !renderPersistenceEligible(b) {
+		b.Skip("warm render benchmark requires eligible build metadata")
+	}
 	req := RenderRequest{
 		Source:  localSource(b, src),
 		Label:   src,
@@ -127,7 +127,7 @@ data:
 `, i))
 	}
 
-	cache := NewTreeCache()
+	cache := NewTreeCache(newTestCache(b, ""))
 
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -164,7 +164,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-%d\n  namespace: ns\ndata:\n  k: v\n", i))
 	}
 
-	cache := NewTreeCache()
+	cache := NewTreeCache(newTestCache(b, ""))
 	input := localSource(b, src)
 	ctx := context.Background()
 	rawSpec := map[string]any{

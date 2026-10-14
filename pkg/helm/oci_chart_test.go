@@ -11,7 +11,6 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -63,7 +62,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 
 			st, hr, dir := ociRenderFixture(t)
-			cli, err := NewClientWithOptions(cacheroot.New(t.TempDir()), ClientOptions{})
+			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -146,7 +145,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
-			cli, err := NewClient(cacheroot.New(t.TempDir()))
+			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)
 			}

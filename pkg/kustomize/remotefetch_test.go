@@ -27,7 +27,7 @@ func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cache := NewTreeCache()
+	cache := NewTreeCache(newTestCache(t, ""))
 
 	ctxA, cancelA := context.WithCancel(context.Background())
 	doneA := make(chan error, 1)
@@ -96,7 +96,7 @@ func TestFetchRemote_RetryTransientCacheClientError(t *testing.T) {
 				_, _ = w.Write([]byte("retried"))
 			}))
 			t.Cleanup(srv.Close)
-			cache := NewTreeCache()
+			cache := NewTreeCache(newTestCache(t, ""))
 			if _, err := cache.FetchRemote(t.Context(), srv.URL); err == nil {
 				t.Fatal("first fetch should fail")
 			}

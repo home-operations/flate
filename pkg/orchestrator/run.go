@@ -267,8 +267,8 @@ func (o *Orchestrator) collectManifests(failed map[manifest.NamedResource]store.
 // once and nils it). Wrapped in sync.Once so the bookkeeping reads cleanly even
 // if a caller's defer runs after Run's defer.
 //
-// The kustomize render cache is in-memory and holds no OS resources, so there
-// is nothing to release here — it is freed with the Orchestrator.
+// Renderers borrow the selected cache. Only an internally created owner is
+// released here, after every controller has stopped.
 func (o *Orchestrator) Stop() {
 	o.stopOnce.Do(func() {
 		o.rsc.Close()

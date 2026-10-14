@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/home-operations/flate/internal/diskcache"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -35,24 +35,13 @@ type TreeCache struct {
 	// clear error. See gitbase.go.
 	gitBase GitBaseFetcher
 
-	// render is the cross-run, content-validated kustomize render cache (see
-	// render_cache.go). nil ⇒ disabled; every render rebuilds. Set once at
-	// construction via SetRenderCache.
-	render *renderCache
+	// owner is borrowed; the caller closes it after all renders finish.
+	owner *cache.Cache
 }
 
-// NewTreeCache constructs an empty render cache.
-func NewTreeCache() *TreeCache { return &TreeCache{} }
-
-// SetRenderCache enables the cross-run render cache, persisting under dir with a
-// capBytes disk cap. Empty dir, non-positive cap or unsafe build metadata
-// disables persistence. The orchestrator calls this once at construction;
-// embedders/tests may leave it unset for an always-render
-// TreeCache.
-func (c *TreeCache) SetRenderCache(dir string, capBytes int64) {
-	s, identity := diskcache.NewStore(dir, capBytes)
-	c.render = newRenderCache(s, identity)
-}
+// NewTreeCache borrows the nonnil owner for source and completed-render storage.
+// The caller MUST close owner after every render and acquired reader finishes.
+func NewTreeCache(owner *cache.Cache) *TreeCache { return &TreeCache{owner: owner} }
 
 // SetGitBaseFetcher wires the git-clone capability used to resolve remote git
 // bases referenced from a kustomization's resources:. The orchestrator calls

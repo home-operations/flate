@@ -58,6 +58,51 @@ func leafKS(name, path string) *manifest.Kustomization {
 	}
 }
 
+func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
+	root := t.TempDir()
+	writeFlatopsOverlay(t, root, "apps")
+	writeFile(t, root, "apps/apps/namespace.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
+	const definition = "apps/apps/apps/ks.yaml"
+	writeFile(t, root, definition, `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child}
+spec: {path: ./leaf}
+`)
+	writeFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
+
+	s := store.New()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: "./apps/apps"}
+	child := leafKS("child", "./leaf")
+	s.AddObject(parent)
+	s.AddObject(child)
+	l := loaderFixture(s, map[manifest.NamedResource]string{child.Named(): definition})
+
+	l.ApplyNamespaces(root)
+
+	for _, tc := range []struct {
+		name, namespace string
+		want            bool
+	}{
+		{"transformed", "apps", true},
+		{"empty", "", false},
+		{"parent fallback", "flux-system", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: child.Name}
+			if _, ok := s.Get[*manifest.Kustomization](id); ok != tc.want {
+				t.Errorf("stored identity %s present=%t, want %t", id, ok, tc.want)
+			}
+			record, ok := l.Index.Records[id]
+			if ok != tc.want {
+				t.Errorf("indexed identity %s present=%t, want %t", id, ok, tc.want)
+			}
+			if tc.want && record.File != definition {
+				t.Errorf("identity %s definition=%q, want %q", id, record.File, definition)
+			}
+		})
+	}
+}
+
 func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 	root := t.TempDir()
 	writeFlatopsOverlay(t, root, "gpu-operator")

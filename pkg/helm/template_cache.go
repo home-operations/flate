@@ -41,12 +41,13 @@ type templateCache struct {
 
 	// disk is the persistent cross-process layer (the shared
 	// diskcache.Store). nil when disk caching is disabled
-	// (RenderCacheBytes <= 0 or empty RenderCacheRoot). Get falls through
+	// (RenderCacheBytes <= 0, empty RenderCacheRoot or empty build identity). Get falls through
 	// to disk on memory miss and promotes hits to the in-process LRU; Put
 	// writes through to disk after the in-process insert. The disk layer
 	// is content-addressed so two processes pointing at the same root
 	// share entries safely.
-	disk *diskcache.Store
+	disk     *diskcache.Store
+	identity string
 }
 
 // templateEntry is the value type stored in templateCache.list. cost
@@ -59,26 +60,23 @@ type templateEntry struct {
 	cost  int64
 }
 
-// newTemplateCache constructs a templateCache with the given byte
-// limit and (optional) disk-backed layer. A limit of 0 (or negative)
-// AND a nil disk cache returns nil — callers wire that through as
-// "caching disabled" and never reach Get/Put.
-//
-// Passing disk != nil with limitBytes <= 0 still returns a valid
-// cache: the in-memory layer becomes a write-through to disk on every
-// Put (size accounting stays at zero, so eviction is a no-op), and
-// Get falls straight through to disk. That shape is useful for
-// embedders that want cross-process reuse without the memory cost of
-// a same-process LRU.
-func newTemplateCache(limitBytes int64, disk *diskcache.Store) *templateCache {
+// newTemplateCache disconnects disk persistence for an empty identity.
+// A positive limit retains memory reuse independently of disk eligibility;
+// without either layer the cache MUST be nil. Identified disk-only caches
+// skip memory retention and read/write directly through the Store.
+func newTemplateCache(limitBytes int64, disk *diskcache.Store, identity string) *templateCache {
+	if identity == "" {
+		disk = nil
+	}
 	if limitBytes <= 0 && disk == nil {
 		return nil
 	}
 	return &templateCache{
-		limit: limitBytes,
-		list:  list.New(),
-		index: map[string]*list.Element{},
-		disk:  disk,
+		limit:    limitBytes,
+		list:     list.New(),
+		index:    map[string]*list.Element{},
+		disk:     disk,
+		identity: identity,
 	}
 }
 
@@ -210,10 +208,9 @@ func chartFingerprint(ch *chart.Chart) string {
 // stale entry never serves a different render. Unmarshalable values return
 // an empty key; callers MUST skip cache reads and writes for that render.
 //
-// chartFP is the precomputed chart fingerprint (see chartFingerprint
-// + Client.LoadChart's caching layer); pass the empty string when no
-// memoized digest is available and the function will recompute it
-// on the fly.
+// loaded.Fingerprint is computed by LoadChart; when empty, the chart
+// content is fingerprinted here. The immutable build identity separates
+// persistent output from different renderer builds.
 //
 // Inputs folded into the key:
 //   - chart fingerprint (Metadata + Templates + Values + Schema + Files —
@@ -254,22 +251,30 @@ func chartFingerprint(ch *chart.Chart) string {
 //     its own metadata afterward.
 //
 // Cost of computing the key: dominated by JSON-marshaling
-// finalValues when chartFP is precomputed. A 50 KB values map
+// finalValues when loaded.Fingerprint is precomputed. A 50 KB values map
 // marshals in ~50 µs — cheap vs. the 5-50 ms render the cache hit
 // avoids.
-func computeTemplateKey(chartFP string, ch *chart.Chart, finalValues map[string]any, opts Options, hr *manifest.HelmRelease) string {
+func (c *templateCache) computeTemplateKey(
+	loaded ChartLoadResult,
+	finalValues map[string]any,
+	opts Options,
+	hr *manifest.HelmRelease,
+) string {
 	h := sha256.New()
+	_, _ = h.Write([]byte("build:"))
+	_, _ = h.Write([]byte(c.identity))
+	_, _ = h.Write([]byte{0})
 
 	// Chart fingerprint. Precomputed at LoadChart time when the
 	// template cache is enabled — fall back to a fresh walk when
 	// callers pass an empty fingerprint (tests, direct compute calls).
-	if chartFP == "" {
-		if !writeChartFingerprint(h, ch) {
+	if loaded.Fingerprint == "" {
+		if !writeChartFingerprint(h, loaded.Chart) {
 			return ""
 		}
 	} else {
 		_, _ = h.Write([]byte("chart-fp:"))
-		_, _ = h.Write([]byte(chartFP))
+		_, _ = h.Write([]byte(loaded.Fingerprint))
 		_, _ = h.Write([]byte{0})
 	}
 

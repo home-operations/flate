@@ -68,16 +68,16 @@ type Store struct {
 }
 
 // NewStore returns a disk-backed Store rooted at root with the supplied byte
-// cap. A non-positive limit or empty root returns nil — the "caching disabled"
-// sentinel the callers wire through.
+// cap and the process build identity. A non-positive limit or empty root returns
+// a nil Store. An empty identity requires callers to bypass render persistence.
 //
 // The root is not created here; the first Put materialises it via rootOnce so we
 // never leave an empty directory behind on disabled configurations.
-func NewStore(root string, limitBytes int64) *Store {
+func NewStore(root string, limitBytes int64) (*Store, string) {
 	if root == "" || limitBytes <= 0 {
-		return nil
+		return nil, processIdentity
 	}
-	return &Store{root: root, limit: limitBytes}
+	return &Store{root: root, limit: limitBytes}, processIdentity
 }
 
 // pathFor returns the on-disk path for a key. Sharding by the first two hex

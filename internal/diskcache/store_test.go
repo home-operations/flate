@@ -34,7 +34,7 @@ func (s *Store) sweepBlocking() {
 // downstream consumer.
 func TestStore_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 1<<20)
+	s, _ := NewStore(dir, 1<<20)
 	if s == nil {
 		t.Fatalf("NewStore returned nil for valid inputs")
 	}
@@ -53,7 +53,7 @@ func TestStore_RoundTrip(t *testing.T) {
 }
 
 func TestStore_RoundTripPayloadLargerThanWindow(t *testing.T) {
-	s := NewStore(t.TempDir(), 32<<20)
+	s, _ := NewStore(t.TempDir(), 32<<20)
 	t.Cleanup(s.sweepBlocking)
 	payload := mixedWindowPayload(1)
 	if len(payload) <= 1<<20 {
@@ -72,7 +72,7 @@ func TestStore_RoundTripPayloadLargerThanWindow(t *testing.T) {
 
 func TestStore_PutManyConcurrent(t *testing.T) {
 	const callers = 64
-	s := NewStore(t.TempDir(), 1<<30)
+	s, _ := NewStore(t.TempDir(), 1<<30)
 	t.Cleanup(s.sweepBlocking)
 	keys := make([]string, callers)
 	payloads := make([][]byte, callers)
@@ -116,7 +116,7 @@ func TestStore_PutManyConcurrent(t *testing.T) {
 // regression that flattens the layout would surface here.
 func TestStore_PutShardsByHexPrefix(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 1<<20)
+	s, _ := NewStore(dir, 1<<20)
 	key := strings.Repeat("b", 64)
 	s.Put(key, []byte("payload"))
 
@@ -135,7 +135,7 @@ func TestStore_PutShardsByHexPrefix(t *testing.T) {
 // contract callers rely on).
 func TestStore_MissReturnsFalse(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 1<<20)
+	s, _ := NewStore(dir, 1<<20)
 	if got, ok := s.Get(strings.Repeat("c", 64)); ok || got != nil {
 		t.Fatalf("miss should return (nil, false); got (%v, %v)", got, ok)
 	}
@@ -151,13 +151,13 @@ func TestStore_MissReturnsFalse(t *testing.T) {
 // contract for the two disable inputs (empty root, non-positive limit). Both
 // return nil so callers' `if store == nil` short-circuit fires.
 func TestStore_DisabledOnEmptyRoot(t *testing.T) {
-	if NewStore("", 1<<20) != nil {
+	if store, _ := NewStore("", 1<<20); store != nil {
 		t.Errorf("empty root must return nil (caching disabled)")
 	}
-	if NewStore(t.TempDir(), 0) != nil {
+	if store, _ := NewStore(t.TempDir(), 0); store != nil {
 		t.Errorf("zero limit must return nil")
 	}
-	if NewStore(t.TempDir(), -1) != nil {
+	if store, _ := NewStore(t.TempDir(), -1); store != nil {
 		t.Errorf("negative limit must return nil")
 	}
 }
@@ -170,7 +170,7 @@ func TestStore_DisabledOnEmptyRoot(t *testing.T) {
 // the eviction math from depending on how well the codec packs the bytes.
 func TestStore_SweepEvictsOldestByMtime(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 1500) // ~1.5 entries fit; the sweep must drop the oldest two
+	s, _ := NewStore(dir, 1500) // ~1.5 entries fit; the sweep must drop the oldest two
 	keys := []string{
 		strings.Repeat("1", 64),
 		strings.Repeat("2", 64),
@@ -208,10 +208,10 @@ func TestStore_CrossProcessReuse(t *testing.T) {
 	key := strings.Repeat("d", 64)
 	payload := []byte("apiVersion: v1\nkind: Service\nmetadata:\n  name: svc\n")
 
-	first := NewStore(dir, 1<<20)
+	first, _ := NewStore(dir, 1<<20)
 	first.Put(key, payload)
 
-	second := NewStore(dir, 1<<20)
+	second, _ := NewStore(dir, 1<<20)
 	got, ok := second.Get(key)
 	if !ok {
 		t.Fatalf("fresh Store pointing at same root must read the previous Put")
@@ -229,7 +229,7 @@ func TestStore_GetBumpsMtime(t *testing.T) {
 	t.Cleanup(func() { nowFn = orig })
 
 	dir := t.TempDir()
-	s := NewStore(dir, 1<<20)
+	s, _ := NewStore(dir, 1<<20)
 	key := strings.Repeat("e", 64)
 	s.Put(key, []byte("payload"))
 
@@ -260,7 +260,7 @@ func TestStore_GetBumpsMtime(t *testing.T) {
 // is zstd(payload), nothing more.
 func TestStore_ReadsExternallyWrittenZstd(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 32<<20)
+	s, _ := NewStore(dir, 32<<20)
 	t.Cleanup(s.sweepBlocking)
 	key := strings.Repeat("f", 64)
 	payload := mixedWindowPayload(1)
@@ -289,7 +289,7 @@ func TestStore_ReadsExternallyWrittenZstd(t *testing.T) {
 }
 
 func TestStore_ReadableByStockDecoder(t *testing.T) {
-	s := NewStore(t.TempDir(), 32<<20)
+	s, _ := NewStore(t.TempDir(), 32<<20)
 	t.Cleanup(s.sweepBlocking)
 	key := strings.Repeat("f", 64)
 	payload := mixedWindowPayload(1)
@@ -324,7 +324,7 @@ func TestStore_ReadableByStockDecoder(t *testing.T) {
 // panic or a garbage hit — so a stale cache simply re-renders.
 func TestStore_RejectsForeignCodec(t *testing.T) {
 	dir := t.TempDir()
-	s := NewStore(dir, 1<<20)
+	s, _ := NewStore(dir, 1<<20)
 	key := strings.Repeat("9", 64)
 	p := s.pathFor(key)
 	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
@@ -394,7 +394,7 @@ data:
 // future codec change is measured, not guessed. Put covers the cache-miss
 // (compress) path; Get covers the warm-hit (decompress) path.
 func BenchmarkStore_Put(b *testing.B) {
-	s := NewStore(b.TempDir(), 1<<30)
+	s, _ := NewStore(b.TempDir(), 1<<30)
 	payload := syntheticManifests(200)
 	key := strings.Repeat("a", 64)
 	b.SetBytes(int64(len(payload)))
@@ -405,7 +405,7 @@ func BenchmarkStore_Put(b *testing.B) {
 }
 
 func BenchmarkStore_Get(b *testing.B) {
-	s := NewStore(b.TempDir(), 1<<30)
+	s, _ := NewStore(b.TempDir(), 1<<30)
 	payload := syntheticManifests(200)
 	key := strings.Repeat("a", 64)
 	s.Put(key, payload)
@@ -421,7 +421,7 @@ func BenchmarkStore_Get(b *testing.B) {
 // Each operation is an eight-write batch; keys are reused to bound disk occupancy.
 func BenchmarkStore_PutParallel(b *testing.B) {
 	const callers = 8
-	s := NewStore(b.TempDir(), 1<<30)
+	s, _ := NewStore(b.TempDir(), 1<<30)
 	b.Cleanup(s.sweepBlocking)
 	keys := make([]string, callers)
 	payloads := make([][]byte, callers)

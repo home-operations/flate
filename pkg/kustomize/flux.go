@@ -72,7 +72,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	}
 	key := ""
 	if cache.render != nil {
-		key = renderKey(req.Spec, root, req.SubPath, ignoreKey)
+		key = cache.render.renderKey(req.Spec, root, req.SubPath, ignoreKey)
 		if req.Source.Key != "" {
 			key = manifest.Fingerprint([]string{key, req.Source.Key})
 		}
@@ -174,14 +174,15 @@ const renderKeyVersion = "render-fs-v4"
 
 // renderKey includes source options and the immutable content pin. Alias
 // content is validated by the read set rather than a whole-checkout hash.
-func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
+func (c *renderCache) renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
 	return manifest.Fingerprint(struct {
 		Spec       map[string]any
 		SourceRoot string
 		SubPath    string
 		Ignore     string
 		Version    string
-	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion})
+		Build      string
+	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion, c.identity})
 }
 
 // applyCommonMetadata merges spec.commonMetadata.labels and

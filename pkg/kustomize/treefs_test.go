@@ -288,7 +288,7 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cache := NewTreeCache()
-			cache.SetRenderCache(t.TempDir(), 1<<20)
+			setTestRenderCache(cache, t.TempDir(), 1<<20)
 			start := make(chan struct{})
 			var wg sync.WaitGroup
 			for n := range 2 {
@@ -326,7 +326,7 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 				t.Fatal(err)
 			}
 			cache := NewTreeCache()
-			cache.SetRenderCache(t.TempDir(), 1<<20)
+			setTestRenderCache(cache, t.TempDir(), 1<<20)
 			source := &store.SourceArtifact{FS: lower, Key: "pin+rules+options+auth", LocalPath: root}
 			for _, state := range []string{"cold", "warm", "host-absent"} {
 				if state == "host-absent" {
@@ -351,7 +351,7 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 
 func TestRenderFlux_ArtifactIdentity(t *testing.T) {
 	cache := NewTreeCache()
-	cache.SetRenderCache(t.TempDir(), 1<<20)
+	setTestRenderCache(cache, t.TempDir(), 1<<20)
 	for _, pin := range []string{"first", "second"} {
 		source := &store.SourceArtifact{Key: pin, LocalPath: "/missing-label", FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML(pin)})}
 		out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec})
@@ -410,7 +410,7 @@ func TestRenderFlux_ReleasedPinRejectsHostContent(t *testing.T) {
 func TestRenderFlux_CacheMissesOnDirectoryMembership(t *testing.T) {
 	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	cache := NewTreeCache()
-	cache.SetRenderCache(t.TempDir(), 1<<20)
+	setTestRenderCache(cache, t.TempDir(), 1<<20)
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoRawSpec}
 	first, err := RenderFlux(t.Context(), cache, req)
 	if err != nil || !strings.Contains(string(first), "name: a") {
@@ -476,7 +476,7 @@ func TestRenderFlux_CacheInvalidatesTypeTransitions(t *testing.T) {
 	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	artifact := localSource(t, root)
 	cache := NewTreeCache()
-	cache.SetRenderCache(t.TempDir(), 1<<20)
+	setTestRenderCache(cache, t.TempDir(), 1<<20)
 	req := RenderRequest{Source: artifact, SubPath: "app", Spec: demoRawSpec}
 	if _, err := RenderFlux(t.Context(), cache, req); err != nil {
 		t.Fatal(err)
@@ -505,7 +505,7 @@ func TestRenderFlux_CacheMissingComponentAppearance(t *testing.T) {
 		"cm.yaml":            cmYAML("base"),
 	})
 	cache := NewTreeCache()
-	cache.SetRenderCache(t.TempDir(), 1<<20)
+	setTestRenderCache(cache, t.TempDir(), 1<<20)
 	req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: ksDoc(map[string]any{
 		"components": []any{"./missing"}, "ignoreMissingComponents": true,
 	})}

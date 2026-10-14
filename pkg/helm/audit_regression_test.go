@@ -15,6 +15,7 @@ import (
 )
 
 func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
+	cache := newTemplateCache(1, nil, "")
 	for _, tc := range []struct {
 		name   string
 		values map[string]any
@@ -32,7 +33,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, computeTemplateKey("", tc.chart, tc.values, Options{}, minimalHR()), "")
+			assert.Equal(t, cache.computeTemplateKey(ChartLoadResult{Fingerprint: "", Chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
 		})
 	}
 }
@@ -74,7 +75,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	}
 	values := map[string]any{"unused": func() {}}
 	opts := Options{}
-	key := computeTemplateKey(loaded.Fingerprint, loaded.Chart, values, opts, hr)
+	key := cli.templateCache.computeTemplateKey(loaded, values, opts, hr)
 	cli.templateCache.Put(key, "poisoned cached output")
 	before := cli.templateCache.Size()
 	out, err := cli.Template(t.Context(), hr, values, opts)

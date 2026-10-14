@@ -2,6 +2,9 @@ package helm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
@@ -24,6 +28,7 @@ import (
 )
 
 func TestTemplateCache_OCIIdentity(t *testing.T) {
+	keyCache := newTemplateCache(1, nil, "test-build")
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	const next = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	shared := digest[:len(digest)-1] + "9"
@@ -65,6 +70,8 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
+						disk, _ := diskcache.NewStore(clientOpts.RenderCacheRoot, clientOpts.RenderCacheBytes)
+						cli.templateCache = newTemplateCache(clientOpts.TemplateCacheBytes, disk, "test-build")
 						cli.SetSourceResolver(NewStoreSourceResolver(st))
 						return cli
 					}
@@ -93,7 +100,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						if !ok {
 							t.Fatal("render did not cache values under its loaded fingerprint")
 						}
-						key := computeTemplateKey(fp, loaded.Chart, merged, opts, hr)
+						key := keyCache.computeTemplateKey(ChartLoadResult{Fingerprint: fp, Chart: loaded.Chart}, merged, opts, hr)
 						if cli.templateCache != nil {
 							cached, ok := cli.templateCache.Get(key)
 							if !ok || cached != out {
@@ -195,7 +202,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				nextKey := computeTemplateKey(loaded.Fingerprint, loaded.Chart, merged, opts, hr)
+				nextKey := cli.templateCache.computeTemplateKey(loaded, merged, opts, hr)
 				if first != "" {
 					assert.Equal(t, out, first)
 					assert.Equal(t, nextKey, key)
@@ -215,7 +222,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 // facing contract — Template's "cached, ok := c.Get(key)" branch relies
 // on it.
 func TestTemplateCache_GetMissReturnsFalse(t *testing.T) {
-	c := newTemplateCache(1024, nil)
+	c := newTemplateCache(1024, nil, "")
 	if _, ok := c.Get("nope"); ok {
 		t.Fatalf("expected miss on empty cache, got hit")
 	}
@@ -240,19 +247,27 @@ func TestTemplateCache_NilReceiverNoops(t *testing.T) {
 }
 
 // TestTemplateCache_DisabledOnZeroLimit pins the constructor contract:
-// a <=0 limit returns nil, which the render path treats as "disabled".
-// Distinct from a positive but tiny limit (which would still construct
-// a cache that just evicts everything).
+// without an eligible disk layer, a <=0 limit disables caching.
+// A positive memory limit remains usable when build identity disables persistence.
 func TestTemplateCache_DisabledOnZeroLimit(t *testing.T) {
-	if newTemplateCache(0, nil) != nil {
+	if newTemplateCache(0, nil, "") != nil {
 		t.Errorf("limit=0 should disable the cache (nil)")
 	}
-	if newTemplateCache(-1, nil) != nil {
+	if newTemplateCache(-1, nil, "") != nil {
 		t.Errorf("negative limit should disable the cache (nil)")
 	}
-	if newTemplateCache(1, nil) == nil {
+	if newTemplateCache(1, nil, "") == nil {
 		t.Errorf("positive limit must construct a real cache")
 	}
+	disk, _ := diskcache.NewStore(t.TempDir(), 1<<20)
+	cache := newTemplateCache(1<<20, disk, "")
+	assert.Equal(t, cache.disk == nil, true)
+	cache.Put("key", "memory output")
+	out, hit := cache.Get("key")
+	assert.Equal(t, hit, true)
+	assert.Equal(t, out, "memory output")
+	_, hit = disk.Get("key")
+	assert.Equal(t, hit, false)
 }
 
 // TestTemplateCache_LRUEvictionByLimit covers the size-bounded eviction
@@ -262,7 +277,7 @@ func TestTemplateCache_DisabledOnZeroLimit(t *testing.T) {
 // 100-byte entries and a 300-byte limit, only the last 3 inserts
 // survive (matching plan §2.2 step 1).
 func TestTemplateCache_LRUEvictionByLimit(t *testing.T) {
-	c := newTemplateCache(300, nil)
+	c := newTemplateCache(300, nil, "")
 	for _, k := range []string{"a", "b", "c", "d", "e"} {
 		// Each value is exactly 100 bytes so the math is obvious.
 		c.Put(k, strings.Repeat("x", 100))
@@ -291,7 +306,7 @@ func TestTemplateCache_LRUEvictionByLimit(t *testing.T) {
 // codifies this exact case: insert A B C, Get A, insert D — D's
 // insertion evicts B (the new LRU tail), not A (now the MRU).
 func TestTemplateCache_GetPromotesToFront(t *testing.T) {
-	c := newTemplateCache(300, nil)
+	c := newTemplateCache(300, nil, "")
 	c.Put("a", strings.Repeat("x", 100))
 	c.Put("b", strings.Repeat("x", 100))
 	c.Put("c", strings.Repeat("x", 100))
@@ -318,7 +333,7 @@ func TestTemplateCache_GetPromotesToFront(t *testing.T) {
 // inserts add their byte cost, evictions subtract it, and a key
 // replacement only counts the new entry's cost (not the sum of both).
 func TestTemplateCache_SizeTracking(t *testing.T) {
-	c := newTemplateCache(1024, nil)
+	c := newTemplateCache(1024, nil, "")
 	c.Put("x", strings.Repeat("y", 100))
 	if got := c.Size(); got != 100 {
 		t.Errorf("Size after one insert = %d, want 100", got)
@@ -338,7 +353,7 @@ func TestTemplateCache_SizeTracking(t *testing.T) {
 // thrashing every other entry out to make room (the entry would just
 // be the next eviction target anyway).
 func TestTemplateCache_OversizedEntryRejected(t *testing.T) {
-	c := newTemplateCache(100, nil)
+	c := newTemplateCache(100, nil, "")
 	c.Put("small", strings.Repeat("y", 50))
 	c.Put("huge", strings.Repeat("y", 200))
 	if _, ok := c.Get("huge"); ok {
@@ -356,7 +371,7 @@ func TestTemplateCache_OversizedEntryRejected(t *testing.T) {
 // same key under the same value doesn't grow the cache twice — the
 // stale entry is removed before the fresh one lands.
 func TestTemplateCache_ReplaceDoesNotDuplicate(t *testing.T) {
-	c := newTemplateCache(1024, nil)
+	c := newTemplateCache(1024, nil, "")
 	c.Put("k", "value")
 	c.Put("k", "value")
 	if got := c.Len(); got != 1 {
@@ -372,7 +387,7 @@ func TestTemplateCache_ReplaceDoesNotDuplicate(t *testing.T) {
 // invariant the LRU might be violating. The pass condition is "no
 // race detector / panic"; the cached values themselves are arbitrary.
 func TestTemplateCache_ConcurrentSafety(t *testing.T) {
-	c := newTemplateCache(64<<10, nil)
+	c := newTemplateCache(64<<10, nil, "")
 	var wg sync.WaitGroup
 	for i := range 32 {
 		wg.Go(func() {
@@ -396,23 +411,25 @@ func TestTemplateCache_ConcurrentSafety(t *testing.T) {
 // with different in-memory insertion orders should collide. Without
 // this, the cache would be a write-only structure (every render misses).
 func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
+	cache := newTemplateCache(1, nil, "")
 	ch := minimalChart()
 	hr := minimalHR()
 	values1 := map[string]any{"a": 1, "b": 2}
 	values2 := map[string]any{"b": 2, "a": 1} // different in-memory order
 	opts := Options{KubeVersion: "1.33"}
 
-	k1 := computeTemplateKey("fp", ch, values1, opts, hr)
-	k2 := computeTemplateKey("fp", ch, values2, opts, hr)
+	k1 := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values1, opts, hr)
+	k2 := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values2, opts, hr)
 	if k1 != k2 {
 		t.Errorf("same logical values must produce same key:\nk1=%s\nk2=%s", k1, k2)
 	}
 }
 
 func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
+	cache := newTemplateCache(1, nil, "")
 	ch, hr := minimalChart(), minimalHR()
 	values := map[string]any{"k": "v"}
-	base := computeTemplateKey("fp", ch, values, Options{}, hr)
+	base := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, Options{}, hr)
 	if base == "" {
 		t.Fatal("valid inputs produced an empty key")
 	}
@@ -436,7 +453,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			default:
 				t.Fatalf("new option %s requires an explicit cache-key decision", field.Name)
 			}
-			key := computeTemplateKey("fp", ch, values, opts, hr)
+			key := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, hr)
 			if key == "" {
 				t.Fatal("valid option produced an empty key")
 			}
@@ -473,17 +490,22 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			default:
 				t.Fatalf("field %s requires an explicit cache-key decision", field)
 			}
-			key := computeTemplateKey("fp", ch, values, Options{}, alt)
+			key := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, Options{}, alt)
 			if key == "" || key == base {
 				t.Fatal("changed release input did not produce a distinct valid key")
 			}
 		})
 	}
+	t.Run("Identity", func(t *testing.T) {
+		a, b := newTemplateCache(1, nil, "a"), newTemplateCache(1, nil, "b")
+		loaded := ChartLoadResult{Fingerprint: "fp", Chart: ch}
+		assert.Equal(t, a.computeTemplateKey(loaded, values, Options{}, hr) == b.computeTemplateKey(loaded, values, Options{}, hr), false)
+	})
 	t.Run("ChartFingerprint", func(t *testing.T) {
-		assert.Equal(t, computeTemplateKey("different", ch, values, Options{}, hr) == base, false)
+		assert.Equal(t, cache.computeTemplateKey(ChartLoadResult{Fingerprint: "different", Chart: ch}, values, Options{}, hr) == base, false)
 	})
 	t.Run("Values", func(t *testing.T) {
-		assert.Equal(t, computeTemplateKey("fp", ch, map[string]any{"k": "different"}, Options{}, hr) == base, false)
+		assert.Equal(t, cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, map[string]any{"k": "different"}, Options{}, hr) == base, false)
 	})
 }
 
@@ -496,11 +518,12 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 // change the rendered bytes) still diverges the key, so this test cannot
 // pass by accident if a genuinely render-affecting input were dropped.
 func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
+	cache := newTemplateCache(1, nil, "")
 	ch := minimalChart()
 	values := map[string]any{"k": "v"}
 	opts := Options{KubeVersion: "1.33"}
 	base := minimalHR()
-	baseKey := computeTemplateKey("fp", ch, values, opts, base)
+	baseKey := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, base)
 
 	t.Run("CommonMetadata does not change the key", func(t *testing.T) {
 		alt := *base
@@ -508,7 +531,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 			Labels:      map[string]string{"team": "platform"},
 			Annotations: map[string]string{"note": "x"},
 		}
-		if got := computeTemplateKey("fp", ch, values, opts, &alt); got != baseKey {
+		if got := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, &alt); got != baseKey {
 			t.Errorf("CommonMetadata must NOT affect the cache key (applied downstream of Template):\nbase=%s\nalt =%s", baseKey, got)
 		}
 	})
@@ -516,7 +539,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	t.Run("control: PostRenderers still diverges", func(t *testing.T) {
 		alt := *base
 		alt.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
-		if got := computeTemplateKey("fp", ch, values, opts, &alt); got == baseKey {
+		if got := cache.computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, &alt); got == baseKey {
 			t.Error("PostRenderers changes rendered output and must still diverge the key (guards against dropping a real input)")
 		}
 	})
@@ -616,11 +639,11 @@ func TestTemplateCache_DisabledViaOptions(t *testing.T) {
 // probe before and after verifies the promotion happened.
 func TestTemplateCache_PromotesFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	disk := diskcache.NewStore(dir, 1<<20)
+	disk, _ := diskcache.NewStore(dir, 1<<20)
 	key := strings.Repeat("e", 64)
 	disk.Put(key, []byte("from-disk"))
 
-	mem := newTemplateCache(1<<20, disk)
+	mem := newTemplateCache(1<<20, disk, "test-build")
 	if got := mem.Len(); got != 0 {
 		t.Fatalf("fresh cache should be empty, has %d entries", got)
 	}
@@ -651,15 +674,15 @@ func TestTemplateCache_PromotesFromDisk(t *testing.T) {
 // stay at zero.
 func TestTemplateCache_PutWritesThroughToDisk(t *testing.T) {
 	dir := t.TempDir()
-	disk1 := diskcache.NewStore(dir, 1<<20)
-	mem1 := newTemplateCache(1<<20, disk1)
+	disk1, _ := diskcache.NewStore(dir, 1<<20)
+	mem1 := newTemplateCache(1<<20, disk1, "test-build")
 	key := strings.Repeat("f", 64)
 	mem1.Put(key, "persistent")
 
 	// Fresh stack — no shared state with mem1/disk1 — but pointing at the same
 	// on-disk root.
-	disk2 := diskcache.NewStore(dir, 1<<20)
-	mem2 := newTemplateCache(1<<20, disk2)
+	disk2, _ := diskcache.NewStore(dir, 1<<20)
+	mem2 := newTemplateCache(1<<20, disk2, "test-build")
 	got, ok := mem2.Get(key)
 	if !ok {
 		t.Fatalf("fresh cache must read the disk-write-through value")
@@ -702,6 +725,8 @@ data:
 	if err != nil {
 		t.Fatalf("NewClientWithOptions first: %v", err)
 	}
+	firstDisk, _ := diskcache.NewStore(layout.RenderHelmCache(), 1<<20)
+	first.templateCache = newTemplateCache(1<<20, firstDisk, "test-build")
 	first.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
 
 	hr := newHR()
@@ -709,6 +734,20 @@ data:
 	expected, err := first.Template(ctx, hr, map[string]any{"greeting": "hi"}, Options{})
 	if err != nil {
 		t.Fatalf("first Template: %v", err)
+	}
+	loaded, err := first.LoadChart(t.Context(), hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := first.templateCache.computeTemplateKey(loaded, map[string]any{"greeting": "hi"}, Options{}, hr)
+	path := filepath.Join(layout.RenderHelmCache(), key[:2], key)
+	old := time.Unix(1, 0)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	beforeHit, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// Second client: fresh in-memory cache, same disk root. The render must hit
@@ -721,6 +760,8 @@ data:
 	if err != nil {
 		t.Fatalf("NewClientWithOptions second: %v", err)
 	}
+	secondDisk, _ := diskcache.NewStore(layout.RenderHelmCache(), 1<<20)
+	second.templateCache = newTemplateCache(1<<20, secondDisk, "test-build")
 	second.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
 
 	got, err := second.Template(ctx, hr, map[string]any{"greeting": "hi"}, Options{})
@@ -730,10 +771,60 @@ data:
 	if got != expected {
 		t.Fatalf("cross-process disk-cached render diverged from initial render:\nfirst:\n%s\nsecond:\n%s", expected, got)
 	}
+	info, err := os.Stat(path)
+	if err != nil || !info.ModTime().After(old) || !os.SameFile(beforeHit, info) {
+		t.Fatalf("real output did not hit disk: %v", err)
+	}
 	// Second client's in-memory cache should have exactly one entry — the disk
 	// fall-through promotion.
 	if got := second.templateCache.Len(); got != 1 {
 		t.Errorf("expected 1 in-memory entry after disk-cached render, got %d", got)
+	}
+
+	// The identity-less namespace uses the merge-base key format for this fixture.
+	legacy := sha256.New()
+	_, _ = legacy.Write([]byte("chart-fp:" + loaded.Fingerprint + "\x00"))
+	writeOptionsBlob(legacy, Options{})
+	hrBlob, err := json.Marshal(struct {
+		ReleaseName      string `json:"release_name"`
+		ReleaseNamespace string `json:"release_namespace"`
+	}{hr.ReleaseName(), hr.ReleaseNamespace()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = legacy.Write([]byte("hr:" + string(hrBlob) + "\x00values:{\"greeting\":\"hi\"}"))
+	legacyKey := hex.EncodeToString(legacy.Sum(nil))
+	for _, tc := range []struct {
+		name, key string
+	}{
+		{"identity A", key},
+		{"identity-less", legacyKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			disk, _ := diskcache.NewStore(t.TempDir(), 1<<20)
+			stale := "STALE " + tc.name
+			disk.Put(tc.key, []byte(stale))
+			raw, hit := disk.Get(tc.key)
+			assert.Equal(t, hit, true)
+			assert.Equal(t, string(raw), stale)
+			for _, identity := range []string{"test-build", "other-build"} {
+				client, err := NewClient(layout)
+				if err != nil {
+					t.Fatal(err)
+				}
+				client.templateCache = newTemplateCache(1<<20, disk, identity)
+				client.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
+				out, err := client.Template(t.Context(), hr, map[string]any{"greeting": "hi"}, Options{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := expected
+				if tc.name == "identity A" && identity == "test-build" {
+					want = stale
+				}
+				assert.Equal(t, out, want)
+			}
+		})
 	}
 }
 
@@ -770,6 +861,8 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		disk, _ := diskcache.NewStore(clientOpts.RenderCacheRoot, clientOpts.RenderCacheBytes)
+		cli.templateCache = newTemplateCache(clientOpts.TemplateCacheBytes, disk, "test-build")
 		cli.SetSourceResolver(NewStoreSourceResolver(st))
 		return cli
 	}

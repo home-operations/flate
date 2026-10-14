@@ -25,20 +25,17 @@ import (
 // *renderCache is the "disabled" sentinel: every method no-ops / misses, so call
 // sites need not guard the wiring.
 type renderCache struct {
-	store *diskcache.Store
+	store    *diskcache.Store
+	identity string
 }
 
-// newRenderCache returns a cache rooted at root with the supplied byte cap, or
-// nil (disabled) for an empty root or non-positive limit. The nil is load-
-// bearing: RenderFlux/tree.go gate on `c.render != nil` by identity, so a
-// disabled Store must collapse the whole renderCache to nil rather than wrap a
-// nil Store.
-func newRenderCache(root string, limitBytes int64) *renderCache {
-	s := diskcache.NewStore(root, limitBytes)
-	if s == nil {
+// newRenderCache requires storage and a nonempty build identity. Otherwise
+// it MUST return nil so RenderFlux skips persistence read-set recording and framing.
+func newRenderCache(s *diskcache.Store, identity string) *renderCache {
+	if s == nil || identity == "" {
 		return nil
 	}
-	return &renderCache{store: s}
+	return &renderCache{store: s, identity: identity}
 }
 
 // get returns the cached snapshot + output for key, or ok=false on any miss

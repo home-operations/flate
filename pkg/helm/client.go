@@ -74,8 +74,8 @@ type Client struct {
 	// (template.go cites ~300 MB on a 200-HR run); repeat HRs with the
 	// same effective inputs hit this cache and skip the call entirely.
 	//
-	// nil when disabled (NewClientWithOptions called with
-	// TemplateCacheBytes<=0). Both Get and Put handle nil receivers
+	// nil when neither memory nor eligible disk caching is enabled.
+	// Both Get and Put handle nil receivers
 	// cleanly so the render path doesn't need extra wiring guards.
 	templateCache *templateCache
 }
@@ -97,14 +97,14 @@ type chartCacheEntry struct {
 // struct field-by-field.
 type ClientOptions struct {
 	// TemplateCacheBytes caps the in-memory helm-template-output
-	// cache. <= 0 disables the cache. Use DefaultTemplateCacheBytes
+	// cache. <= 0 disables memory retention. Use DefaultTemplateCacheBytes
 	// for the project-wide default.
 	TemplateCacheBytes int64
 
 	// RenderCacheBytes caps the persistent on-disk helm template-
 	// output cache. <= 0 disables disk caching. Disk
 	// caching is also disabled when RenderCacheRoot is empty even
-	// if RenderCacheBytes > 0 — the wiring requires both.
+	// if RenderCacheBytes > 0, or when build metadata cannot identify the renderer.
 	RenderCacheBytes int64
 
 	// RenderCacheRoot is the on-disk directory the persistent
@@ -172,6 +172,7 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		// keeps working.
 		layout.Root = filepath.Join(os.TempDir(), "flate-cache")
 	}
+	disk, identity := diskcache.NewStore(opts.RenderCacheRoot, opts.RenderCacheBytes)
 	return &Client{
 		chartCache:       map[string]chartCacheEntry{},
 		chartValuesCache: map[string]map[string]any{},
@@ -179,7 +180,8 @@ func NewClientWithOptions(layout cacheroot.Layout, opts ClientOptions) (*Client,
 		valuesCache:      values.NewCache(),
 		templateCache: newTemplateCache(
 			opts.TemplateCacheBytes,
-			diskcache.NewStore(opts.RenderCacheRoot, opts.RenderCacheBytes),
+			disk,
+			identity,
 		),
 	}, nil
 }

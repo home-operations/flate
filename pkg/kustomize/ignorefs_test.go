@@ -180,7 +180,7 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 		"b.yaml":        cmYAML("b"),
 	})
 	cache := NewTreeCache()
-	cache.SetRenderCache(t.TempDir(), 1<<30)
+	setTestRenderCache(cache, t.TempDir(), 1<<30)
 	ctx := context.Background()
 
 	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
@@ -194,7 +194,7 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := renderKey(demoRawSpec, root, ".", ignoreKey)
+	key := cache.render.renderKey(demoRawSpec, root, ".", ignoreKey)
 	snap, _, ok := cache.render.get(key)
 	if !ok {
 		t.Fatal("first render did not populate the cache")

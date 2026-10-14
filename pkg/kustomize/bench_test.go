@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/diskcache"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -59,7 +60,8 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 	}
 	testutil.WriteFile(b, src, "app/kustomization.yaml", existingKustomization(resources...))
 	cache := NewTreeCache()
-	cache.SetRenderCache(b.TempDir(), 1<<30)
+	disk, _ := diskcache.NewStore(b.TempDir(), 1<<30)
+	cache.render = newRenderCache(disk, "test-build")
 	req := RenderRequest{
 		Source:  localSource(b, src),
 		Label:   src,

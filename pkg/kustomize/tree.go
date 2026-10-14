@@ -26,6 +26,9 @@ type TreeCache struct {
 	// Kustomizations is fetched once. See remotefetch.go.
 	remoteFetches sync.Map // url string -> *remoteFetch
 
+	// sourceRoots owns standalone source admission and shaping for this run.
+	sourceRoots sync.Map
+
 	// gitBase resolves a remote kustomize git base (a repo URL at a bare ref)
 	// to an on-disk worktree. The one injected seam: pkg/kustomize cannot import
 	// pkg/source/git (import cycle). nil ⇒ a git-base resource fails with a

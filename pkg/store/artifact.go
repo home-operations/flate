@@ -47,14 +47,17 @@ type SourceArtifact struct {
 	Size      int64
 	Metadata  map[string]string
 
-	// LocalRoot is the working tree whose repository resolved this artifact.
-	// Its Kustomizations retain ownership there even when LocalPath is cached.
+	// LocalRoot is the selected input's ownership origin, which may be synthetic.
+	// Only an admitted bootstrap uses its original checkout root for Git metadata.
 	LocalRoot string
 
 	// Key pins immutable content, source options, authentication and shaping rules.
 	// Empty Key with FS denotes mutable content requiring cache validation.
 	// Nonempty Key without FS requires acquisition before reading.
 	Key string
+	// InputAlias marks source shaping derived from the selected bootstrap input,
+	// rather than an authored committed source pin.
+	InputAlias bool
 	// FS supplies acquired content; LocalPath and LocalRoot are coordinates only.
 	// Nil FS is unavailable or existence-only, regardless of Key or LocalPath.
 	FS fs.FS
@@ -144,8 +147,9 @@ func (a *ResourceSetArtifact) RenderedFingerprint() string { return a.Fingerprin
 //     circuit avoids reflection entirely for that case (~3× faster
 //     than the legacy reflect.DeepEqual-on-aliased-pointers fast
 //     path, which still walks struct headers).
-//  2. Source payloads are compared by Key, with remaining metadata compared
-//     by value. Filesystems MUST NOT be traversed under the shard lock.
+//  2. Pinned source payloads are compared by Key and remaining metadata by value.
+//     Distinct mutable views replace each other. Filesystems MUST NOT be compared
+//     or traversed under the shard lock.
 //  3. reflect.DeepEqual fallback for distinct-pointer dedup. Phase 1
 //     evaluated hashing here (FNV64a via both json.Marshal and a
 //     hand-rolled walker) and benched it against DeepEqual on the

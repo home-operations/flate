@@ -451,7 +451,7 @@ spec:
 	}
 }
 
-func TestResolveScanPath_SymlinkResolved(t *testing.T) {
+func TestRun_SymlinkEntryResolved(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	target := filepath.Join(dir, "real")
@@ -462,13 +462,13 @@ func TestResolveScanPath_SymlinkResolved(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	got, err := discovery.ResolveScanPath(link)
+	got, err := discovery.Run(t.Context(), discovery.Config{Path: link, Store: store.New()})
 	if err != nil {
-		t.Fatalf("ResolveScanPath: %v", err)
+		t.Fatal(err)
 	}
 	want, _ := filepath.EvalSymlinks(target)
-	if got != want {
-		t.Errorf("ResolveScanPath(link) = %q, want %q", got, want)
+	if got.RepoRoot != want {
+		t.Errorf("RepoRoot = %q, want %q", got.RepoRoot, want)
 	}
 }
 

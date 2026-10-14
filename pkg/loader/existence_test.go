@@ -205,6 +205,7 @@ stringData: {value: fixture}
 			if tc.existing {
 				st.AddObject(cm)
 			}
+			admitForTest(st, dir)
 			idx := loaderFixture(st, nil)
 			for _, id := range []manifest.NamedResource{cm.Named(), secret} {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
@@ -292,6 +293,7 @@ spec:
 	for _, tc := range []struct{ namespace, version string }{{"apps", "1.0.0"}, {"other", "2.0.0"}} {
 		t.Run(tc.namespace, func(t *testing.T) {
 			st := store.New()
+			admitForTest(st, dir)
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.namespace, Name: "podinfo"}
 			admit := func(manifest.BaseManifest) bool { return true }
 			if !Promote(st, id, filepath.Join(dir, "bundle.yaml"), PromoteOptions{Admit: admit}) {

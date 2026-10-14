@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -20,12 +21,15 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/baseline"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -37,12 +41,17 @@ const (
 )
 
 type commonFlags struct {
-	path     string
-	pathOrig string
-	// Extracted baseline trees need explicit source roots and identity.
+	input     *store.SourceArtifact
+	baseInput *store.SourceArtifact
+	changes   *change.Set
+	owner     *sourcecache.Cache
+	path      string
+	pathOrig  string
+	// Synthetic baseline labels need explicit source coordinates and identity.
 	pathRoot             string
 	pathOrigRoot         string
 	pathOrigSelfURLs     []string
+	selfURLs             []string
 	base                 string
 	namespace            string
 	substituteFrom       []string
@@ -186,10 +195,7 @@ func bindSelector(fs *pflag.FlagSet, f *listFlags) {
 	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
 }
 
-// bindBase wires the `--base` flag. Bound on every command that
-// accepts --path-orig (build, get, test, diff). Selects the baseline
-// git rev that the auto-baseline flow materializes into a tempdir
-// for changed-only mode.
+// bindBase selects a baseline revision for changed-only mode.
 //
 // Semantics differ per verb:
 //   - diff REQUIRES a baseline; bare command auto-detects via
@@ -197,15 +203,13 @@ func bindSelector(fs *pflag.FlagSet, f *listFlags) {
 //   - build/get/test do NOT auto-detect — bare command tests/builds
 //     everything (preserves the existing "full tree" default).
 //     Setting --base on these verbs opts into changed-only mode
-//     against the named rev, sharing the same materialization
-//     machinery as diff.
+//     against the named rev, sharing diff's admitted input pair.
 //
 // Mutually exclusive with --path-orig (the absolute-path escape
 // hatch); the check fires at runtime in resolveBaseline.
 func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVar(&f.base, "base", "",
-		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA) — "+
-			"materializes the rev's tree to a tempdir and runs in changed-only mode. "+
+		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA) for changed-only mode. "+
 			"A rev the checkout doesn't hold is fetched from its origin remote. "+
 			"On `diff`, omitting --base auto-detects via merge-base with @{u} / origin/HEAD. "+
 			"On `build`/`get`/`test`, omitting --base keeps the default full-tree behavior. "+
@@ -272,12 +276,9 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 	}
 }
 
-// resolveBaseline resolves source roots and baseline identity, materializing
-// --base when requested. autoFallback requires an automatically selected
-// baseline when neither --path-orig nor --base is set.
-//
-// Callers MUST defer cleanup until all readers have drained: cancellation can
-// precede filesystem reads finishing beneath a temporary baseline tree.
+// resolveBaseline admits --base inputs through the command's cache owner.
+// autoFallback selects automatic baseline resolution for diff commands.
+// Callers MUST defer cleanup until both orchestrators' readers have joined.
 func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (func(), error) {
 	noop := func() {}
 	c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs = "", "", nil
@@ -303,28 +304,42 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 		c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs, err = baseline.ResolvePaths(ctx, current, original)
 		return noop, err
 	}
-	res, err := baseline.AutoResolve(ctx, current, c.base, cacheroot.New(c.resolveCacheRoot()))
+	ssrfguard.Restrict(c.restrictEgress)
+	c.path = current
+	owner, err := sourcecache.New(ctx, cacheroot.New(c.resolveCacheRoot()))
 	if err != nil {
 		return noop, err
 	}
-	c.pathRoot = res.RepoRoot
-	c.pathOrig = res.PathOrig
-	// The materialized baseline has no .git: pass its repo root + the live
-	// tree's remotes explicitly so the baseline side anchors spec.path and
-	// aliases self-referential sources without a synthetic marker.
-	c.pathOrigRoot = res.TempDir
-	c.pathOrigSelfURLs = res.SelfURLs
-	slog.Debug("baseline", "source", res.Source, "rev", res.Rev, "path_orig", res.PathOrig, "persistent", res.Persistent)
-	if res.Persistent {
-		return noop, nil
+	res, err := baseline.AutoResolve(ctx, c.path, c.base, owner)
+	if err != nil {
+		_ = owner.Close()
+		return noop, err
 	}
-	return func() { _ = os.RemoveAll(res.TempDir) }, nil
+	rel, err := filepath.Rel(res.Source.LocalPath, c.path)
+	if err != nil {
+		_ = owner.Close()
+		return noop, err
+	}
+	res.BaseInput.LocalPath, err = filepath.Abs(cacheroot.New(c.resolveCacheRoot()).Baseline(res.BaseInput.Revision))
+	if err != nil {
+		_ = owner.Close()
+		return noop, err
+	}
+	c.owner, c.input, c.baseInput, c.changes = owner, res.Source, res.BaseInput, res.Changes
+	c.pathOrig = filepath.Join(res.BaseInput.LocalPath, rel)
+	c.pathRoot = res.Source.LocalPath
+	c.pathOrigRoot = res.BaseInput.LocalPath
+	c.pathOrigSelfURLs = res.SelfURLs
+	c.selfURLs = res.SelfURLs
+	slog.Debug("baseline", "source", res.Source.Metadata["baseline-selection"], "rev", res.Rev, "path_orig", c.pathOrig)
+	return func() { _ = owner.Close() }, nil
 }
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	return orchestrator.Config{
-		Path:                       c.path,
-		RepoRoot:                   c.pathRoot,
+		Path: c.path, RepoRoot: c.pathRoot,
+		Input: c.input, BaseInput: c.baseInput, ExternalChanges: c.changes, Cache: c.owner,
+		SelfURLs:                   c.selfURLs,
 		PathOrig:                   c.pathOrigRoot,
 		HelmOptions:                c.helmOptions(h),
 		DisableChartDigestTracking: h.disableChartDigestTracking,
@@ -378,9 +393,6 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 			return nil, nil, err
 		}
 	}
-	// Cleanup is deferred (not bound to ctx) so the tempdir survives
-	// SIGINT until the orchestrator's read paths have actually
-	// unwound.
 	if err := c.loadSubstitutions(ctx); err != nil {
 		return nil, nil, err
 	}

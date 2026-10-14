@@ -1,23 +1,24 @@
 package gittree
 
 import (
-	"context"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 )
 
 // benchRepo seeds a source repo with n blobs (a 90/10 small/large mix —
 // small ≤16KB land as in-memory pack objects, large ≥64KB take go-git's
 // FSObject reopen+inflate path), commits them, then CLONES it. A fresh
-// clone stores objects only in a packfile, so Materialize exercises the
+// clone stores objects only in a packfile, so the views exercise the
 // same packfile-backed read path as a production source fetch (a loose
 // PlainInit repo would shadow the pack with unpacked objects and
 // understate the read cost).
@@ -67,34 +68,63 @@ func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 	if err != nil {
 		b.Fatalf("Head: %v", err)
 	}
-	return cloned, head.Hash() // Materialize resolves the commit's tree itself
+	return cloned, head.Hash()
 }
 
-// BenchmarkMaterialize is the gate for the blob-write lock-narrowing.
-// Workers=1 has no lock contention (control); Workers=NumCPU is where
-// moving the per-blob disk write outside the object-read lock can pay
-// off. Compare current-vs-narrowed with benchstat over -count=10; ship
-// the narrowing only on a significant Workers=N improvement.
-func BenchmarkMaterialize(b *testing.B) {
+func BenchmarkView_Packed(b *testing.B) {
 	repo, commit := benchRepo(b, 5000)
-	for _, workers := range []int{1, runtime.NumCPU()} {
-		b.Run(fmt.Sprintf("Workers=%d", workers), func(b *testing.B) {
+	backing := repo.Storer.(*filesystem.Storage).Filesystem()
+	wt, err := repo.Worktree()
+	if err != nil {
+		b.Fatal(err)
+	}
+	current, err := New(b.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: wt.Filesystem})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, name := range []string{"Source", "LazyBase", "SelectedBody", "ReadAll"} {
+		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				b.StopTimer()
-				dst, err := os.MkdirTemp("", "mat-bench-*")
+				opts := ViewOptions{Mode: Source}
+				if name == "LazyBase" || name == "SelectedBody" {
+					opts = ViewOptions{Mode: Direct, Current: current, Changes: []string{"d00/f00000.bin"}}
+				}
+				input, err := New(b.Context(), backing, commit, opts)
 				if err != nil {
 					b.Fatal(err)
 				}
-				b.StartTimer()
-
-				if err := Materialize(context.Background(), repo, commit, dst, Options{Workers: workers}); err != nil {
-					b.Fatalf("Materialize: %v", err)
+				if name == "SelectedBody" {
+					f, err := input.Open("d00/f00000.bin")
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := io.Copy(io.Discard, f); err != nil {
+						b.Fatal(err)
+					}
+					if err := f.Close(); err != nil {
+						b.Fatal(err)
+					}
 				}
-
-				b.StopTimer()
-				_ = os.RemoveAll(dst)
-				b.StartTimer()
+				if name == "ReadAll" {
+					if err := fs.WalkDir(input, ".", func(path string, entry fs.DirEntry, err error) error {
+						if err != nil || entry.IsDir() {
+							return err
+						}
+						f, err := input.Open(path)
+						if err != nil {
+							return err
+						}
+						_, err = io.Copy(io.Discard, f)
+						closeErr := f.Close()
+						if err != nil {
+							return err
+						}
+						return closeErr
+					}); err != nil {
+						b.Fatal(err)
+					}
+				}
 			}
 		})
 	}

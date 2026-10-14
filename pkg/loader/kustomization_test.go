@@ -3,6 +3,7 @@ package loader
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -106,7 +107,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 			l := loaderFixture(store.New(), nil)
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "stray"}
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
-			l.FinalizeIndex(dir, nil)
+			rendererFixture(t, l, dir, nil)
 			if got := l.Index.Records[id].Excluded; got != tc.want {
 				t.Errorf("Excluded(%q) = %v, want %v", tc.file, got, tc.want)
 			}
@@ -147,7 +148,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	if _, name := r.input(filepath.VolumeName(working) + string(filepath.Separator)); name != "." {
 		t.Fatalf("filesystem root name = %q, want dot", name)
 	}
-	r.views = map[string]fs.FS{committed: fstest.MapFS{
+	r.views = map[string]fs.FS{working: os.DirFS(working), committed: fstest.MapFS{
 		"Kustomization": {Data: []byte("namespace: committed\n")},
 	}}
 	first, file := r.read(working)
@@ -185,6 +186,7 @@ func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "components: [old]\n")
 	st := store.New()
+	admitForTest(st, root)
 	ks := &manifest.Kustomization{Name: "apps", Path: "./apps"}
 	st.AddObject(ks)
 	l := New(st)

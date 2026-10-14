@@ -1,8 +1,7 @@
 package baseline
 
 import (
-	"context"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // TestAutoResolve_ExplicitBaseFetchedFromOrigin pins the fetch fallback:
@@ -45,12 +43,12 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := historylessCheckout(t, url, "a.yaml", "pr-tip")
-			res, err := AutoResolve(context.Background(), dir, tc.base, cacheroot.Layout{})
+			res, err := AutoResolve(t.Context(), dir, tc.base, testOwner(t, ""))
 			if err != nil {
 				t.Fatalf("AutoResolve(--base=%s): %v", tc.base, err)
 			}
-			defer func() { _ = os.RemoveAll(res.TempDir) }()
-			got, err := os.ReadFile(filepath.Join(res.TempDir, "a.yaml"))
+
+			got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
 			if err != nil {
 				t.Fatalf("read materialized: %v", err)
 			}
@@ -60,8 +58,8 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 			if res.Rev != shortRev(mainCommit) {
 				t.Errorf("Rev = %q, want %q", res.Rev, shortRev(mainCommit))
 			}
-			if !strings.Contains(res.Source, "fetched from origin") {
-				t.Errorf("Source = %q, want it to say the rev was fetched from origin", res.Source)
+			if !strings.Contains(res.Source.Metadata["baseline-selection"], "fetched from origin") {
+				t.Errorf("Source = %q, want it to say the rev was fetched from origin", res.Source.Metadata["baseline-selection"])
 			}
 			// The checkout is read-only: the fetch lands nowhere near it.
 			if _, err := openHelper(t, dir).CommitObject(mainCommit); err == nil {
@@ -83,11 +81,11 @@ func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
 	initRepoWithFile(t, dir, "a.yaml", "pr-tip")
 	addOrigin(t, dir, filepath.Join(remote, ".git"))
 
-	res, err := AutoResolve(context.Background(), dir, "main", cacheroot.Layout{})
+	res, err := AutoResolve(t.Context(), dir, "main", testOwner(t, ""))
 	if err != nil {
 		t.Fatalf("AutoResolve(--base=main): %v", err)
 	}
-	defer func() { _ = os.RemoveAll(res.TempDir) }()
+
 	if res.Rev != shortRev(mainCommit) {
 		t.Errorf("Rev = %q, want %q", res.Rev, shortRev(mainCommit))
 	}
@@ -100,7 +98,7 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(context.Background(), dir, "nope", cacheroot.Layout{})
+	_, err := AutoResolve(t.Context(), dir, "nope", testOwner(t, ""))
 	if err == nil {
 		t.Fatal("expected error for a rev origin does not have")
 	}
@@ -116,7 +114,7 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
 	dir := historylessCheckout(t, "", "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(context.Background(), dir, "main", cacheroot.Layout{})
+	_, err := AutoResolve(t.Context(), dir, "main", testOwner(t, ""))
 	if err == nil {
 		t.Fatal("expected error without an origin remote")
 	}
@@ -133,7 +131,7 @@ func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(context.Background(), dir, "", cacheroot.Layout{})
+	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
 	if err == nil {
 		t.Fatal("expected error for an unborn HEAD without --base")
 	}

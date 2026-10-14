@@ -56,69 +56,53 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 	return newMatcher(domain, patterns, extra, withDefaults), nil
 }
 
-// NewFromFiles builds a Matcher from absolute .sourceignore paths collected by
-// an existing tree walk. Rules load in the order of
-// github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns: each directory's
-// own file before its lexically ordered subdirectories, skipping only .git.
-// Defaults and extra follow the same policy as New.
-func NewFromFiles(root string, files []string, extra *string, withDefaults bool) (*Matcher, error) {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("sourceignore abs: %w", err)
-	}
-	domain := splitPath(abs)
-	files = slices.Clone(files)
-	slices.SortFunc(files, func(a, b string) int {
-		return slices.Compare(splitPath(filepath.Dir(a)), splitPath(filepath.Dir(b)))
-	})
-	var patterns []gitignore.Pattern
-	for _, file := range files {
-		rel, err := filepath.Rel(abs, filepath.Dir(file))
-		if err != nil {
-			return nil, fmt.Errorf("sourceignore relative path: %w", err)
-		}
-		fileDomain := domain
-		if rel != "." {
-			fileDomain = slices.Concat(domain, splitPath(rel))
-		}
-		ps, err := flux.ReadIgnoreFile(file, fileDomain)
+// NewFS builds Flux policy from a slash-named immutable filesystem.
+// Nil files walks the input; a supplied list MUST contain every relative ignore file.
+// Parent rules MUST precede nested rules, independent of filesystem listing order.
+func NewFS(input fs.FS, files []string, extra string, withDefaults bool) (*Matcher, error) {
+	if files == nil {
+		err := fs.WalkDir(input, ".", func(name string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() && d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			if d.Name() == flux.IgnoreFile {
+				files = append(files, name)
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, fmt.Errorf("sourceignore load: %w", err)
 		}
-		patterns = append(patterns, ps...)
 	}
-	return newMatcher(domain, patterns, extra, withDefaults), nil
-}
-
-// NewFS builds the same Flux policy from a slash-named immutable filesystem.
-func NewFS(input fs.FS, extra string, withDefaults bool) (*Matcher, error) {
+	files = slices.Clone(files)
+	slices.SortFunc(files, func(a, b string) int {
+		a, b = path.Dir(a), path.Dir(b)
+		var left, right []string
+		if a != "." {
+			left = strings.Split(a, "/")
+		}
+		if b != "." {
+			right = strings.Split(b, "/")
+		}
+		return slices.Compare(left, right)
+	})
 	var patterns []gitignore.Pattern
-	err := fs.WalkDir(input, ".", func(name string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() && d.Name() == ".git" {
-			return fs.SkipDir
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		data, err := fs.ReadFile(input, path.Join(name, flux.IgnoreFile))
+	for _, name := range files {
+		data, err := fs.ReadFile(input, name)
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+			continue
 		}
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("sourceignore load: %w", err)
 		}
-		domain := []string{}
-		if name != "." {
-			domain = strings.Split(name, "/")
+		var domain []string
+		if dir := path.Dir(name); dir != "." {
+			domain = strings.Split(dir, "/")
 		}
 		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(string(data)), domain)...)
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("sourceignore load: %w", err)
 	}
 	return newMatcher(nil, patterns, &extra, withDefaults), nil
 }
@@ -143,7 +127,10 @@ func newMatcher(domain []string, patterns []gitignore.Pattern, extra *string, wi
 // Match reports whether rel (a path relative to the matcher's root, using the
 // OS separator) is excluded. isDir distinguishes directory-only patterns.
 func (m *Matcher) Match(rel string, isDir bool) bool {
-	segments := slices.Concat(m.domain, splitPath(rel))
+	segments := splitPath(rel)
+	if len(m.domain) != 0 {
+		segments = slices.Concat(m.domain, segments)
+	}
 	return m.matcher.Match(segments, isDir)
 }
 

@@ -4,6 +4,7 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"os"
 )
 
 func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]string {
@@ -31,4 +32,8 @@ func discoveryLoaderForTest(s *store.Store) *loader.Loader {
 	l := loader.New(s)
 	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	return l
+}
+
+func admitDiscoveryForTest(s *store.Store, root string) {
+	s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 }

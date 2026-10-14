@@ -302,7 +302,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
 	}
-	l.FinalizeIndex(dir, nil)
+	rendererFixture(t, l, dir, nil)
 	idx := l.Index
 
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
@@ -679,7 +679,7 @@ func TestLoader_DotDotPaths(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "repo")
 			dir := filepath.Join(root, tc.path)
 			testutil.WriteFile(t, dir, "kustomization.yaml", "configMapGenerator:\n- name: settings\n  literals: [key=value]\n")
-			documents := documentReader{cache: map[string]document{}}
+			documents := readerForTest(root)
 			documents.read(dir)
 
 			l := &Loader{documents: documents}

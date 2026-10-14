@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func TestNew_PatternDefaults(t *testing.T) {
@@ -64,7 +65,7 @@ func TestNew_PatternDefaults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			for rel, body := range tc.files {
-				write(t, root, rel, body)
+				testutil.WriteFile(t, root, rel, body)
 			}
 			matcher, err := New(root, tc.extra, tc.withDefaults)
 			if err != nil {

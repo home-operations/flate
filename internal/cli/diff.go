@@ -189,12 +189,9 @@ func reportOmittedValues(w io.Writer, warnings []manifest.Warning, label string)
 }
 
 // runDiffOrchestrators resolves the baseline, then hands the
-// two completed runs to selection. Baseline lifetime ends after both renders drain.
+// two completed runs to selection.
 func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (orchestrator.Rendered, orchestrator.Rendered, error) {
-	// diff REQUIRES a baseline — when neither --path-orig nor --base
-	// is set, auto-detect via the merge-base ladder. Cleanup is
-	// deferred (not bound to ctx) so the tempdir survives SIGINT
-	// until both orchestrators' read paths have actually unwound.
+	// Diff requires a baseline. Owner cleanup waits for both sides to join.
 	if err := c.loadSubstitutions(ctx); err != nil {
 		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
 	}
@@ -206,7 +203,7 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (or
 	// RenderTrees compares each scan entry against the other tree's source root.
 	base, head, runErr := orchestrator.RenderTrees(ctx,
 		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
-		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path},
+		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs},
 		buildOrchCfg(*c, *h))
 	return base, head, runErr
 }

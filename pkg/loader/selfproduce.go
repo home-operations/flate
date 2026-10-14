@@ -40,6 +40,9 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 	record := func(v graphVisit) {
 		if v.owner != (manifest.NamedResource{}) {
 			b.idx.Readers[v.coordinate] = appendUniqueProducer(b.idx.Readers[v.coordinate], v.owner)
+			if local := v.localCoordinate(); local != "" {
+				b.idx.Readers[local] = appendUniqueProducer(b.idx.Readers[local], v.owner)
+			}
 		}
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
@@ -138,6 +141,14 @@ type graphVisit struct {
 	peers              []manifest.NamedResource
 	document           *kustomizationDocument
 	readable           bool
+	localAlias         bool
+}
+
+func (v graphVisit) localCoordinate() string {
+	if !v.localAlias {
+		return ""
+	}
+	return strings.TrimPrefix(v.coordinate, v.prefix+"/")
 }
 
 // graphVisits projects each source and namespace separately. Visits borrow cached
@@ -207,7 +218,7 @@ func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scop
 		if ks.IsFragment() {
 			continue
 		}
-		root, _, external := SourceView(l.Store, ks, repoRoot)
+		root, pinned, external := SourceView(l.Store, ks, repoRoot)
 		if external {
 			continue
 		}
@@ -224,6 +235,7 @@ func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scop
 				continue
 			}
 			v.prefix = filepath.ToSlash(prefix)
+			v.localAlias = !pinned
 		}
 		if i, found := grouped[v.graphContext]; found {
 			roots[i].peers = append(roots[i].peers, v.owner)

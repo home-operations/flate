@@ -2,14 +2,16 @@ package sourceignore
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
-func TestNewFromFiles_Parity(t *testing.T) {
+func TestNewFS_Parity(t *testing.T) {
 	cases := []struct {
 		name  string
 		files map[string]string
@@ -52,7 +54,7 @@ func TestNewFromFiles_Parity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			for rel, body := range tc.files {
-				write(t, root, rel, body)
+				testutil.WriteFile(t, root, rel, body)
 			}
 			var files, paths []string
 			err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -79,23 +81,30 @@ func TestNewFromFiles_Parity(t *testing.T) {
 				t.Fatal(err)
 			}
 			slices.Reverse(files)
-			orig := slices.Clone(files)
 			for _, withDefaults := range []bool{false, true} {
 				for _, extra := range []*string{nil, new("!app/keep.tmp\n")} {
 					want, err := New(root, extra, withDefaults)
-					if err != nil {
-						t.Fatal(err)
+					assert.NoError(t, err)
+					var relative []string
+					for _, file := range files {
+						rel, err := filepath.Rel(root, file)
+						assert.NoError(t, err)
+						relative = append(relative, filepath.ToSlash(rel))
 					}
-					got, err := NewFromFiles(root, files, extra, withDefaults)
-					if err != nil {
-						t.Fatal(err)
+					rules := ""
+					if extra != nil {
+						rules = *extra
 					}
-					if !slices.Equal(files, orig) {
-						t.Fatalf("NewFromFiles reordered its input: %v, want %v", files, orig)
-					}
+					orig := slices.Clone(relative)
+					listed, err := NewFS(os.DirFS(root), relative, rules, withDefaults)
+					assert.NoError(t, err)
+					assert.Diff(t, relative, orig)
+					walked, err := NewFS(os.DirFS(root), nil, rules, withDefaults)
+					assert.NoError(t, err)
 					for _, rel := range paths {
 						for _, isDir := range []bool{false, true} {
-							assert.Equal(t, got.Match(rel, isDir), want.Match(rel, isDir))
+							assert.Equal(t, listed.Match(rel, isDir), want.Match(rel, isDir))
+							assert.Equal(t, walked.Match(rel, isDir), want.Match(rel, isDir))
 						}
 					}
 				}

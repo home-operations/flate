@@ -119,7 +119,7 @@ func BenchmarkDetect(b *testing.B) {
 			testutil.WriteFile(b, after, "mod.yaml", "BBB")
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := Detect(before, after); err != nil {
+				if _, err := Detect(b.Context(), testInput(before), testInput(after)); err != nil {
 					b.Fatal(err)
 				}
 			}

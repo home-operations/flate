@@ -2,14 +2,14 @@ package kustomization
 
 import (
 	"errors"
-	"os"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
@@ -65,7 +65,9 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${MISSING}'}\n")
 	st := store.New()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root})
+	input, err := gittree.AdmitDirectory(t.Context(), root)
+	assert.NoError(t, err)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
 	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(), false)
 	c.Configure(Options{StrictSubstitutions: true})
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))

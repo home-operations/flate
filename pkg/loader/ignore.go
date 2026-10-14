@@ -2,6 +2,7 @@ package loader
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,10 @@ import (
 	"strings"
 
 	"github.com/fluxcd/pkg/sourceignore/gitignore"
+	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-git/v5/plumbing"
+
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 // ignoreSet is the matched-rule set from a .krmignore (or .gitignore-style)
@@ -49,12 +54,21 @@ func (r documentReader) loadIgnore(root string) (*ignoreSet, error) {
 // kept elsewhere in the repo (e.g. .krmignore.staging) reads exactly as
 // it would at the scan root. Unlike loadIgnore, a missing file is an
 // error: the caller named it explicitly.
-func (r documentReader) loadIgnoreFile(path, root string) (*ignoreSet, error) {
+func (r documentReader) loadIgnoreFile(ctx context.Context, path, root string) (*ignoreSet, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 	}
 	input, name := r.input(abs)
+	mounted := r.mountedRoot(abs)
+	if mounted == "" {
+		// Only the explicitly named option may admit a file outside source mounts.
+		input, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: osfs.New(filepath.Dir(abs), osfs.WithBoundOS())})
+		if err != nil {
+			return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
+		}
+		name = filepath.Base(abs)
+	}
 	f, err := input.Open(name)
 	if err != nil {
 		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)

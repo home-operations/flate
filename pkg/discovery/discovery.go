@@ -9,19 +9,18 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 // Result summarizes what discovery hydrated into the store.
 type Result struct {
-	// RepoRoot is the resolved working-tree anchor with repository lookup
-	// and symlink resolution applied.
+	// RepoRoot is the bootstrap input's ownership coordinate. Admitted
+	// inputs may use a synthetic label with no corresponding directory.
 	RepoRoot string
 	// Index contains the immutable static discovery facts consumed by rendering.
 	Index *manifest.DiscoveryIndex
@@ -49,8 +48,9 @@ type Config struct {
 	// RepoRoot is the source root that Kustomization spec.path values
 	// resolve against (the GitRepository artifact root). Supplied
 	// explicitly by SDK consumers rendering extracted trees that have no
-	// .git; empty uses the repository containing Path or Path itself
-	// when there is no repository. Path must sit at or under RepoRoot.
+	// .git. Without an admitted bootstrap input, an empty value selects
+	// the repository containing Path or Path itself. A preseeded
+	// input retains its own coordinate. Path must sit at or under RepoRoot.
 	RepoRoot string
 	// SelfURLs are the remote URL(s) this tree represents. A user-authored
 	// GitRepository matching one is the cluster pulling itself: no ref or
@@ -86,7 +86,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// emitRenderedChildren, the orchestrator's orphan-promotion
 	// sweep, or depwait's lazy-promotion fallback.
 	l.Options.DiscoveryOnly = true
-	d := &discoverer{cfg: cfg, loader: l}
+	d := &discoverer{cfg: cfg, loader: l, aliasViews: make(map[string]fs.FS)}
 	repoRoot, err := d.seedBootstrapSource(ctx)
 	if err != nil {
 		return nil, err
@@ -127,6 +127,7 @@ type discoverer struct {
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]*manifest.GitRepository
 	remotes         map[string]struct{}
+	aliasViews      map[string]fs.FS
 	hasPins         bool
 }
 
@@ -141,11 +142,18 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 
 	scanRoot := repoRoot
 	if d.cfg.Path != "" {
-		if abs, err := ResolveScanPath(d.cfg.Path); err == nil {
-			scanRoot = abs
+		var err error
+		scanRoot, err = filepath.Abs(d.cfg.Path)
+		if err != nil {
+			return err
 		}
 	}
-	if info, err := os.Stat(scanRoot); err != nil {
+	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	name, err := filepath.Rel(input.LocalPath, scanRoot)
+	if err != nil {
+		return err
+	}
+	if info, err := fs.Stat(input.FS, filepath.ToSlash(name)); err != nil {
 		return fmt.Errorf("--path %q: %w", d.cfg.Path, err)
 	} else if !info.IsDir() {
 		return fmt.Errorf("--path %q is not a directory", d.cfg.Path)
@@ -223,21 +231,11 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if external && ref.Kind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
 				continue
 			}
-			target := filepath.Join(sourceRoot, filepath.FromSlash(stripDotSlash(ks.Path)))
-			// Canonicalize via EvalSymlinks so two spec.paths that
-			// resolve to the same on-disk directory (one direct, one
-			// through a symlink) share a scanned-set key. Without
-			// this, a symlinked spec.path re-walks an already-scanned
-			// subtree. Best-effort: fall back to the joined path on
-			// any error (typical: target doesn't exist; the existing
-			// pathUnderRoot+Stat check at loadAt handles that).
-			if resolved, err := filepath.EvalSymlinks(target); err == nil {
-				target = resolved
-			}
+			target := filepath.Join(sourceRoot, manifest.NormalizeClaimBase(ks.Path))
 			if _, seen := scanned[target]; seen {
 				continue
 			}
-			if !pathUnderRoot(target, sourceRoot) {
+			if !safepath.Contains(sourceRoot, target) {
 				continue
 			}
 			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
@@ -250,7 +248,11 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		}
 	}
 	l.PreferExisting = false
-	aliased = append(d.aliasMissingKustomizationSources(repoRoot), aliased...)
+	missing, err := d.aliasMissingKustomizationSources(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	aliased = append(missing, aliased...)
 	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
 	return nil
@@ -287,7 +289,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 		if _, pinned := pinnedSources[id]; pinned {
 			continue
 		}
-		if !pathUnderRoot(filepath.Join(repoRoot, filepath.FromSlash(file)), repoRoot) {
+		if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
 			continue
 		}
 		_, owned := manifest.StrictParent(prefixes, file, id, nil)
@@ -334,35 +336,4 @@ func ResolveScanPath(p string) (string, error) {
 		return "", fmt.Errorf("resolve --path %q: %w", p, err)
 	}
 	return resolved, nil
-}
-
-// stripDotSlash strips leading `./` / `/` / bare `.` segments from a
-// Flux spec.path so it can be joined against repoRoot without
-// re-rooting. `..` is preserved — the caller validates traversal via
-// pathUnderRoot.
-func stripDotSlash(p string) string {
-	for {
-		if after, ok := strings.CutPrefix(p, "./"); ok {
-			p = after
-			continue
-		}
-		if after, ok := strings.CutPrefix(p, "/"); ok {
-			p = after
-			continue
-		}
-		if p == "." {
-			return ""
-		}
-		return p
-	}
-}
-
-// pathUnderRoot reports whether target resolves inside root. Both are
-// trailing-slash normalized so a sibling path with a prefix-matching
-// name (`/repo/apps` vs `/repo/apps-staging`) doesn't get a false
-// positive from raw HasPrefix.
-func pathUnderRoot(target, root string) bool {
-	t := filepath.Clean(target) + string(filepath.Separator)
-	r := filepath.Clean(root) + string(filepath.Separator)
-	return strings.HasPrefix(t, r)
 }

@@ -4,7 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -48,6 +50,9 @@ spec: {}
 	idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
 	st := store.New()
 	idx.Store = st
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	assert.NoError(t, err)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true}
 	if !e.Promote(id) || st.GetObject(id) == nil {
 		t.Fatal("selected data must be admitted")
@@ -105,6 +110,9 @@ spec: {url: https://example.test/excluded.git}
 		idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
 	}
 	idx.Store = st
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	assert.NoError(t, err)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true, filter: filter}
 	size := len(filter.KeepNames())
 	if !e.Promote(selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {

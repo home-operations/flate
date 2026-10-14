@@ -1,19 +1,5 @@
-// Package baseline resolves and materializes a git revision into a
-// tempdir so `flate diff` can run without an explicit --path-orig.
-//
-// The user-facing flow: when --path-orig isn't supplied, the CLI
-// calls AutoResolve, which picks the commit to diff against (either
-// the explicit --base=<rev>, or auto-detected via merge-base with the
-// branch's upstream / origin/HEAD / origin/{main,master}) and extracts
-// that commit's tree into a fresh tempdir. The CLI sets --path-orig to
-// that tempdir for the remainder of the diff run, then deletes it on
-// exit. An explicit rev the checkout doesn't hold is fetched from its
-// origin remote into a throwaway bare repo, so a checkout with only a
-// remote and the current files still has a baseline.
-//
-// This package treats the user's checkout as read-only — it opens
-// the existing repo via go-git's object store and does not mutate
-// the working tree, the index, or refs. The materialized tempdir and
-// the fetch's throwaway repo are the only side effects, and they live
-// only for the diff invocation.
+// Package baseline resolves one base revision and admits lazy input views.
+// Metadata and missing changed bodies use the shared cache owner, while
+// unchanged baseline bodies reuse admitted current bytes. The checkout and
+// its Git object store are read-only throughout selection and rendering.
 package baseline

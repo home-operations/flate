@@ -8,8 +8,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/home-operations/flate/pkg/baseline"
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // Tree is one cluster directory to render for comparison. RepoRoot is the
@@ -18,8 +22,8 @@ import (
 // to RepoRoot when empty (a cluster whose Flux entry is a subdir passes the
 // subdir as Path and the root as RepoRoot). SelfURLs are the remote URL(s)
 // the tree represents, for self-referential GitRepository aliasing. A
-// consumer rendering extracted trees with no .git supplies all three
-// explicitly; nothing here is inferred from a .git ancestor.
+// consumer rendering extracted trees with no .git supplies the source root
+// and scan path explicitly.
 type Tree struct {
 	RepoRoot string
 	Path     string
@@ -52,6 +56,7 @@ type Rendered struct {
 // Both sides share the common cache owner and run concurrently. Caller-injected
 // cfg.Cache remains caller-owned; an internal owner closes after both sides stop.
 // cfg.Path, RepoRoot, PathOrig and SelfURLs come from the supplied trees.
+// cfg.BaseInput and cfg.Input supply authoritative base and head bytes, respectively.
 //
 // Both orchestrators are Stopped before return; their Stores remain
 // readable. err is non-nil if either side had any failure; callers that
@@ -68,16 +73,46 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 		}
 		defer func() { err = errors.Join(err, cfg.Cache.Close()) }()
 	}
+	inputs := [2]*store.SourceArtifact{cfg.BaseInput, cfg.Input}
+	directoryInputs := inputs[0] == nil && inputs[1] == nil
+	for i, side := range []*Tree{&baseTree, &headTree} {
+		if inputs[i] == nil {
+			path := cmp.Or(side.Path, side.RepoRoot)
+			if path == "" {
+				return base, head, fmt.Errorf("%w: tree path is required", manifest.ErrInput)
+			}
+			inputs[i], side.Path, err = baseline.AdmitDirectory(ctx, path, side.RepoRoot)
+			if err != nil {
+				return base, head, err
+			}
+		}
+		if inputs[i].FS == nil || inputs[i].LocalPath == "" {
+			return base, head, fmt.Errorf("%w: tree input content unavailable", manifest.ErrInput)
+		}
+		side.RepoRoot = inputs[i].LocalPath
+	}
+	sameDirectory := directoryInputs && baseTree.RepoRoot == headTree.RepoRoot
+	if cfg.ExternalChanges == nil && !sameDirectory {
+		cfg.ExternalChanges, err = change.Detect(ctx, inputs[0], inputs[1])
+		if err != nil {
+			return base, head, err
+		}
+	}
 	baseCfg := cfg
 	baseCfg.RepoRoot = baseTree.RepoRoot
 	baseCfg.Path = cmp.Or(baseTree.Path, baseTree.RepoRoot)
 	baseCfg.PathOrig = headTree.RepoRoot
 	baseCfg.SelfURLs = baseTree.SelfURLs
+	baseCfg.Input, baseCfg.BaseInput = inputs[0], inputs[1]
 	headCfg := cfg
 	headCfg.RepoRoot = headTree.RepoRoot
 	headCfg.Path = cmp.Or(headTree.Path, headTree.RepoRoot)
 	headCfg.PathOrig = baseTree.RepoRoot
 	headCfg.SelfURLs = headTree.SelfURLs
+	headCfg.Input, headCfg.BaseInput = inputs[1], inputs[0]
+	if sameDirectory {
+		baseCfg.BaseInput, headCfg.BaseInput = baseCfg.Input, headCfg.Input
+	}
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {

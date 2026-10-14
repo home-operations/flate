@@ -1,81 +1,71 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/url"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// seedBootstrapSource initializes source identity before discovery reads it.
+// seedBootstrapSource retains an admitted bootstrap input or admits a standalone
+// working tree. LocalPath is the source coordinate, never a fallback disk read.
 func (d *discoverer) seedBootstrapSource(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("%w: initialize discovery: %w", manifest.ErrFlux, err)
+	id := manifest.BootstrapSourceID
+	admitted, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
+	root := d.cfg.RepoRoot
+	if admitted != nil {
+		root = cmp.Or(admitted.LocalRoot, admitted.LocalPath)
 	}
-	abs, err := ResolveScanPath(d.cfg.Path)
-	if err != nil {
-		return "", err
-	}
-	root := abs
-	if d.cfg.RepoRoot != "" {
-		root, err = ResolveScanPath(d.cfg.RepoRoot)
+	urls := d.cfg.SelfURLs
+	if root == "" || len(urls) == 0 {
+		abs, err := ResolveScanPath(cmp.Or(root, d.cfg.Path))
 		if err != nil {
 			return "", err
 		}
-	}
-	urls := d.cfg.SelfURLs
-	if d.cfg.RepoRoot == "" || len(urls) == 0 {
-		located, repo, _ := gitrepo.Locate(root)
-		if d.cfg.RepoRoot == "" && located != "" {
-			root = located
+		located, repo, _ := gitrepo.Locate(abs)
+		if root == "" {
+			root = cmp.Or(located, abs)
 		}
 		if len(urls) == 0 && repo != nil {
 			urls, _ = gitrepo.RemoteURLs(repo)
 		}
 	}
+	if admitted == nil {
+		var err error
+		admitted, d.cfg.Path, err = baseline.AdmitDirectory(ctx, d.cfg.Path, root)
+		if err != nil {
+			return "", err
+		}
+		d.cfg.Store.SetArtifact(id, admitted)
+	}
+	if admitted.FS == nil || admitted.LocalPath == "" {
+		return "", fmt.Errorf("%w: bootstrap source input is unavailable", manifest.ErrInput)
+	}
 	if len(urls) > 0 {
 		d.remotes = make(map[string]struct{}, len(urls))
 		addNormalizedRemotes(d.remotes, urls...)
 	}
-	input, err := source.NewLocalFS(ctx, root)
-	if err != nil {
-		return "", err
-	}
-	id := manifest.BootstrapSourceID
-	// Always seed the artifact + status: even if the user authored a
-	// GitRepository at this id (the `flux bootstrap` pattern), the
-	// canonical reference for spec.path resolution is the local
-	// working tree, not whatever URL the manifest declares. The
-	// artifact supplies content before consumers and indexes are built.
-	d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
-		Kind: manifest.KindGitRepository,
-		URL:  "file://" + root, LocalPath: root, FS: input,
-	})
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap")
-	// Only publish the synthetic object when no user-authored
-	// equivalent exists. If the user has their own
-	// GitRepository/flux-system/flux-system in the tree, the loader's
-	// first pass (PreferExisting=false at this point) would otherwise
-	// overwrite this synthetic immediately and leave object↔artifact
-	// out of sync when overrideSelfReferentialGitRepositories doesn't
-	// fire (no remote URL match).
 	if d.cfg.Store.GetObject(id) == nil {
-		repo := &manifest.GitRepository{
-			Name: id.Name, Namespace: id.Namespace,
-			URL: "file://" + root,
-		}
-		d.cfg.Store.AddObject(repo)
+		d.cfg.Store.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + admitted.LocalPath})
 	}
-	return root, nil
+	return admitted.LocalPath, nil
 }
 
 // aliasMissingKustomizationSources supplies missing Git sourceRefs because
@@ -86,7 +76,7 @@ func (d *discoverer) seedBootstrapSource(ctx context.Context) (string, error) {
 // of namespace. The accepted trade-off is that a typo'd sourceRef renders
 // against the working tree instead of failing fast.
 // Returns working-tree alias IDs for the combined multi-source warning.
-func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifest.NamedResource {
+func (d *discoverer) aliasMissingKustomizationSources(ctx context.Context, repoRoot string) ([]manifest.NamedResource, error) {
 	// existing doubles as a dedup set: after a successful publish we add
 	// the new id so repeated sourceRefs across KSes are skipped without
 	// a second map.
@@ -100,23 +90,34 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 		if _, ok := existing[id]; ok {
 			continue
 		}
-		if !d.publishBootstrapAlias(id, repoRoot) {
+		published, err := d.publishBootstrapAlias(ctx, id, repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		if !published {
 			continue
 		}
 		existing[id] = struct{}{}
 		aliased = append(aliased, id)
 	}
-	return aliased
+	return aliased, nil
 }
 
 // overrideSelfReferentialGitRepositories satisfies matching file-loaded
 // GitRepositories locally: the cluster pulling itself. Real Flux fetches that
 // URL with a SOPS-decrypted deploy key; offline rendering must use available
-// local trees. No ref or HEAD uses the checkout; another locally available ref
-// uses the committed artifact. Unavailable refs or non-HEAD sparse/submodule
-// options must warn and fetch normally.
+// local trees. No ref aliases this side; HEAD aliases only a matching side.
+// Other locally available refs use committed artifacts with source shaping.
+// Unavailable refs or committed-side submodules must warn and fetch normally.
 // Returns only working-tree aliases for the combined multi-source warning.
 func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context, repoRoot string) ([]manifest.NamedResource, error) {
+	lookupRoot, sideRevision := repoRoot, ""
+	if bootstrap, ok := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact); ok {
+		sideRevision = bootstrap.Revision
+		if bootstrap.LocalRoot != "" {
+			lookupRoot = bootstrap.LocalRoot
+		}
+	}
 	remotes := d.remotes
 	debugLogRemotes(remotes)
 	if len(remotes) == 0 {
@@ -136,7 +137,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 			pinned = append(pinned, repo)
 		}
 	}
-	artifacts, err := git.ResolveLocal(ctx, repoRoot, pinned)
+	artifacts, err := git.ResolveLocal(ctx, lookupRoot, pinned, sideRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +165,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 					"reason", "ref unavailable in this tree's repository or checkout options require fetching")
 				continue
 			}
-			if artifact.LocalPath != repoRoot {
+			if artifact.LocalPath != lookupRoot {
 				d.hasPins = true
 				artifact.LocalRoot = repoRoot
 				d.cfg.Store.SetArtifact(id, artifact)
@@ -172,11 +173,9 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 				continue
 			}
 		}
-		d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
-			Kind: manifest.KindGitRepository,
-			URL:  "file://" + repoRoot, LocalPath: repoRoot,
-			FS: d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).FS,
-		})
+		if _, err := d.publishBootstrapAlias(ctx, id, repoRoot); err != nil {
+			return nil, err
+		}
 		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
 		slog.Debug("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
 			"id", id.String(), "url", repo.URL, "normalizedKey", normalized, "localPath", repoRoot)
@@ -185,23 +184,55 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 	return overridden, nil
 }
 
-// publishBootstrapAlias inserts a synthetic source CR plus its
-// working-tree SourceArtifact under id. Returns false when id.Kind
-// isn't a kind aliasing knows how to materialize.
-func (d *discoverer) publishBootstrapAlias(id manifest.NamedResource, repoRoot string) bool {
+// publishBootstrapAlias gives Flux aliases source-qualified labels while
+// LocalRoot retains this side's claim origin. Mutable aliases MUST keep Key
+// empty; the bootstrap artifact MUST retain its direct-input semantics.
+func (d *discoverer) publishBootstrapAlias(ctx context.Context, id manifest.NamedResource, repoRoot string) (bool, error) {
 	obj, url, ok := newBootstrapAlias(id, repoRoot)
 	if !ok {
-		return false
+		return false, nil
+	}
+	if id == manifest.BootstrapSourceID {
+		return true, nil
+	}
+	bootstrap := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	if existing := d.cfg.Store.GetObject(id); existing != nil {
+		obj = existing
+	}
+	repo := obj.(*manifest.GitRepository)
+	ignore := ""
+	if repo.Ignore != nil {
+		ignore = *repo.Ignore
+	}
+	tuple := []string{repoRoot, bootstrap.LocalRoot, bootstrap.Key, "source", ignore, strconv.FormatBool(repo.RecurseSubmodules)}
+	viewKey := manifest.Fingerprint(append(tuple, repo.SparseCheckout...))
+	viewRoot := filepath.Join(filepath.Dir(repoRoot), ".flate-sources", viewKey)
+	input := d.aliasViews[viewKey]
+	if input == nil {
+		var err error
+		input, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, Ignore: ignore, Sparse: repo.SparseCheckout})
+		if err != nil {
+			return false, err
+		}
+		if d.aliasViews == nil {
+			d.aliasViews = make(map[string]fs.FS)
+		}
+		d.aliasViews[viewKey] = input
+	}
+
+	artifact := *bootstrap
+	artifact.Kind, artifact.URL, artifact.FS = id.Kind, url, input
+	artifact.InputAlias = true
+	artifact.LocalPath = filepath.Join(viewRoot, id.Namespace, id.Name)
+	artifact.LocalRoot = repoRoot
+	if bootstrap.Key != "" {
+		artifact.Key = manifest.Fingerprint([]string{viewKey, id.Namespace, id.Name})
 	}
 	d.cfg.Store.AddObject(obj)
-	d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
-		Kind: id.Kind, URL: url, LocalPath: repoRoot,
-		FS: d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).FS,
-	})
+	d.cfg.Store.SetArtifact(id, &artifact)
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias")
-	slog.Debug("discovery: aliased bootstrap source",
-		"id", id.String(), "localPath", repoRoot)
-	return true
+	slog.Debug("discovery: aliased bootstrap source", "id", id.String(), "localPath", artifact.LocalPath)
+	return true, nil
 }
 
 // newBootstrapAlias builds the synthetic source manifest for id and

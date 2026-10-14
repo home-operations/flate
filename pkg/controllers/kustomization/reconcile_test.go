@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -13,10 +12,12 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -43,9 +44,9 @@ data: {greeting: hi}
 		URL: "file://" + root,
 	}
 	s.AddObject(bootstrap)
-	s.SetArtifact(bootstrap.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + root, FS: os.DirFS(root), LocalPath: root,
-	})
+	input, err := gittree.AdmitDirectory(t.Context(), root)
+	assert.NoError(t, err)
+	s.SetArtifact(bootstrap.Named(), input)
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
 	cache := kustomize.NewTreeCache()

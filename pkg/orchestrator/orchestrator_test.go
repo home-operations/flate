@@ -1471,7 +1471,7 @@ data: {k: v}
 // Pre-fix the deferred Stop didn't exist, so the probe would still
 // run and flip `probeFired` to true — flagging the leak.
 func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
-	// Non-existent path forces Bootstrap -> discovery.Run -> os.Stat
+	// Non-existent path forces Bootstrap -> discovery.Run -> fs.Stat
 	// to fail, which is the canonical (nil, err) embed path.
 	o, err := New(Config{Path: "/nonexistent/orchestrator-render-cleanup", WipeSecrets: true})
 	if err != nil {

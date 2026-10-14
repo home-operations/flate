@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"io/fs"
+	"os"
 	"slices"
 	"testing"
 
@@ -20,11 +22,22 @@ func loaderFixture(s *store.Store, files map[manifest.NamedResource]string) *Loa
 }
 
 func stampForTest(s *store.Store, files map[manifest.NamedResource]string, root string) {
-	loaderFixture(s, files).stampTransformerTargetNamespaces(root)
+	l := loaderFixture(s, files)
+	l.documents = readerForTest(root)
+	l.stampTransformerTargetNamespaces(root)
+}
+
+func readerForTest(root string) documentReader {
+	return documentReader{cache: map[string]document{}, views: map[string]fs.FS{root: os.DirFS(root)}}
+}
+
+func admitForTest(s *store.Store, root string) {
+	s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 }
 
 func rendererFixture(t *testing.T, l *Loader, root string, producers *manifest.ProducerIndex) *manifest.DiscoveryIndex {
 	t.Helper()
+	admitForTest(l.Store, root)
 	l.FinalizeIndex(root, producers)
 	return l.Index
 }
@@ -91,7 +104,7 @@ func TestFinalizeIndex_DataOwners(t *testing.T) {
 			st.AddObject(overlay)
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: tc.namespace}
 			l := loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
-			l.FinalizeIndex(root, nil)
+			rendererFixture(t, l, root, nil)
 			projected := id
 			projected.Namespace = "apps"
 			r, _ := l.Index.Lookup(projected)

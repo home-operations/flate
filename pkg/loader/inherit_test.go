@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/source/gittree"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -17,12 +21,17 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 		name   string
 		hrDir  string
 		pinned bool
+		alias  bool
 		files  map[string]string
 		scans  []string
 		want   []string
 	}{
 		{name: "pinned_namespace", pinned: true, files: map[string]string{
 			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: pinned, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"apps/kustomization.yaml": "namespace: dirty\nresources: [hr.yaml]\n",
+		}, scans: []string{"flux", "apps"}, want: []string{"apps"}},
+		{name: "alias_namespace", alias: true, files: map[string]string{
+			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
 			"apps/kustomization.yaml": "namespace: dirty\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"apps"}},
 		{name: "standalone", files: map[string]string{
@@ -87,10 +96,22 @@ spec:
 `)
 				l := loaderFixture(store.New(), nil)
 				l.SourceRoot, l.Options.DiscoveryOnly = root, deferred
+				if tc.alias {
+					input, err := gittree.AdmitDirectory(t.Context(), root)
+					assert.NoError(t, err)
+					l.Store.SetArtifact(manifest.BootstrapSourceID, input)
+					view, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+					assert.NoError(t, err)
+					id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+					l.Store.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + root})
+					l.Store.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, LocalRoot: root, LocalPath: filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name), InputAlias: true, FS: view})
+				}
 				if tc.pinned {
 					artifact := t.TempDir()
 					testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: []\n")
-					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, FS: os.DirFS(artifact), LocalPath: artifact})
+					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, LocalPath: artifact, Key: "pinned", FS: os.DirFS(artifact)})
+					l.documents = readerForTest(root)
+					l.documents.views[artifact] = os.DirFS(artifact)
 					l.documents.read(filepath.Join(artifact, "apps"))
 				}
 				for _, scan := range tc.scans {

@@ -21,11 +21,12 @@ import (
 )
 
 // ResolveLocal resolves matching authored sources against root's own repository.
-// A root-path artifact preserves working-tree edits; a committed artifact's
+// An empty sideRevision permits working-tree edits; an immutable side may alias
+// HEAD only when its revision matches. A committed artifact's
 // FS supplies its bytes and LocalPath labels ownership. Missing entries require
 // normal fetching. Invalid input, unusable objects and view-construction failures
 // return domain errors.
-func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository) (map[manifest.NamedResource]*store.SourceArtifact, error) {
+func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository, sideRevision string) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
 	}
@@ -91,7 +92,7 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		if r.err != nil {
 			return nil, localError(repository, r.err)
 		}
-		if r.hash == head {
+		if r.hash == head && (sideRevision == "" || sideRevision == r.hash.String()) {
 			if local == nil {
 				input, err := source.NewLocalFS(ctx, root)
 				if err != nil {

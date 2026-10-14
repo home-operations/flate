@@ -13,18 +13,11 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
 // allowlistIgnore is the mono-repo .sourceignore shape from #936: exclude
 // everything at the root, re-include the manifest directories.
 const allowlistIgnore = "# Exclude all\n/*\n# Include manifest directories\n!/clusters/\n!/charts/x/\n"
-
-func testIgnoreFS(t *testing.T, root string) filesys.FileSystem {
-	t.Helper()
-	return testIgnoreTreeFS(t, root)
-}
 
 func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 	root := writeTree(t, map[string]string{
@@ -35,7 +28,7 @@ func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 		"charts/y/Chart.yaml":   "name: y\n",
 		"README.md":             "hi\n",
 	})
-	ig := testIgnoreFS(t, root)
+	ig := testIgnoreTreeFS(t, root)
 	abs := func(rel string) string { return filepath.Join(root, rel) }
 
 	cases := []struct {
@@ -190,11 +183,7 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 	if strings.Contains(string(out1), "name: b") {
 		t.Fatalf("b.yaml should be excluded; got %s", out1)
 	}
-	_, ignoreKey, err := source.ReadView(t.Context(), localSource(t, root).FS, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := cache.render.renderKey(demoRawSpec, root, ".", ignoreKey)
+	key := cache.render.renderKey(demoRawSpec, root, ".", "source")
 	snap, _, ok := cache.render.get(key)
 	if !ok {
 		t.Fatal("first render did not populate the cache")

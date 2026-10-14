@@ -67,6 +67,8 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			}
 			l := loaderFixture(st, nil)
 			l.Options.WipeSecrets = tc.wipe
+			l.documents = readerForTest(root)
+			admitForTest(st, root)
 			l.documents.read(filepath.Join(root, "apps/a"))
 			l.FinalizeIndex(root, nil)
 			obj := st.GetObject(id)

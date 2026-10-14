@@ -331,7 +331,7 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization, level manifest.Dr
 			}
 			return nil, false, fmt.Errorf("%w: source %s artifact content unavailable", manifest.ErrObjectNotFound, srcID)
 		}
-		return sa, sa.Digest == "" && sa.Revision == "", nil
+		return sa, srcID == manifest.BootstrapSourceID || sa.Digest == "" && sa.Revision == "", nil
 	}
 	return nil, false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
 		manifest.ErrFlux, art, srcID.String())

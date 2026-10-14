@@ -21,7 +21,7 @@ func BenchmarkFinalizeIndex_WideDirectory(b *testing.B) {
 		files[manifest.NamedResource{Kind: manifest.KindConfigMap, Name: file}] = file
 	}
 	testutil.WriteFile(b, root, "kustomization.yaml", "resources:\n"+resources.String())
-	documents := documentReader{cache: map[string]document{}}
+	documents := readerForTest(root)
 	documents.read(root)
 	b.ReportAllocs()
 	for b.Loop() {

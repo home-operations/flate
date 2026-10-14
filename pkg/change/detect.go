@@ -1,20 +1,22 @@
 package change
 
 import (
+	"context"
 	"crypto/sha256"
-	"errors"
+	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"sync"
 
-	fluxignore "github.com/fluxcd/pkg/sourceignore"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // Set is the immutable result of Detect — the set of file paths
@@ -59,218 +61,166 @@ func (s *Set) Contains(rel string) bool {
 	return ok
 }
 
-// Detect returns the set of repo-relative file paths that differ between
-// before and after, using each tree's own Flux sourceignore rules. File contents,
-// additions, deletions, entry types and symlink targets participate in the diff.
-func Detect(before, after string) (*Set, error) {
-	if before == "" || after == "" {
-		return nil, errors.New("change.Detect: both paths required")
+// Detect compares admitted filesystems under each side's Flux ignore policy.
+func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, error) {
+	if before == nil || after == nil || before.FS == nil || after.FS == nil {
+		return nil, fmt.Errorf("%w: both admitted inputs required", manifest.ErrInput)
 	}
-	before, err := filepath.Abs(before)
-	if err != nil {
-		return nil, err
-	}
-	after, err = filepath.Abs(after)
-	if err != nil {
-		return nil, err
-	}
-	var (
-		eg       errgroup.Group
-		beforeFS map[string]fileMeta
-		afterFS  map[string]fileMeta
-	)
+	var bef, aft map[string]fileMeta
+	eg, scanCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		tree, err := scanTree(before, after)
-		beforeFS = tree
+		var err error
+		bef, err = scanTree(scanCtx, before, after)
 		return err
 	})
 	eg.Go(func() error {
-		tree, err := scanTree(after, before)
-		afterFS = tree
+		var err error
+		aft, err = scanTree(scanCtx, after, before)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-
-	paths := make(map[string]struct{}, len(afterFS)/8)
+	paths := make(map[string]struct{}, len(aft)/8)
 	type hashJob struct {
-		rel                 string
-		beforeAbs, afterAbs string
-		// symlink applies to both sides: a job is only queued when the
-		// before/after entry kinds agree (a type swap is handled above).
-		symlink bool
+		name    string
+		changed bool
 	}
-	var hashJobs []hashJob
-
-	for rel, aft := range afterFS {
-		bef, ok := beforeFS[rel]
-		if !ok {
-			paths[rel] = struct{}{}
+	var jobs []hashJob
+	for name, right := range aft {
+		left, ok := bef[name]
+		if !ok || left.size != right.size {
+			paths[name] = struct{}{}
 			continue
 		}
-		if bef.symlink != aft.symlink {
-			paths[rel] = struct{}{}
-			continue
+		jobs = append(jobs, hashJob{name: name})
+	}
+	for name := range bef {
+		if _, ok := aft[name]; !ok {
+			paths[name] = struct{}{}
 		}
-		if bef.size != aft.size {
-			paths[rel] = struct{}{}
-			continue
-		}
-		// Coarse filesystem timestamps cannot establish content equality.
-		hashJobs = append(hashJobs, hashJob{
-			rel: rel, beforeAbs: bef.abs, afterAbs: aft.abs,
-			symlink: aft.symlink,
+	}
+	hg, hashCtx := errgroup.WithContext(ctx)
+	const hashWorkers = 8
+	for worker := range min(hashWorkers, len(jobs)) {
+		hg.Go(func() error {
+			for i := worker; i < len(jobs); i += hashWorkers {
+				if err := hashCtx.Err(); err != nil {
+					return err
+				}
+				job := &jobs[i]
+				b, err := hashFile(hashCtx, before.FS, job.name)
+				if err != nil {
+					return err
+				}
+				a, err := hashFile(hashCtx, after.FS, job.name)
+				if err != nil {
+					return err
+				}
+				job.changed = a != b
+			}
+			return nil
 		})
 	}
-	for rel := range beforeFS {
-		if _, ok := afterFS[rel]; !ok {
-			paths[rel] = struct{}{}
+	if err := hg.Wait(); err != nil {
+		return nil, err
+	}
+	for _, job := range jobs {
+		if job.changed {
+			paths[job.name] = struct{}{}
 		}
 	}
-
-	if len(hashJobs) > 0 {
-		var mu sync.Mutex
-		var hg errgroup.Group
-		const hashWorkers = 8
-		jobs := make(chan hashJob, len(hashJobs))
-		for range hashWorkers {
-			hg.Go(func() error {
-				for j := range jobs {
-					b, err := hashEntry(j.beforeAbs, j.symlink)
-					if err != nil {
-						return err
-					}
-					a, err := hashEntry(j.afterAbs, j.symlink)
-					if err != nil {
-						return err
-					}
-					if a != b {
-						mu.Lock()
-						paths[j.rel] = struct{}{}
-						mu.Unlock()
-					}
-				}
-				return nil
-			})
-		}
-		for _, j := range hashJobs {
-			jobs <- j
-		}
-		close(jobs)
-		if err := hg.Wait(); err != nil {
-			return nil, err
-		}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
 	return &Set{paths: paths}, nil
 }
 
 type fileMeta struct {
-	size    int64
-	abs     string
-	symlink bool
+	size int64
 }
 
-// scanTree must descend excluded directories so deeper re-includes survive,
-// mirroring github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns,
-// which loads each directory's own file before subdirectories and skips only .git.
-// The opposite snapshot and .git metadata never belong to the artifact view.
-func scanTree(root, opposite string) (map[string]fileMeta, error) {
-	out := map[string]fileMeta{}
-	var ignoreFiles []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+// Excluded directories MUST still be traversed so deeper .sourceignore re-includes
+// survive, matching github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns.
+func scanTree(ctx context.Context, input, opposite *store.SourceArtifact) (map[string]fileMeta, error) {
+	out := make(map[string]fileMeta)
+	scoped := input.FS
+	oppositeName, err := filepath.Rel(input.LocalPath, opposite.LocalPath)
+	if err == nil {
+		oppositeName = filepath.ToSlash(oppositeName)
+	}
+
+	files := []string{}
+	err = fs.WalkDir(scoped, ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p != root && (p == opposite || d.Name() == ".git") {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if name != "." && (d.Name() == ".git" || name == oppositeName) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
 		}
+		if d.Name() == ".sourceignore" {
+			files = append(files, name)
+		}
 		if d.IsDir() {
 			return nil
 		}
-		if d.Name() == fluxignore.IgnoreFile {
-			ignoreFiles = append(ignoreFiles, p)
-		}
-		typ := d.Type()
-		// Regular files and symlinks both participate in the diff;
-		// other entry kinds (sockets, devices, named pipes) don't
-		// land in a Flux tree and would confuse the comparison.
-		isLink := typ&fs.ModeSymlink != 0
-		if !typ.IsRegular() && !isLink {
-			return nil
-		}
-		rel, err := filepath.Rel(root, p)
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		out[filepath.ToSlash(rel)] = fileMeta{
-			abs:     p,
-			symlink: isLink,
-		}
+		out[name] = fileMeta{size: info.Size()}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	// Opposite-snapshot rules must not disable this side's Flux defaults.
-	matcher, err := sourceignore.NewFromFiles(root, ignoreFiles, nil, true)
+	matcher, err := sourceignore.NewFS(scoped, files, "", true)
 	if err != nil {
 		return nil, err
 	}
-	for rel, meta := range out {
-		if matcher.Match(rel, false) {
-			delete(out, rel)
-			continue
+	for name := range out {
+		if matcher.Match(filepath.FromSlash(name), false) {
+			delete(out, name)
 		}
-		// Lstat preserves the link's own size for comparison via readlink.
-		info, err := os.Lstat(meta.abs)
-		if err != nil {
-			return nil, err
-		}
-		meta.size = info.Size()
-		out[rel] = meta
 	}
 	return out, nil
 }
 
-// Symlinks are compared without following them because flate renders in-root
-// links. github.com/fluxcd/pkg/artifact v0.18.3 storage.Storage.Archive
-// (storage/archive.go) omits non-regular files; changing that render-parity gap
-// must also change detection's treatment of links.
-func hashEntry(path string, isSymlink bool) ([sha256.Size]byte, error) {
-	if isSymlink {
-		target, err := os.Readlink(path)
-		if err != nil {
-			return [sha256.Size]byte{}, err
-		}
-		return sha256.Sum256([]byte(target)), nil
-	}
-	return hashFile(path)
+type hashBuffer struct {
+	io.Reader
+	hash  hash.Hash
+	bytes [32 * 1024]byte
+	sum   [sha256.Size]byte
 }
 
 var hashBuffers = sync.Pool{New: func() any {
-	buf := make([]byte, 32*1024)
-	return &buf
+	return &hashBuffer{hash: sha256.New()}
 }}
 
-func hashFile(path string) ([sha256.Size]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // path is a tree-walk result, not user-controlled
+func hashFile(_ context.Context, input fs.FS, name string) ([sha256.Size]byte, error) {
+	f, err := input.Open(name)
 	if err != nil {
 		return [sha256.Size]byte{}, err
 	}
 	defer func() { _ = f.Close() }()
-	h := sha256.New()
-	buf := hashBuffers.Get().(*[]byte)
-	defer hashBuffers.Put(buf)
+	buf := hashBuffers.Get().(*hashBuffer)
+	buf.Reader = f
+	defer func() {
+		buf.Reader = nil
+		hashBuffers.Put(buf)
+	}()
+	h := buf.hash
+	h.Reset()
 	// Hide File.WriteTo so CopyBuffer uses the pooled buffer.
-	if _, err := io.CopyBuffer(h, struct{ io.Reader }{f}, *buf); err != nil {
+	if _, err := io.CopyBuffer(h, buf, buf.bytes[:]); err != nil {
 		return [sha256.Size]byte{}, err
 	}
-	var sum [sha256.Size]byte
-	h.Sum(sum[:0])
-	return sum, nil
+	h.Sum(buf.sum[:0])
+	return buf.sum, nil
 }

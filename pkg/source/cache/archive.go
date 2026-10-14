@@ -216,7 +216,7 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 }
 
 func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
-	matcher, err := sourceignore.NewFS(raw, key.Ignore, key.WithDefaults)
+	matcher, err := sourceignore.NewFS(raw, nil, key.Ignore, key.WithDefaults)
 	if err != nil {
 		return err
 	}

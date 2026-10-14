@@ -1,11 +1,18 @@
 package change
 
 import (
+	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func writeFile(t *testing.T, dir, rel, body string) {
@@ -20,10 +27,10 @@ func writeFile(t *testing.T, dir, rel, body string) {
 }
 
 func TestDetect_BothPathsRequired(t *testing.T) {
-	if _, err := Detect("", "/tmp/x"); err == nil {
+	if _, err := Detect(t.Context(), testInput(""), testInput("/tmp/x")); err == nil {
 		t.Errorf("expected error for empty before")
 	}
-	if _, err := Detect("/tmp/x", ""); err == nil {
+	if _, err := Detect(t.Context(), testInput("/tmp/x"), testInput("")); err == nil {
 		t.Errorf("expected error for empty after")
 	}
 }
@@ -33,7 +40,7 @@ func TestDetect_IdenticalTreesEmpty(t *testing.T) {
 	after := t.TempDir()
 	writeFile(t, before, "a.yaml", "x")
 	writeFile(t, after, "a.yaml", "x")
-	got, err := Detect(before, after)
+	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
@@ -60,7 +67,7 @@ func TestDetect_AddedRemovedModified(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	got, err := Detect(before, after)
+	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
@@ -76,7 +83,7 @@ func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
 	after := t.TempDir()
 	writeFile(t, before, "f.yaml", "small")
 	writeFile(t, after, "f.yaml", "this is a larger payload")
-	got, err := Detect(before, after)
+	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
@@ -94,7 +101,7 @@ func TestDetect_HiddenScanRoot(t *testing.T) {
 	writeFile(t, before, "mod.yaml", "old")
 	writeFile(t, after, "mod.yaml", "new")
 
-	got, err := Detect(before, after)
+	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
@@ -125,7 +132,7 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 		t.Fatalf("chtimes after: %v", err)
 	}
 
-	got, err := Detect(before, after)
+	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
@@ -139,15 +146,15 @@ func TestHashFile(t *testing.T) {
 	writeFile(t, dir, "a", "hello")
 	writeFile(t, dir, "b", "hello")
 	writeFile(t, dir, "c", "different")
-	ha, err := hashFile(filepath.Join(dir, "a"))
+	ha, err := hashFile(t.Context(), os.DirFS(dir), "a")
 	if err != nil {
 		t.Fatalf("hashFile a: %v", err)
 	}
-	hb, err := hashFile(filepath.Join(dir, "b"))
+	hb, err := hashFile(t.Context(), os.DirFS(dir), "b")
 	if err != nil {
 		t.Fatalf("hashFile b: %v", err)
 	}
-	hc, err := hashFile(filepath.Join(dir, "c"))
+	hc, err := hashFile(t.Context(), os.DirFS(dir), "c")
 	if err != nil {
 		t.Fatalf("hashFile c: %v", err)
 	}
@@ -159,37 +166,66 @@ func TestHashFile(t *testing.T) {
 	}
 }
 
-func TestDetect_Symlinks(t *testing.T) {
-	t.Setenv("PATH", "")
-	cases := []struct {
-		name                      string
-		beforeTarget, afterTarget string
-		afterRegular              bool
-	}{
-		{name: "same_length_retarget", beforeTarget: "target-A", afterTarget: "target-B"},
-		{name: "different_length_retarget", beforeTarget: "target", afterTarget: "other-target"},
-		{name: "regular_type_swap", beforeTarget: "target", afterTarget: "target", afterRegular: true},
+func testInput(root string) *store.SourceArtifact {
+	if root == "" {
+		return nil
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			before, after := t.TempDir(), t.TempDir()
-			if err := os.Symlink(tc.beforeTarget, filepath.Join(before, "link")); err != nil {
-				t.Fatal(err)
+	return &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+}
+
+func TestDetect_MissingInputsWrapInput(t *testing.T) {
+	for _, input := range []*store.SourceArtifact{nil, {}} {
+		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}})
+		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			t.Fatalf("missing input error=%v", err)
+		}
+	}
+}
+
+func TestDetect_LastBodyCancellation(t *testing.T) {
+	for _, side := range []string{"before", "after"} {
+		t.Run(side, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			input := fstest.MapFS{"file.yaml": {Data: []byte("same")}}
+			before := &store.SourceArtifact{FS: input}
+			after := &store.SourceArtifact{FS: input}
+			cancelled := &cancellingInput{FS: input, cancel: cancel}
+			if side == "before" {
+				before.FS = cancelled
+			} else {
+				after.FS = cancelled
 			}
-			if tc.afterRegular {
-				writeFile(t, after, "link", tc.afterTarget)
-			} else if err := os.Symlink(tc.afterTarget, filepath.Join(after, "link")); err != nil {
-				t.Fatal(err)
-			}
-			for _, roots := range [][2]string{{before, after}, {after, before}} {
-				got, err := Detect(roots[0], roots[1])
-				if err != nil {
-					t.Fatal(err)
-				}
-				if paths := got.Paths(); !slices.Equal(paths, []string{"link"}) {
-					t.Errorf("paths = %v, want [link]", paths)
-				}
+			set, err := Detect(ctx, before, after)
+			if !errors.Is(err, context.Canceled) || set != nil {
+				t.Fatalf("cancelled last body=%v,%v", set, err)
 			}
 		})
 	}
+}
+
+type cancellingInput struct {
+	fs.FS
+	cancel context.CancelFunc
+}
+
+func (c *cancellingInput) Open(name string) (fs.File, error) {
+	f, err := c.FS.Open(name)
+	if err != nil || name != "file.yaml" {
+		return f, err
+	}
+	return &cancellingFile{File: f, cancel: c.cancel}, nil
+}
+
+type cancellingFile struct {
+	fs.File
+	cancel context.CancelFunc
+}
+
+func (c *cancellingFile) Read(p []byte) (int, error) {
+	n, err := c.File.Read(p)
+	if n > 0 {
+		c.cancel()
+	}
+	return n, err
 }

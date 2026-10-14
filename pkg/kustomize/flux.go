@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"io/fs"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -11,10 +12,11 @@ import (
 	"time"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
+	"github.com/go-git/go-git/v5/plumbing"
 	"sigs.k8s.io/kustomize/api/resmap"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -48,7 +50,7 @@ type RenderRequest struct {
 	Spec map[string]any
 }
 
-// RenderFlux builds through one common filesystem and a private render overlay.
+// RenderFlux consumes admitted sources through one filesystem and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
 func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byte, error) {
@@ -61,17 +63,25 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	if req.Source == nil || req.Source.FS == nil {
 		return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
 	}
-	lower, ignoreKey, err := source.ReadView(ctx, req.Source.FS, req.ApplyIgnore)
-	if err != nil {
-		return nil, err
+	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
+	ignoreKey := ""
+	if req.ApplyIgnore {
+		input, err := cache.sourceRootFor(ctx, req.Source, root)
+		if err != nil {
+			return nil, err
+		}
+		lower, root = input.fs, input.root
 	}
-	root := cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
+	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
 	key := ""
 	if cache.render != nil {
+		if req.ApplyIgnore {
+			ignoreKey = "source"
+		}
 		key = cache.render.renderKey(req.Spec, root, req.SubPath, ignoreKey)
 		if req.Source.Key != "" {
 			key = manifest.Fingerprint([]string{key, req.Source.Key})
@@ -183,6 +193,36 @@ func (c *renderCache) renderKey(rawSpec map[string]any, sourceRoot, subPath, ign
 		Version    string
 		Build      string
 	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion, c.identity})
+}
+
+type sourceRoot struct {
+	root string
+	fs   fs.FS
+}
+
+// Source admission belongs to the run owner. Every reader of a source MUST use
+// the same view; the checkout MUST remain stable until all readers finish.
+func (c *TreeCache) sourceRootFor(ctx context.Context, source *store.SourceArtifact, root string) (*sourceRoot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	key := struct {
+		source *store.SourceArtifact
+		root   string
+	}{source, root}
+	if cached, ok := c.sourceRoots.Load(key); ok {
+		return cached.(func() (*sourceRoot, error))()
+	}
+	// Shared admission belongs to the cache lifetime, not the first reader's cancellation.
+	load := sync.OnceValues(func() (*sourceRoot, error) {
+		input, err := gittree.New(context.Background(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: source.FS})
+		if err != nil {
+			return nil, err
+		}
+		return &sourceRoot{root: root, fs: input}, nil
+	})
+	actual, _ := c.sourceRoots.LoadOrStore(key, load)
+	return actual.(func() (*sourceRoot, error))()
 }
 
 // applyCommonMetadata merges spec.commonMetadata.labels and

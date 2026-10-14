@@ -3,7 +3,6 @@ package loader
 import (
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -31,24 +31,40 @@ type document struct {
 
 // documentReader caches positive and negative results by absolute source-view directory.
 type documentReader struct {
-	cache map[string]document
-	views map[string]fs.FS
+	cache   map[string]document
+	views   map[string]fs.FS
+	regular bool
 }
 
 func (r *documentReader) mountSources(s *store.Store) {
-	for _, obj := range s.ListObjects(manifest.KindGitRepository) {
-		art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
-		if !ok || art.LocalPath == "" {
-			continue
-		}
-		if r.views == nil {
-			r.views = map[string]fs.FS{}
-		}
-		r.views[art.LocalPath] = art.FS
-		if art.FS == nil {
-			r.views[art.LocalPath] = unavailableSource{}
+	bootstrap, _ := s.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket, manifest.KindExternalArtifact} {
+		for _, obj := range s.ListObjects(kind) {
+			art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
+			if !ok || art.LocalPath == "" || bootstrap != nil && art.LocalPath == bootstrap.LocalPath {
+				continue
+			}
+			r.mount(art.LocalPath, art.FS)
 		}
 	}
+	if bootstrap != nil && bootstrap.LocalPath != "" {
+		r.mount(bootstrap.LocalPath, bootstrap.FS)
+	}
+}
+
+func (r *documentReader) mount(root string, input fs.FS) {
+	if r.views[root] == nil && input != nil {
+		// Acquisition must not retain negative inspection of unavailable content.
+		for file, cached := range r.cache {
+			if cached.body == nil && len(cached.objects) == 0 && safepath.Contains(root, file) {
+				delete(r.cache, file)
+			}
+		}
+	}
+	if r.views == nil {
+		r.views = map[string]fs.FS{}
+	}
+	r.views[root] = input
 }
 
 type unavailableSource struct{}
@@ -57,25 +73,29 @@ func (unavailableSource) Open(string) (fs.File, error) {
 	return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
 }
 
-var workingFiles = os.DirFS("/")
-
 // input binds source coordinates to their filesystem; an absent mounted file
 // MUST never fall through to the working tree.
 func (r documentReader) input(file string) (fs.FS, string) {
-	if len(r.views) != 0 {
-		for root := file; root != filepath.Dir(root); root = filepath.Dir(root) {
-			if input := r.views[root]; input != nil {
-				rel, _ := filepath.Rel(root, file)
-				return input, filepath.ToSlash(rel)
-			}
+	if root := r.mountedRoot(file); root != "" {
+		input := r.views[root]
+		rel, _ := filepath.Rel(root, file)
+		if input == nil {
+			input = unavailableSource{}
+		}
+		return input, filepath.ToSlash(rel)
+	}
+	return unavailableSource{}, "."
+}
+
+func (r documentReader) mountedRoot(file string) string {
+	for root := file; ; root = filepath.Dir(root) {
+		if _, exists := r.views[root]; exists {
+			return root
+		}
+		if root == filepath.Dir(root) {
+			return ""
 		}
 	}
-	root := filepath.VolumeName(file) + string(filepath.Separator)
-	name := filepath.ToSlash(strings.TrimPrefix(file, root))
-	if name == "" {
-		name = "."
-	}
-	return workingFiles, name
 }
 
 func (r *documentReader) read(dir string) (*kustomizationDocument, string) {

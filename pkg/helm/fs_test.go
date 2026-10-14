@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -265,6 +266,33 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		loaded, err := cli.LoadChart(t.Context(), hr)
 		if err != nil || loaded.Chart.Metadata.Version != version {
 			t.Fatalf("archive change replayed stale chart: %+v, %v", loaded.Chart, err)
+		}
+	}
+}
+
+func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
+	st := store.New()
+	client, err := NewClient(cacheroot.New(t.TempDir()))
+	assert.NoError(t, err)
+	client.SetSourceResolver(NewStoreSourceResolver(st))
+	id := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: id.Kind, RepoName: id.Name, RepoNamespace: id.Namespace}}
+	for _, label := range []string{"", "mutable"} {
+		for _, value := range []string{"one", "two", "one"} {
+			input := fstest.MapFS{
+				"Chart.yaml":  {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+				"values.yaml": {Data: []byte("answer: " + value + "\n")},
+			}
+			st.SetArtifact(id, &store.SourceArtifact{FS: input, LocalPath: label})
+			loaded, err := client.LoadChart(t.Context(), hr)
+			if err != nil || loaded.Chart.Values["answer"] != value {
+				t.Fatalf("anonymous input %q: %+v, %v", value, loaded, err)
+			}
+			input["Chart.yaml"].Data = []byte("apiVersion: v2\nname: demo\nversion: 20.0.0\n")
+			loaded, err = client.LoadChart(t.Context(), hr)
+			if err != nil || loaded.Chart.Metadata.Version != "20.0.0" {
+				t.Fatalf("modified anonymous chart: %+v, %v", loaded, err)
+			}
 		}
 	}
 }

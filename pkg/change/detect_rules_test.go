@@ -64,7 +64,7 @@ func TestDetect_FluxIgnoreRules(t *testing.T) {
 				if reverse {
 					left, right = after, before
 				}
-				got, err := Detect(left, right)
+				got, err := Detect(t.Context(), testInput(left), testInput(right))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -90,7 +90,7 @@ func TestDetect_GitlinkFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, roots := range [][2]string{{before, after}, {after, before}} {
-		got, err := Detect(roots[0], roots[1])
+		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func TestDetect_NestedOppositeRoot(t *testing.T) {
 	testutil.WriteFile(t, outer, "mod.yaml", "old")
 	testutil.WriteFile(t, inner, "mod.yaml", "new")
 	for _, roots := range [][2]string{{outer, inner}, {inner, outer}} {
-		got, err := Detect(roots[0], roots[1])
+		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +129,7 @@ func TestDetect_Concurrent(t *testing.T) {
 			var g errgroup.Group
 			for range concurrency {
 				g.Go(func() error {
-					got, err := Detect(before, after)
+					got, err := Detect(t.Context(), testInput(before), testInput(after))
 					if err != nil {
 						return err
 					}

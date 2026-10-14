@@ -2,9 +2,11 @@ package loader
 
 import (
 	"fmt"
+	"io/fs"
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 // parseFile opens path and returns the recognized Flux CRs in document order —
@@ -38,7 +40,13 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 // decode) surface to the caller with the path baked into the wrap.
 func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
 	input, name := r.input(path)
-	f, err := input.Open(name)
+	var f fs.File
+	var err error
+	if local, ok := input.(*gittree.FS); ok && r.regular {
+		f, err = local.OpenRegular(name)
+	} else {
+		f, err = input.Open(name)
+	}
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}

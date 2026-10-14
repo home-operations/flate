@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -43,6 +44,9 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			testutil.WriteFile(t, root, prefix+"hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: apps}\n")
 			testutil.WriteFile(t, root, prefix+"cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n")
 			st := store.New()
+			if !tc.mounted {
+				admitForTest(st, root)
+			}
 			ks := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: tc.path}
 			if tc.pinned {
 				ks.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pinned", Namespace: "flux-system"}
@@ -176,7 +180,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	// home-kubernetes is aliased to the working tree (LocalPath == repoRoot).
 	s.SetArtifact(
 		manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"},
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, FS: os.DirFS(repoRoot), LocalPath: repoRoot},
+		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot, FS: fstest.MapFS{}},
 	)
 
 	prefixes := loaderFixture(s, nil).Claims(repoRoot)
@@ -198,12 +202,13 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 func TestSourceView_LocalRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name, repoRoot, localRoot string
-		external                  bool
+		external, unavailable     bool
 	}{
 		{name: "own-repository", repoRoot: "/repo", localRoot: "/repo"},
 		{name: "another-repository", repoRoot: "/repo", localRoot: "/other", external: true},
 		{name: "unset-local-root", repoRoot: "/repo", external: true},
 		{name: "unset-roots", external: true},
+		{name: "unavailable-source", repoRoot: "/repo", localRoot: "/repo", external: true, unavailable: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := store.New()
@@ -214,9 +219,13 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			}
 			st.AddObject(repo)
 			st.AddObject(ks)
-			st.SetArtifact(repo.Named(), &store.SourceArtifact{
-				Kind: manifest.KindGitRepository, LocalPath: "/cache", LocalRoot: tc.localRoot,
-			})
+			artifact := &store.SourceArtifact{
+				Kind: manifest.KindGitRepository, LocalPath: "/cache", LocalRoot: tc.localRoot, Key: "pinned", FS: fstest.MapFS{},
+			}
+			if tc.unavailable {
+				artifact.FS = nil
+			}
+			st.SetArtifact(repo.Named(), artifact)
 			_, _, external := SourceView(st, ks, tc.repoRoot)
 			if external != tc.external {
 				t.Fatalf("external = %v, want %v", external, tc.external)

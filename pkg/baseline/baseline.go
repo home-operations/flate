@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,116 +13,78 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"github.com/home-operations/flate/internal/cas"
+	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
+	"github.com/home-operations/flate/pkg/store"
 )
 
-// Result describes a materialized baseline tree on disk.
+// Result retains admitted inputs and one selection for both render sides.
 type Result struct {
-	// RepoRoot is the source repository root acquired while resolving the baseline.
-	RepoRoot string
-	// PathOrig is the path the caller should use as the synthetic
-	// --path-orig: <TempDir>/<rel> where rel is the user's --path
-	// relative to the git repo root.
-	PathOrig string
-	// TempDir is the root of the materialized tree. When Persistent
-	// is false, caller is responsible for os.RemoveAll once the diff
-	// is done. When Persistent is true, the directory lives under the
-	// cache root and is meant to be reused across runs — caller MUST
-	// NOT remove it.
-	TempDir string
-	// Persistent reports whether TempDir lives under a content-
-	// addressed cache root (and so survives across runs) or is a
-	// disposable MkdirTemp directory (legacy behavior). Callers wire
-	// cleanup conditionally on this flag.
-	Persistent bool
-	// Rev is the resolved short SHA of the baseline commit, for
-	// logging and error context.
-	Rev string
-	// Source is a human-readable description of how the rev was
-	// picked (e.g. "merge-base with origin/HEAD", "explicit
-	// --base=main"), surfaced in the startup log line.
-	Source string
-	// SelfURLs are the working tree's git remote URLs (raw, unnormalized).
-	// The materialized baseline tree carries no .git, so the caller passes
-	// these to the baseline render as Config.SelfURLs — the source root
-	// represents the same repo, so a self-referential GitRepository aliases
-	// to the local tree on the baseline side too.
-	SelfURLs []string
+	Source    *store.SourceArtifact
+	BaseInput *store.SourceArtifact
+	Changes   *change.Set
+	Rev       string
+	SelfURLs  []string
 }
 
-// resolution carries the result of picking a baseline rev.
 type resolution struct {
-	Hash   plumbing.Hash
-	Source string
-	// Repo holds the commit: the checkout itself, or the throwaway repo
-	// a fetched baseline landed in, released by cleanup.
+	Hash    plumbing.Hash
+	Source  string
 	Repo    *git.Repository
-	cleanup func()
+	backing billy.Filesystem
+	remote  *baseRemote
 }
 
-// AutoResolve picks a baseline for path, materializes it, and returns
-// a Result with the synthetic --path-orig already mapped into the
-// baseline tree's coordinate system. When base is non-empty it is the
-// explicit --base=<rev> override; otherwise the auto-detection ladder
-// runs.
-//
-// layout enables content-addressed reuse: when layout.Root is non-
-// empty the baseline lands at layout.Baseline(commitSHA) and Result
-// is marked Persistent — subsequent runs against the same commit
-// skip materialization entirely. When layout.Root is "" the legacy
-// MkdirTemp path runs and the caller is responsible for cleanup.
-//
-// Errors carry the suggested next flag so the user knows whether to
-// pass --base=<rev> or --path-orig=<dir>.
-func AutoResolve(ctx context.Context, path, base string, layout cacheroot.Layout) (*Result, error) {
+// AutoResolve resolves the base once and admits lazy readers owned by owner.
+// The checkout MUST remain stable until all readers have joined.
+func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cache) (*Result, error) {
+	if owner == nil {
+		return nil, fmt.Errorf("%w: baseline cache owner is required", manifest.ErrInput)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
 	}
-	repoRoot, repo, err := gitrepo.Locate(path)
+	root, repo, err := gitrepo.Locate(path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
 	}
 	if repo == nil {
 		return nil, fmt.Errorf("%w: --path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", manifest.ErrInput, path)
 	}
-	selfURLs, err := gitrepo.RemoteURLs(repo)
-	if err != nil {
-		selfURLs = nil
+	if _, err := relToRepo(root, path); err != nil {
+		return nil, err
 	}
-	// Validate path is inside the repo early, before any expensive work.
-	rel, err := relToRepo(repoRoot, path)
+	local := repo.Storer.(*filesystem.Storage).Filesystem()
+	worktree := osfs.New(root, osfs.WithBoundOS())
+	current, err := gittree.New(ctx, local, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: worktree})
 	if err != nil {
 		return nil, err
 	}
-	r, err := resolve(ctx, repo, base)
+	r, err := resolve(ctx, repo, base, owner)
 	if err != nil {
 		return nil, err
 	}
-	if r.cleanup != nil {
-		defer r.cleanup()
-	}
-
-	dir, persistent, err := materializeAt(ctx, r.Repo, r.Hash, layout)
+	before, selected, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, worktree: worktree, owner: owner})
 	if err != nil {
 		return nil, err
 	}
-	pathOrig := dir
-	if rel != "." {
-		pathOrig = filepath.Join(dir, rel)
+	label := filepath.Join(root, ".flate-base", r.Hash.String())
+	urls, err := gitrepo.RemoteURLs(repo)
+	if err != nil {
+		urls = nil
 	}
+	identity := manifest.Fingerprint(append([]string{root, r.Hash.String(), "direct"}, urls...))
 	return &Result{
-		RepoRoot:   repoRoot,
-		PathOrig:   pathOrig,
-		TempDir:    dir,
-		Persistent: persistent,
-		Rev:        shortRev(r.Hash),
-		Source:     r.Source,
-		SelfURLs:   selfURLs,
+		Source:    &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: current, Metadata: map[string]string{"baseline-selection": r.Source}},
+		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: "base-" + identity, FS: before},
+		Changes:   selected, Rev: shortRev(r.Hash), SelfURLs: urls,
 	}, nil
 }
 
@@ -172,55 +132,6 @@ func ResolvePaths(ctx context.Context, current, original string) (currentRoot, o
 	return currentRoot, originalRoot, selfURLs, nil
 }
 
-// materializeAt produces the baseline tree on disk for hash and
-// returns (dir, persistent, err). When layout.Root is non-empty the
-// directory lives at layout.Baseline(hash) and is reused across runs;
-// otherwise an MkdirTemp directory is allocated.
-func materializeAt(ctx context.Context, repo *git.Repository, hash plumbing.Hash, layout cacheroot.Layout) (string, bool, error) {
-	if layout.Root != "" {
-		slot := layout.Baseline(hash.String())
-		if isDir(slot) {
-			return slot, true, nil
-		}
-		parent := filepath.Dir(slot)
-		if err := os.MkdirAll(parent, 0o750); err != nil {
-			return "", false, fmt.Errorf("baseline cache parent: %w", err)
-		}
-		// Stage in a sibling temp dir on the same filesystem so the
-		// finalize is an atomic rename — concurrent diffs against the
-		// same commit will either share the finished slot or fall
-		// through to their own stage (one wins the rename, the rest
-		// see ErrExist, discard the temp, and adopt the winner's slot).
-		if err := cas.Stage(parent, slot, "baseline staging", "baseline finalize",
-			func(staging string) error { return materialize(ctx, repo, hash, staging) },
-			func() bool { return isDir(slot) },
-		); err != nil {
-			return "", false, err
-		}
-		return slot, true, nil
-	}
-
-	tmp, err := os.MkdirTemp("", "flate-baseline-*")
-	if err != nil {
-		return "", false, fmt.Errorf("baseline tempdir: %w", err)
-	}
-	if err := materialize(ctx, repo, hash, tmp); err != nil {
-		_ = os.RemoveAll(tmp)
-		return "", false, err
-	}
-	return tmp, false, nil
-}
-
-// materialize extracts hash's tree into root, skipping (and warning on)
-// any submodules.
-func materialize(ctx context.Context, repo *git.Repository, hash plumbing.Hash, root string) error {
-	return gittree.Materialize(ctx, repo, hash, root, gittree.Options{
-		OnSubmodule: func(path string) {
-			slog.Warn("baseline: skipping submodule", "path", path)
-		},
-	})
-}
-
 // relToRepo returns path's location relative to repoRoot. Returns "."
 // when path equals repoRoot. Errors when path escapes the repo.
 func relToRepo(repoRoot, path string) (string, error) {
@@ -256,9 +167,9 @@ func relToRepo(repoRoot, path string) (string, error) {
 // "preview my dirty edits"). Shallow clones can't compute a merge-base
 // against any of these refs because the necessary commits are absent;
 // detect .git/shallow and emit a CI-friendly error.
-func resolve(ctx context.Context, repo *git.Repository, base string) (*resolution, error) {
+func resolve(ctx context.Context, repo *git.Repository, base string, owner *sourcecache.Cache) (*resolution, error) {
 	if base != "" {
-		return resolveExplicit(ctx, repo, base)
+		return resolveExplicit(ctx, repo, base, owner)
 	}
 	head, err := repo.Head()
 	if err != nil {
@@ -311,11 +222,10 @@ func resolve(ctx context.Context, repo *git.Repository, base string) (*resolutio
 }
 
 // resolveExplicit resolves --base=<rev>: locally first, then as
-// origin/<rev>, and finally by fetching it from the origin remote into a
-// throwaway repo. The fetch is what makes a checkout without the
+// origin/<rev>, and finally by acquiring it from origin in private backing. The fetch is what makes a checkout without the
 // baseline's history work: a fetch-depth=1 clone of another branch, or
 // a tree written straight to disk over `git init` with only a remote.
-func resolveExplicit(ctx context.Context, repo *git.Repository, base string) (*resolution, error) {
+func resolveExplicit(ctx context.Context, repo *git.Repository, base string, owner *sourcecache.Cache) (*resolution, error) {
 	if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
 		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
 	}
@@ -335,11 +245,11 @@ func resolveExplicit(ctx context.Context, repo *git.Repository, base string) (*r
 	if !ok {
 		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from", base, base)
 	}
-	f, err := fetchBase(ctx, url, base)
+	f, err := fetchBase(ctx, url, base, owner)
 	if err != nil {
 		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w", base, base, url, err)
 	}
-	return &resolution{Hash: f.hash, Source: "explicit --base=" + base + " (fetched from origin)", Repo: f.repo, cleanup: f.cleanup}, nil
+	return &resolution{Hash: f.hash, Source: "explicit --base=" + base + " (fetched from origin)", Repo: f.repo, backing: f.backing, remote: f.remote}, nil
 }
 
 // upstreamHash reads the current branch's upstream from the repo
@@ -429,14 +339,6 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 func isShallow(repo *git.Repository) bool {
 	hashes, err := repo.Storer.Shallow()
 	return err == nil && len(hashes) > 0
-}
-
-// isDir reports whether path exists and is a directory. Used to detect
-// a finished baseline cache slot, both before staging and as the adopt
-// predicate after losing the finalize race.
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 // shortRev formats a hash as the conventional 7-char prefix used in

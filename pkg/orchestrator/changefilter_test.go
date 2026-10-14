@@ -9,21 +9,23 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestComputeChangeSet_FluxExcludedWarning(t *testing.T) {
+func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	t.Setenv("PATH", "")
 	before, after := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, before, ".sops.yaml", "old")
 	testutil.WriteFile(t, after, ".sops.yaml", "new")
-	o := &Orchestrator{cfg: Config{PathOrig: before}, store: store.New()}
-	got, err := o.computeChangeSet(after)
+	input, _, err := baseline.AdmitDirectory(t.Context(), after, after)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, got.Len(), 0)
+	o := &Orchestrator{cfg: Config{PathOrig: before, Input: input}, store: store.New()}
+	assert.NoError(t, o.buildChangeFilter(t.Context(), after))
+	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want one", warnings)

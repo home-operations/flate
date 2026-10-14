@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -293,6 +295,9 @@ func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testin
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [../missing]\n")
 	st := store.New()
+	admitted, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	assert.NoError(t, err)
+	st.SetArtifact(manifest.BootstrapSourceID, admitted)
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}
 	st.AddObject(producer)
 	l := loader.New(st)

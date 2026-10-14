@@ -18,7 +18,7 @@ func TestLoadIgnore_GlobStarMatchesAcrossDirectories(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".krmignore", "apps/junk/**\n")
 
-	ig, err := (documentReader{}).loadIgnore(root)
+	ig, err := readerForTest(root).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestLoadIgnore_SingleGlobPattern(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".krmignore", "apps/*.yaml\n")
 
-	ig, err := (documentReader{}).loadIgnore(root)
+	ig, err := readerForTest(root).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestLoadIgnore_SingleGlobPattern(t *testing.T) {
 // no-op set without error.
 func TestLoadIgnore_NoFile(t *testing.T) {
 	root := t.TempDir()
-	ig, err := (documentReader{}).loadIgnore(root)
+	ig, err := readerForTest(root).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore on missing file: %v", err)
 	}
@@ -93,7 +93,7 @@ apps/junk/**
 # another comment
 `)
 
-	ig, err := (documentReader{}).loadIgnore(root)
+	ig, err := readerForTest(root).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestLoadIgnore_DirOnlyPattern(t *testing.T) {
 	// "tmp/" — trailing slash means "only match directories named tmp"
 	testutil.WriteFile(t, root, ".krmignore", "tmp/\n")
 
-	ig, err := (documentReader{}).loadIgnore(root)
+	ig, err := readerForTest(root).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestLoadIgnore_DirOnlyPattern(t *testing.T) {
 func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".krmignore", "apps/junk/**\ntmp/\n")
-	ig, err := (documentReader{}).loadIgnore(root)
+	ig, err := readerForTest(root).loadIgnore(root)
 	if err != nil {
 		t.Fatalf("loadIgnore: %v", err)
 	}

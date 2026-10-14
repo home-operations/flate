@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -232,5 +235,24 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 				t.Fatalf("own cache retained lock: acquired=%v err=%v", acquired, err)
 			}
 		})
+	}
+}
+
+func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
+	root := t.TempDir()
+	writeCluster(t, root, "same", "same")
+	alias := filepath.Join(t.TempDir(), "linked")
+	assert.NoError(t, os.Symlink(root, alias))
+	base, head, err := orchestrator.RenderTrees(t.Context(),
+		orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: alias},
+		orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2})
+	assert.NoError(t, err)
+	for _, rendered := range []orchestrator.Rendered{base, head} {
+		if names := configMapNames(rendered.Result); !names["cfg-a"] || !names["cfg-b"] {
+			t.Fatalf("same-directory comparison lost full render: %v", names)
+		}
+		if len(rendered.Result.Warnings) != 1 || rendered.Result.Warnings[0].Category != manifest.WarnPathConfig {
+			t.Fatalf("same-directory warning changed: %v", rendered.Result.Warnings)
+		}
 	}
 }

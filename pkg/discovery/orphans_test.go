@@ -27,6 +27,7 @@ spec:
       sourceRef: {kind: GitRepository, name: source, namespace: apps}
 `)
 	st := store.New()
+	admitDiscoveryForTest(st, dir)
 	l := discoveryLoaderForTest(st)
 	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "self"}
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
@@ -61,6 +62,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	testutil.WriteFile(t, dir, "bundle.yaml", body)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
 	st := store.New()
+	admitDiscoveryForTest(st, dir)
 	docs, err := manifest.SplitDocs([]byte(body))
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +96,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			st := store.New()
+			admitDiscoveryForTest(st, dir)
 			l := discoveryLoaderForTest(st)
 			d := &discoverer{cfg: Config{Store: st, WipeSecrets: true}, loader: l}
 			ids := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "secure", Name: "a"}}

@@ -29,3 +29,11 @@ func Diff(t testing.TB, got, want any) {
 		t.Errorf("mismatch (-want +got):\n%s", d)
 	}
 }
+
+// NoError stops the test when an operation fails.
+func NoError(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}

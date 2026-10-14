@@ -37,11 +37,13 @@ func localKustomizations(s *store.Store, repoRoot string) []*manifest.Kustomizat
 }
 
 func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss []*manifest.Kustomization) []manifest.KSClaim {
-	local := kss[:0]
-	var pinned []*manifest.Kustomization
+	var qualified []*manifest.Kustomization
 	var components map[manifest.NamedResource][]string
-	for _, ks := range kss {
-		root, pin, _ := SourceView(s, ks, repoRoot)
+	for i, ks := range kss {
+		root, _, external := SourceView(s, ks, repoRoot)
+		if external {
+			continue
+		}
 		base := documents.claimBase(root, ks.Path)
 		if base != manifest.NormalizeClaimBase(ks.Path) {
 			c := *ks
@@ -50,11 +52,10 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 				c.Path = "."
 			}
 			ks = &c
+			kss[i] = ks
 		}
-		if pin {
-			pinned = append(pinned, ks)
-		} else {
-			local = append(local, ks)
+		if root != "" && root != repoRoot {
+			qualified = append(qualified, ks)
 		}
 		if root != "" {
 			if k, _ := documents.read(filepath.Join(root, base)); k != nil && len(k.Components) != 0 {
@@ -65,18 +66,18 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 			}
 		}
 	}
-	claims := manifest.BuildKSClaims(local, components)
-	for _, ks := range pinned {
+	claims := manifest.BuildKSClaims(kss, components)
+	for _, ks := range qualified {
 		root, _, _ := SourceView(s, ks, repoRoot)
 		base, err := filepath.Rel(repoRoot, root)
 		if err != nil {
 			continue
 		}
 		for _, c := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, components) {
-			claims = append(claims, c, manifest.KSClaim{ID: c.ID, Prefix: filepath.ToSlash(filepath.Join(base, c.Prefix)) + "/"})
+			claims = append(claims, manifest.KSClaim{ID: c.ID, Prefix: filepath.ToSlash(filepath.Join(base, c.Prefix)) + "/"})
 		}
 	}
-	if len(pinned) != 0 {
+	if len(qualified) != 0 {
 		slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
 	}
 	return claims
@@ -111,20 +112,21 @@ func (r documentReader) Readlink(file string) (string, error) {
 	return fs.ReadLink(input, name)
 }
 
-// SourceView classifies a Kustomization's local source root, committed pin and
-// external ownership. Missing Git source objects retain bootstrap alias semantics.
-// External-sourced Kustomizations MUST NOT claim unrelated working-tree files.
+// SourceView classifies a Kustomization's admitted source coordinate, committed
+// pin and external ownership. Mutable aliases retain empty Key. Unavailable
+// sources MUST NOT borrow bootstrap bytes or claim unrelated working-tree files.
 func SourceView(s *store.Store, ks *manifest.Kustomization, repoRoot string) (root string, pinned, external bool) {
 	ref := ks.SourceID()
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
 		return repoRoot, false, false
 	}
-	if art, ok := s.GetArtifact(ref).(*store.SourceArtifact); ok {
-		if art.LocalRoot != "" && art.LocalRoot == repoRoot {
-			return art.LocalPath, true, false
-		}
+	if art, ok := s.GetArtifact(ref).(*store.SourceArtifact); ok && art.FS != nil {
 		if art.LocalPath == repoRoot {
 			return repoRoot, false, false
+		}
+		if art.LocalRoot != "" && art.LocalRoot == repoRoot {
+			// Derived input keys pin selected bootstrap bytes, never authored refs.
+			return art.LocalPath, art.Key != "" && !art.InputAlias, false
 		}
 	}
 	return repoRoot, false, s.GetObject(ref) != nil || ref.Kind == manifest.KindOCIRepository

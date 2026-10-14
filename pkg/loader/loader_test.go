@@ -25,9 +25,12 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 		Name: "pinned", Namespace: "flux-system", TargetNamespace: "apps", Path: "./apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: sourceID.Kind, Name: sourceID.Name, Namespace: sourceID.Namespace},
 	})
-	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, FS: os.DirFS(artifactDir), LocalPath: artifactDir})
+	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir, Key: "pinned", FS: os.DirFS(artifactDir)})
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
+	l.documents = readerForTest(root)
+	l.documents.views[artifactDir] = os.DirFS(artifactDir)
+	admitForTest(s, root)
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "configMapGenerator:\n- name: dirty\n  literals: [value=dirty]\n")
 	testutil.WriteFile(t, artifactDir, "apps/kustomization.yaml", "configMapGenerator:\n- name: pinned\n  literals: [value=pinned]\n")
 	l.documents.read(filepath.Join(root, "apps"))
@@ -221,7 +224,9 @@ spec:
 `)
 
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(t.Context(), filepath.Join(root, "entry")); err != nil {
+	l := loaderFixture(s, nil)
+	l.SourceRoot = root
+	if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "crds"}) == nil {
@@ -1161,6 +1166,7 @@ brokenPointer: [ unclosed
 				testutil.WriteFile(t, dir, name, body)
 			}
 			l := New(store.New())
+			l.SourceRoot = filepath.Dir(dir)
 			_, err := l.Load(t.Context(), dir)
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("Load error = %v, want one wrapping manifest.ErrInput", err)

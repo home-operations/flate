@@ -16,12 +16,12 @@ func BenchmarkResolveLocal(b *testing.B) {
 				tag = "v2.0.0"
 			}
 			repositories := []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: tag})}
-			if _, err := ResolveLocal(b.Context(), root, repositories); err != nil {
+			if _, err := ResolveLocal(b.Context(), root, repositories, ""); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := ResolveLocal(b.Context(), root, repositories); err != nil {
+				if _, err := ResolveLocal(b.Context(), root, repositories, ""); err != nil {
 					b.Fatal(err)
 				}
 			}

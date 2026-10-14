@@ -15,6 +15,7 @@ import (
 
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -31,9 +32,7 @@ func memoryTree(t testing.TB, files map[string]string) *tree.Tree {
 		}
 	}
 	lower, err := b.Build()
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	return lower
 }
 
@@ -61,9 +60,7 @@ func TestTreeFS_MethodMatrix(t *testing.T) {
 		}
 	}
 	lower, err := b.Build()
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	adapter := newTreeFS(lower, "/virtual/root", nil)
 	for _, tc := range []struct {
 		name, content string
@@ -210,9 +207,7 @@ func TestRenderFlux_AutoGenerateEscape(t *testing.T) {
 				t.Fatal(err)
 			}
 			lower, err := b.Build()
-			if err != nil {
-				t.Fatal(err)
-			}
+			assert.NoError(t, err)
 			called := false
 			adapter := newTreeFS(lower, "/virtual", nil)
 			err = adapter.Walk("/virtual", func(name string, _ fs.FileInfo, err error) error {
@@ -238,9 +233,7 @@ func TestRenderFlux_ExoticNames(t *testing.T) {
 		files := map[string]string{"base/" + name: cmYAML("same"), "base/kustomization.yaml": existingKustomization("./" + name), "app/kustomization.yaml": existingKustomization("../base")}
 		lower := memoryTree(t, files)
 		out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: treeRef(lower, "pin"), Label: "/absent", SubPath: "app", Spec: demoRawSpec})
-		if err != nil {
-			t.Fatal(err)
-		}
+		assert.NoError(t, err)
 		if want == nil {
 			want = out
 		}
@@ -259,9 +252,7 @@ func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
 		t.Fatal(err)
 	}
 	lower, err := b.Build()
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 	for _, tc := range []struct {
 		subPath string
 		want    error
@@ -517,5 +508,18 @@ func TestRenderFlux_CacheMissingComponentAppearance(t *testing.T) {
 	out, err := RenderFlux(t.Context(), cache, req)
 	if err != nil || !strings.Contains(string(out), "name: arrived") {
 		t.Fatalf("missing component arrival replayed stale output: %s, %v", out, err)
+	}
+}
+
+func TestRenderFlux_ArtifactWithoutPayloadRejected(t *testing.T) {
+	label := writeTree(t, map[string]string{"cm.yaml": cmYAML("host")})
+	for _, key := range []string{"", "pin"} {
+		t.Run("key="+key, func(t *testing.T) {
+			source := &store.SourceArtifact{LocalPath: label, Key: key}
+			out, err := RenderFlux(t.Context(), NewTreeCache(), RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec})
+			if !errors.Is(err, manifest.ErrInput) || strings.Contains(string(out), "host") {
+				t.Fatalf("render = %q, %v", out, err)
+			}
+		})
 	}
 }

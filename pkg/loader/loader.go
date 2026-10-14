@@ -23,6 +23,7 @@
 package loader
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -47,7 +49,8 @@ type Options struct {
 	DiscoveryOnly bool
 }
 
-// Loader walks a directory tree and adds Flux objects to a Store.
+// Loader walks source views and adds Flux objects to a Store. Source membership
+// MUST remain stable across its Load calls.
 type Loader struct {
 	Store   *store.Store
 	Options Options
@@ -55,10 +58,8 @@ type Loader struct {
 	// Load calls sharing a Loader MUST be sequential.
 	DisableChartDigestTracking bool
 
-	// SourceRoot, when non-empty, is the directory used as the
-	// reference point for discovery file coordinates. Recorded paths are
-	// slash-separated and relative to this root, which matches the
-	// shape change.Detect produces.
+	// SourceRoot anchors slash-separated discovery coordinates and bounds
+	// standalone input admission. Source artifacts supply their own FS.
 	SourceRoot string
 
 	// Index optionally records static discovery facts. Its maps MUST be initialized
@@ -106,6 +107,22 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	mounted := len(l.documents.views) != 0
+	if !mounted {
+		inputRoot, err := filepath.Abs(cmp.Or(l.SourceRoot, abs))
+		if err != nil {
+			return 0, err
+		}
+		input, err := gittree.AdmitDirectory(ctx, inputRoot)
+		if err != nil {
+			if l.IgnoreFile != "" && errors.Is(err, fs.ErrNotExist) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		l.Store.SetArtifact(manifest.BootstrapSourceID, input)
+		l.documents.mountSources(l.Store)
+	}
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
 		input, name := l.documents.input(abs)
@@ -116,7 +133,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		if statErr != nil {
 			return 0, statErr
 		}
-		ignore, err = l.documents.loadIgnoreFile(l.IgnoreFile, abs)
+		ignore, err = l.documents.loadIgnoreFile(ctx, l.IgnoreFile, abs)
 	} else {
 		ignore, err = l.documents.loadIgnore(abs)
 	}
@@ -399,7 +416,9 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 		if _, ok := seen[abs]; ok {
 			continue
 		}
-		objs, err := w.loader.documents.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets})
+		reader := w.loader.documents
+		reader.regular = e.Type().IsRegular()
+		objs, err := reader.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets})
 		if err != nil {
 			slog.Warn("loader: bootstrap-sibling parse failed", "path", abs, "err", err)
 			continue
@@ -615,8 +634,10 @@ func (l *Loader) skipExisting(id manifest.NamedResource) bool {
 
 // Indexed discovery defers decode errors; Load without an index remains strict.
 func (l *Loader) loadFile(path string) (int, error) {
+	reader := l.documents
+	reader.regular = true
 	objs := []manifest.BaseManifest{}
-	err := l.documents.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents.cache != nil, func(obj manifest.BaseManifest) {
+	err := reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents.cache != nil, func(obj manifest.BaseManifest) {
 		if raw, ok := obj.(*manifest.RawObject); ok && len(manifest.ProducerTargets(raw)) == 0 {
 			return
 		}

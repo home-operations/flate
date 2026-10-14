@@ -34,11 +34,12 @@ func (l *Loader) applyNamespaceInheritance(repoRoot string) {
 	}
 	kss := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 	for v := range l.graphVisits(repoRoot, kss, l.standaloneRoots(repoRoot, kss)) {
-		file := v.coordinate
-		if _, needed := namespaces[file]; needed {
-			scope := namespaceContext{namespace: v.namespace, fallback: v.fallback}
-			if !slices.Contains(namespaces[file], scope) {
-				namespaces[file] = append(namespaces[file], scope)
+		for _, file := range [2]string{v.coordinate, v.localCoordinate()} {
+			if _, needed := namespaces[file]; needed {
+				scope := namespaceContext{namespace: v.namespace, fallback: v.fallback}
+				if !slices.Contains(namespaces[file], scope) {
+					namespaces[file] = append(namespaces[file], scope)
+				}
 			}
 		}
 	}

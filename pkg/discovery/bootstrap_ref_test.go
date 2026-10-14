@@ -18,12 +18,14 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/cacheroot"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -100,7 +102,7 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 				scan = root
 			}
 			result, err := Run(t.Context(), Config{
-				Path: scan, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
+				Path: scan, RepoRoot: root, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -124,7 +126,7 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			}
 			for _, id := range []manifest.NamedResource{childID, cm, generated} {
 				file := filepath.Join(root, filepath.FromSlash(filesForTest(result.Index)[id]))
-				if !pathUnderRoot(file, artifact.LocalPath) {
+				if !safepath.Contains(artifact.LocalPath, file) {
 					t.Fatalf("source file for %s = %s, want under %s", id, file, artifact.LocalPath)
 				}
 			}
@@ -141,13 +143,19 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 
 func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 	for _, tc := range []struct {
-		name                                              string
+		name, base                                        string
+		commit                                            bool
 		ref                                               *manifest.GitRepositoryRef
 		head, fallback, fail, noStore, sparse, submodules bool
 	}{
 		{name: "no-ref", head: true},
 		{name: "empty-ref", ref: &manifest.GitRepositoryRef{}, head: true},
 		{name: "head", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
+		{name: "older-base-head-tag", base: "v1.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}},
+		{name: "older-base-head-commit", base: "v1.0.0", commit: true},
+		{name: "matching-base-head", base: "v2.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
+		{name: "older-base-head-sparse", base: "v1.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true},
+		{name: "older-base-head-submodules", base: "v1.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, submodules: true, fallback: true},
 		{name: "non-head", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}},
 		{name: "conflicting", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}},
 		{name: "missing-tag", ref: &manifest.GitRepositoryRef{Tag: "missing"}, fallback: true},
@@ -173,6 +181,37 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			st := store.New()
 			repository := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 			repository.URL, repository.Reference = "git://fixture.invalid/cluster", tc.ref
+			var revision string
+			if tc.base != "" {
+				repo, err := git.PlainOpen(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				head, err := repo.Head()
+				if err != nil {
+					t.Fatal(err)
+				}
+				revision = head.Hash().String()
+				if tc.commit {
+					repository.Reference = &manifest.GitRepositoryRef{Commit: revision}
+				}
+				ignore := "apps/excluded.txt\n"
+				repository.Ignore = &ignore
+				owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := owner.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				result, err := baseline.AutoResolve(t.Context(), root, tc.base, owner)
+				if err != nil {
+					t.Fatal(err)
+				}
+				st.SetArtifact(manifest.BootstrapSourceID, result.BaseInput)
+			}
 			repository.RecurseSubmodules = tc.submodules
 			if tc.sparse {
 				repository.SparseCheckout = []string{"apps"}
@@ -186,11 +225,26 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 			t.Cleanup(func() { slog.SetDefault(previous) })
-			d.cfg.Path = root
+			bootstrap := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			side := bootstrap.LocalPath
+			d.cfg.Path = side
 			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			_, err := d.overrideSelfReferentialGitRepositories(t.Context(), root)
+			aliased, err := d.overrideSelfReferentialGitRepositories(t.Context(), side)
+			if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap || st.GetObject(repository.Named()) != repository {
+				t.Fatal("discovery replaced the bootstrap or authored source")
+			}
+			if tc.base != "" {
+				want := "A"
+				if tc.head {
+					want = "B"
+				}
+				content, err := fs.ReadFile(bootstrap.FS, "value.txt")
+				if err != nil || string(content) != want || bootstrap.Key == "" || bootstrap.LocalRoot != root {
+					t.Fatalf("baseline content = %q, %v; want %s with immutable checkout identity: %+v", content, err, want, bootstrap)
+				}
+			}
 			if tc.fail {
 				if !errors.Is(err, manifest.ErrFlux) || st.GetArtifact(repository.Named()) != nil {
 					t.Fatalf("invalid source = %v, %v", err, st.GetArtifact(repository.Named()))
@@ -207,26 +261,54 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				if status, ok := st.GetStatus(repository.Named()); ok && status.Status == store.StatusReady {
 					t.Fatal("fallback marked source ready")
 				}
-				if strings.Count(logs.String(), "level=WARN") != 1 || !strings.Contains(logs.String(), "cluster") || !strings.Contains(logs.String(), manifest.GitRefString(*tc.ref)) {
+				if strings.Count(logs.String(), "level=WARN") != 1 || !strings.Contains(logs.String(), "cluster") || !strings.Contains(logs.String(), manifest.GitRefString(*repository.Reference)) {
 					t.Fatalf("fallback warning = %s", logs.String())
 				}
 				return
 			}
 			artifact := st.GetArtifact(repository.Named()).(*store.SourceArtifact)
+			if tc.base != "" {
+				for range 2 {
+					content, err := fs.ReadFile(artifact.FS, "apps/value.txt")
+					if err != nil || string(content) != "B" {
+						t.Fatalf("pinned HEAD content = %q, %v; want B", content, err)
+					}
+				}
+				if artifact.Revision != revision || artifact.Key == "" || artifact.LocalRoot != side || artifact.LocalPath == side || artifact.InputAlias != tc.head || d.hasPins == tc.head || (len(aliased) == 1) != tc.head {
+					t.Fatalf("pinned HEAD identity/classification = %+v, pins=%t aliases=%v", artifact, d.hasPins, aliased)
+				}
+				if !tc.head && artifact.URL != repository.URL {
+					t.Fatalf("committed URL = %q, want %q", artifact.URL, repository.URL)
+				}
+				status, ok := st.GetStatus(repository.Named())
+				if !ok || status.Status != store.StatusReady {
+					t.Fatalf("pinned HEAD status = %v, %t", status, ok)
+				}
+				for _, name := range []string{"apps/ignored.txt", "apps/excluded.txt"} {
+					if _, err := fs.Stat(artifact.FS, name); !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("source retained excluded %s: %v", name, err)
+					}
+					if content, err := fs.ReadFile(bootstrap.FS, name); err != nil || len(content) == 0 {
+						t.Fatalf("source shaping changed direct bootstrap %s: %q, %v", name, content, err)
+					}
+				}
+			}
 			want := "A"
-			if tc.head {
+			if tc.base != "" {
+				want = "B"
+			} else if tc.head {
 				want = "dirty"
-				if artifact.LocalPath != root {
-					t.Fatalf("head alias path = %s", artifact.LocalPath)
+				if artifact.LocalRoot != root || artifact.LocalPath == root || artifact.FS == nil || artifact.Key != "" {
+					t.Fatalf("mutable alias did not retain its admitted origin: %+v", artifact)
 				}
 			} else if artifact.FS == nil || artifact.Key == "" || artifact.URL != repository.URL {
 				t.Fatalf("committed artifact did not use supplied cache: %+v", artifact)
 			}
-			if artifact.FS == nil || tc.head && artifact.Key != "" {
+			if artifact.FS == nil || tc.head && tc.base == "" && artifact.Key != "" {
 				t.Fatal("local admission violated the FS/Key state contract")
 			}
 			content, err := fs.ReadFile(artifact.FS, "value.txt")
-			if tc.sparse && !tc.head {
+			if tc.sparse {
 				if !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("sparse source retained excluded file: %q, %v", content, err)
 				}
@@ -337,6 +419,10 @@ func discoveryRefFixture(t *testing.T) string {
 	}
 	for i, value := range []string{"A", "B"} {
 		testutil.WriteFile(t, root, "value.txt", value)
+		testutil.WriteFile(t, root, "apps/value.txt", value)
+		testutil.WriteFile(t, root, "apps/ignored.txt", value)
+		testutil.WriteFile(t, root, "apps/excluded.txt", value)
+		testutil.WriteFile(t, root, ".sourceignore", "apps/ignored.txt\n")
 		if _, err := wt.Add("."); err != nil {
 			t.Fatal(err)
 		}
@@ -349,6 +435,7 @@ func discoveryRefFixture(t *testing.T) string {
 		}
 	}
 	testutil.WriteFile(t, root, "value.txt", "dirty")
+	testutil.WriteFile(t, root, "apps/value.txt", "dirty")
 	return root
 }
 

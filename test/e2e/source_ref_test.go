@@ -5,6 +5,7 @@ import (
 	stdcmp "cmp"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -529,7 +530,7 @@ spec:
 			}
 			transport := installSourceRefTransport(t, repo.Storer)
 			var previous string
-			for _, concurrency := range []string{"2", "8"} {
+			for _, concurrency := range []string{"2", "4"} {
 				t.Run("concurrency_"+concurrency, func(t *testing.T) {
 					out, stderr, code := runCLIBuffers("build", "ks", "apps", "-n", "alpha",
 						"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir())
@@ -538,7 +539,7 @@ spec:
 						t.Fatalf("suspended consumer: exit=%d transport=%d stdout=%q\nstderr:\n%s",
 							code, transport.calls.Load(), out, stderr)
 					}
-					if concurrency == "8" && out != previous {
+					if concurrency == "4" && out != previous {
 						t.Fatalf("output differs across concurrency levels (-want +got):\n%s", cmp.Diff(previous, out))
 					}
 					previous = out
@@ -564,15 +565,23 @@ spec:
 			art, ok := st.GetArtifact(manifest.NamedResource{
 				Kind: manifest.KindGitRepository, Namespace: "alpha", Name: "cluster",
 			}).(*store.SourceArtifact)
-			if !ok || art.LocalRoot != root || art.LocalPath == root {
+			if !ok || art.LocalRoot != root || art.LocalPath == root || art.Key == "" || art.FS == nil {
 				t.Fatalf("expected alpha's committed source artifact, got %+v", art)
+			}
+			pinned, err := fs.ReadFile(art.FS, "broken/cm.yaml")
+			if err != nil || !strings.Contains(string(pinned), "value: pinned") {
+				t.Fatalf("alpha lost committed bytes: %q, %v", pinned, err)
 			}
 			if tt.workingTree {
 				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{
 					Kind: manifest.KindGitRepository, Namespace: "beta", Name: "cluster",
 				}).(*store.SourceArtifact)
-				if !ok || betaArtifact.LocalRoot == root || betaArtifact.LocalPath != root {
+				if !ok || betaArtifact.LocalRoot != root || betaArtifact.LocalPath == root || betaArtifact.LocalPath == art.LocalPath || betaArtifact.Key != "" || betaArtifact.FS == nil {
 					t.Fatalf("expected beta's working-tree artifact, got %+v", betaArtifact)
+				}
+				current, err := fs.ReadFile(betaArtifact.FS, "broken/cm.yaml")
+				if err != nil || string(current) != "metadata: {name: broken\n" {
+					t.Fatalf("beta lost malformed working-tree bytes: %q, %v", current, err)
 				}
 				if discoveryError != nil || !errors.Is(res.Index.Errors["broken/cm.yaml"], manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree error, got %v", discoveryError)
@@ -1351,11 +1360,15 @@ func TestE2E_PinnedDiff_BaseAndCurrentRefs(t *testing.T) {
 	root, repo, _, _ := sourceRefFixture(t)
 	loader := installSourceRefTransport(t, repo.Storer)
 	setSourceRef(t, root, "tag: v2.0.0")
-	out, stderr := requireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "flux"), "--base", "HEAD",
-		"--concurrency", "2", "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
-	assertSourceValueDiff(t, out, "v1.0.0", "v2.0.0")
-	if loader.calls.Load() == 0 || strings.Count(stderr, "declared source ref cannot be satisfied locally") != 1 {
-		t.Fatalf("exported declared-ref baseline did not warn/fetch: calls=%d\n%s", loader.calls.Load(), stderr)
+	for _, concurrency := range []string{"2", "4"} {
+		t.Run("concurrency_"+concurrency, func(t *testing.T) {
+			out, stderr := requireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "flux"), "--base", "HEAD",
+				"--concurrency", concurrency, "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
+			assertSourceValueDiff(t, out, "v1.0.0", "v2.0.0")
+			if loader.calls.Load() != 0 || strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
+				t.Fatalf("locally available side refs warned/fetched: calls=%d\n%s", loader.calls.Load(), stderr)
+			}
+		})
 	}
 }
 
@@ -1376,10 +1389,15 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 	if fetched != local || loader.calls.Load() == 0 {
 		t.Fatalf("local/fetched pin bytes differ or no fetch occurred:\nlocal:\n%s\nfetched:\n%s", local, fetched)
 	}
-	out, stderr := requireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "flux"), "--base", "HEAD",
-		"--concurrency", "2", "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
-	if out != "" || strings.Count(stderr, "declared source ref cannot be satisfied locally") != 1 {
-		t.Fatalf("stable pin changed with dirty working files:\n%s\nstderr:\n%s", out, stderr)
+	for _, concurrency := range []string{"2", "4"} {
+		t.Run("concurrency_"+concurrency, func(t *testing.T) {
+			before := loader.calls.Load()
+			out, stderr := requireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "flux"), "--base", "HEAD",
+				"--concurrency", concurrency, "--cache-dir", t.TempDir(), "--git-depth", "0", "--log-level", "warn", "-o", "diff")
+			if out != "" || loader.calls.Load() != before || strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
+				t.Fatalf("stable local pin changed, warned or fetched with dirty working files: calls=%d\n%s\nstderr:\n%s", loader.calls.Load()-before, out, stderr)
+			}
+		})
 	}
 }
 

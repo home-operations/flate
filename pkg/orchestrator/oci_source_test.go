@@ -3,13 +3,13 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -19,14 +19,19 @@ type generatedOCIFetcher struct {
 	fetched atomic.Bool
 }
 
-func (f *generatedOCIFetcher) Fetch(_ context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
 	if obj.Named().Name == "app" {
 		f.fetched.Store(true)
 	}
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.root, Digest: "sha256:fixture", Key: "fixture", FS: os.DirFS(f.root)}, nil
+	input, err := gittree.AdmitDirectory(ctx, f.root)
+	if err != nil {
+		return nil, err
+	}
+	input.Kind, input.Digest = manifest.KindOCIRepository, "sha256:fixture"
+	return input, nil
 }
 
 func TestRender_DeferredOCIArtifactRoot(t *testing.T) {

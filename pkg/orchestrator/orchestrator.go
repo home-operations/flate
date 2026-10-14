@@ -4,10 +4,12 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
 
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
@@ -53,6 +55,11 @@ type SubstitutionSource struct {
 
 // Config carries everything the orchestrator needs.
 type Config struct {
+	// Input carries this side's admitted direct reader and source coordinates.
+	Input *store.SourceArtifact
+	// BaseInput carries the opposite side's admitted direct reader.
+	BaseInput *store.SourceArtifact
+
 	// Path is the directory to scan for Flux objects (the scan entry
 	// point — a cluster's Flux entry, which may be a subdir of RepoRoot).
 	Path string
@@ -573,6 +580,28 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	if o.cfg.Input == nil {
+		input, path, err := baseline.AdmitDirectory(ctx, o.cfg.Path, o.cfg.RepoRoot)
+		if err != nil {
+			return err
+		}
+		if o.cfg.BaseInput == nil && o.cfg.PathOrig != "" && o.cfg.ExternalChanges == nil {
+			baseInput, _, err := baseline.AdmitDirectory(ctx, o.cfg.PathOrig, o.cfg.PathOrig)
+			if err != nil {
+				return err
+			}
+			if baseInput.LocalPath == input.LocalPath {
+				baseInput = input
+			}
+			o.cfg.BaseInput = baseInput
+		}
+		o.cfg.Input, o.cfg.Path = input, path
+	}
+	if o.cfg.Input.FS == nil || o.cfg.Input.LocalPath == "" {
+		return fmt.Errorf("%w: input content unavailable", manifest.ErrInput)
+	}
+	o.cfg.RepoRoot = o.cfg.Input.LocalPath
+	o.store.SetArtifact(manifest.BootstrapSourceID, o.cfg.Input)
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
@@ -586,7 +615,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 
 	o.freezeSubstitutions()
 	o.failDependsOnCycles()
-	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
+	if err := o.buildChangeFilter(ctx, res.RepoRoot); err != nil {
 		return err
 	}
 	o.hrc.Options.DisableChartDigestTracking = res.DisableChartDigestTracking

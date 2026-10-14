@@ -76,6 +76,8 @@ spec: {path: ./leaf}
 	s.AddObject(parent)
 	s.AddObject(child)
 	l := loaderFixture(s, map[manifest.NamedResource]string{child.Named(): definition})
+	admitForTest(s, root)
+	l.documents = readerForTest(root)
 
 	l.ApplyNamespaces(root)
 
@@ -520,14 +522,14 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 	}
 	writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", depth), "resources:\n  - ./transformer.yaml\n")
 	writeFile(t, root, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
-	if (documentReader{}).subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{}, 0) {
+	if readerForTest(root).subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{}, 0) {
 		t.Error("want false: NamespaceTransformer sits past transformerScanMaxDepth")
 	}
 
 	// A reference cycle a → b → a must terminate (visited set) and return false.
 	writeFile(t, root, "cyc/a/kustomization.yaml", "resources:\n  - ../b\n")
 	writeFile(t, root, "cyc/b/kustomization.yaml", "resources:\n  - ../a\n")
-	if (documentReader{}).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, 0) {
+	if readerForTest(root).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, 0) {
 		t.Error("want false on a reference cycle (must not loop)")
 	}
 }

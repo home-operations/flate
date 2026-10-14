@@ -4,133 +4,240 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
+	"io"
 	"strings"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/packfile"
+	"github.com/go-git/go-git/v5/plumbing/format/pktline"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-// fetchedRef is where a fetched baseline lands in the throwaway repo.
-const fetchedRef plumbing.ReferenceName = "refs/flate/baseline"
+const fullBaseRef plumbing.ReferenceName = "refs/flate/base-full"
 
-// fetched is a baseline commit held in a throwaway bare repo rather
-// than the user's checkout, which stays untouched.
 type fetched struct {
 	repo    *git.Repository
 	hash    plumbing.Hash
-	cleanup func()
+	backing billy.Filesystem
+	remote  *baseRemote
 }
 
-// fetchBase fetches rev from url into a fresh bare repo and returns the
-// commit it names. rev is matched against the remote's refs the way
-// `git fetch origin <rev>` would: a full ref name as is, a branch before
-// a tag of the same name, origin/<name> as the branch, and a full SHA
-// through whichever ref points at it.
-func fetchBase(ctx context.Context, url, rev string) (*fetched, error) {
-	dir, err := os.MkdirTemp("", "flate-baseline-fetch-*")
-	if err != nil {
-		return nil, fmt.Errorf("baseline fetch tempdir: %w", err)
-	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	f, err := fetchInto(ctx, dir, url, rev)
-	if err != nil {
-		cleanup()
-		return nil, err
-	}
-	f.cleanup = cleanup
-	return f, nil
+type baseRemote struct {
+	client       transport.Transport
+	endpoint     *transport.Endpoint
+	capabilities *capability.List
+	url          string
+	pin          plumbing.Hash
+	full         bool
 }
 
-func fetchInto(ctx context.Context, dir, url, rev string) (*fetched, error) {
-	repo, err := git.PlainInit(dir, true)
-	if err != nil {
-		return nil, fmt.Errorf("baseline fetch init: %w", err)
-	}
-	remote, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
-	if err != nil {
-		return nil, fmt.Errorf("baseline fetch remote: %w", err)
-	}
-	src, err := remoteRef(ctx, remote, rev)
+func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (*fetched, error) {
+	ep, err := transport.NewEndpoint(url)
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("baseline: fetching from origin", "rev", src, "url", url)
-	err = remote.FetchContext(ctx, &git.FetchOptions{
-		RefSpecs: []config.RefSpec{config.RefSpec(src + ":" + fetchedRef.String())},
-		Depth:    fetchDepth(url),
-		Tags:     git.NoTags,
-	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return nil, fmt.Errorf("fetch %s: %w", src, err)
-	}
-	ref, err := repo.Reference(fetchedRef, true)
+	client, err := client.NewClient(ep)
 	if err != nil {
-		return nil, fmt.Errorf("fetched %s: %w", src, err)
+		return nil, err
 	}
-	hash := ref.Hash()
-	// An annotated tag points at a tag object; the baseline is the
-	// commit behind it.
-	if tag, err := repo.TagObject(hash); err == nil {
-		commit, err := tag.Commit()
-		if err != nil {
-			return nil, fmt.Errorf("peel tag %s: %w", src, err)
+	session, err := client.NewUploadPackSession(ep, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = session.Close() }()
+	refs, err := session.AdvertisedReferencesContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pin, err := remotePin(refs, rev)
+	if err != nil {
+		return nil, err
+	}
+	remote := &baseRemote{client: client, endpoint: ep, capabilities: refs.Capabilities, pin: pin, url: url}
+	key := sourcecache.GitKey{ID: "baseline-meta-" + manifest.Fingerprint([]string{url, pin.String()}), Ref: pin.String()}
+	generation, err := owner.Git(ctx, key, sourcecache.Forever, func(upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+		if err := remote.fetch(ctx, upper, nil); err != nil {
+			return plumbing.ZeroHash, err
 		}
-		hash = commit.Hash
-	}
-	return &fetched{repo: repo, hash: hash}, nil
-}
-
-// remoteRef picks the ref on the remote that rev names. A full SHA
-// fetches as the ref pointing at it when one exists, which every server
-// allows, and as the bare SHA otherwise, which needs the server's
-// consent (GitHub gives it for reachable commits).
-func remoteRef(ctx context.Context, remote *git.Remote, rev string) (string, error) {
-	refs, err := remote.ListContext(ctx, &git.ListOptions{})
-	if err != nil {
-		return "", fmt.Errorf("list origin refs: %w", err)
-	}
-	if plumbing.IsHash(rev) {
-		for _, ref := range refs {
-			if ref.Hash().String() == rev {
-				return ref.Name().String(), nil
+		if tag, err := object.GetTag(upper, pin); err == nil {
+			commit, err := tag.Commit()
+			if err != nil {
+				return plumbing.ZeroHash, err
 			}
+			remote.pin = commit.Hash
 		}
-		return rev, nil
+		return remote.pin, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	present := make(map[plumbing.ReferenceName]bool, len(refs))
-	for _, ref := range refs {
-		present[ref.Name()] = true
+	remote.pin = generation.Commit
+	storer := filesystem.NewStorageWithOptions(generation.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
+	// The private repository exposes metadata; it never represents a checkout.
+	repo := &git.Repository{Storer: storer}
+	if _, err := storer.Reference(fullBaseRef); err == nil {
+		remote.full = true
+	} else if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, err
 	}
-	var candidates []plumbing.ReferenceName
-	if strings.HasPrefix(rev, "refs/") {
-		candidates = []plumbing.ReferenceName{plumbing.ReferenceName(rev)}
-	} else {
-		name := strings.TrimPrefix(rev, "origin/")
-		candidates = []plumbing.ReferenceName{
-			plumbing.NewBranchReferenceName(name),
-			plumbing.NewTagReferenceName(name),
-		}
-	}
-	for _, name := range candidates {
-		if present[name] {
-			return name.String(), nil
-		}
-	}
-	return "", fmt.Errorf("origin has no ref named %s", rev)
+	return &fetched{repo: repo, hash: generation.Commit, backing: generation.Backing, remote: remote}, nil
 }
 
-// fetchDepth is 1 for network remotes. A local-path remote is served by
-// go-git's in-process server, which refuses shallow fetches, and has
-// nothing to save by one.
-func fetchDepth(url string) int {
-	if ep, err := transport.NewEndpoint(url); err == nil && ep.Protocol == "file" {
-		return 0
+func remotePin(refs *packp.AdvRefs, rev string) (plumbing.Hash, error) {
+	if plumbing.IsHash(rev) {
+		return plumbing.NewHash(rev), nil
 	}
-	return 1
+	names := []string{rev}
+	if !strings.HasPrefix(rev, "refs/") {
+		name := strings.TrimPrefix(rev, "origin/")
+		names = []string{plumbing.NewBranchReferenceName(name).String(), plumbing.NewTagReferenceName(name).String()}
+	}
+	for _, name := range names {
+		if pin, ok := refs.References[name]; ok {
+			return pin, nil
+		}
+	}
+	return plumbing.ZeroHash, fmt.Errorf("origin has no ref named %s", rev)
+}
+
+// fetch requests only missing body wants after the metadata phase. Unsupported
+// partial capabilities permit one full fetch of the same resolved commit.
+func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	req := packp.NewUploadPackRequestFromCapabilities(r.capabilities)
+	req.Capabilities.Delete(capability.Sideband64k)
+	req.Capabilities.Delete(capability.Sideband)
+	if len(wants) == 0 {
+		req.Wants = []plumbing.Hash{r.pin}
+		if r.capabilities.Supports(capability.Shallow) {
+			req.Depth = packp.DepthCommits(1)
+			_ = req.Capabilities.Set(capability.Shallow)
+		}
+		if !r.full && r.capabilities.Supports(capability.Filter) {
+			if err := req.Capabilities.Set(capability.Filter); err != nil {
+				return err
+			}
+			req.Filter = packp.FilterBlobNone()
+		} else {
+			r.full = true
+		}
+	} else if r.capabilities.Supports(capability.AllowReachableSHA1InWant) {
+		req.Wants = wants
+	} else {
+		if r.full {
+			return fmt.Errorf("base %s is missing objects after full fetch", r.pin)
+		}
+		r.full = true
+		req.Wants = []plumbing.Hash{r.pin}
+		if r.capabilities.Supports(capability.Shallow) {
+			req.Depth = packp.DepthCommits(1)
+			_ = req.Capabilities.Set(capability.Shallow)
+		}
+	}
+	for {
+		session, err := r.client.NewUploadPackSession(r.endpoint, nil)
+		if err != nil {
+			return err
+		}
+		response, err := session.UploadPack(ctx, req)
+		if err == nil {
+			err = errors.Join(packfile.UpdateObjectStorage(upper, response), response.Close())
+		}
+		err = errors.Join(err, session.Close())
+		if err == nil {
+			if r.full {
+				if err := upper.SetReference(plumbing.NewHashReference(fullBaseRef, r.pin)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
+			return err
+		}
+		if _, refusal := errors.AsType[*pktline.ErrorLine](err); !refusal || r.full {
+			return err
+		}
+		r.full = true
+		req = packp.NewUploadPackRequestFromCapabilities(r.capabilities)
+		req.Capabilities.Delete(capability.Sideband64k)
+		req.Capabilities.Delete(capability.Sideband)
+		req.Wants = []plumbing.Hash{r.pin}
+		if r.capabilities.Supports(capability.Shallow) {
+			req.Depth = packp.DepthCommits(1)
+			_ = req.Capabilities.Set(capability.Shallow)
+		}
+	}
+}
+
+func copyMetadata(ctx context.Context, source storage.Storer, upper storage.Storer, hash plumbing.Hash) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	commit, err := source.EncodedObject(plumbing.CommitObject, hash)
+	if err != nil {
+		return err
+	}
+	if _, err = upper.SetEncodedObject(commit); err != nil {
+		return err
+	}
+	c, err := object.GetCommit(source, hash)
+	if err != nil {
+		return err
+	}
+	tree, err := c.Tree()
+	if err != nil {
+		return err
+	}
+	walker := object.NewTreeWalker(tree, true, nil)
+	defer walker.Close()
+	root, err := source.EncodedObject(plumbing.TreeObject, tree.Hash)
+	if err != nil {
+		return err
+	}
+	if _, err = upper.SetEncodedObject(root); err != nil {
+		return err
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, entry, err := walker.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if entry.Mode != filemode.Dir {
+			continue
+		}
+		obj, err := source.EncodedObject(plumbing.TreeObject, entry.Hash)
+		if err != nil {
+			return err
+		}
+		if _, err = upper.SetEncodedObject(obj); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // originURL is the checkout's origin remote URL, when it has one.

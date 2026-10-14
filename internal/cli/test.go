@@ -73,7 +73,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// Colorize only when stdout can show it — output.ColorEnabled
 			// (colorprofile) honors NO_COLOR / CLICOLOR / TTY-ness; piped or
 			// redirected output stays plain.
-			color := output.ColorEnabled(cmd.OutOrStdout())
+			encoder := output.Encoder{Writer: cmd.OutOrStdout(), Color: output.ColorEnabled(cmd.OutOrStdout())}
 			// One consolidated report on stdout: the per-resource report (failures
 			// already appear inline on their rows), then render advisories
 			// (warnings) and deferred logs (notes), then a single verdict.
@@ -81,7 +81,7 @@ func testCmd(use string, aliases []string, short string, args cobra.PositionalAr
 			// diagnostic so a passing selected row cannot hide a fatal cause.
 			warnings := slices.Concat(res.Warnings, res.Unrelated)
 			notes := drainLogNotes()
-			if err := roster.Write(cmd.OutOrStdout(), warnings, notes, color, elapsed); err != nil {
+			if err := encoder.Test(roster, warnings, notes, elapsed); err != nil {
 				return errors.Join(err, runErr)
 			}
 			if name != "" && runErr != nil {

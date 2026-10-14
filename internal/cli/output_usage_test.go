@@ -17,6 +17,11 @@ func TestOutputUsage(t *testing.T) {
 		want    string
 	}{
 		{
+			name:    "diff help order",
+			outputs: output.DiffFormats,
+			want:    "output format: human, github, diff, html, brief, gitlab, gitea, json",
+		},
+		{
 			name:    "build set",
 			outputs: []output.Format{output.FormatYAML, output.FormatJSON},
 			want:    "output format: yaml, json",

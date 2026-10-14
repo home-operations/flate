@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"cmp"
 	"strings"
 	"testing"
 
@@ -53,33 +54,124 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 
 // Suppression headers must remain visible even when no changes render.
 func TestRenderDocs_SuppressionHeader(t *testing.T) {
-	l := []Doc{cmDoc(ksParent, "keep", "apps", "old", "")}
-	r := []Doc{cmDoc(ksParent, "keep", "apps", "new", "")}
-	suppressed := []Suppression{{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "chart not ready"}}
+	parent := ksParent
+	parent.Path = "apps/<path>"
+	l := []Doc{cmDoc(parent, "keep", "apps", "old", ""), cmDoc(parent, "other", "apps", "before", "")}
+	r := []Doc{cmDoc(parent, "keep", "apps", "new", ""), cmDoc(parent, "other", "apps", "after", "")}
+	suppressed := []Suppression{
+		{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "chart not ready"},
+		{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "suspended on orig"},
+	}
 	note := suppressed[0].String()
+	const humanBody = `
+data.k  (v1/ConfigMap/apps/keep)
+  ± value change
+    - old
+    + new
+
+data.k  (v1/ConfigMap/apps/other)
+  ± value change
+    - before
+    + after
+
+`
 
 	for _, tc := range []struct {
 		format Format
 		prefix string
+		body   string
 	}{
-		{FormatHuman, "⚠ "},
-		{FormatGitHub, "! "},
-		{FormatGitLab, "# "},
-		{FormatGitea, "! "},
-		{FormatBrief, "⚠ "},
-		{FormatDiff, "# "},
+		{"", "⚠ ", humanBody},
+		{FormatHuman, "⚠ ", humanBody},
+		{FormatGitHub, "! ", `
+@@ data.k @@
+# v1/ConfigMap/apps/keep
+! ± value change
+- old
++ new
+
+@@ data.k @@
+# v1/ConfigMap/apps/other
+! ± value change
+- before
++ after
+
+`},
+		{FormatGitLab, "# ", `
+= data.k
+= v1/ConfigMap/apps/keep
+# ± value change
+- old
++ new
+
+= data.k
+= v1/ConfigMap/apps/other
+# ± value change
+- before
++ after
+
+`},
+		{FormatGitea, "! ", `
+@@ data.k @@
+= v1/ConfigMap/apps/keep
+! ± value change
+- old
++ new
+
+@@ data.k @@
+= v1/ConfigMap/apps/other
+! ± value change
+- before
++ after
+
+`},
+		{FormatBrief, "⚠ ", "two changes detected between from, two documents and to, two documents\n\n"},
+		{FormatDiff, "# ", `--- ConfigMap apps/keep (apps/<path>)
++++ ConfigMap apps/keep (apps/<path>)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  k: old
++  k: new
+ kind: ConfigMap
+ metadata:
+   name: keep
+
+--- ConfigMap apps/other (apps/<path>)
++++ ConfigMap apps/other (apps/<path>)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  k: before
++  k: after
+ kind: ConfigMap
+ metadata:
+   name: other
+`},
 	} {
-		t.Run(string(tc.format), func(t *testing.T) {
+		t.Run(cmp.Or(string(tc.format), "default"), func(t *testing.T) {
 			out, err := RenderDocs(l, r, Options{Format: tc.format, Suppressed: suppressed})
 			if err != nil {
 				t.Fatalf("render: %v", err)
 			}
-			s := string(out)
-			if !strings.HasPrefix(s, tc.prefix+note+"\n") {
-				t.Errorf("output should lead with the note %q; got:\n%s", tc.prefix+note, s)
+			header := tc.prefix + note + "\n" + tc.prefix + suppressed[1].String() + "\n"
+			body, err := RenderDocs(l, r, Options{Format: tc.format})
+			if err != nil {
+				t.Fatalf("body: %v", err)
 			}
-			if strings.TrimSpace(strings.TrimPrefix(s, tc.prefix+note)) == "" {
-				t.Errorf("unrelated change should still render after the note:\n%s", s)
+			if string(body) != tc.body {
+				t.Errorf("body = %q, want %q", body, tc.body)
+			}
+			if want := header + "\n" + tc.body; string(out) != want {
+				t.Errorf("output = %q, want %q", out, want)
+			}
+			out, err = RenderDocs(nil, nil, Options{Format: tc.format, Suppressed: suppressed})
+			if err != nil || string(out) != header {
+				t.Errorf("notes only = %q, %v; want %q, nil", out, err, header)
+			}
+			out, err = RenderDocs(nil, nil, Options{Format: tc.format})
+			if err != nil || len(out) != 0 {
+				t.Errorf("empty = %q, %v; want empty bytes, nil", out, err)
 			}
 		})
 	}
@@ -95,14 +187,12 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 	})
 
 	t.Run("suppression alone still emits", func(t *testing.T) {
-		for _, f := range []Format{FormatHuman, FormatGitHub, FormatDiff, FormatHTML} {
-			out, err := RenderDocs(nil, nil, Options{Format: f, Suppressed: suppressed})
-			if err != nil {
-				t.Fatalf("%s: %v", f, err)
-			}
-			if !strings.Contains(string(out), "not rendered on the current side") {
-				t.Errorf("%s: an otherwise-empty diff must still disclose the suppression; got %q", f, out)
-			}
+		out, err := RenderDocs(nil, nil, Options{Format: FormatHTML, Suppressed: suppressed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), "not rendered on the current side") {
+			t.Errorf("an otherwise-empty HTML diff must still disclose the suppression; got %q", out)
 		}
 	})
 }

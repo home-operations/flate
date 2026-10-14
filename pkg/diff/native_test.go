@@ -69,8 +69,26 @@ func TestRenderDocs_NoChange(t *testing.T) {
 
 func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 	d := ncm("hello", "k", "v")
-	if _, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"}); err == nil {
-		t.Error("expected error for unsupported format")
+	out, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"})
+	if err == nil || err.Error() != `unsupported diff format "bogus"` || out != nil {
+		t.Errorf("RenderDocs = %q, %v; want nil bytes and exact unsupported-format error", out, err)
+	}
+	d.Manifest["bad"] = func() {}
+	for _, tc := range []struct {
+		format Format
+		prefix string
+	}{
+		{FormatGitHub, "marshal from: "},
+		{FormatDiff, "marshal: "},
+		{FormatHTML, "marshal: "},
+	} {
+		t.Run(string(tc.format), func(t *testing.T) {
+			out, err := RenderDocs([]Doc{d}, nil, Options{Format: tc.format,
+				Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "chart not ready"}}})
+			if err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil {
+				t.Fatalf("RenderDocs = %q, %v; want nil bytes and %s error", out, err, tc.prefix)
+			}
+		})
 	}
 }
 

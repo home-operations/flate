@@ -30,7 +30,17 @@ func TestRenderHTML_Changed(t *testing.T) {
 	t.Parallel()
 	from := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"2\"\n  level: info\n")
 	to := htmlDoc(t, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n  namespace: apps\ndata:\n  replicas: \"3\"\n  level: info\n")
-	out := renderHTMLString(t, []Doc{from}, []Doc{to})
+	for _, d := range []*Doc{&from, &to} {
+		d.Manifest["metadata"].(map[string]any)["name"] = "web<resource>"
+		d.Manifest["data"].(map[string]any)["payload"] = "<yaml>"
+		d.Parent.Name, d.Parent.Path = "web<parent>", "apps/<path>"
+	}
+	raw, err := RenderDocs([]Doc{from}, []Doc{to}, Options{Format: FormatHTML,
+		Suppressed: []Suppression{{Parent: from.Parent, Side: SideCurrent, Reason: "<suppression>"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(raw)
 
 	for _, want := range []string{
 		"<!doctype html>",
@@ -51,6 +61,7 @@ func TestRenderHTML_Changed(t *testing.T) {
 		"1 changed",                    // summary count
 		"ConfigMap apps/web",           // per-resource title
 		"HelmRelease apps/web",         // parent attribution
+		"&lt;resource&gt;", "&lt;parent&gt;", "apps/&lt;path&gt;", "&lt;yaml&gt;", "&lt;suppression&gt;",
 		// Column widths must live on <col>: the tables are table-layout:fixed,
 		// whose column sizing comes from the first row — usually a colspan
 		// expander — so a width on the line-number cells alone collapses every
@@ -78,6 +89,11 @@ func TestRenderHTML_Changed(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("changed-diff HTML missing %q", want)
+		}
+	}
+	for _, unescaped := range []string{"<resource>", "<parent>", "<path>", "<yaml>", "<suppression>"} {
+		if strings.Contains(out, unescaped) {
+			t.Errorf("unescaped input %q in HTML", unescaped)
 		}
 	}
 }
@@ -139,26 +155,6 @@ data:
 		if !strings.Contains(out, want) {
 			t.Errorf("folded-context HTML missing %q", want)
 		}
-	}
-}
-
-func TestRuneDiffRange(t *testing.T) {
-	t.Parallel()
-	// a value edit in the middle: only the differing run is flagged on each side.
-	if lo, hi, _, _ := runeDiffRange("v1.19.6", "v1.20.0"); string([]rune("v1.19.6")[lo:hi]) != "19.6" {
-		t.Errorf(`middle edit: got %q, want "19.6"`, string([]rune("v1.19.6")[lo:hi]))
-	}
-	// a suffix removed: the left flags the removed run, the right flags nothing.
-	aLo, aHi, bLo, bHi := runeDiffRange("name: ceph-csi-controller-manager", "name: ceph-csi")
-	if got := string([]rune("name: ceph-csi-controller-manager")[aLo:aHi]); got != "-controller-manager" {
-		t.Errorf(`suffix removed (left): got %q, want "-controller-manager"`, got)
-	}
-	if bHi != bLo {
-		t.Errorf("suffix removed (right): want empty range, got [%d,%d)", bLo, bHi)
-	}
-	// no shared prefix or suffix: nothing flagged, so the line is just tinted.
-	if lo, hi, _, _ := runeDiffRange("abc", "xyz"); lo != 0 || hi != 0 {
-		t.Errorf("unrelated lines: want empty range, got [%d,%d)", lo, hi)
 	}
 }
 

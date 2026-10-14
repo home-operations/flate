@@ -2,11 +2,9 @@ package testrunner
 
 import (
 	"bytes"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
@@ -14,65 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func TestWrite_NotesFooter(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		notes []output.Note
-		want  string
-	}{
-		{name: "empty", want: "\n  ✓ 0 passed\n"},
-		{
-			name:  "single",
-			notes: []output.Note{{Text: "resource orphaned id=x"}},
-			want:  "\n  notes (1)\n    resource orphaned id=x\n\n  ✓ 0 passed\n",
-		},
-		{
-			name:  "collapsed",
-			notes: []output.Note{{Text: "resource orphaned id=x", Count: 3}, {Text: "source fetched", Count: 1}},
-			want:  "\n  notes (4)\n    resource orphaned id=x (×3)\n    source fetched\n\n  ✓ 0 passed\n",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var b bytes.Buffer
-			if err := (Report{}).Write(&b, nil, tc.notes, false, 0); err != nil {
-				t.Fatal(err)
-			}
-			assert.Equal(t, b.String(), tc.want)
-		})
-	}
-}
-
-// TestWrite_VerdictGlyphAndElapsed: the summary leads with a green ✓ when all
-// pass and a red ✗ when anything fails, and shows the elapsed clock only when
-// non-zero.
-func TestWrite_VerdictGlyphAndElapsed(t *testing.T) {
-	po, pass := newRunner(t)
-	ok := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
-	pass.AddObject(&manifest.Kustomization{Name: ok.Name, Namespace: ok.Namespace})
-	pass.UpdateStatus(ok, store.StatusReady, "")
-	var pb bytes.Buffer
-	if err := runSelected(t, po).Write(&pb, nil, nil, false, 1500*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if out := pb.String(); !strings.Contains(out, output.GlyphPass) || strings.Contains(out, output.GlyphFail) {
-		t.Errorf("all-pass summary wants ✓ and no ✗:\n%s", out)
-	} else if !strings.Contains(out, "1.5s") {
-		t.Errorf("summary should show the elapsed clock:\n%s", out)
-	}
-
-	fo, fail := newRunner(t)
-	bad := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "bad"}
-	fail.AddObject(&manifest.Kustomization{Name: bad.Name, Namespace: bad.Namespace})
-	fail.UpdateStatus(bad, store.StatusFailed, "boom")
-	var fb bytes.Buffer
-	_ = runSelected(t, fo).Write(&fb, nil, nil, false, 0)
-	if out := fb.String(); !strings.Contains(out, output.GlyphFail) {
-		t.Errorf("failing summary wants ✗:\n%s", out)
-	} else if strings.Contains(out, "0.0s") {
-		t.Errorf("elapsed=0 should be omitted, not rendered:\n%s", out)
-	}
-}
 
 func TestRun_AllPass(t *testing.T) {
 	o, s := newRunner(t)
@@ -88,7 +27,7 @@ func TestRun_AllPass(t *testing.T) {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
 	var b bytes.Buffer
-	if err := rep.Write(&b, nil, nil, false, 0); err != nil {
+	if err := (output.Encoder{Writer: &b}).Test(rep, nil, nil, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if !strings.Contains(b.String(), "2 passed") {
@@ -111,22 +50,30 @@ func TestRun_OneFailed(t *testing.T) {
 }
 
 func TestRun_SkippedReasonReportedAsSkipped(t *testing.T) {
-	// A KS that soft-skipped (e.g. source was --allow-missing-secrets'd)
-	// reports as SKIPPED, not PASSED or FAILED.
-	o, s := newRunner(t)
-	s.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system"})
-	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"},
-		store.StatusReady, "skipped: source GitRepository/flux-system/sealed missing auth")
+	for _, tc := range []struct {
+		name, message, reason string
+	}{
+		{"source skipped", "skipped: source GitRepository/flux-system/sealed missing auth", "missing auth"},
+		{"unchanged", store.MsgUnchanged, store.MsgUnchanged},
+		{"suspended", store.MsgSuspended, store.MsgSuspended},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, s := newRunner(t)
+			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
+			s.AddObject(ks)
+			s.UpdateStatus(ks.Named(), store.StatusReady, tc.message)
 
-	rep := runSelected(t, o)
-	if rep.AnyFailed() {
-		t.Errorf("skipped-reason case must not fail: %+v", rep)
-	}
-	if rep.Skipped != 1 || rep.Passed != 0 {
-		t.Errorf("expected 1 skipped, 0 passed; got %+v", rep)
-	}
-	if !strings.Contains(rep.Cases[0].Reason, "missing auth") {
-		t.Errorf("skip reason should carry the underlying message; got %q", rep.Cases[0].Reason)
+			rep := runSelected(t, o)
+			if rep.AnyFailed() {
+				t.Errorf("skipped-reason case must not fail: %+v", rep)
+			}
+			if rep.Skipped != 1 || rep.Passed != 0 {
+				t.Errorf("expected 1 skipped, 0 passed; got %+v", rep)
+			}
+			if !strings.Contains(rep.Cases[0].Reason, tc.reason) {
+				t.Errorf("skip reason should carry %q; got %q", tc.reason, rep.Cases[0].Reason)
+			}
+		})
 	}
 }
 
@@ -151,80 +98,6 @@ func TestRun_SelectedNamespace(t *testing.T) {
 	rep := runSelected(t, o, manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "alpha"})
 	if rep.Passed != 1 || len(rep.Cases) != 1 || rep.Cases[0].ID != alpha {
 		t.Errorf("selected namespace report = %+v, want only %s", rep, alpha)
-	}
-}
-
-func TestWrite_ShowsSkippedByDefault(t *testing.T) {
-	o, s := newRunner(t)
-	passed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "changed"}
-	skipped := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "untouched"}
-	s.AddObject(&manifest.Kustomization{Name: passed.Name, Namespace: passed.Namespace})
-	s.AddObject(&manifest.Kustomization{Name: skipped.Name, Namespace: skipped.Namespace})
-	s.UpdateStatus(passed, store.StatusReady, "")
-	s.UpdateStatus(skipped, store.StatusReady, store.MsgUnchanged)
-
-	rep := runSelected(t, o)
-
-	var b bytes.Buffer
-	if err := rep.Write(&b, nil, nil, false, 0); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	out := b.String()
-
-	if !strings.Contains(out, "changed") {
-		t.Errorf("PASSED row must appear: %s", out)
-	}
-	if !strings.Contains(out, "untouched") {
-		t.Errorf("skipped row must appear by default: %s", out)
-	}
-	if !strings.Contains(out, "‒") || !strings.Contains(out, "unchanged") {
-		t.Errorf("skipped row should carry its glyph and reason: %s", out)
-	}
-	if !strings.Contains(out, "1 skipped") {
-		t.Errorf("summary must report the skipped count: %s", out)
-	}
-}
-
-func TestWrite_FailedNeverHidden(t *testing.T) {
-	o, s := newRunner(t)
-	failed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "broken"}
-	s.AddObject(&manifest.Kustomization{Name: failed.Name, Namespace: failed.Namespace})
-	s.UpdateStatus(failed, store.StatusFailed, "boom")
-
-	rep := runSelected(t, o)
-	var b bytes.Buffer
-	if err := rep.Write(&b, nil, nil, false, 0); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if out := b.String(); !strings.Contains(out, "✗") || !strings.Contains(out, "broken") {
-		t.Errorf("failed row must appear by default: %s", out)
-	}
-}
-
-// TestWrite_Color: color=true emits ANSI codes (green pass, red fail); color=
-// false renders none, so piped / NO_COLOR output stays plain.
-func TestWrite_Color(t *testing.T) {
-	o, s := newRunner(t)
-	pass := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
-	fail := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "bad"}
-	s.AddObject(&manifest.Kustomization{Name: pass.Name, Namespace: pass.Namespace})
-	s.AddObject(&manifest.HelmRelease{Name: fail.Name, Namespace: fail.Namespace})
-	s.UpdateStatus(pass, store.StatusReady, "")
-	s.UpdateStatus(fail, store.StatusFailed, "boom")
-	rep := runSelected(t, o)
-
-	var colored, plain bytes.Buffer
-	if err := rep.Write(&colored, nil, nil, true, 0); err != nil {
-		t.Fatalf("Write(color): %v", err)
-	}
-	if err := rep.Write(&plain, nil, nil, false, 0); err != nil {
-		t.Fatalf("Write(plain): %v", err)
-	}
-	if !strings.Contains(colored.String(), "\x1b") {
-		t.Errorf("colored output emitted no ANSI: %q", colored.String())
-	}
-	if strings.Contains(plain.String(), "\x1b") {
-		t.Errorf("plain output leaked an escape code: %q", plain.String())
 	}
 }
 
@@ -265,55 +138,6 @@ func TestRun_DeterministicOrderAndMatchCount(t *testing.T) {
 	}
 }
 
-func TestWrite_ReturnsWriterError(t *testing.T) {
-	want := errors.New("write failed")
-	rep := Report{Cases: []Case{{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
-
-	if err := rep.Write(errWriter{err: want}, nil, nil, false, 0); !errors.Is(err, want) {
-		t.Fatalf("Write error = %v, want %v", err, want)
-	}
-}
-
-func TestWrite_MultilineColorAndNotes(t *testing.T) {
-	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "root"}
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
-	r := Report{
-		Cases:   []Case{{ID: root, Outcome: OutcomeFailed, Reason: " first \n\t\n second\n third "}},
-		Blocked: []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by ns/root"}},
-		Failed:  1,
-	}
-	for _, tc := range []struct {
-		name  string
-		color bool
-	}{{name: "plain"}, {name: "color", color: true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			color := tc.color
-			want := "\n  " + output.Fail(output.GlyphFail, color) + "  " + output.Dim(root.Kind, color) + "  ns/root  " + output.Dim("first", color) +
-				"\n         " + output.Dim("second", color) + "\n         " + output.Dim("third", color) +
-				"\n  " + output.Dim(output.GlyphBlocked, color) + "  " + output.Dim(child.Kind, color) + "  ns/child  " + output.Dim("blocked by ns/root", color) +
-				"\n\n  " + output.Warn("⚠ warnings (1)", color) + "\n    " + output.Warn("advisory (×2)", color) +
-				"\n\n  " + output.Dim("notes (3)", color) + "\n    " + output.Dim("repeated (×3)", color) +
-				"\n\n  " + output.Fail(output.GlyphFail, color) + " " + output.Pass("0 passed", color) + " · " + output.Fail("1 failed", color) +
-				" · " + output.Dim("1 blocked", color) + "   " + output.Dim("1.5s", color) + "\n"
-			var b bytes.Buffer
-			if err := r.Write(&b, []manifest.Warning{{Message: "advisory", Count: 2}}, []output.Note{{Text: "repeated", Count: 3}}, color, 1500*time.Millisecond); err != nil {
-				t.Fatal(err)
-			}
-			if got := b.String(); got != want {
-				t.Fatalf("report = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-type errWriter struct {
-	err error
-}
-
-func (w errWriter) Write(_ []byte) (int, error) {
-	return 0, w.err
-}
-
 // TestRun_BlockedByPrimaryFailure pins the cascade: a failure with recorded
 // blockers classifies as Blocked (not Failed), is kept out of the roster Cases,
 // and lands in Blocked as a "blocked by <root>" case naming the primary failure
@@ -340,13 +164,13 @@ func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 		}
 	}
 	// The root is a primary failure on its own row, so it carries no "(not found)".
-	want := []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by flux-system/cluster-apps"}}
+	want := []output.Case{{ID: child, Outcome: output.OutcomeBlocked, Reason: "blocked by flux-system/cluster-apps"}}
 	if !reflect.DeepEqual(rep.Blocked, want) {
 		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 	}
 
 	var b bytes.Buffer
-	_ = rep.Write(&b, nil, nil, false, 0)
+	_ = (output.Encoder{Writer: &b}).Test(rep, nil, nil, 0)
 	out := b.String()
 	if !strings.Contains(out, "1 failed") || !strings.Contains(out, "1 blocked") {
 		t.Errorf("verdict should separate failed and blocked:\n%s", out)
@@ -375,7 +199,7 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 	if rep.Matched != 1 || rep.Passed != 1 || rep.Failed != 1 {
 		t.Fatalf("want 1 matched, 1 passed (KS) + 1 failed (ResourceSet), got %+v", rep)
 	}
-	var found *Case
+	var found *output.Case
 	for i := range rep.Cases {
 		if rep.Cases[i].ID == rs {
 			found = &rep.Cases[i]
@@ -384,11 +208,11 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 	if found == nil {
 		t.Fatalf("ResourceSet failure not surfaced as a case: %+v", rep.Cases)
 	}
-	if found.Outcome != OutcomeFailed || !strings.Contains(found.Reason, "nope") {
+	if found.Outcome != output.OutcomeFailed || !strings.Contains(found.Reason, "nope") {
 		t.Errorf("ResourceSet case = %+v, want failed with the parse error", found)
 	}
 	var b bytes.Buffer
-	_ = rep.Write(&b, nil, nil, false, 0)
+	_ = (output.Encoder{Writer: &b}).Test(rep, nil, nil, 0)
 	if out := b.String(); !strings.Contains(out, "broken-rs") || !strings.Contains(out, "nope") {
 		t.Errorf("roster must show the non-roster failure inline:\n%s", out)
 	}
@@ -444,12 +268,12 @@ func TestRun_BlockedRootReason(t *testing.T) {
 			if rep.Matched != 1 || rep.Failed != tc.wantFailed || len(rep.Blocked) != 1 || !rep.AnyFailed() {
 				t.Fatalf("want %d failed + 1 blocked, got %+v", tc.wantFailed, rep)
 			}
-			want := []Case{{ID: hr, Outcome: OutcomeBlocked, Reason: tc.wantReason}}
+			want := []output.Case{{ID: hr, Outcome: output.OutcomeBlocked, Reason: tc.wantReason}}
 			if !reflect.DeepEqual(rep.Blocked, want) {
 				t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 			}
 			var b bytes.Buffer
-			if err := rep.Write(&b, nil, nil, false, 0); err != nil {
+			if err := (output.Encoder{Writer: &b}).Test(rep, nil, nil, 0); err != nil {
 				t.Fatal(err)
 			}
 			if out := b.String(); !strings.Contains(out, "apps/demo") || strings.Count(out, "fetch artifact: 404 Not Found") != 1 || strings.Contains(out, "flux error:") {
@@ -477,12 +301,12 @@ func TestRun_BlockedByMissingDep(t *testing.T) {
 	if !rep.AnyFailed() {
 		t.Error("a blocked-only run must still be non-zero")
 	}
-	want := []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by kopiur-system/kopiur (not found)"}}
+	want := []output.Case{{ID: child, Outcome: output.OutcomeBlocked, Reason: "blocked by kopiur-system/kopiur (not found)"}}
 	if !reflect.DeepEqual(rep.Blocked, want) {
 		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 	}
 	var b bytes.Buffer
-	_ = rep.Write(&b, nil, nil, false, 0)
+	_ = (output.Encoder{Writer: &b}).Test(rep, nil, nil, 0)
 	if !strings.Contains(b.String(), "not found") {
 		t.Errorf("missing root should render (not found):\n%s", b.String())
 	}
@@ -512,9 +336,9 @@ func TestRun_BlockedByCycle(t *testing.T) {
 	}
 	// Each cycle victim names its immediate blocker; both
 	// blockers carry a status, so neither is tagged "(not found)".
-	want := []Case{
-		{ID: hr, Outcome: OutcomeBlocked, Reason: "blocked by flux-system/ks-a"},
-		{ID: ks, Outcome: OutcomeBlocked, Reason: "blocked by app/hr-b"},
+	want := []output.Case{
+		{ID: hr, Outcome: output.OutcomeBlocked, Reason: "blocked by flux-system/ks-a"},
+		{ID: ks, Outcome: output.OutcomeBlocked, Reason: "blocked by app/hr-b"},
 	}
 	if !reflect.DeepEqual(rep.Blocked, want) {
 		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
@@ -531,7 +355,7 @@ func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 	return o, o.Store()
 }
 
-func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.NamedResource) Report {
+func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.NamedResource) output.TestReport {
 	t.Helper()
 	if len(roots) == 0 {
 		roots = []manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}

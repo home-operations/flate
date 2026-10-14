@@ -3,6 +3,7 @@ package diff
 import (
 	"cmp"
 	"fmt"
+	"iter"
 	"slices"
 	"strings"
 
@@ -161,33 +162,12 @@ func suppress(orig, current Snapshot) ([]manifest.BaseManifest, []manifest.BaseM
 	return l, r, suppressed
 }
 
-// suppressionHeader renders suppressions as a leading block, one prefixed
-// line per entry, so the reader meets the explanation before any body. Empty
-// when nothing was suppressed.
-func suppressionHeader(suppressed []Suppression, prefix string) []byte {
-	if len(suppressed) == 0 {
-		return nil
+func suppressionNotes(suppressed []Suppression) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for _, note := range suppressed {
+			if !yield(note.String()) {
+				return
+			}
+		}
 	}
-	var b strings.Builder
-	for _, s := range suppressed {
-		b.WriteString(prefix)
-		b.WriteString(s.String())
-		b.WriteByte('\n')
-	}
-	return []byte(b.String())
-}
-
-// withHeader prepends header to body, separated by a blank line when both are
-// non-empty.
-func withHeader(header, body []byte) []byte {
-	switch {
-	case len(header) == 0:
-		return body
-	case len(body) == 0:
-		return header
-	}
-	out := make([]byte, 0, len(header)+1+len(body))
-	out = append(out, header...)
-	out = append(out, '\n')
-	return append(out, body...)
 }

@@ -2,10 +2,14 @@ package diff
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"log/slog"
 	"slices"
 
+	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -19,39 +23,48 @@ type pairedResource struct {
 	a, b                  map[string]any
 }
 
-type changedPair struct {
-	pairedResource
-	from, to string
-}
-
 // changedPairs yields YAML differences after normalization, which can change identities.
 // A nil side marshals to an empty document, so its counterpart is a full add/remove.
-func changedPairs(left, right []Doc, opts Options) iter.Seq2[changedPair, error] {
-	return func(yield func(changedPair, error) bool) {
+func changedPairs(left, right []Doc, opts Options) iter.Seq2[output.LineChange, error] {
+	return func(yield func(output.LineChange, error) bool) {
 		left = normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
 		right = normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
 		for _, p := range pair(left, right) {
 			from, err := marshalForUnified(p.a)
 			if err != nil {
-				yield(changedPair{}, err)
+				yield(output.LineChange{}, err)
 				return
 			}
 			to, err := marshalForUnified(p.b)
 			if err != nil {
-				yield(changedPair{}, err)
+				yield(output.LineChange{}, err)
 				return
 			}
-			if from != to && !yield(changedPair{pairedResource: p, from: from, to: to}, nil) {
+			if from == to {
+				continue
+			}
+			status, _ := classify(p.a, p.b)
+			if !yield(output.LineChange{
+				Resource:   manifest.NamedResource{Kind: p.kind, Namespace: p.namespace, Name: p.name},
+				Parent:     manifest.NamedResource{Kind: p.parent.Kind, Namespace: p.parent.Namespace, Name: p.parent.Name},
+				ParentPath: p.parent.Path, From: from, To: to, Status: string(status),
+			}, nil) {
 				return
 			}
 		}
 	}
 }
 
-// label is the resource's human-facing title, e.g. "Deployment apps/web" —
-// the heading the unified and HTML paths put above each resource's diff.
-func (p pairedResource) label() string {
-	return p.kind + " " + (manifest.NamedResource{Namespace: p.namespace, Name: p.name}).NamespacedName()
+// A nil side must stay empty so line formats report a wholesale add/remove.
+func marshalForUnified(m map[string]any) (string, error) {
+	if m == nil {
+		return "", nil
+	}
+	b, err := yaml.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+	return string(b), nil
 }
 
 // pairKey identifies a resource for cross-set matching.

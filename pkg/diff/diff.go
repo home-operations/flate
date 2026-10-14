@@ -1,10 +1,11 @@
 package diff
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 
-	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/internal/output"
 )
 
 // Parent identifies the Flux Kustomization or HelmRelease that rendered a
@@ -18,14 +19,6 @@ type Parent struct {
 	// parents), with the conventional `./` prefix stripped. It is display
 	// metadata, not part of producer identity.
 	Path string `json:"path"`
-}
-
-func (p Parent) label() string {
-	s := p.Kind + " " + (manifest.NamedResource{Namespace: p.Namespace, Name: p.Name}).NamespacedName()
-	if p.Path != "" {
-		s += " (" + p.Path + ")"
-	}
-	return s
 }
 
 // Doc pairs a rendered manifest with its parent.
@@ -79,16 +72,18 @@ type Options struct {
 func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
 	opts.Format = cmp.Or(opts.Format, FormatHuman)
 	switch opts.Format {
-	case FormatDiff:
-		return renderUnified(left, right, opts)
-	case FormatHTML:
-		return renderHTML(left, right, opts)
+	case FormatDiff, FormatHTML:
+		var buf bytes.Buffer
+		encoder := output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}
+		if err := encoder.Lines(changedPairs(left, right, opts), suppressionNotes(opts.Suppressed)); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
 	case FormatJSON:
 		return renderJSON(left, right, opts)
+	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
+		return renderNative(left, right, opts)
 	default:
-		if diffStyles[opts.Format].writer != nil {
-			return renderNative(left, right, opts)
-		}
 		return nil, fmt.Errorf("unsupported diff format %q", opts.Format)
 	}
 }

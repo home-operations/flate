@@ -3,21 +3,16 @@ package diff
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/gonvenience/ytbx"
+	"github.com/homeport/dyff/pkg/dyff"
 	"sigs.k8s.io/yaml"
+
+	"github.com/home-operations/flate/internal/output"
 )
 
-// renderNative diffs the two doc sets as whole multi-document inputs and
-// renders dyff's report directly in the requested style. dyff pairs the
-// documents by their Kubernetes identity (apiVersion/kind/namespace/name)
-// and labels each diff with it natively — so we don't synthesize a
-// per-resource header.
-//
-// Trade-offs accepted here (vs. per-resource diffing): pairing is by
-// k8s identity rather than flate's parent, and a set change can draw a
-// document-level "order changed" note. Both are rare in practice for
-// content diffs.
+// Whole-document input preserves dyff's Kubernetes identity pairing and native labels.
 func renderNative(left, right []Doc, opts Options) ([]byte, error) {
 	from, err := multiDocInput("from", normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize))
 	if err != nil {
@@ -27,14 +22,19 @@ func renderNative(left, right []Doc, opts Options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// dyffReport's CompareInputFiles defaults to KubernetesEntityDetection
-	// =on (native labels + name-based pairing) and IgnoreOrderChanges=off
-	// (so in-resource list reorders still surface as `⇆ order changed`).
-	body, err := dyffReport(from, to, opts.Format)
+	// KubernetesEntityDetection stays enabled for name-based pairing, and
+	// IgnoreOrderChanges stays disabled to retain in-resource list reorders.
+	report, err := dyff.CompareInputFiles(from, to)
 	if err != nil {
+		return nil, fmt.Errorf("dyff compare: %w", err)
+	}
+	report.Diffs = slices.DeleteFunc(report.Diffs, isFileLevelOrderChange)
+	var buf bytes.Buffer
+	e := output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}
+	if err := e.Native(report, suppressionNotes(opts.Suppressed)); err != nil {
 		return nil, err
 	}
-	return withHeader(suppressionHeader(opts.Suppressed, diffStyles[opts.Format].note), body), nil
+	return buf.Bytes(), nil
 }
 
 // multiDocInput marshals a doc set into a single multi-document YAML

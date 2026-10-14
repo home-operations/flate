@@ -1,34 +1,6 @@
 package diff
 
-import (
-	"bytes"
-	"fmt"
-	"slices"
-
-	"github.com/gonvenience/ytbx"
-	"github.com/homeport/dyff/pkg/dyff"
-)
-
-// dyffReport compares two inputs and renders the report in the given style
-// for the native path (renderNative). An empty report yields no output:
-// dyff would otherwise emit a stray newline the caller would mistake for a
-// non-empty diff.
-func dyffReport(from, to ytbx.InputFile, style Format) ([]byte, error) {
-	report, err := dyff.CompareInputFiles(from, to)
-	if err != nil {
-		return nil, fmt.Errorf("dyff compare: %w", err)
-	}
-	report.Diffs = slices.DeleteFunc(report.Diffs, isFileLevelOrderChange)
-	if len(report.Diffs) == 0 {
-		return nil, nil
-	}
-	writer := diffStyles[style].writer(report)
-	var buf bytes.Buffer
-	if err := writer.WriteReport(&buf); err != nil {
-		return nil, fmt.Errorf("dyff render: %w", err)
-	}
-	return buf.Bytes(), nil
-}
+import "github.com/homeport/dyff/pkg/dyff"
 
 // isFileLevelOrderChange reports whether d is dyff's document-SET "order
 // changed" note: a nil path (dyff renders it as "(file level)") whose details

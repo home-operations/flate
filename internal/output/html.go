@@ -1,10 +1,11 @@
-package diff
+package output
 
 import (
 	"bytes"
 	_ "embed"
 	"fmt"
 	"html/template"
+	"iter"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -12,8 +13,6 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/pmezard/go-difflib/difflib"
-
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
 //go:embed templates/diff.html.tmpl
@@ -99,51 +98,45 @@ type sRow struct {
 	Left, Right cell
 }
 
-// renderHTML produces a self-contained HTML diff document: the same resource
-// pairing and line diff as FormatDiff, rendered with YAML syntax highlighting,
-// a left navigation tree, a side-by-side ⇄ unified toggle, and a light/dark
-// theme. Identical resources are dropped, matching renderUnified; an empty
-// diff produces no output at all, like the other formats.
-func renderHTML(left, right []Doc, opts Options) ([]byte, error) {
+func (e Encoder) html(changes iter.Seq2[LineChange, error], notes iter.Seq[string]) error {
 	hl, css, err := newHighlighter()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	data := htmlData{ChromaCSS: template.CSS(css)} //nolint:gosec // chroma-generated stylesheet, not user input
-	for _, s := range opts.Suppressed {
-		data.Suppressed = append(data.Suppressed, s.String())
+	for note := range notes {
+		data.Suppressed = append(data.Suppressed, note)
 	}
-	for p, err := range changedPairs(left, right, opts) {
+	for p, err := range changes {
 		if err != nil {
-			return nil, err
+			return err
 		}
 		r := buildHTMLResource(p, hl)
 		r.ID = fmt.Sprintf("r%d", len(data.Resources))
 		data.Resources = append(data.Resources, r)
 		switch r.Status {
-		case string(StatusAdded):
+		case "added":
 			data.Added++
-		case string(StatusRemoved):
+		case "removed":
 			data.Removed++
 		default:
 			data.Changed++
 		}
 	}
 	if len(data.Resources) == 0 && len(data.Suppressed) == 0 {
-		return nil, nil // no diff — emit nothing, matching the other formats
+		return nil
 	}
 	data.Tree = buildTree(data.Resources)
 
-	var buf bytes.Buffer
-	if err := diffHTMLTemplate.Execute(&buf, data); err != nil {
-		return nil, fmt.Errorf("render html: %w", err)
+	if err := diffHTMLTemplate.Execute(e.Writer, data); err != nil {
+		return fmt.Errorf("render html: %w", err)
 	}
-	return buf.Bytes(), nil
+	return nil
 }
 
 // buildTree groups the resources — already sorted by parent → kind → name by
-// pair() — into the sidebar's parent → kind → resource hierarchy without a map,
+// preparation — into the sidebar's parent → kind → resource hierarchy without a map,
 // relying on that ordering.
 func buildTree(res []htmlResource) []treeParent {
 	var tree []treeParent
@@ -166,19 +159,20 @@ func buildTree(res []htmlResource) []treeParent {
 // trimmed before/between/after the hunks are emitted as collapsed rows behind
 // an expander so the whole file can be revealed in place — see unifiedRows /
 // sideRows.
-func buildHTMLResource(p changedPair, hl *highlighter) htmlResource {
-	a, b := difflib.SplitLines(p.from), difflib.SplitLines(p.to)
+func buildHTMLResource(p LineChange, hl *highlighter) htmlResource {
+	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
 	ah, bh := highlightPair(a, b, groups, hl)
-	status, _ := classify(p.a, p.b)
-
-	id := (manifest.NamedResource{Namespace: p.namespace, Name: p.name}).NamespacedName()
+	parent := p.Parent.Kind + " " + p.Parent.NamespacedName()
+	if p.ParentPath != "" {
+		parent += " (" + p.ParentPath + ")"
+	}
 	res := htmlResource{
-		Title:  p.label(),
-		Kind:   p.kind,
-		Name:   id,
-		Parent: p.parent.label(),
-		Status: string(status),
+		Title:  p.Resource.Kind + " " + p.Resource.NamespacedName(),
+		Kind:   p.Resource.Kind,
+		Name:   p.Resource.NamespacedName(),
+		Parent: parent,
+		Status: p.Status,
 		URows:  unifiedRows(ah, bh, groups),
 		SRows:  sideRows(ah, bh, groups),
 	}

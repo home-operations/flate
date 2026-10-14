@@ -61,7 +61,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 			return d.run(cmd, c, h, manifest.NamedResource{Kind: kind, Name: firstArg(args)})
 		},
 	}
-	bindCommon(cmd.Flags(), c, diffOutputFormats()...)
+	bindCommon(cmd.Flags(), c, output.DiffFormats...)
 	bindHelmFlags(cmd.Flags(), h)
 	bindDiffFlags(cmd, d)
 	return cmd
@@ -109,22 +109,6 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		}
 	}
 	return errors.Join((output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs), runErr)
-}
-
-// diffOutputFormats lists the -o values `flate diff ks/hr/all` accepts,
-// in help-display order, with the default first. bindCommon uses this set
-// for both help and parse-time validation.
-func diffOutputFormats() []output.Format {
-	return []output.Format{
-		output.Format(diff.FormatHuman),
-		output.Format(diff.FormatGitHub),
-		output.Format(diff.FormatDiff),
-		output.Format(diff.FormatHTML),
-		output.Format(diff.FormatBrief),
-		output.Format(diff.FormatGitLab),
-		output.Format(diff.FormatGitea),
-		output.Format(diff.FormatJSON),
-	}
 }
 
 func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root manifest.NamedResource) error {

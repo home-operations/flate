@@ -86,6 +86,16 @@ func TestE2E_MissingCRDs_StrictIssue(t *testing.T) {
 	t.Logf("strict issue: exit=%d stdout=%s stderr=%s", code, out, errOut)
 }
 
+func TestE2E_ResourceSet_RuntimeClassDependency(t *testing.T) {
+	dir := missingCRDRepo(t, "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: rs, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: node.k8s.io/v1, kind: RuntimeClass, name: nvidia}]\n  resources: [{apiVersion: v1, kind: ConfigMap, metadata: {name: result}}]\n")
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [rs.yaml, runtime.yaml]\n")
+	testutil.WriteFile(t, dir, "apps/runtime.yaml", "apiVersion: node.k8s.io/v1\nkind: RuntimeClass\nmetadata: {name: nvidia}\nhandler: nvidia\n")
+	out, errOut, code := runCLIBuffers("test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	if code != 0 {
+		t.Fatalf("RuntimeClass dependency: exit=%d stdout=%s stderr=%s", code, out, errOut)
+	}
+}
+
 const helmReleaseCRD = `apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata: {name: helmreleases.helm.toolkit.fluxcd.io}

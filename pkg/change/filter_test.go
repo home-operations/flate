@@ -1,11 +1,14 @@
 package change
 
 import (
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"slices"
 	"testing"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -413,52 +416,41 @@ func TestFilter_KeepNamespaces(t *testing.T) {
 	}
 }
 
-func TestFilter_TransitiveDepsHelmRelease(t *testing.T) {
-	hr := &manifest.HelmRelease{
-		Name: "plex", Namespace: "media",
-		Chart: manifest.HelmChart{
-			RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system",
-		},
-		ValuesFrom: []manifest.ValuesReference{
-			{Kind: manifest.KindConfigMap, Name: "plex-values"},
-		},
-	}
-	hrID := hr.Named()
-	repoID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "media", Name: "plex-values"}
-
-	f := NewFilter(NewSet([]string{"hr.yaml"}), filterFixture{files: map[manifest.NamedResource]string{hrID: "hr.yaml"}, root: "", objects: testutil.MapLister{hrID: hr}}.index(), testutil.MapLister{hrID: hr})
-
-	if !f.ShouldReconcile(repoID) {
-		t.Errorf("chart source not pulled in by HR; keep=%v", f.KeepNames())
-	}
-	if !f.ShouldReconcile(cmID) {
-		t.Errorf("valuesFrom ref not pulled in by HR; keep=%v", f.KeepNames())
-	}
-}
-
 func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},
-		DependsOn: []kustomizev1.DependencyReference{{
-			Namespace: "flux-system", Name: "repositories",
-		}},
+		DependsOn: []kustomizev1.DependencyReference{{Namespace: "flux-system", Name: "repositories"}},
 	}
 	ksID := ks.Named()
 	gitID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}
-	depID := manifest.NamedResource{Namespace: "flux-system", Name: "repositories"}
+	depID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "repositories"}
 
 	f := NewFilter(NewSet([]string{"ks.yaml"}), filterFixture{files: map[manifest.NamedResource]string{ksID: "ks.yaml"}, root: "", objects: testutil.MapLister{ksID: ks}}.index(), testutil.MapLister{ksID: ks})
 
-	if !f.ShouldReconcile(gitID) {
-		t.Errorf("sourceRef not pulled in by KS; keep=%v", f.KeepNames())
-	}
-	// dependsOn is reconcile-ordering only; unchanged ancestors must
-	// stay OUT of the keep set so offline diffs don't render unrelated
-	// trees.
-	if f.ShouldReconcile(depID) {
-		t.Errorf("dependsOn leaked into keep set; keep=%v", f.KeepNames())
+	assert.Equal(t, f.ShouldReconcile(gitID), true)
+	assert.Equal(t, f.ShouldReconcile(depID), false)
+}
+
+func TestFilter_ContentDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		obj  manifest.BaseManifest
+		deps []manifest.NamedResource
+	}{
+		{&manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system"}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "plex-values"}}}, []manifest.NamedResource{{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}, {Kind: manifest.KindConfigMap, Namespace: "media", Name: "plex-values"}}},
+		{&manifest.GitRepository{Name: "source", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}, []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"}}},
+		{&manifest.OCIRepository{Name: "source", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}, CertSecretRef: &manifest.LocalObjectReference{Name: "cert"}}, []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"}, {Kind: manifest.KindSecret, Namespace: "apps", Name: "cert"}}},
+		{&manifest.ResourceSet{Name: "set", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "inputs"}}}, []manifest.NamedResource{{Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "inputs"}}},
+		{&manifest.HelmChartSource{Name: "chart", Namespace: "apps", SourceRef: sourcev1.LocalHelmChartSourceReference{Name: "source"}}, []manifest.NamedResource{{Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "source"}}},
+	} {
+		t.Run(tc.obj.Named().Kind, func(t *testing.T) {
+			objects := testutil.MapLister{tc.obj.Named(): tc.obj}
+			f := NewFilter(NewSet([]string{"changed.yaml"}), filterFixture{files: map[manifest.NamedResource]string{tc.obj.Named(): "changed.yaml"}, objects: objects}.index(), objects)
+			for _, id := range tc.deps {
+				assert.Equal(t, f.ShouldReconcile(id), true)
+			}
+			assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "unrelated"}), false)
+		})
 	}
 }
 

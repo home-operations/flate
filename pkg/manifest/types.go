@@ -72,32 +72,33 @@ type BaseManifest interface {
 	kind() KindInfo
 }
 
-// DependencyRef describes one authored dependency or resolved chart source.
+// DependencyRef is a compact prerequisite identity and optional CEL gate.
 type DependencyRef struct {
 	NamedResource
+	// ReadyExpr replaces the built-in readiness check when non-empty.
+	ReadyExpr string
+}
+
+// Reference contains transient facts for one authored dependency or resolved source.
+// Consumers MUST retain only DependencyRef or NamedResource, never the full value.
+type Reference struct {
+	DependencyRef
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
 	// certSecretRef, proxySecretRef or inputsFrom.
 	Use string
-	// Position is the zero-based position within the source field. Credential
-	// fields use secretRef=0, certSecretRef=1 and proxySecretRef=2.
+	// Position indexes the authored field; credentials use secret=0, cert=1, proxy=2.
 	Position int
 	// Optional permits an absent target under the reference's data policy.
 	Optional bool
 	// Content selects changed-only content dependents; ordering edges are false.
 	Content bool
-	// Ready requests readiness rather than existence, independently of kind status.
-	Ready bool
-	// ReadyExpr is the CEL expression to evaluate against the dep's
-	// projected status. When non-empty, the built-in Ready=True check
-	// is replaced. Empty means "use the built-in check."
-	ReadyExpr string
 }
 
 // References yields dependencies in source-field order without deduplication.
 // The object and its embedded spec MUST remain immutable during iteration.
 // Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
-func References(obj BaseManifest) iter.Seq[DependencyRef] {
-	return func(yield func(DependencyRef) bool) {
+func References(obj BaseManifest) iter.Seq[Reference] {
+	return func(yield func(Reference) bool) {
 		switch obj := obj.(type) {
 		case *Kustomization:
 			obj.references(yield)
@@ -119,10 +120,10 @@ func References(obj BaseManifest) iter.Seq[DependencyRef] {
 	}
 }
 
-func credentialReferences(yield func(DependencyRef) bool, namespace string, refs ...*LocalObjectReference) {
+func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) {
 	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {
-		if ref != nil && !yield(DependencyRef{Kind: KindSecret, Namespace: namespace, Name: ref.Name,
+		if ref != nil && !yield(Reference{Kind: KindSecret, Namespace: namespace, Name: ref.Name,
 			Use: uses[i], Position: i, Content: true}) {
 			return
 		}
@@ -205,7 +206,5 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 }
 
 func (r *RawObject) kind() KindInfo {
-	info, _ := kindInfo(apiGroup(r.APIVersion), r.Kind)
-	info.Tracked, info.Runnable, info.Status = false, false, false
-	return info
+	return KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind}
 }

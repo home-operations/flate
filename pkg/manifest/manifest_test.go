@@ -226,40 +226,22 @@ func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 	}
 }
 
-func TestParseHelmChartSource_ReconcileStrategy(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmChart
-metadata: {name: c, namespace: ns}
-spec:
-  chart: nginx
-  reconcileStrategy: Revision
-  sourceRef: {kind: HelmRepository, name: r}
-`)
-	hc, err := parseHelmChartSource(doc)
-	if err != nil {
-		t.Fatalf("parseHelmChartSource: %v", err)
-	}
-	if hc.ReconcileStrategy != "Revision" {
-		t.Errorf("ReconcileStrategy = %q, want %q", hc.ReconcileStrategy, "Revision")
-	}
-}
-
-func TestParseHelmChartSource_PreservesEmptyNamespace(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmChart
-metadata: {name: c}
-spec:
-  chart: nginx
-  sourceRef: {kind: HelmRepository, name: r}
-`)
-	hc, err := parseHelmChartSource(doc)
-	if err != nil {
-		t.Fatalf("parseHelmChartSource: %v", err)
-	}
-	if hc.Namespace != "" {
-		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", hc.Namespace)
+func TestParseHelmChartSource_DefaultsAndReconcileStrategy(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace, strategy, source string
+	}{
+		{"explicit", "ns", "Revision", "{kind: HelmRepository, name: r}"},
+		{"default", "", "", "{name: r}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hc, err := parseHelmChartSource(mustYAML(t, "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: c, namespace: '"+tc.namespace+"'}\nspec: {chart: nginx, reconcileStrategy: '"+tc.strategy+"', sourceRef: "+tc.source+"}\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, hc.Namespace, tc.namespace)
+			assert.Equal(t, hc.SourceRef.Kind, KindHelmRepository)
+			assert.Equal(t, hc.ReconcileStrategy, tc.strategy)
+		})
 	}
 }
 
@@ -1212,15 +1194,17 @@ metadata: {name: x}`, "Foo"},
 	}
 }
 
-// TestParseDoc_ForeignAPIGroup pins that a CRD reusing a kind name flate
-// models, but from another API group, parses to a RawObject instead of
-// being decoded as (or rejected as a malformed) Flux CR — issue #872,
-// where a seaweed.seaweedfs.com Bucket reached the Flux Bucket fetcher.
+// Typed decoding requires the exact API group and the supported core version.
 func TestParseDoc_ForeignAPIGroup(t *testing.T) {
 	cases := []struct {
 		name string
 		yaml string
 	}{
+		{"slash-less flux version", `
+apiVersion: kustomize.toolkit.fluxcd.io
+kind: Kustomization
+metadata: {name: raw, namespace: default}
+spec: {path: ./apps}`},
 		{"seaweedfs bucket", `
 apiVersion: seaweed.seaweedfs.com/v1
 kind: Bucket
@@ -1255,8 +1239,11 @@ spec: {url: https://example}`},
 apiVersion: example.com/v1
 kind: ConfigMap
 metadata: {name: c, namespace: default}`},
-		// The group is compared exactly, so a group that merely starts
-		// with one of ours is foreign too.
+		{"unsupported core version", `
+apiVersion: v2
+kind: ConfigMap
+metadata: {name: c, namespace: default}`},
+		// Group prefixes cannot select typed decoders.
 		{"group with kustomize prefix", `
 apiVersion: kustomize.config.k8s.io.example.com/v1
 kind: Kustomization
@@ -1282,8 +1269,7 @@ spec: {name: b}`},
 			if KindOf(obj).Tracked {
 				t.Fatalf("got %T, want *RawObject", obj)
 			}
-			// Identity must survive: the object still renders and diffs
-			// like any other unmodeled resource.
+			// Raw identity must survive rendering and diff selection.
 			raw := obj.(*RawObject)
 			if raw.Kind != DocKind(mustYAML(t, tc.yaml)) || raw.Name == "" {
 				t.Errorf("RawObject lost identity: %+v", raw)

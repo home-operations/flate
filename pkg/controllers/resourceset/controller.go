@@ -157,33 +157,28 @@ func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publ
 	return docs
 }
 
-// collectDeps assembles the dependency refs whose readiness must precede
-// this ResourceSet: explicit spec.dependsOn entries (carrying any CEL
-// ReadyExpr), each named spec.inputsFrom RSIP, and the structural parent
-// KS that renders us (so any parent-render-time spec mutations land
-// first). A selector-only inputsFrom (ref.Name == "") adds no id edge —
-// its matching RSIPs may be emitted by an unknown producer; the
-// drain-rerun mechanism (WantsDrainRerun) re-expands the RS at the
-// structural fixpoint instead.
+// collectDeps gates explicit dependencies, named inputs and the structural parent.
+// Authored dependsOn Ready=false still requests readiness here. Selector-only inputs
+// use the drain rerun because their producers have no nameable gate.
 func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
 	parent, hasParent := c.LookupParent(rs.Named())
 	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
 	if hasParent {
 		capacity++
 	}
-	deps := make([]manifest.DependencyRef, 0, capacity)
+	deps := make([]manifest.DependencyRef, capacity)
+	n := 0
 	for ref := range manifest.References(rs) {
-		if ref.Use == "dependsOn" {
-			ref.Ready = true
-		}
 		if ref.Use == "dependsOn" || ref.Use == "inputsFrom" && ref.Name != "" {
-			deps = append(deps, ref)
+			deps[n] = ref.DependencyRef
+			n++
 		}
 	}
 	if hasParent {
-		deps = append(deps, manifest.DependencyRef{NamedResource: parent, Ready: true})
+		deps[n] = manifest.DependencyRef{NamedResource: parent}
+		n++
 	}
-	return deps
+	return deps[:n]
 }
 
 // WantsDrainRerun reports whether the ResourceSet id has a selector-only

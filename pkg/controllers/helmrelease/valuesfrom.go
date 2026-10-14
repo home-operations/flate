@@ -175,7 +175,7 @@ func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
 	return c.Store.GetObjectByName(id.Kind, id.Namespace, id.Name) != nil
 }
 
-func valuesRefID(ref manifest.DependencyRef) (manifest.NamedResource, bool) {
+func valuesRefID(ref manifest.Reference) (manifest.NamedResource, bool) {
 	if ref.Optional || ref.Name == "" {
 		return manifest.NamedResource{}, false
 	}

@@ -1,13 +1,14 @@
 // Package depwait resolves a controller's NamedResource dependencies
 // for the dag scheduler: Classify decides, WITHOUT blocking, whether
 // each dep is Ready, terminally Failed, or still blocked (parkable).
-// The shared readiness predicates (readyNow, depExists, the ReadyExpr
+// The shared readiness predicates (readyNow, the ReadyExpr
 // evaluator, discovery-record promotion) live here so the gate semantics
 // are single-sourced.
 package depwait
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -51,36 +52,59 @@ type ExistenceLookup interface {
 	Promote(id manifest.NamedResource) bool
 }
 
-func (w *Waiter) readyNow(dep manifest.DependencyRef) bool {
+// Bucket names by their first byte to avoid hashing statusless dependencies.
+var statusKinds = func() [256][]string {
+	var kinds [256][]string
+	for kind := range manifest.Kinds() {
+		if kind.Status {
+			first := kind.Kind[0]
+			kinds[first] = append(kinds[first], kind.Kind)
+		}
+	}
+	return kinds
+}()
+
+type dependencyState uint8
+
+const (
+	depAbsent dependencyState = iota
+	depPending
+	depReady
+)
+
+func (w *Waiter) readyNow(dep manifest.DependencyRef) dependencyState {
 	id := dep.NamedResource
 	obj := w.Store.GetObject(id)
 	if obj == nil {
 		if _, exists := w.Store.GetStatus(id); !exists {
-			return false
+			return depAbsent
 		}
 	}
-	if !dep.Ready || !w.supportsStatus(id, obj) {
-		return true
+	if !supportsStatus(id.Kind, obj) {
+		return depReady
 	}
 	if dep.ReadyExpr != "" {
-		ready, _ := w.tryReadyExpr(dep.ReadyExpr, id)
-		return ready
+		if ready, _ := w.tryReadyExpr(dep.ReadyExpr, id); ready {
+			return depReady
+		}
+		return depPending
 	}
 	info, ok := w.Store.GetStatus(id)
-	return ok && info.Status == store.StatusReady
+	if ok && info.Status == store.StatusReady {
+		return depReady
+	}
+	return depPending
 }
 
 // Status-only entries have no API group; preserve their kind-based readiness.
-func (w *Waiter) supportsStatus(id manifest.NamedResource, obj manifest.BaseManifest) bool {
+func supportsStatus(kind string, obj manifest.BaseManifest) bool {
+	if kind == "" || !slices.Contains(statusKinds[kind[0]], kind) {
+		return false
+	}
 	if obj != nil {
 		return manifest.KindOf(obj).Status
 	}
-	for kind := range manifest.Kinds() {
-		if kind.Kind == id.Kind {
-			return kind.Status
-		}
-	}
-	return false
+	return true
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:
@@ -100,14 +124,4 @@ func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (ready boo
 		return false, ""
 	}
 	return ok, ""
-}
-
-// depExists reports whether a dep is known to the store via either an
-// added object or a recorded status entry.
-func (w *Waiter) depExists(dep manifest.NamedResource) bool {
-	if w.Store.GetObject(dep) != nil {
-		return true
-	}
-	_, ok := w.Store.GetStatus(dep)
-	return ok
 }

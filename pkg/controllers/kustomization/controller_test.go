@@ -1,11 +1,11 @@
 package kustomization
 
 import (
-	"slices"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -23,8 +23,10 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 		present                   bool
 		status                    store.Status
 		retain                    bool
+		noData                    bool
 	}{
 		{name: "unfiltered missing", retain: true},
+		{name: "no data", retain: true, noData: true},
 		{name: "known file excluded", active: true, indexed: true},
 		{name: "render generated excluded", active: true, present: true},
 		{name: "unknown retained", active: true, retain: true},
@@ -48,30 +50,33 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			}
 			consumer := &manifest.Kustomization{
 				Name: "consumer", Namespace: "apps",
-				DependsOn: []kustomizev1.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}},
+				DependsOn: []kustomizev1.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}, {Name: target.Name, Namespace: target.Namespace, ReadyExpr: "true"}},
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source", Namespace: "apps"},
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}}},
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}, {Kind: manifest.KindConfigMap, Name: "ignored"}, {Kind: "Unsupported", Name: "unsupported"}, {Kind: manifest.KindConfigMap, Name: "self"}, {Kind: manifest.KindConfigMap, Name: "values"}}},
+			}
+			if tc.noData {
+				consumer.PostBuild = nil
 			}
 			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, st)
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+			producers := []manifest.NamedResource{{Kind: manifest.KindKustomization, Namespace: "apps", Name: "second"}, {Kind: manifest.KindKustomization, Namespace: "apps", Name: "first"}}
 			c := New(st, nil, nil, false)
-			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent})})
+			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Renderers: producers}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Renderers: []manifest.NamedResource{consumer.Named()}}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent}), SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "ignored"}: &manifest.ConfigMap{}}})
 			size := len(filter.KeepNames())
 			deps := c.collectDeps(consumer)
-			if got := slices.ContainsFunc(deps, func(dep manifest.DependencyRef) bool {
-				return dep.Use == "dependsOn" && dep.Name == consumer.DependsOn[0].Name
-			}); got != tc.retain {
-				t.Errorf("ordering edge retained = %v, want %v; deps = %v", got, tc.retain, deps)
+			var want []manifest.DependencyRef
+			if tc.retain {
+				want = append(want, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "true"})
 			}
-			for _, id := range []manifest.NamedResource{
-				{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}, parent,
-				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"},
-			} {
-				if !slices.ContainsFunc(deps, func(d manifest.DependencyRef) bool { return d.NamedResource == id }) {
-					t.Errorf("content/parent dependency %s was pruned", id)
+			want = append(want, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"})
+			if !tc.noData {
+				want = append(want, manifest.DependencyRef{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"})
+				for _, producer := range producers {
+					want = append(want, manifest.DependencyRef{NamedResource: producer})
 				}
 			}
-			if len(filter.KeepNames()) != size || len(consumer.DependsOn) != 1 {
+			assert.Diff(t, deps, want)
+			if len(filter.KeepNames()) != size || len(consumer.DependsOn) != 2 {
 				t.Error("ordering collection must preserve keep and input edges")
 			}
 		})

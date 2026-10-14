@@ -16,14 +16,10 @@
 //
 // # Shadow fields
 //
-// HelmRelease and Kustomization embed the upstream Flux Spec struct and
-// also expose projected top-level fields (Values, DependsOn, Chart,
-// Path, SourceRef, ...) that mirror commonly-read pieces of that
-// nested spec. Reads should use the projected fields; the embedded
-// Spec is retained for round-tripping unknown fields back out via
-// pkg/manifest's encoders. Writing to the embedded Spec.* after parse
-// is a bug — the projections are populated once during ParseDoc and
-// later reads will diverge.
+// HelmRelease and Kustomization embed the upstream Flux Spec struct.
+// Values, Chart and PostBuildSubstitute project fields whose decoded shapes differ.
+// Dependency and source identities come from References over the authored spec.
+// Embedded specs MUST remain immutable after parse so projections cannot diverge.
 //
 // # Mutation contract
 //

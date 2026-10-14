@@ -48,7 +48,7 @@ func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {
 	return out, nil
 }
 
-func (h *HelmRepository) references(yield func(DependencyRef) bool) {
+func (h *HelmRepository) references(yield func(Reference) bool) {
 	credentialReferences(yield, h.Namespace, h.SecretRef, h.CertSecretRef)
 }
 

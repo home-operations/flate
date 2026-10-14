@@ -25,13 +25,7 @@ func newGetKSCmd() *cobra.Command {
 		use: "ks", aliases: []string{"kustomization", "kustomizations"},
 		short: "List Kustomizations", kind: manifest.KindKustomization, cols: ksColumns,
 		mapper: func(_ *orchestrator.Result, o *manifest.Kustomization) (row map[string]string, doc map[string]any) {
-			var source manifest.NamedResource
-			for ref := range manifest.References(o) {
-				if ref.Use == "source" {
-					source = ref.NamedResource
-					break
-				}
-			}
+			source := o.SourceID()
 			doc = map[string]any{
 				"kind": manifest.KindKustomization, "namespace": o.Namespace,
 				"name": o.Name, "path": o.Path,

@@ -304,31 +304,11 @@ func (c *Controller) IsFileIndexed(id manifest.NamedResource) bool {
 	return c.existence != nil && c.existence.IsFileIndexed(id)
 }
 
-// OrderingDeps selects explicit ordering refs and prunes only known unchanged
-// targets. Unknown refs MUST remain available for missing-dependency diagnosis.
-func (c *Controller) OrderingDeps(obj manifest.BaseManifest) []manifest.DependencyRef {
-	capacity := 0
-	for dep := range manifest.References(obj) {
-		if dep.Use == "dependsOn" {
-			capacity++
-		}
-	}
-	if capacity == 0 {
-		return nil
-	}
-	deps := make([]manifest.DependencyRef, 0, capacity)
-	for dep := range manifest.References(obj) {
-		if dep.Use == "dependsOn" {
-			deps = append(deps, dep)
-		}
-	}
-	if c.filterActive() {
-		deps = slices.DeleteFunc(deps, func(dep manifest.DependencyRef) bool {
-			return !c.filter.ShouldReconcile(dep.NamedResource) &&
-				(c.IsFileIndexed(dep.NamedResource) || c.Store.GetObject(dep.NamedResource) != nil)
-		})
-	}
-	return deps
+// KeepOrderingDep drops only known unchanged targets; unknown refs MUST remain
+// available for missing-dependency diagnosis.
+func (c *Controller) KeepOrderingDep(id manifest.NamedResource) bool {
+	return !c.filterActive() || c.filter.ShouldReconcile(id) ||
+		!c.IsFileIndexed(id) && c.Store.GetObject(id) == nil
 }
 
 // SourceSkipped converts a referenced source's soft skip into the caller's skip.
@@ -415,18 +395,9 @@ func (c *Controller) filterActive() bool {
 	return c.filter != nil && c.filter.Enabled()
 }
 
-// Require gates the caller on deps WITHOUT blocking: it classifies each dep
-// and returns one of:
-//   - nil — every dep satisfied; the body proceeds.
-//   - *manifest.DependencyFailedError — a dep is terminally
-//     Failed and none is still blockable; instant cascade, no grace.
-//   - *depwait.ErrBlocked — at least one dep is absent/Pending/ReadyExpr-pending;
-//     the body returns and the scheduler parks the node on those deps.
-//
-// Blocked WINS over failed: if any dep is still producible (ClassBlocked) we
-// park even when another dep already failed. The re-run re-derives failure
-// once nothing is blocked, so values omission cannot discard producible refs.
-// Callers own their progress status writes.
+// Require requests readiness for each compact prerequisite; statusless targets
+// need only existence. Blocked gates take precedence over failures so a producible
+// reference cannot be discarded. Callers own their progress status writes.
 func (c *Controller) Require(
 	_ context.Context,
 	id manifest.NamedResource,
@@ -464,11 +435,13 @@ func (c *Controller) Require(
 
 var errSuspended = errors.New("reconcile suspended")
 
-// RequireRefresh checks dependencies before reading the canonical object.
-// Callers MUST reconcile against that object when found and retain their
-// snapshot when absent. A suspended canonical object is marked Ready/suspended
-// and returns an internal stop error consumed by RunWithStatusOutcome; callers
-// MUST propagate that error before rendering or emitting children.
+// RequireRefresh checks dependencies and re-reads the canonical object after a
+// successful gate. Callers MUST reconcile against that object when found and
+// retain their snapshot when absent. A structural parent may have re-emitted a
+// changed spec while this object was parked. A suspended canonical object is
+// marked Ready/suspended and returns an internal stop error consumed by
+// RunWithStatusOutcome; callers MUST propagate that error before rendering or
+// emitting children.
 func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 	ctx context.Context,
 	id manifest.NamedResource,

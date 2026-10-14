@@ -386,6 +386,7 @@ func TestRun_BuildKS_NameFilter_NoMatch(t *testing.T) {
 // TestRun_GetKS_YAML exercises -o yaml on a list verb.
 func TestRun_GetKS_YAML(t *testing.T) {
 	path := writeFixture(t)
+	testutil.WriteFile(t, path, "nosrc.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nosrc, namespace: flux-system}\nspec: {path: ./apps, suspend: true}\n")
 	stdout, _, code := runCLI(t, "get", "ks", "--path", path, "-o", "yaml")
 	if code != 0 {
 		t.Fatalf("get ks -o yaml exited %d", code)
@@ -393,6 +394,12 @@ func TestRun_GetKS_YAML(t *testing.T) {
 	for _, want := range []string{"kind: Kustomization", "name: apps"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("yaml output missing %q:\n%s", want, stdout)
+		}
+	}
+	for _, output := range []string{"yaml", "json"} {
+		stdout, stderr, code := runCLI(t, "get", "ks", "nosrc", "--path", path, "-o", output)
+		if code != 0 || !strings.Contains(stdout, "flux-system") || strings.Contains(stdout, `namespace: ""`) || strings.Contains(stdout, `"namespace": ""`) {
+			t.Fatalf("absent sourceRef %s: exit=%d stdout=%s stderr=%s", output, code, stdout, stderr)
 		}
 	}
 }
@@ -515,16 +522,11 @@ func TestRun_AdvisoriesOnlyInTest(t *testing.T) {
 
 func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "test", "all", "--path", path)
-	if code != 0 {
-		t.Fatalf("test all exited %d: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "✓") || !strings.Contains(stdout, "passed") {
-		t.Errorf("expected passing rows in test report:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "failed") {
-		t.Errorf("clean fixture should report no failures:\n%s", stdout)
-	}
+	testutil.WriteFile(t, path, "flux/hidden.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: hidden, namespace: flux-system}\nstatus: {artifact: {url: 'file://"+path+"'}}\n")
+	stdout, _, code := runCLI(t, "test", "all", "--path", path)
+	assert.Equal(t, code, 0)
+	assert.Equal(t, strings.Contains(stdout, "✓") && strings.Contains(stdout, "passed"), true)
+	assert.Equal(t, strings.Contains(stdout, "failed") || strings.Contains(stdout, "hidden"), false)
 }
 
 func TestRun_TestAll_RespectsNamespace(t *testing.T) {

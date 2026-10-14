@@ -9,7 +9,6 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -125,54 +124,50 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	}
 }
 
-// TestReconcile_SelectorInputsFrom_LateRSIP pins (b): a selector
-// inputsFrom RS renders the complete set even when the matching RSIP
-// arrives AFTER the first render. The first pass renders zero docs (no
-// match); WantsDrainRerun reports true (so the scheduler re-runs at the
-// fixpoint); a re-dispatch after the RSIP arrives renders the full set.
 func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
-	c, s := newController(t)
-	rs := &manifest.ResourceSet{
-		Name: "acl", Namespace: "flux-system",
-		InputsFrom: []fluxopv1.InputProviderReference{
-			{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"role": "db"},
-			}},
-		},
-		// Guard on inputs so the no-match first pass (nil input set under
-		// Flatten) renders nothing; once the RSIP arrives the input set is
-		// populated and the Widget emits.
-		ResourcesTemplate: `<< if inputs >>---
-apiVersion: example.com/v1
-kind: Widget
-metadata: {name: << inputs.user >>, namespace: flux-system}
-<< end >>`,
-	}
+	s := store.New()
+	tasks := task.NewBounded(2)
+	c := New(s, tasks, true)
+	c.Configure(Options{})
+	c.StartLifecycle()
+	defer c.Close()
+	rs := selectorFixture("acl", "blue")
 	s.AddObject(rs)
-
-	// A selector-only RS always wants a drain rerun (no nameable dep).
-	if !c.WantsDrainRerun(rs.Named()) {
-		t.Fatal("WantsDrainRerun = false, want true for a selector-only inputsFrom RS")
+	if !c.WantsDrainRerun(rs.Named()) || len(c.collectDeps(rs)) != 0 {
+		t.Fatal("selector-only input must request a rerun without an ID gate")
 	}
-
-	// First dispatch: no matching RSIP, renders nothing, terminalizes Ready.
-	info := dispatchToFixpoint(t, c, s, rs.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("first dispatch status = %+v, want Ready (empty render)", info)
+	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+		t.Fatalf("empty render status = %+v, want Ready", info)
 	}
-	if art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact); hasRenderedDoc(art, "Widget", "alice") {
-		t.Fatal("first dispatch should render no Widget (RSIP not yet present)")
+	if art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact); art == nil || len(art.Manifests) != 0 {
+		t.Fatalf("empty selection artifact = %+v", art)
 	}
-
-	// RSIP arrives late → the drain-rerun re-dispatch renders the full set.
-	s.AddObject(staticRSIP("rsip", "flux-system", map[string]string{"role": "db"}, map[string]string{"user": "alice"}))
-	info = dispatchToFixpoint(t, c, s, rs.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("drain-rerun status = %+v, want Ready", info)
-	}
-	art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
-	if !hasRenderedDoc(art, "Widget", "alice") {
-		t.Fatalf("expected rendered Widget/alice after late RSIP; artifact = %+v", art)
+	for _, matches := range []bool{true, false} {
+		started, written := make(chan struct{}), make(chan struct{})
+		var blocked []manifest.NamedResource
+		tasks.Go(t.Context(), "membership", func(context.Context) {
+			tasks.YieldSlot(func() { <-started })
+			color := "red"
+			if matches {
+				color = "blue"
+			}
+			s.AddObject(staticRSIP("rsip", "ns", map[string]string{"color": color}, nil))
+			close(written)
+		})
+		tasks.Go(t.Context(), "selector", func(ctx context.Context) {
+			close(started)
+			tasks.YieldSlot(func() { <-written })
+			blocked = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
+		})
+		tasks.BlockTillDone()
+		art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+		info, _ := s.GetStatus(rs.Named())
+		if len(blocked) != 0 || tasks.Failures() != 0 || info.Status != store.StatusReady || hasRenderedDoc(art, "ConfigMap", "rsip") != matches {
+			t.Fatalf("membership=%v: blocked=%v status=%+v artifact=%+v", matches, blocked, info, art)
+		}
+		if rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue" {
+			t.Fatal("selector mutation changed the authored spec")
+		}
 	}
 }
 
@@ -428,7 +423,7 @@ func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
 	rs := obj.(*manifest.ResourceSet)
 	s.AddObject(rs)
 	deps := c.collectDeps(rs)
-	if len(deps) != 1 || deps[0].NamedResource != provider.Named() || deps[0].Ready {
+	if len(deps) != 1 || deps[0].NamedResource != provider.Named() {
 		t.Fatalf("input dependencies = %+v, want existence edge to %s", deps, provider.Named())
 	}
 	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
@@ -446,41 +441,3 @@ func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
 		t.Fatal("authored input kind mutated")
 	}
 }
-||||||| parent of 5c21b103 (perf(values): reuse authored post-build storage and trim reference tests)
-func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
-	c, s := newController(t)
-	provider := staticRSIP("inputs", "apps", nil, map[string]string{"user": "alice"})
-	s.AddObject(provider)
-	obj, _, _, err := manifest.ParseDoc(map[string]any{
-		"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
-		"metadata": map[string]any{"name": "app", "namespace": "apps"},
-		"spec": map[string]any{
-			"inputsFrom":        []any{map[string]any{"kind": "Unsupported", "name": "inputs"}},
-			"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>, namespace: apps}\n",
-		},
-	}, manifest.ParseDocOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rs := obj.(*manifest.ResourceSet)
-	s.AddObject(rs)
-	deps := c.collectDeps(rs)
-	if len(deps) != 1 || deps[0].NamedResource != provider.Named() || deps[0].Ready {
-		t.Fatalf("input dependencies = %+v, want existence edge to %s", deps, provider.Named())
-	}
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
-		t.Fatalf("blocked = %v with existing provider", blocked)
-	}
-	info, _ := s.GetStatus(rs.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want Ready", info)
-	}
-	art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
-	if !hasRenderedDoc(art, "Widget", "alice") {
-		t.Fatalf("expected rendered Widget/alice; artifact = %+v", art)
-	}
-	if rs.InputsFrom[0].Kind != "Unsupported" {
-		t.Fatal("authored input kind mutated")
-	}
-}
-

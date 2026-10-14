@@ -7,26 +7,16 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func classifyDep(t *testing.T, w *Waiter, ref manifest.DependencyRef, drain manifest.DrainLevel) Classification {
-	t.Helper()
-	return w.Classify(ref, drain)
-}
-
 func ksDep(name string) manifest.DependencyRef {
-	return manifest.DependencyRef{Ready: true,
-		Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+	return manifest.DependencyRef{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
-// TestClassify_CoreStates exercises the non-ReadyExpr branches that drive the
-// dag engine's gate, asserting the canonical event-engine messages per drain
-// level.
 func TestClassify_CoreStates(t *testing.T) {
 	s := store.New()
 	ready := ksDep("ready")
 	failed := ksDep("failed")
 	pending := ksDep("pending")
-	statusless := manifest.DependencyRef{Ready: true,
-		Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
+	statusless := manifest.DependencyRef{Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
 	absent := ksDep("absent")
 	s.UpdateStatus(ready.NamedResource, store.StatusReady, "")
 	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "boom")
@@ -35,20 +25,20 @@ func TestClassify_CoreStates(t *testing.T) {
 
 	w := &Waiter{Store: s}
 
-	if got := classifyDep(t, w, ready, manifest.DrainNone); got.Kind != ClassReady {
+	if got := w.Classify(ready, manifest.DrainNone); got.Kind != ClassReady {
 		t.Errorf("ready: got %+v, want ClassReady", got)
 	}
-	if got := classifyDep(t, w, failed, manifest.DrainNone); got.Kind != ClassFailed || got.Message != "boom" {
+	if got := w.Classify(failed, manifest.DrainNone); got.Kind != ClassFailed || got.Message != "boom" {
 		t.Errorf("failed: got %+v, want ClassFailed 'boom'", got)
 	}
 	// Present-Pending: blocks at none/cascade, fails "not ready" only at force.
-	if got := classifyDep(t, w, pending, manifest.DrainNone); got.Kind != ClassBlocked {
+	if got := w.Classify(pending, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("pending@none: got %+v, want ClassBlocked", got)
 	}
-	if got := classifyDep(t, w, pending, manifest.DrainCascade); got.Kind != ClassBlocked {
+	if got := w.Classify(pending, manifest.DrainCascade); got.Kind != ClassBlocked {
 		t.Errorf("pending@cascade: got %+v, want ClassBlocked (cascade keeps Pending blocked)", got)
 	}
-	if got := classifyDep(t, w, pending, manifest.DrainForce); got.Kind != ClassFailed || got.Message != "not ready" {
+	if got := w.Classify(pending, manifest.DrainForce); got.Kind != ClassFailed || got.Message != "not ready" {
 		t.Errorf("pending@force: got %+v, want ClassFailed 'not ready'", got)
 	}
 	// Present with no Ready condition (a synthetic HelmChart before its source
@@ -58,22 +48,19 @@ func TestClassify_CoreStates(t *testing.T) {
 		manifest.DrainCascade: {Kind: ClassBlocked},
 		manifest.DrainForce:   {Kind: ClassFailed, Message: "not ready"},
 	} {
-		if got := classifyDep(t, w, statusless, level); got != want {
+		if got := w.Classify(statusless, level); got != want {
 			t.Errorf("statusless@%v: got %+v, want %+v", level, got, want)
 		}
 	}
 	// Absent: blocks at none, fails "dependency not found" once draining.
-	if got := classifyDep(t, w, absent, manifest.DrainNone); got.Kind != ClassBlocked {
+	if got := w.Classify(absent, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("absent@none: got %+v, want ClassBlocked", got)
 	}
-	if got := classifyDep(t, w, absent, manifest.DrainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
+	if got := w.Classify(absent, manifest.DrainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
 		t.Errorf("absent@cascade: got %+v, want ClassFailed 'dependency not found'", got)
 	}
 }
 
-// TestClassify_ReplaceReadyExpr: in the default (replace) mode the CEL is the
-// readiness check; a never-true CEL blocks until the fixpoint, then fails with
-// the event engine's "readyExpr timeout" string.
 func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	s := store.New()
 	dep := ksDep("infra")
@@ -81,10 +68,10 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
 
 	w := &Waiter{Store: s}
-	if got := classifyDep(t, w, dep, manifest.DrainNone); got.Kind != ClassBlocked {
+	if got := w.Classify(dep, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("replace ReadyExpr false@none: got %+v, want ClassBlocked", got)
 	}
-	if got := classifyDep(t, w, dep, manifest.DrainCascade); got.Kind != ClassFailed ||
+	if got := w.Classify(dep, manifest.DrainCascade); got.Kind != ClassFailed ||
 		got.Message != "readyExpr timeout: context deadline exceeded" {
 		t.Errorf("replace ReadyExpr false@cascade: got %+v, want ClassFailed 'readyExpr timeout: context deadline exceeded'", got)
 	}
@@ -92,21 +79,23 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 
 func TestClassify_EdgeReadiness(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		obj   manifest.BaseManifest
-		ready bool
-		want  ClassKind
+		name string
+		obj  manifest.BaseManifest
+		expr string
+		want ClassKind
 	}{
-		{name: "existence ignores pending", obj: &manifest.Kustomization{Name: "dependency", Namespace: "apps"}, want: ClassReady},
-		{name: "ready waits for pending", obj: &manifest.Kustomization{Name: "dependency", Namespace: "apps"}, ready: true, want: ClassBlocked},
-		{name: "foreign kind remains existence", obj: &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "example.com/v1", Name: "dependency", Namespace: "apps"}, ready: true, want: ClassReady},
+		{name: "ready waits for pending", obj: &manifest.Kustomization{Name: "dependency", Namespace: "apps"}, want: ClassBlocked},
+		{name: "raw Flux group remains existence", obj: &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: manifest.FluxKustomizeDomain + "/v1", Name: "dependency", Namespace: "apps"}, want: ClassReady},
+		{name: "foreign kind remains existence", obj: &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "example.com/v1", Name: "dependency", Namespace: "apps"}, want: ClassReady},
+		{name: "ConfigMap ignores pending and CEL", obj: &manifest.ConfigMap{Name: "dependency", Namespace: "apps"}, expr: "invalid [", want: ClassReady},
+		{name: "Secret ignores pending and CEL", obj: &manifest.Secret{Name: "dependency", Namespace: "apps"}, expr: "invalid [", want: ClassReady},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := store.New()
 			s.AddObject(tc.obj)
 			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "working")
 			w := &Waiter{Store: s}
-			got := w.Classify(manifest.DependencyRef{NamedResource: tc.obj.Named(), Ready: tc.ready}, manifest.DrainNone)
+			got := w.Classify(manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: tc.expr}, manifest.DrainNone)
 			if got.Kind != tc.want {
 				t.Fatalf("classification = %+v, want %v", got, tc.want)
 			}

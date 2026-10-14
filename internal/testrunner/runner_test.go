@@ -81,8 +81,10 @@ func TestRun_AllPass(t *testing.T) {
 	s.AddObject(&manifest.HelmRelease{Name: "demo", Namespace: "apps"})
 	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}, store.StatusReady, "")
 	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}, store.StatusReady, "")
+	s.AddObject(&manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "foreign.example/v1", Namespace: "apps", Name: "raw"})
 
 	rep := runSelected(t, o)
+	assert.Equal(t, Run(&orchestrator.Result{Objects: []manifest.BaseManifest{s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "raw"})}}).Matched, 0)
 	if rep.AnyFailed() || rep.Passed != 2 {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}

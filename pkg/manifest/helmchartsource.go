@@ -43,10 +43,10 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	}, nil
 }
 
-func (h *HelmChartSource) references(yield func(DependencyRef) bool) {
-	yield(DependencyRef{
+func (h *HelmChartSource) references(yield func(Reference) bool) {
+	yield(Reference{
 		Kind: cmp.Or(h.SourceRef.Kind, KindHelmRepository), Namespace: h.Namespace, Name: h.SourceRef.Name,
-		Use: "source", Content: h.SourceRef.Name != "", Ready: true,
+		Use: "source", Content: h.SourceRef.Name != "",
 	})
 }
 

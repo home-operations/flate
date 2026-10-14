@@ -24,4 +24,10 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 	assert.Equal(t, got.Chart.RepoNamespace, "sources")
 	assert.Equal(t, got.Chart.RepoName, "resolved")
 	assert.Equal(t, hr.Chart.RepoNamespace, "authored")
+	hr.ChartRef.Kind, hr.Chart.RepoKind = manifest.KindOCIRepository, manifest.KindOCIRepository
+	got, err = Prepare(hr, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, got.Chart.RepoNamespace, "effective")
 }

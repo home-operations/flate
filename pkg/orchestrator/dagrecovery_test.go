@@ -2,16 +2,80 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+type arrivalDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
+
+func (d arrivalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+	return d(ctx, id, level)
+}
+
+func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
+	for _, tc := range []struct {
+		fetcher    bool
+		dispatched int64
+	}{{false, 0}, {true, 1}} {
+		t.Run(fmt.Sprint(tc.fetcher), func(t *testing.T) {
+			dir := t.TempDir()
+			o, err := New(Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer o.Stop()
+			delete(o.src.Fetchers, manifest.KindExternalArtifact)
+			if tc.fetcher {
+				o.src.Fetchers[manifest.KindExternalArtifact] = source.ExistenceFetcher{}
+			}
+			obj := &manifest.ExternalArtifact{Name: "external", Namespace: "apps"}
+			o.store.AddObject(obj)
+			assert.Equal(t, slices.Contains(o.seedNodes(), obj.Named()), tc.fetcher)
+			obj = &manifest.ExternalArtifact{Name: "arriving", Namespace: "apps"}
+			producer, consumer := ksID("producer"), ksID("consumer")
+			attempted := make(chan struct{})
+			var dispatched atomic.Int64
+			var completed atomic.Bool
+			d := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+				switch id {
+				case producer:
+					o.tasks.YieldSlot(func() { <-attempted })
+					o.store.AddObject(obj)
+				case consumer:
+					if o.store.GetObject(obj.Named()) == nil {
+						close(attempted)
+						return schedule.OutcomeBlocked, []schedule.NodeID{obj.Named()}, false
+					}
+					completed.Store(true)
+				case obj.Named():
+					dispatched.Add(1)
+					return dagDispatcher{o}.Dispatch(ctx, id, level)
+				}
+				return schedule.OutcomeTerminal, nil, false
+			})
+			sched := schedule.New(o.tasks, d)
+			unsubscribe := o.watchDAG(sched)
+			defer unsubscribe()
+			sched.Seed([]schedule.NodeID{producer, consumer})
+			if err := sched.Run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, completed.Load(), true)
+			assert.Equal(t, dispatched.Load(), tc.dispatched)
+		})
+	}
+}
 
 func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	dir := t.TempDir()

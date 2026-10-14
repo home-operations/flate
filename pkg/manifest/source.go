@@ -53,8 +53,8 @@ func (g *GitRepository) Suspended() bool { return g.Suspend }
 func (g *GitRepository) RepoName() string { return g.Named().FluxResourceName() }
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
-func validateSecretReference(id NamedResource, err *error) func(DependencyRef) bool {
-	return func(ref DependencyRef) bool {
+func validateSecretReference(id NamedResource, err *error) func(Reference) bool {
+	return func(ref Reference) bool {
 		if ref.Kind == KindSecret && ref.Name == "" {
 			*err = inputf("%s %s/%s: spec.%s.name is empty", id.Kind, id.Namespace, id.Name, ref.Use)
 			return false
@@ -214,11 +214,11 @@ func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	return out, nil
 }
 
-func (g *GitRepository) references(yield func(DependencyRef) bool) {
+func (g *GitRepository) references(yield func(Reference) bool) {
 	credentialReferences(yield, g.Namespace, g.SecretRef, nil, g.ProxySecretRef)
 }
 
-func (o *OCIRepository) references(yield func(DependencyRef) bool) {
+func (o *OCIRepository) references(yield func(Reference) bool) {
 	credentialReferences(yield, o.Namespace, o.SecretRef, o.CertSecretRef, o.ProxySecretRef)
 }
 

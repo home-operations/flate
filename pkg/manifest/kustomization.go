@@ -22,7 +22,6 @@ type Kustomization struct {
 
 	kustomizev1.KustomizationSpec `json:",inline" yaml:",inline"`
 
-
 	// Contents is the raw decoded YAML document. Retained because
 	// RenderFlux still feeds it to fluxcd/pkg/kustomize.NewGenerator
 	// as an unstructured.Unstructured.
@@ -172,19 +171,21 @@ func (k *Kustomization) SourceID() NamedResource {
 // IsFragment identifies patch fragments without a render path or source name.
 func (k *Kustomization) IsFragment() bool { return k.Path == "" && k.SourceRef.Name == "" }
 
-func (k *Kustomization) references(yield func(DependencyRef) bool) {
-	if src := k.SourceID(); src.Kind != "" || src.Name != "" {
-		if !yield(DependencyRef{
+func (k *Kustomization) references(yield func(Reference) bool) {
+	if k.SourceRef.Kind != "" || k.SourceRef.Name != "" {
+		src := k.SourceID()
+		if !yield(Reference{
 			NamedResource: src,
-			Use:           "source", Content: src.Kind != "" && src.Name != "", Ready: true,
+			Use:           "source", Content: src.Kind != "" && src.Name != "",
 		}) {
 			return
 		}
 	}
-	for i, dep := range k.DependsOn {
-		if !yield(DependencyRef{
+	for i := range k.DependsOn {
+		dep := &k.DependsOn[i]
+		if !yield(Reference{
 			Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, k.Namespace), Name: dep.Name,
-			Use: "dependsOn", Position: i, Ready: true, ReadyExpr: dep.ReadyExpr,
+			Use: "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return
 		}
@@ -197,10 +198,9 @@ func (k *Kustomization) references(yield func(DependencyRef) bool) {
 			continue
 		}
 		content := !ref.Optional && ref.Name != ""
-		if !yield(DependencyRef{
+		if !yield(Reference{
 			Kind: ref.Kind, Namespace: k.Namespace, Name: ref.Name,
 			Use: "substituteFrom", Position: i, Optional: ref.Optional, Content: content,
-			Ready: content && ref.Kind == KindConfigMap,
 		}) {
 			return
 		}

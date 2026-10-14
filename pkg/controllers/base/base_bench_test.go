@@ -33,7 +33,7 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 			st.AddObject(obj)
 			st.UpdateStatus(obj.Named(), state, "reason")
 			c := base.New(st, nil, "benchmark")
-			deps := []manifest.DependencyRef{{Ready: true, NamedResource: obj.Named()}}
+			deps := []manifest.DependencyRef{{NamedResource: obj.Named()}}
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
 			b.ReportAllocs()
 			for b.Loop() {

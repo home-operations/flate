@@ -5,6 +5,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -48,14 +49,10 @@ func TestResolveDependsOnSubstitutions_ResolvesBareVar(t *testing.T) {
 
 	ResolveDependsOnSubstitutions(s)
 
-	if got := firstDepName(t, s, "flux-system", "rook-ceph-app"); got != "0-biohazard-config" {
-		t.Errorf("dependsOn name = %q, want 0-biohazard-config", got)
-	}
+	assert.Equal(t, firstDepName(t, s, "flux-system", "rook-ceph-app"), "0-biohazard-config")
 	// Idempotent: a second pass is a no-op (resolved name has no ${).
 	ResolveDependsOnSubstitutions(s)
-	if got := firstDepName(t, s, "flux-system", "rook-ceph-app"); got != "0-biohazard-config" {
-		t.Errorf("second pass changed result: %q", got)
-	}
+	assert.Equal(t, firstDepName(t, s, "flux-system", "rook-ceph-app"), "0-biohazard-config")
 }
 
 // A var no KS supplies leaves envsubst.Eval in its error path, so the
@@ -66,9 +63,7 @@ func TestResolveDependsOnSubstitutions_UnsetVarStaysLiteral(t *testing.T) {
 
 	ResolveDependsOnSubstitutions(s)
 
-	if got := firstDepName(t, s, "flux-system", "app"); got != "0-${UNKNOWN}-config" {
-		t.Errorf("unset var must stay literal; got %q", got)
-	}
+	assert.Equal(t, firstDepName(t, s, "flux-system", "app"), "0-${UNKNOWN}-config")
 }
 
 // A var declared with conflicting values across Kustomizations (a
@@ -82,9 +77,7 @@ func TestResolveDependsOnSubstitutions_ConflictingVarDropped(t *testing.T) {
 
 	ResolveDependsOnSubstitutions(s)
 
-	if got := firstDepName(t, s, "flux-system", "app"); got != "0-${CLUSTER_NAME}-config" {
-		t.Errorf("conflicting var must be dropped (stay literal); got %q", got)
-	}
+	assert.Equal(t, firstDepName(t, s, "flux-system", "app"), "0-${CLUSTER_NAME}-config")
 }
 
 // A KS whose dependsOn carries no template is left untouched (no clone /
@@ -99,12 +92,16 @@ func TestResolveDependsOnSubstitutions_NoTemplateUntouchedAndAgreeingVarOK(t *te
 
 	ResolveDependsOnSubstitutions(s)
 
-	if got := firstDepName(t, s, "flux-system", "plain"); got != "0-biohazard-config" {
-		t.Errorf("literal dependsOn must be untouched; got %q", got)
+	assert.Equal(t, firstDepName(t, s, "flux-system", "plain"), "0-biohazard-config")
+	assert.Equal(t, firstDepName(t, s, "flux-system", "templated"), "0-biohazard-config")
+	withDeps := testing.AllocsPerRun(100, func() { ResolveDependsOnSubstitutions(s) })
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		clone := ks.Clone()
+		clone.DependsOn = nil
+		s.AddObject(clone)
 	}
-	if got := firstDepName(t, s, "flux-system", "templated"); got != "0-biohazard-config" {
-		t.Errorf("agreeing var must still resolve; got %q", got)
-	}
+	withoutDeps := testing.AllocsPerRun(100, func() { ResolveDependsOnSubstitutions(s) })
+	assert.Equal(t, withDeps, withoutDeps)
 }
 
 func TestResolveDependsOnSubstitutions_PreservesAuthoredNamespaceAndStoredSpec(t *testing.T) {

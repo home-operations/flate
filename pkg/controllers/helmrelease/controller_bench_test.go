@@ -61,7 +61,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st))
 	b.ReportAllocs()
 	for b.Loop() {
-		c.OrderingDeps(hr)
+		c.collectDeps(hr)
 	}
 }
 

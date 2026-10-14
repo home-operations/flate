@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -765,44 +767,43 @@ spec:
 	}
 }
 
-// TestLoader_DiscoveryOnlyRecordsSourceRefs pins the reverse-edge
-// plumbing: under DiscoveryOnly a HelmRelease never reaches the Store,
-// yet its chart source reference must still be captured in SourceRefs
-// so the change filter can re-render the HR when its (centralized)
-// OCIRepository changes. The ref is read from the parse-time chart
-// projection, not the Store.
+// DiscoveryOnly keeps HelmRelease references even when it defers admission.
 func TestLoader_DiscoveryOnlyRecordsSourceRefs(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "apps/envoy/helm-release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: envoy-gateway
-  namespace: envoy-gateway
-spec:
-  chartRef:
-    kind: OCIRepository
-    name: envoy-gateway
-    namespace: flux-system
-`)
+	path := filepath.Join(dir, "hr.yaml")
+	testutil.WriteFile(t, dir, "hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: envoy-gateway, namespace: envoy-gateway}\nspec: {chartRef: {kind: OCIRepository, name: envoy-gateway, namespace: flux-system}}\n")
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
-	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
+	l.Options.DiscoveryOnly, l.SourceRoot = true, dir
+	if _, err := l.Load(t.Context(), dir); err != nil {
+		t.Fatal(err)
 	}
-
 	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
-	if s.GetObject(hrID) != nil {
-		t.Fatalf("HR must NOT be in Store under DiscoveryOnly (existence-only)")
+	assert.Equal(t, s.GetObject(hrID), manifest.BaseManifest(nil))
+	assert.Diff(t, l.Index.Records[hrID].Refs, []manifest.NamedResource{{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}})
+	assert.Equal(t, len(l.documents.cache[path].objects), 0)
+	ksPath := filepath.Join(dir, "ks.yaml")
+	testutil.WriteFile(t, dir, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app, namespace: apps}\nspec: {path: ./apps}\n")
+	if _, err := l.loadFile(ksPath); err != nil {
+		t.Fatal(err)
 	}
-	refs, ok := refsForTest(l.Index)[hrID]
-	if !ok {
-		t.Fatalf("HR chart source ref must be captured in SourceRefs; got %v", refsForTest(l.Index))
+	assert.Equal(t, len(l.documents.cache[ksPath].objects), 1)
+	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
+		file := filepath.Join(dir, kind+".yaml")
+		testutil.WriteFile(t, dir, kind+".yaml", "apiVersion: v1\nkind: "+kind+"\nmetadata: {name: data, namespace: apps}\n")
+		if _, err := l.loadFile(file); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, len(l.documents.cache[file].objects), 1)
+		assert.Equal(t, s.GetObject(manifest.NamedResource{Kind: kind, Name: "data", Namespace: "apps"}), manifest.BaseManifest(nil))
 	}
-	want := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}
-	if len(refs) != 1 || refs[0] != want {
-		t.Errorf("SourceRefs[HR] = %v; want [%v]", refs, want)
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps", SourceRef: sourcev1.LocalHelmChartSourceReference{Name: "source"}}
+	l.recordObject(chart, filepath.Join(dir, "chart.yaml"))
+	assert.Diff(t, l.Index.Records[chart.Named()].Refs, []manifest.NamedResource{{Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "source"}})
+	for _, source := range []kustomizev1.CrossNamespaceSourceReference{{Kind: manifest.KindGitRepository}, {Name: "source"}, {}} {
+		ks := &manifest.Kustomization{Name: "incomplete", Namespace: "apps", SourceRef: source}
+		l.recordObject(ks, ksPath)
+		assert.Equal(t, len(l.Index.Records[ks.Named()].Refs), 0)
 	}
 }
 

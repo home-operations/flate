@@ -1,21 +1,5 @@
 package manifest
 
-// IsClusterScoped reports group-aware scope for a recognized document.
-func IsClusterScoped(doc map[string]any) bool {
-	if DocAPIVersion(doc) == "" {
-		return isClusterScopedKind(DocKind(doc))
-	}
-	info, known := kindInfo(apiGroup(DocAPIVersion(doc)), DocKind(doc))
-	return known && !info.Namespaced
-}
-
-func isClusterScopedKind(kind string) bool {
-	if i, ok := kindIndex[kind]; ok {
-		return !kindTable[i].Namespaced
-	}
-	return false
-}
-
 // StampNamespace defaults omitted metadata.namespace to ns under the emission
 // policy. No-op when ns is empty, the doc already names a namespace, or the kind
 // is excluded. Explicit namespaces are preserved, including on cluster-scoped kinds.

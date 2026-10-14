@@ -62,7 +62,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				parent := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "parent"}
 				rs := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "apps", Name: "rs"}
 				consumer := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
-				source := &manifest.OCIRepository{Name: "shared", Namespace: "apps", URL: "oci://example.test/chart"}
+				source := &manifest.Bucket{Name: "shared", Namespace: "apps"}
 				s.AddObject(source)
 				s.UpdateStatus(source.Named(), store.StatusReady, "unchanged")
 				c.SetFilter(change.NewFilter(change.NewSet([]string{"parent.yaml"}), &manifest.DiscoveryIndex{
@@ -78,6 +78,10 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					}
 					if id == rs {
 						sets++
+						bucket, _ := s.Get[*manifest.Bucket](source.Named())
+						updated := *bucket
+						updated.Endpoint = "updated.invalid"
+						s.AddObject(&updated)
 					}
 					if id == source.Named() {
 						refires++
@@ -92,11 +96,11 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				}, false)
 				c.Emit(parent, []map[string]any{
 					{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "raw"}},
-					{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": "rs"}, "spec": map[string]any{}},
 					{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": map[string]any{"name": "child"}, "spec": map[string]any{"chartRef": map[string]any{"kind": "OCIRepository", "name": "shared"}}},
-					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "shared"}, "spec": map[string]any{"url": source.URL}},
+					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "Bucket", "metadata": map[string]any{"name": "shared"}, "spec": map[string]any{"endpoint": "minio.invalid", "bucketName": "shared"}},
+					{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": "rs"}, "spec": map[string]any{}},
 				}, false, publish)
-				if arrivals == 0 || refires == 0 || (consumers == 1) != publish || (sets == 1) != publish {
+				if arrivals == 0 || refires > 3 || (refires == 3) != publish || (consumers == 1) != publish || (sets == 1) != publish {
 					t.Fatalf("arrivals=%d refires=%d consumers=%d sets=%d publish=%t", arrivals, refires, consumers, sets, publish)
 				}
 			})

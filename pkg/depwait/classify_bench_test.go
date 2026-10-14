@@ -25,7 +25,7 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 				s.UpdateStatus(id, store.StatusPending, "")
 			}
 			w := &Waiter{Store: s}
-			dep := manifest.DependencyRef{Ready: true, NamedResource: id}
+			dep := manifest.DependencyRef{NamedResource: id}
 			for b.Loop() {
 				w.Classify(dep, manifest.DrainCascade)
 			}

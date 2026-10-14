@@ -445,6 +445,7 @@ func TestSelect_AuthoredPrerequisites(t *testing.T) {
 	}{
 		{"ResourceSet", rs, []manifest.NamedResource{dep, provider}},
 		{"DependsOn", &manifest.Kustomization{Name: "selected", Namespace: "apps"}, []manifest.NamedResource{dep}},
+		{"Source", &manifest.Kustomization{Name: "selected", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}, []manifest.NamedResource{{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
@@ -485,7 +486,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 }
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
-	obj := &manifest.Kustomization{Name: "external", Namespace: "apps", KustomizationSpec: kustomizev1.KustomizationSpec{SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}}
+	obj := &manifest.Kustomization{Name: "external", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
 	run := selectedRun(&Result{})
 	run.store.AddObject(obj)
 	run.store.UpdateStatus(obj.Named(), store.StatusReady, "skipped: external source")

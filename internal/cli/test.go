@@ -21,7 +21,7 @@ import (
 func newTestCmd() *cobra.Command {
 	var kinds []string
 	for info := range manifest.Kinds() {
-		if info.Status && info.Kind != manifest.KindHelmChart && info.Kind != manifest.KindExternalArtifact {
+		if info.Includes("test") {
 			kinds = append(kinds, info.Kind)
 		}
 	}

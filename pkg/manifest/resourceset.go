@@ -161,22 +161,21 @@ func (p *ResourceSetInputProvider) derivedID() string {
 	return SHA256Hex([]byte(p.Namespace + "/" + p.Name))[:16]
 }
 
-func (r *ResourceSet) references(yield func(DependencyRef) bool) {
+func (r *ResourceSet) references(yield func(Reference) bool) {
 	for i, dep := range r.DependsOn {
 		ns := cmp.Or(dep.Namespace, r.Namespace)
-		info, _ := kindInfo(apiGroup(dep.APIVersion), dep.Kind)
-		if !info.Namespaced || dep.APIVersion == "" && isClusterScopedKind(dep.Kind) {
+		if i, ok := kindIndex[dep.Kind]; ok && kindTable[i].skipNamespaceStamp {
 			ns = ""
 		}
-		if !yield(DependencyRef{
+		if !yield(Reference{
 			Kind: dep.Kind, Namespace: ns, Name: dep.Name,
-			Use: "dependsOn", Position: i, Ready: dep.Ready, ReadyExpr: dep.ReadyExpr,
+			Use: "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return
 		}
 	}
 	for i, ref := range r.InputsFrom {
-		if !yield(DependencyRef{
+		if !yield(Reference{
 			Kind: KindResourceSetInputProvider, Namespace: r.Namespace, Name: ref.Name,
 			Use: "inputsFrom", Position: i, Content: true,
 		}) {

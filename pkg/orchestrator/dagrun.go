@@ -61,7 +61,7 @@ func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainL
 // seedNodes returns every file-loaded reconcilable + ResourceSet + source
 // object currently in the store — the scheduler's initial frontier.
 // ResourceSetInputProviders are NOT seeded: they are pure data, not
-// runnable nodes (see dagSchedulable).
+// runnable nodes according to the manifest kind table.
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	var ids []manifest.NamedResource
 	for info := range manifest.Kinds() {
@@ -69,7 +69,7 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 			continue
 		}
 		for _, obj := range o.store.ListObjects(info.Kind) {
-			if manifest.KindOf(obj).Runnable && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named())) {
+			if o.schedulable(obj) {
 				ids = append(ids, obj.Named())
 			}
 		}
@@ -94,6 +94,21 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	o.hrc.Start(ctx)
 	o.rsc.StartLifecycle()
 
+	unsubscribe := o.watchDAG(sched)
+	defer unsubscribe()
+
+	sched.Seed(o.seedNodes())
+	err := sched.Run(ctx)
+
+	return errors.Join(err, o.finalize())
+}
+
+func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
+	info := manifest.KindOf(obj)
+	return info.Runnable && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named()))
+}
+
+func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 	// Store → scheduler adapters (fire-only, flush=false), registered AFTER the
 	// shared cycle-detect listener so cycle preflight runs first.
 	//
@@ -105,11 +120,8 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	//   scheduler state, so there is no store-lock ↔ sched.mu inversion.
 	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		obj, _ := payload.(manifest.BaseManifest)
-		info := manifest.KindOf(obj)
-		_, source := o.src.Fetchers[id.Kind]
-		sched.OnArrival(id, info.Runnable && (info.Group != manifest.SourceDomain || source))
+		sched.OnArrival(id, o.schedulable(obj))
 	}, false)
-	defer unsubAdd()
 	//   EventStatusUpdated: wake nodes parked on a dep that reached a terminal
 	//   status. Non-terminal (Pending) updates return before the scheduler lock.
 	unsubStatus := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -119,10 +131,9 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 		}
 		sched.OnStatusWake(id, info.Status == store.StatusReady, info.Status == store.StatusFailed)
 	}, false)
-	defer unsubStatus()
 
-	sched.Seed(o.seedNodes())
-	err := sched.Run(ctx)
-
-	return errors.Join(err, o.finalize())
+	return func() {
+		unsubStatus()
+		unsubAdd()
+	}
 }

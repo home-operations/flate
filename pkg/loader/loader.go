@@ -648,7 +648,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if l.skipExisting(id) {
 			continue
 		}
-		if l.Options.DiscoveryOnly && (info.Group == "" || info.Kind == manifest.KindHelmRelease) {
+		if l.Options.DiscoveryOnly && !info.Includes("discovery") {
 			// Under render-driven discovery, HRs / ConfigMaps /
 			// Secrets / raw manifests stay out of the Store at file-
 			// load time. They reach the Store via KS render
@@ -666,7 +666,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 	if l.documents.cache != nil {
 		objects := slices.DeleteFunc(objs, func(obj manifest.BaseManifest) bool {
 			info := manifest.KindOf(obj)
-			return info.Tracked && info.Kind != manifest.KindConfigMap && info.Kind != manifest.KindSecret && info.Kind != manifest.KindKustomization
+			return !info.Includes("cache")
 		})
 		l.documents.cache[path] = document{objects: objects}
 	}
@@ -709,13 +709,23 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	}
 	id := obj.Named()
 	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
+	var buf [16]manifest.NamedResource
+	refs := buf[:0]
 	for ref := range manifest.References(obj) {
-		if ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Ready ||
-			(ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != "" {
-			r.Refs = append(r.Refs, ref.NamedResource)
+		if !discoveryReference(ref) {
+			continue
 		}
+		refs = append(refs, ref.NamedResource)
+	}
+	if len(refs) > 0 {
+		r.Refs = slices.Clone(refs)
 	}
 	l.Index.Records[id] = r
+}
+
+func discoveryReference(ref manifest.Reference) bool {
+	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Content && ref.Kind == manifest.KindConfigMap ||
+		(ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {

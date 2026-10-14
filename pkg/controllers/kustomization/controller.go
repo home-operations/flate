@@ -124,16 +124,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 			ref := ks.SourceID()
 			_, blocked := errors.AsType[*depwait.ErrBlocked](err)
 			_, failed := errors.AsType[*manifest.DependencyFailedError](err)
-			if (blocked || failed) && level >= manifest.DrainCascade && ks.SourceKind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
-			ref := manifest.NamedResource{}
-			for edge := range manifest.References(ks) {
-				if edge.Use == "source" {
-					ref = edge.NamedResource
-					break
-				}
-			}
-			if level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
-			if level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
+			if (blocked || failed) && level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
 				return fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
 			}
 			return err
@@ -252,38 +243,54 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	return nil
 }
 
-// collectDeps orders explicit dependencies, sources, structural parents and
-// substitution data producers before the consumer reads their rendered data.
-// Secrets are not hard data edges: SOPS/ExternalSecret inputs may exist only in cluster state.
+// collectDeps preserves dependsOn, parent, source, then data/producer gate order.
+// Secrets have no direct hard gate: SOPS/ExternalSecret data may exist only in-cluster.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
-	deps := c.OrderingDeps(ks)
-	if parent, ok := c.LookupParent(ks.Named()); ok {
-		deps = append(deps, manifest.DependencyRef{NamedResource: parent, Ready: true})
+	var deps []manifest.DependencyRef
+	if len(ks.DependsOn) > 0 {
+		deps = make([]manifest.DependencyRef, 0, len(ks.DependsOn))
 	}
-	for ref := range manifest.References(ks) {
-		if ref.Use == "source" {
-			if ref.Kind != "" && ref.Name != "" {
-				deps = append(deps, ref)
+	var source manifest.DependencyRef
+	flushed := false
+	flush := func() {
+		if parent, ok := c.LookupParent(ks.Named()); ok {
+			deps = append(deps, manifest.DependencyRef{NamedResource: parent})
+		}
+		if source.Kind != "" && source.Name != "" {
+			deps = append(deps, source)
+		}
+		flushed = true
+	}
+	manifest.References(ks)(func(ref manifest.Reference) bool {
+		switch ref.Use {
+		case "source":
+			source = ref.DependencyRef
+		case "dependsOn":
+			if c.KeepOrderingDep(ref.NamedResource) {
+				deps = append(deps, ref.DependencyRef)
 			}
-			continue
+		case "substituteFrom":
+			if !flushed {
+				flush()
+			}
+			if ref.Optional || ref.Name == "" || c.substitutionSources[ref.NamedResource] != nil {
+				return true
+			}
+			producers := c.index.DataProducers(ref.NamedResource)
+			if slices.Contains(producers, ks.Named()) {
+				return true
+			}
+			if ref.Kind == manifest.KindConfigMap {
+				deps = append(deps, ref.DependencyRef)
+			}
+			for _, producer := range producers {
+				deps = append(deps, manifest.DependencyRef{NamedResource: producer})
+			}
 		}
-		if ref.Use != "substituteFrom" || ref.Optional || ref.Name == "" {
-			continue
-		}
-		depID := ref.NamedResource
-		if c.substitutionSources[depID] != nil {
-			continue
-		}
-		producers := c.index.DataProducers(depID)
-		if slices.Contains(producers, ks.Named()) {
-			continue
-		}
-		if ref.Kind == manifest.KindConfigMap {
-			deps = append(deps, manifest.DependencyRef{NamedResource: depID})
-		}
-		for _, producer := range producers {
-			deps = append(deps, manifest.DependencyRef{NamedResource: producer, Ready: true})
-		}
+		return true
+	})
+	if !flushed {
+		flush()
 	}
 	return deps
 }

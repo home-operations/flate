@@ -7,80 +7,46 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"slices"
 )
 
-// TestDiscoveryOnly_SkipsNonDiscoveryKinds locks the step-4 contract:
-// under DiscoveryOnly, the file walker AddObjects only KS + RS + RSIP
-// + source kinds. HRs, CMs, Secrets, and raw manifests stay out of
-// the Store and land in Existence instead.
+// Discovery drivers stay in the Store; deferred content stays in the file index.
 func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
----
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: podinfo
-  namespace: default
-spec:
-  chart:
-    spec:
-      chart: podinfo
-      sourceRef:
-        kind: HelmRepository
-        name: podinfo
-        namespace: default
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-settings
-  namespace: flux-system
-data:
-  FOO: bar
-`)
-
+	cases := []struct {
+		kind, api, spec string
+		admitted        bool
+	}{
+		{manifest.KindKustomization, manifest.FluxKustomizeDomain + "/v1", "spec: {interval: 10m, path: ./apps, sourceRef: {kind: GitRepository, name: fixture}}", true},
+		{manifest.KindResourceSet, manifest.FluxOperatorDomain + "/v1", "spec: {resources: []}", true},
+		{manifest.KindResourceSetInputProvider, manifest.FluxOperatorDomain + "/v1", "spec: {type: Static, defaultValues: {key: value}}", true},
+		{manifest.KindGitRepository, manifest.SourceDomain + "/v1", "spec: {url: https://example.test/repo.git}", true},
+		{manifest.KindHelmRelease, manifest.HelmReleaseDomain + "/v2", "spec: {chart: {spec: {chart: podinfo, sourceRef: {kind: HelmRepository, name: podinfo}}}}", false},
+		{manifest.KindConfigMap, "v1", "data: {FOO: bar}", false},
+	}
+	for _, tc := range cases {
+		testutil.WriteFile(t, dir, tc.kind+".yaml", fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: fixture, namespace: flux-system}\n%s\n", tc.api, tc.kind, tc.spec))
+	}
 	st := store.New()
 	l := loaderFixture(st, nil)
 	l.Options.DiscoveryOnly = true
-	if _, err := l.Load(context.Background(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
+	if _, err := l.Load(t.Context(), dir); err != nil {
+		t.Fatal(err)
 	}
-
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-	if st.GetObject(ksID) == nil {
-		t.Errorf("Kustomization should be in Store under DiscoveryOnly")
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			id := manifest.NamedResource{Kind: tc.kind, Name: "fixture", Namespace: "flux-system"}
+			assert.Equal(t, st.GetObject(id) != nil, tc.admitted)
+			_, indexed := l.Index.Lookup(id)
+			assert.Equal(t, indexed, true)
+		})
 	}
-
-	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "podinfo"}
-	if st.GetObject(hrID) != nil {
-		t.Errorf("HelmRelease should NOT be in Store under DiscoveryOnly; should be in Existence")
-	}
-	if _, ok := l.Index.Lookup(hrID); !ok {
-		t.Errorf("HelmRelease must be recorded in Existence index")
-	}
-
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
-	if st.GetObject(cmID) != nil {
-		t.Errorf("ConfigMap should NOT be in Store under DiscoveryOnly; should be in Existence")
-	}
-	if _, ok := l.Index.Lookup(cmID); !ok {
-		t.Errorf("ConfigMap must be recorded in Existence index")
-	}
+	cached := l.documents.cache[filepath.Join(dir, manifest.KindGitRepository+".yaml")].objects
+	assert.Equal(t, slices.ContainsFunc(cached, func(obj manifest.BaseManifest) bool { return obj.Named().Kind == manifest.KindGitRepository }), false)
 }
 
 // TestDiscoveryOnly_PromoteMaterializesFromIndex covers the

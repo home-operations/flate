@@ -22,7 +22,6 @@ func BenchmarkLoad_LargeRepo(b *testing.B) {
 	synthLargeRepo(b, dir, 200, 100, 50)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		s := store.New()
 		if _, err := New(s).Load(context.Background(), dir); err != nil {
@@ -39,7 +38,6 @@ func BenchmarkLoad_DeepComponents(b *testing.B) {
 	synthDeepComponents(b, dir, 5)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		s := store.New()
 		if _, err := New(s).Load(context.Background(), dir); err != nil {
@@ -48,9 +46,6 @@ func BenchmarkLoad_DeepComponents(b *testing.B) {
 	}
 }
 
-// BenchmarkParseFile_Kustomization measures parseFile (the loader's
-// canonical entry that DecodeDocs + ParseDoc + envsubst-filter) for a
-// single Flux Kustomization YAML.
 func BenchmarkParseFile_Kustomization(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "ks.yaml")
@@ -83,7 +78,6 @@ spec:
 	opts := manifest.ParseDocOptions{WipeSecrets: true}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		objs, err := (documentReader{}).parseFile(path, opts)
 		if err != nil {
@@ -95,8 +89,6 @@ spec:
 	}
 }
 
-// BenchmarkParseFile_HelmRelease measures parseFile on a single
-// HelmRelease YAML — the other major hot kind during a load.
 func BenchmarkParseFile_HelmRelease(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "hr.yaml")
@@ -156,7 +148,6 @@ spec:
 	opts := manifest.ParseDocOptions{WipeSecrets: true}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		objs, err := (documentReader{}).parseFile(path, opts)
 		if err != nil {
@@ -165,6 +156,51 @@ spec:
 		if len(objs) == 0 {
 			b.Fatalf("expected at least one object")
 		}
+	}
+}
+
+func BenchmarkRecordObject_HelmRelease(b *testing.B) {
+	benchmarkRecordObject(b, manifest.KindHelmRelease)
+}
+
+func BenchmarkRecordObject_Kustomization(b *testing.B) {
+	benchmarkRecordObject(b, manifest.KindKustomization)
+}
+
+func benchmarkRecordObject(b *testing.B, kind string) {
+	b.Helper()
+	for _, count := range []int{0, 1, 3, 4, 16} {
+		b.Run(fmt.Sprintf("refs=%d", count), func(b *testing.B) {
+			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "app", Namespace: "ns"}
+			if kind == manifest.KindHelmRelease {
+				obj = &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+			}
+			if count > 0 {
+				refs := make([]any, count-1)
+				for i := range refs {
+					refs[i] = map[string]any{"kind": "ConfigMap", "name": fmt.Sprintf("vars-%d", i)}
+				}
+				api := "kustomize.toolkit.fluxcd.io/v1"
+				spec := map[string]any{"sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
+					"postBuild": map[string]any{"substituteFrom": refs}}
+				if kind == manifest.KindHelmRelease {
+					api = "helm.toolkit.fluxcd.io/v2"
+					spec = map[string]any{"chart": map[string]any{"spec": map[string]any{"chart": "app", "sourceRef": map[string]any{"kind": "HelmRepository", "name": "repo"}}}, "valuesFrom": refs}
+				}
+				var err error
+				obj, _, _, err = manifest.ParseDoc(map[string]any{"apiVersion": api, "kind": kind,
+					"metadata": map[string]any{"name": "app", "namespace": "ns"}, "spec": spec}, manifest.ParseDocOptions{})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			l := &Loader{Index: &manifest.DiscoveryIndex{}}
+			b.ReportAllocs()
+			for b.Loop() {
+				l.Index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}
+				l.recordObject(obj, "/repo/object.yaml")
+			}
+		})
 	}
 }
 
@@ -189,7 +225,6 @@ func BenchmarkIgnoreMatches(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		for _, p := range probes {
 			_ = ig.matches(p, root, false)

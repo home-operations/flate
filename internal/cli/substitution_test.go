@@ -427,6 +427,29 @@ func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 	}
 }
 
+func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
+	root := substitutionFixture(t, "", "literal")
+	testutil.WriteFile(t, root, "flux.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps, namespace: flux-system}\nspec: {path: ./app, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substituteFrom: [{kind: Secret, name: cluster-secrets}]}}\n")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml, hr.yaml]\n")
+	testutil.WriteFile(t, root, "app/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec: {chart: {spec: {chart: charts/mychart, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}, values: {greeting: '${SECRET_X}'}}\n")
+	testutil.WriteFile(t, root, "charts/mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, root, "charts/mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo-cm}\ndata: {greeting: {{ required \"greeting needed\" .Values.greeting | quote }}}\n")
+	input := filepath.Join(t.TempDir(), "sec.yaml")
+	testutil.WriteFileAt(t, input, "apiVersion: v1\nkind: Secret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nstringData: {OTHER: y}\n")
+	for _, supplied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("supplied=%t", supplied), func(t *testing.T) {
+			args := []string{"test", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			if supplied {
+				args = append(args, "--substitute-from", input)
+			}
+			out, diagnostic, code := runCLI(t, args...)
+			if (code == 1) != supplied || supplied && !strings.Contains(out+diagnostic, "greeting needed") {
+				t.Fatalf("exit %d: %s %s", code, out, diagnostic)
+			}
+		})
+	}
+}
+
 func TestRun_StrictSubstitutionCachedRender(t *testing.T) {
 	root := substitutionFixture(t, "  postBuild: {substituteStrategy: Always}\n", "${VALUE}")
 	cache := t.TempDir()

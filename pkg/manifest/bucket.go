@@ -59,7 +59,7 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 	return out, nil
 }
 
-func (b *Bucket) references(yield func(DependencyRef) bool) {
+func (b *Bucket) references(yield func(Reference) bool) {
 	credentialReferences(yield, b.Namespace, b.SecretRef, b.CertSecretRef, b.ProxySecretRef)
 }
 

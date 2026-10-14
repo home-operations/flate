@@ -261,10 +261,10 @@ func TestSameKindDepTargets_CallerBuffer(t *testing.T) {
 			}
 			ks := makeKS("app", "ns", want...)
 			var buf [8]manifest.NamedResource
-			assert.Diff(t, sameKindDepTargets(ks, manifest.KindKustomization, buf[:0]), want)
+			assert.Diff(t, sameKindDepTargets(ks, buf[:0]), want)
 			if count <= len(buf) {
 				allocs := testing.AllocsPerRun(100, func() {
-					_ = sameKindDepTargets(ks, manifest.KindKustomization, buf[:0])
+					_ = sameKindDepTargets(ks, buf[:0])
 				})
 				assert.Equal(t, allocs, float64(0))
 			}

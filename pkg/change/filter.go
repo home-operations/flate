@@ -588,9 +588,6 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 // Skipped resources still get marked Ready by their controllers, so
 // downstream depwait completes naturally.
 func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
-	if obj == nil {
-		return nil
-	}
 	var out []manifest.NamedResource
 	for ref := range manifest.References(obj) {
 		if ref.Content {

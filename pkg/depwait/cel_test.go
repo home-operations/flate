@@ -43,9 +43,8 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
 	w := &Waiter{Store: s}
-	ref := manifest.DependencyRef{Ready: true,
-		NamedResource: dep,
-		ReadyExpr:     `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
+	ref := manifest.DependencyRef{NamedResource: dep,
+		ReadyExpr: `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}
 	if got := w.Classify(ref, manifest.DrainNone); got.Kind != ClassReady {
 		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want ClassReady", got)
@@ -64,7 +63,7 @@ func TestReadyExpr_CompileError(t *testing.T) {
 		t.Fatal("expected compile error")
 	}
 	w := &Waiter{Store: s}
-	ref := manifest.DependencyRef{Ready: true, NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
+	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
 	got := w.Classify(ref, manifest.DrainNone)
 	if got.Kind != ClassFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
 		t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
@@ -101,7 +100,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	if ready, failMsg := w.tryReadyExpr(expr, dep); ready || failMsg != "" {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
-	ref := manifest.DependencyRef{Ready: true, NamedResource: dep, ReadyExpr: expr}
+	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
 	if got := w.Classify(ref, manifest.DrainNone); got.Kind != ClassBlocked {
 		t.Errorf("transient eval error@none: got %+v, want ClassBlocked (re-runnable, not failed)", got)
 	}

@@ -54,7 +54,7 @@ func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
 		return
 	}
 	var buf [8]manifest.NamedResource
-	deps := sameKindDepTargets(obj, id.Kind, buf[:0])
+	deps := sameKindDepTargets(obj, buf[:0])
 	o.depGraph.ReplaceEdges(id, deps)
 	o.syncPreflightFailures()
 }
@@ -114,19 +114,16 @@ func (o *Orchestrator) rebuildDependencyGraphFromStore() {
 		for _, obj := range o.store.ListObjects(kind) {
 			id := obj.Named()
 			var buf [8]manifest.NamedResource
-			deps := sameKindDepTargets(obj, kind, buf[:0])
+			deps := sameKindDepTargets(obj, buf[:0])
 			o.depGraph.ReplaceEdges(id, deps)
 		}
 	}
 }
 
-// sameKindDepTargets pulls the dependsOn list from a Kustomization /
-// HelmRelease and filters it down to entries of the same kind. Flux's
-// spec.dependsOn is kind-homogeneous (KS deps on KS, HR deps on HR);
-// stripping cross-kind entries here keeps the graph's invariant intact.
-func sameKindDepTargets(obj manifest.BaseManifest, kind string, out []manifest.NamedResource) []manifest.NamedResource {
+// Flux Kustomization and HelmRelease dependsOn references are kind-homogeneous.
+func sameKindDepTargets(obj manifest.BaseManifest, out []manifest.NamedResource) []manifest.NamedResource {
 	for ref := range manifest.References(obj) {
-		if ref.Use == "dependsOn" && ref.Kind == kind {
+		if ref.Use == "dependsOn" {
 			out = append(out, ref.NamedResource)
 		}
 	}

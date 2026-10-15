@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	yaml "go.yaml.in/yaml/v2"
+	yaml "go.yaml.in/yaml/v3"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/kustomize"

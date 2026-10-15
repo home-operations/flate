@@ -117,66 +117,75 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	if rerun || out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
 		t.Fatalf("primary failure misclassified = %v/%v status=%+v blockers=%v", out, deps, info, info.BlockedBy())
 	}
-	t.Run("released pin recovery", func(t *testing.T) {
-		consumer := ks.Clone()
-		consumer.Name, consumer.Path, consumer.DependsOn = "released-consumer", "./consumer", nil
-		consumer.SourceRef.Kind, consumer.SourceRef.Name = manifest.KindOCIRepository, "app"
-		repo := &manifest.OCIRepository{Name: "app", Namespace: consumer.Namespace, URL: "oci://fixture.invalid/app"}
-		fetcher := &generatedOCIFetcher{root: dir}
-		o.src.Fetchers[manifest.KindOCIRepository] = fetcher
-		o.src.StartLifecycle()
-		o.ksc.StartLifecycle()
-		o.store.AddObject(repo)
-		o.store.AddObject(consumer)
-		o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
-		o.store.UpdateStatus(repo.Named(), store.StatusReady, "")
-		attempted, recovered := make(chan struct{}), make(chan struct{})
-		producer := ksID("reacquire")
-		dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-			if id == producer {
-				o.tasks.YieldSlot(func() {
-					select {
-					case <-attempted:
-					case <-ctx.Done():
-					}
-				})
-				out, deps, rerun := d.Dispatch(ctx, repo.Named(), level)
-				o.tasks.YieldSlot(func() {
-					select {
-					case <-recovered:
-					case <-ctx.Done():
-					}
-				})
-				return out, deps, rerun
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("released pin recovery/%d workers", workers), func(t *testing.T) {
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+			if err != nil {
+				t.Fatal(err)
 			}
-			out, deps, rerun := d.Dispatch(ctx, id, level)
-			if out == schedule.OutcomeBlocked {
-				assert.Diff(t, deps, []schedule.NodeID{repo.Named()})
-				select {
-				case <-attempted:
-				default:
-					close(attempted)
+			defer o.Stop()
+			o.configureControllers()
+			d := dagDispatcher{o}
+			consumer := ks.Clone()
+			consumer.Name, consumer.Path, consumer.DependsOn = "released-consumer", "./consumer", nil
+			consumer.SourceRef.Kind, consumer.SourceRef.Name = manifest.KindOCIRepository, "app"
+			repo := &manifest.OCIRepository{Name: "app", Namespace: consumer.Namespace, URL: "oci://fixture.invalid/app"}
+			fetcher := &generatedOCIFetcher{root: dir}
+			o.src.Fetchers[manifest.KindOCIRepository] = fetcher
+			o.src.StartLifecycle()
+			o.ksc.StartLifecycle()
+			o.store.AddObject(repo)
+			o.store.AddObject(consumer)
+			o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
+			o.store.UpdateStatus(repo.Named(), store.StatusReady, "")
+			attempted, acquired := make(chan struct{}), make(chan struct{})
+			dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+				assert.Equal(t, level, manifest.DrainNone)
+				if id == repo.Named() {
+					o.tasks.YieldSlot(func() {
+						select {
+						case <-attempted:
+						case <-ctx.Done():
+						}
+					})
+					out, deps, rerun := d.Dispatch(ctx, id, level)
+					info, _ := o.store.GetStatus(id)
+					assert.Equal(t, info.Status, store.StatusReady)
+					assert.Equal(t, fetcher.fetched.Load(), true)
+					close(acquired)
+					return out, deps, rerun
 				}
-			} else {
-				close(recovered)
+				out, deps, rerun := d.Dispatch(ctx, id, level)
+				if out == schedule.OutcomeBlocked {
+					assert.Diff(t, deps, []schedule.NodeID{repo.Named()})
+					close(attempted)
+					// Ready must precede the consumer's first blocked-edge registration.
+					o.tasks.YieldSlot(func() {
+						select {
+						case <-acquired:
+						case <-ctx.Done():
+						}
+					})
+				}
+				return out, deps, rerun
+			})
+			sched := schedule.New(o.tasks, dispatch)
+			unsubscribe := o.watchDAG(sched)
+			defer unsubscribe()
+			// Sources must be scheduled under the identity they reconcile.
+			sched.Seed([]schedule.NodeID{repo.Named(), consumer.Named()})
+			if err := sched.Run(t.Context()); err != nil {
+				t.Fatal(err)
 			}
-			return out, deps, rerun
+			info, _ := o.store.GetStatus(consumer.Named())
+			assert.Equal(t, info.Status, store.StatusReady)
+			art, ok := o.store.GetArtifact(consumer.Named()).(*store.KustomizationArtifact)
+			if !ok || len(art.Manifests) != 1 {
+				t.Fatalf("recovered output = %+v", art)
+			}
+			assert.Diff(t, art.Manifests[0]["data"], map[string]any{"k": "v"})
 		})
-		sched := schedule.New(o.tasks, dispatch)
-		unsubscribe := o.watchDAG(sched)
-		defer unsubscribe()
-		sched.Seed([]schedule.NodeID{producer, consumer.Named()})
-		if err := sched.Run(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		info, _ := o.store.GetStatus(consumer.Named())
-		assert.Equal(t, info.Status, store.StatusReady)
-		art, ok := o.store.GetArtifact(consumer.Named()).(*store.KustomizationArtifact)
-		if !ok || len(art.Manifests) != 1 {
-			t.Fatalf("recovered output = %+v", art)
-		}
-		assert.Diff(t, art.Manifests[0]["data"], map[string]any{"k": "v"})
-	})
+	}
 	if err := o.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}

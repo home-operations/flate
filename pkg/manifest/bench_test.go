@@ -319,7 +319,7 @@ func BenchmarkParseDoc_ConfigMapAndStringData(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true}); err != nil {
+				if _, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}); err != nil {
 					b.Fatal(err)
 				}
 			}

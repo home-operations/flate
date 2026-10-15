@@ -16,10 +16,10 @@
 // so no two renders share mutable state and there is no per-tree build lock.
 // krusty's package-global state (the openapi schema registry, builtin
 // plugin/transformer factories) is still not goroutine-safe, so the
-// process-wide BuildMutex (flux.go) serializes EVERY krusty invocation flate
+// process-wide internal/kustomize.BuildMutex serializes EVERY krusty invocation flate
 // runs — including the helm post-renderer's krusty.Run in pkg/helm.
 // fluxcd/pkg/kustomize guards its own Build for the same reason; every
-// flate-owned krusty entrypoint MUST hold BuildMutex.
+// flate-owned krusty entrypoint MUST hold that same mutex.
 //
 // Caching boundary. kustomize output caching is deferred to the controller
 // layer (the Kustomization controller's spec+source fingerprint dedup), NOT

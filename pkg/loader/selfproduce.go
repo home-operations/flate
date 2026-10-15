@@ -301,7 +301,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 		}
 		return
 	}
-	_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets}, true, record)
+	_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, record)
 }
 
 // materializeSecret retains SOPS stand-ins under the rendered namespace so

@@ -417,7 +417,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath s
 		}
 		reader := w.loader.documents
 		reader.regular = e.Type().IsRegular()
-		objs, err := reader.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets})
+		objs, err := reader.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets, DefaultNamespace: ""})
 		if err != nil {
 			slog.Warn("loader: bootstrap-sibling parse failed", "path", abs, "err", err)
 			continue
@@ -646,7 +646,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 			collect(obj)
 		}
 	} else {
-		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, true, collect)
+		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""}, true, collect)
 	}
 	if err != nil {
 		if !errors.Is(err, manifest.ErrInput) {
@@ -703,7 +703,7 @@ func (l *Loader) addObject(obj manifest.BaseManifest, path string) {
 // recordDataFile keeps Component data available for lazy promotion without
 // publishing untemplated Component resources into the Store.
 func (l *Loader) recordDataFile(absPath string) error {
-	objs, err := l.documents.parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	objs, err := l.documents.parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
 	if err != nil {
 		return err
 	}

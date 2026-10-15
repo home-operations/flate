@@ -156,7 +156,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	if first == nil || other == nil || first.Namespace != "working" || other.Namespace != "committed" {
 		t.Fatalf("source views were mixed: working=%v committed=%v", first, other)
 	}
-	if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{}); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("absent committed file fell through to disk: %v", err)
 	}
 	testutil.WriteFile(t, working, "Kustomization", "namespace: changed\n")
@@ -200,7 +200,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		st.AddObject(repo)
 		st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: committed, Key: "pin"})
 		r.mountSources(st)
-		if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{}); !errors.Is(err, manifest.ErrInput) {
+		if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("released pin read host content through its coordinate: %v", err)
 		}
 	})

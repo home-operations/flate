@@ -161,7 +161,7 @@ spec: {interval: 1m, prune: true}
 			assert.Equal(t, len(docs), 3)
 			seen := map[manifest.NamedResource]bool{}
 			for _, doc := range docs {
-				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 				if err != nil {
 					t.Fatal(err)
 				}

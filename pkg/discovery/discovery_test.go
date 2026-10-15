@@ -647,13 +647,8 @@ spec:
 	}
 }
 
-// TestRun_ComponentGeneratorMaterializesCM mirrors home-operations/flate
-// issue #396: a Flux Kustomization references a kustomize Component
-// whose configMapGenerator produces cluster-settings. Without the
-// generator-discovery pass, depwait can't find the CM (no on-disk
-// YAML to walk to) and every downstream KS with `substituteFrom:
-// [cluster-settings]` fails. The fix synthesizes the CM at the
-// Flux KS's namespace and registers it in the store + ExistenceIndex.
+// Generated data MUST use the render namespace, independent of the owning
+// Kustomization's metadata.namespace, so dependency lookups address its output.
 func TestRun_ComponentGeneratorMaterializesCM(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -694,9 +689,9 @@ configMapGenerator:
 	}
 
 	cmID := manifest.NamedResource{
-		Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings",
+		Kind: manifest.KindConfigMap, Name: "cluster-settings",
 	}
-	cm, _ := st.GetByName[*manifest.ConfigMap](manifest.KindConfigMap, "flux-system", "cluster-settings")
+	cm, _ := st.GetByName[*manifest.ConfigMap](manifest.KindConfigMap, "", "cluster-settings")
 	if cm == nil {
 		t.Fatalf("ConfigMap %s not synthesized from configMapGenerator", cmID)
 	}

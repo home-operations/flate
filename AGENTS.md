@@ -60,7 +60,7 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
 - The scheduler never touches the store, the pool or a dispatcher while holding its mutex;
   drop `mu` before `tasks.Go`. Termination is a structural fixpoint plus drain, never a
   timeout.
-- Every krusty build holds `kustomize.BuildMutex`. It is the only global serialization point;
+- Every krusty build holds `internal/kustomize.BuildMutex`. It is the only global serialization point;
   do not add another on the render path.
 - Changed-only mode: `KeepEmitted`/`AddEmitted` before `AddObject`.
 - Only SOPS ciphertext is wiped (`..PLACEHOLDER_<key>..`); missing secrets fail loud unless a

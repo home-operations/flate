@@ -167,6 +167,13 @@ Combination follows `spec.inputStrategy`: **Flatten** (default) concatenates all
 
 flate is rendering-only.
 
+- **Custom resource scope.** Cluster-scoped custom resources unknown to
+  Kustomize's schema, such as a ClusterIssuer or a kyverno or NVIDIA
+  ClusterPolicy, receive a Kustomization `targetNamespace` or HelmRelease
+  release namespace in rendered output, as `flux build` prints them. The API
+  server clears the namespace on apply. flate does not infer custom resource
+  scope from CRDs.
+
 - **No SOPS decryption.** SOPS-encrypted values are wiped to a placeholder; pre-decrypt if you need them in the diff. (Cleartext Secret values render as-is.)
 - **No signature verification.** `spec.verify` on `OCIRepository` (cosign) and `GitRepository` (PGP) is ignored — artifacts are pulled and rendered unconditionally. flate shows what Flux would apply; it does not gate on signatures. Enforce signatures in-cluster.
 - **No cloud workload identity.** `spec.serviceAccountName` is a no-op; use static creds in a Secret.

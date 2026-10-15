@@ -181,10 +181,18 @@ func TestReconcile_EmitsFluxChildToStore(t *testing.T) {
 		ResourcesTemplate: `---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata: {name: child, namespace: flux-system}
+metadata: {name: child}
 spec:
   path: ./child
   sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: bare}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: bare}
 `,
 	}
 	s.AddObject(rs)
@@ -198,6 +206,29 @@ spec:
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
 	}
+	art := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+	before := make([]map[string]any, len(art.Manifests))
+	for i, doc := range art.Manifests {
+		before[i] = manifest.DeepCopyMap(doc)
+		name, ns := manifest.DocMetadata(doc)
+		want := rs.Namespace
+		if manifest.DocKind(doc) == "ClusterRole" {
+			want = ""
+		}
+		if ns != want {
+			t.Fatalf("rendered namespace = %q, want %q", ns, want)
+		}
+		if s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+			t.Fatalf("missing effective child %s/%s", want, name)
+		}
+	}
+	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+		t.Fatalf("repeat reconcile: %+v", info)
+	}
+	if delta := cmp.Diff(before, art.Manifests); delta != "" {
+		t.Fatalf("replay mutated output (-want +got):\n%s", delta)
+	}
+
 }
 
 // TestReconcile_RenderError_MarksFailed pins that a malformed RS template
@@ -276,7 +307,7 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 				"metadata": map[string]any{"name": "disabled", "namespace": "default", "annotations": map[string]any{fluxopv1.ReconcileAnnotation: value}},
 				"spec":     map[string]any{"inputsFrom": []any{map[string]any{"name": "missing"}}, "resourcesTemplate": "<< inputs.missing >>"},
 			}
-			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -331,12 +362,12 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 `,
 				},
 			}
-			children, _ := c.Emit(parent.Named(), []map[string]any{doc}, false, true)
+			children, _ := c.Emit(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
 			if len(children) != 1 {
 				t.Fatalf("initial publication: %v", children)
 			}
 			rs := children[0].Obj.(*manifest.ResourceSet)
-			original, _, _, err := manifest.ParseDoc(manifest.DeepCopyMap(doc), manifest.ParseDocOptions{})
+			original, _, _, err := manifest.ParseDoc(manifest.DeepCopyMap(doc), manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -365,7 +396,7 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 				if fired.Swap(true) {
 					return
 				}
-				c.Emit(parent.Named(), []map[string]any{replacement}, false, true)
+				c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
 				published.Store(true)
 			}, false)
 			t.Cleanup(unsub)
@@ -416,7 +447,7 @@ func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
 			"inputsFrom":        []any{map[string]any{"kind": "Unsupported", "name": "inputs"}},
 			"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>, namespace: apps}\n",
 		},
-	}, manifest.ParseDocOptions{})
+	}, manifest.ParseDocOptions{DefaultNamespace: ""})
 	if err != nil {
 		t.Fatal(err)
 	}

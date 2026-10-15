@@ -293,44 +293,29 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 	}
 }
 
-// TestRender_DefaultsNamespace asserts that namespaced resources
-// without an explicit metadata.namespace inherit the ResourceSet's
-// own namespace, while cluster-scoped kinds (Namespace, ClusterRole,
-// CRD, etc.) stay namespace-less.
-func TestRender_DefaultsNamespace(t *testing.T) {
+func TestRender_PreservesNamespaces(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "tenant-x",
 		Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
 		Resources: []*apix.JSON{
-			// Namespaced — should default to tenant-x.
-			jsonTmpl(t, `{
-					"apiVersion": "v1", "kind": "ConfigMap",
-					"metadata": {"name": "<< inputs.name >>"}
-				}`),
-			// Cluster-scoped — must stay namespace-less.
-			jsonTmpl(t, `{
-					"apiVersion": "v1", "kind": "Namespace",
-					"metadata": {"name": "<< inputs.name >>"}
-				}`),
+			jsonTmpl(t, `{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "<< inputs.name >>"}}`),
+			jsonTmpl(t, `{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "<< inputs.name >>"}}`),
+			jsonTmpl(t, `{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": "<< inputs.name >>"}}`),
+			jsonTmpl(t, `{"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "<< inputs.name >>", "namespace": "authored"}}`),
+			jsonTmpl(t, `{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "explicit", "namespace": "authored"}}`),
 		},
 	}
 	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
-		t.Fatalf("Render: %v", err)
+		t.Fatal(err)
 	}
-	for _, doc := range docs {
-		kind := doc["kind"].(string)
-		md := doc["metadata"].(map[string]any)
-		ns, _ := md["namespace"].(string)
-		switch kind {
-		case "ConfigMap":
-			if ns != "tenant-x" {
-				t.Errorf("ConfigMap namespace=%q want tenant-x", ns)
-			}
-		case "Namespace":
-			if ns != "" {
-				t.Errorf("Namespace got injected namespace=%q (cluster-scoped)", ns)
-			}
+	if len(docs) != 5 {
+		t.Fatalf("documents = %d", len(docs))
+	}
+	for i, want := range []string{"", "", "", "authored", "authored"} {
+		_, ns := manifest.DocMetadata(docs[i])
+		if ns != want {
+			t.Errorf("document %d namespace = %q, want %q", i, ns, want)
 		}
 	}
 }
@@ -841,7 +826,7 @@ func TestRender_Steps(t *testing.T) {
 			names := make([]string, 0, len(docs))
 			for _, doc := range docs {
 				name, ns := manifest.DocMetadata(doc)
-				if ns != "default" {
+				if ns != "" {
 					t.Errorf("namespace = %q", ns)
 				}
 				labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
@@ -955,7 +940,7 @@ items:
 	for _, doc := range docs {
 		name, ns := manifest.DocMetadata(doc)
 		names = append(names, name)
-		if ns != "default" {
+		if ns != "" {
 			t.Errorf("namespace = %q", ns)
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	flatekustomize "github.com/home-operations/flate/pkg/kustomize"
 )
 
@@ -87,10 +88,10 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize) (*bytes.Buffe
 	// kustomize's krusty pipeline mutates package-global state that is
 	// not goroutine-safe. Hold the shared build mutex so this HR
 	// post-render never runs concurrently with a Kustomization's
-	// build (or another HR's post-render) — see kustomize.BuildMutex.
+	// build (or another HR's post-render) — see kustomizestate.BuildMutex.
 	rm, err := func() (resmap.ResMap, error) {
-		flatekustomize.BuildMutex.Lock()
-		defer flatekustomize.BuildMutex.Unlock()
+		kustomizestate.BuildMutex.Lock()
+		defer kustomizestate.BuildMutex.Unlock()
 		return krusty.MakeKustomizer(opts).Run(fs, ".")
 	}()
 	if err != nil {

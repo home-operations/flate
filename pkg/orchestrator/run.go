@@ -42,7 +42,7 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	if id.Namespace == "" {
 		return false
 	}
-	// Discovery retains bare identities until a parent stamps the namespace.
+	// Discovery retains bare identities until parsing applies the parent namespace.
 	id.Namespace = ""
 	r, ok := e.index.Lookup(id)
 	return ok && r.Path != ""

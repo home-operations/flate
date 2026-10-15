@@ -82,12 +82,36 @@ func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifes
 	return info
 }
 
+const namespaceIdentityDocs = `apiVersion: v1
+kind: ConfigMap
+metadata: {name: hello}
+data: {greeting: hi}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: chart}
+spec: {url: oci://example.test/chart}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: app}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: role}
+---
+apiVersion: foreign.example/v1
+kind: ClusterRole
+metadata: {name: foreign}
+`
+
 // TestReconcile_HappyPath drives the full reconcile flow: AddObject
 // fires the listener, depwait clears (no deps), kustomize renders,
 // emitRenderedChildren lands the ConfigMap as a rendered artifact,
 // status flips Ready, artifact carries a fingerprint.
 func TestReconcile_HappyPath(t *testing.T) {
 	c, s, root := newControllerWithFixture(t)
+	testutil.WriteFile(t, root, "apps/cm.yaml", namespaceIdentityDocs)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Path: "./apps",
@@ -113,6 +137,18 @@ func TestReconcile_HappyPath(t *testing.T) {
 	}
 	if len(art.Manifests) == 0 {
 		t.Error("artifact has no rendered manifests")
+	}
+	assert.Equal(t, len(art.Manifests), 5)
+	for _, doc := range art.Manifests {
+		name, ns := manifest.DocMetadata(doc)
+		assert.Equal(t, ns, "")
+		want := ks.TargetNamespace
+		if manifest.DocKind(doc) == "ClusterRole" && manifest.DocAPIVersion(doc) == "rbac.authorization.k8s.io/v1" {
+			want = ""
+		}
+		if s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+			t.Errorf("missing effective child %s/%s", want, name)
+		}
 	}
 	if filepath.Dir(art.Path) == "/" {
 		t.Errorf("unexpected artifact path: %q (root=%s)", art.Path, root)
@@ -192,7 +228,7 @@ data: {greeting: '%s'}
 				"kind":       "Kustomization",
 				"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 				"spec":       spec,
-			}, manifest.ParseDocOptions{})
+			}, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatalf("ParseDoc: %v", err)
 			}
@@ -219,10 +255,11 @@ data: {greeting: '%s'}
 // the issue by AddObject'ing the same KS twice and verifying the
 // artifact's identity persists (SetArtifact dedupes via DeepEqual).
 func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
-	c, s, _ := newControllerWithFixture(t)
+	c, s, root := newControllerWithFixture(t)
+	testutil.WriteFile(t, root, "apps/cm.yaml", namespaceIdentityDocs)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		Path: "./apps",
+		Path: "./apps", TargetNamespace: "release",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
@@ -233,6 +270,11 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
+	art := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+	before := make([]map[string]any, len(art.Manifests))
+	for i, doc := range art.Manifests {
+		before[i] = manifest.DeepCopyMap(doc)
+	}
 
 	// Re-AddObject a copy with kustomize ownership labels stamped, then drive a
 	// second reconcile: the labels differ so the body re-runs, but the
@@ -249,6 +291,22 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
 	}
+	assert.Diff(t, art.Manifests, before)
+	for _, doc := range art.Manifests {
+		name, ns := manifest.DocMetadata(doc)
+		want := ks.TargetNamespace
+		if manifest.DocAPIVersion(doc) == "rbac.authorization.k8s.io/v1" {
+			want = ""
+		}
+		assert.Equal(t, ns, want)
+		if s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+			t.Errorf("replayed child %s/%s missing", want, name)
+		}
+		if want != "" && s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Name: name}) != nil {
+			t.Errorf("replay published duplicate bare child %s", name)
+		}
+	}
+
 }
 
 // TestReconcile_AlreadyReady_NoTransientPending pins Part A of the
@@ -482,7 +540,7 @@ data: {greeting: hi}
 				st.UpdateStatus(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "")
 				level = manifest.DrainCascade
 			}
-			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -505,7 +563,7 @@ data: {greeting: hi}
 				if fired.Swap(true) {
 					return
 				}
-				c.Emit(parent.Named(), []map[string]any{replacement}, false, true)
+				c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
 				published.Store(true)
 			}, false)
 			t.Cleanup(unsub)

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -73,7 +75,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					var artifact *store.KustomizationArtifact
 					if retained {
 						doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": retainedID.Name, "namespace": retainedID.Namespace}, "data": map[string]any{"value": "prior"}}
-						o.ksc.Emit(child, []map[string]any{doc}, false, true)
+						o.ksc.Emit(child, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace}, true)
 						artifact = &store.KustomizationArtifact{Manifests: []map[string]any{doc}, Fingerprint: "prior"}
 						o.store.SetArtifact(child, artifact)
 					}
@@ -88,7 +90,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 							t.Error(err)
 							return
 						}
-						o.ksc.Emit(gate, docs, false, true)
+						o.ksc.Emit(gate, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: gate.Namespace}, true)
 					}, false)
 					t.Cleanup(unsub)
 					unsubArrivals := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -98,7 +100,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 								t.Errorf("child arrived before ownership and selection: owner=%s owned=%t", owner, owned)
 							}
 						}
-						if id == retainedID || id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: child.Name}) {
+						if id == retainedID || id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: child.Name}) {
 							arrivals.Add(1)
 						}
 					}, false)
@@ -126,7 +128,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						t.Fatal("suspended child produced output")
 					}
 					for _, name := range []string{"dependent", "independent"} {
-						id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: name}
+						id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
 						if o.store.GetObject(id) == nil || len(res.Manifests[ksID(name)]) != 1 {
 							t.Fatalf("active output missing: %s", id)
 						}
@@ -183,6 +185,7 @@ data:
 			// must not request another reconcile while that HR is running.
 			testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
 			testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
+			testutil.WriteFile(t, dir, "charts/app/templates/bare.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bare}\ndata: {value: retained}\n")
 			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
 			if err != nil {
 				t.Fatal(err)
@@ -206,6 +209,60 @@ data:
 			if !ok || cm.Data["greeting"] != "hello" {
 				t.Fatalf("shared values were not rendered: %+v", cm)
 			}
+			ksArt := o.store.GetArtifact(ksID("apps")).(*store.KustomizationArtifact)
+			var childDoc map[string]any
+			for _, doc := range ksArt.Manifests {
+				if manifest.DocKind(doc) == manifest.KindHelmRelease {
+					childDoc = doc
+				}
+			}
+			if childDoc == nil {
+				t.Fatal("bare release document missing")
+			}
+			_, ns := manifest.DocMetadata(childDoc)
+			if ns != "flux-system" {
+				t.Fatalf("release document namespace = %q", ns)
+			}
+			hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
+			childBefore := manifest.DeepCopyMap(childDoc)
+			hrArt := o.store.GetArtifact(hrID).(*store.HelmReleaseArtifact)
+			retained := make([]map[string]any, len(hrArt.Manifests))
+			for i, doc := range hrArt.Manifests {
+				retained[i] = manifest.DeepCopyMap(doc)
+				if name, ns := manifest.DocMetadata(doc); name == "bare" && ns != hrID.Namespace {
+					t.Fatalf("bare chart namespace = %q, want %q", ns, hrID.Namespace)
+				}
+			}
+			bare := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hrID.Namespace, Name: "bare"}
+			if o.store.GetObject(bare) == nil {
+				t.Fatal("bare chart child lost release namespace identity")
+			}
+			o.store.DeleteObject(bare)
+			o.ksc.Emit(ksID("apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"}, false)
+			_, replay := o.hrc.Emit(hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace}, false)
+			if o.store.GetObject(bare) == nil {
+				t.Fatal("replay lost release namespace identity")
+			}
+			next, err := manifest.DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, _, _, err := manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.ReleaseIfNotRetained(next[0], parsed)
+			if delta := cmp.Diff(childBefore, childDoc); delta != "" {
+				t.Fatalf("replay changed bare release (-want +got):\n%s", delta)
+			}
+			if delta := cmp.Diff(retained, replay); delta != "" {
+				t.Fatalf("replay changed retained documents (-want +got):\n%s", delta)
+			}
+			_, ns = manifest.DocMetadata(childDoc)
+			if ns != "flux-system" {
+				t.Fatalf("replay release namespace %q", ns)
+			}
+
 		})
 	}
 }

@@ -16,7 +16,7 @@ import (
 // defaultParseDocOptions returns the standard ParseDoc options — secrets wiped.
 // Test-only helper; production callers pass an explicit ParseDocOptions.
 func defaultParseDocOptions() ParseDocOptions {
-	return ParseDocOptions{WipeSecrets: true}
+	return ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}
 }
 
 // mustYAML decodes a single YAML document literal into a generic map.
@@ -282,11 +282,11 @@ spec:
   interval: 5m
 `,
 			get: func(d map[string]any) (*LocalObjectReference, error) {
-				o, err := ParseOCIRepository(d)
+				o, _, _, err := ParseDoc(d, ParseDocOptions{DefaultNamespace: ""})
 				if err != nil {
 					return nil, err
 				}
-				return o.ProxySecretRef, nil
+				return o.(*OCIRepository).ProxySecretRef, nil
 			},
 		},
 		{
@@ -457,8 +457,11 @@ metadata: {name: x, namespace: ns}
 spec:
   url: oci://example/x
   secretRef: {name: ""}`,
-			want:  "spec.secretRef.name is empty",
-			parse: func(d map[string]any) error { _, err := ParseOCIRepository(d); return err },
+			want: "spec.secretRef.name is empty",
+			parse: func(d map[string]any) error {
+				_, _, _, err := ParseDoc(d, ParseDocOptions{DefaultNamespace: ""})
+				return err
+			},
 		},
 		{
 			name: "GitRepository spec.secretRef.name empty",
@@ -949,7 +952,7 @@ metadata:
 data:
   DOMAIN: example.com
 `)
-	cmobj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+	cmobj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 	cm := cmobj.(*ConfigMap)
 	if err != nil {
 		t.Fatalf("parseConfigMap: %v", err)
@@ -977,7 +980,7 @@ data:
   PLAINTEXT: keep-me
 `
 	t.Run("wiped", func(t *testing.T) {
-		cmobj, _, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: true})
+		cmobj, _, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 		cm := cmobj.(*ConfigMap)
 		if err != nil {
 			t.Fatalf("parseConfigMap: %v", err)
@@ -988,7 +991,7 @@ data:
 		})
 	})
 	t.Run("preserved when wipeSecrets=false", func(t *testing.T) {
-		cmobj, _, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: false})
+		cmobj, _, _, err := ParseDoc(mustYAML(t, src), ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 		cm := cmobj.(*ConfigMap)
 		if err != nil {
 			t.Fatalf("parseConfigMap: %v", err)
@@ -1019,7 +1022,7 @@ stringData:
   enc-key: ` + sops + `
 `
 	t.Run("sops wiped, plaintext preserved", func(t *testing.T) {
-		sobj, _, _, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{WipeSecrets: true})
+		sobj, _, _, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 		s := sobj.(*Secret)
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
@@ -1046,7 +1049,7 @@ stringData:
 	})
 
 	t.Run("preserved with wipeSecrets=false", func(t *testing.T) {
-		sobj, _, _, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{WipeSecrets: false})
+		sobj, _, _, err := ParseDoc(mustYAML(t, yamlDoc), ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 		s := sobj.(*Secret)
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
@@ -1071,7 +1074,7 @@ metadata: {name: wordpress-values, namespace: default}
 data:
   values.yaml: `+base64.StdEncoding.EncodeToString([]byte(valuesYAML))+`
 `)
-		sobj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+		sobj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 		s := sobj.(*Secret)
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
@@ -1103,12 +1106,12 @@ stringData:
 `
 	doc := mustYAML(t, yamlDoc)
 
-	s1obj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+	s1obj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 	s1 := s1obj.(*Secret)
 	if err != nil {
 		t.Fatalf("first parse: %v", err)
 	}
-	s2obj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true})
+	s2obj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 	s2 := s2obj.(*Secret)
 	if err != nil {
 		t.Fatalf("second parse: %v", err)
@@ -1134,63 +1137,110 @@ stringData:
 
 func TestParseDoc_Dispatch(t *testing.T) {
 	cases := []struct {
-		name string
-		yaml string
-		kind string
+		name    string
+		yaml    string
+		kind    string
+		cluster bool
 	}{
 		{"kustomization", `
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: x, namespace: ns}
-spec: {path: ./a, sourceRef: {kind: GitRepository, name: r}}`, KindKustomization},
+spec: {path: ./a, sourceRef: {kind: GitRepository, name: r}}`, KindKustomization, false},
 		{"helmrelease", `
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: r, namespace: ns}
-spec: {chart: {spec: {chart: c, sourceRef: {name: rr}}}}`, KindHelmRelease},
+spec: {chart: {spec: {chart: c, sourceRef: {name: rr}}}}`, KindHelmRelease, false},
 		{"helmrepository", `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata: {name: r, namespace: ns}
-spec: {url: https://example}`, KindHelmRepository},
+spec: {url: https://example}`, KindHelmRepository, false},
 		{"helmchart", `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata: {name: hc, namespace: ns}
-spec: {chart: c, sourceRef: {name: rr}}`, KindHelmChart},
+spec: {chart: c, sourceRef: {name: rr}}`, KindHelmChart, false},
 		{"gitrepository", `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: r, namespace: ns}
-spec: {url: https://example.git}`, KindGitRepository},
+spec: {url: https://example.git}`, KindGitRepository, false},
 		{"ocirepository", `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata: {name: r, namespace: ns}
-spec: {url: oci://example}`, KindOCIRepository},
+spec: {url: oci://example}`, KindOCIRepository, false},
 		{"configmap", `
 apiVersion: v1
 kind: ConfigMap
-metadata: {name: c, namespace: ns}`, KindConfigMap},
+metadata: {name: c, namespace: ns}`, KindConfigMap, false},
 		{"secret", `
 apiVersion: v1
 kind: Secret
-metadata: {name: s, namespace: ns}`, KindSecret},
+metadata: {name: s, namespace: ns}`, KindSecret, false},
 		{"unknown", `
 apiVersion: example.com/v1
 kind: Foo
-metadata: {name: x}`, "Foo"},
+metadata: {name: x}`, "Foo", false},
+	}
+	for _, raw := range []struct {
+		apiVersion, kind string
+		cluster          bool
+	}{
+		{"apps/v1", "Deployment", false},
+		{"rbac.authorization.k8s.io/v1", "ClusterRole", true},
+		{"foreign.example/v1", "ClusterRole", false},
+		{"rbac.authorization.k8s.io/v999", "ClusterRole", false},
+		{"gateway.networking.k8s.io/v1", "GatewayClass", false},
+		{"kyverno.io/v1", "ClusterPolicy", false},
+		{"nvidia.com/v1", "ClusterPolicy", false},
+		{"cert-manager.io/v1", "ClusterIssuer", false},
+	} {
+		cases = append(cases, struct {
+			name, yaml, kind string
+			cluster          bool
+		}{
+			raw.kind + "/" + raw.apiVersion,
+			fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: raw}\nspec: {value: keep}", raw.apiVersion, raw.kind),
+			raw.kind, raw.cluster,
+		})
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			obj, _, _, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
-			if err != nil {
-				t.Fatalf("ParseDoc: %v", err)
-			}
-			if obj.Named().Kind != tc.kind {
-				t.Errorf("Kind = %q, want %q", obj.Named().Kind, tc.kind)
-			}
-		})
+		for _, ns := range []struct{ authored, fallback string }{{"", ""}, {"", "apps"}, {"explicit", "apps"}} {
+			t.Run(tc.name+"/authored="+ns.authored+"/default="+ns.fallback, func(t *testing.T) {
+				doc := mustYAML(t, tc.yaml)
+				md := doc["metadata"].(map[string]any)
+				delete(md, "namespace")
+				if ns.authored != "" {
+					md["namespace"] = ns.authored
+				}
+				before := DeepCopyMap(doc)
+				obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ns.fallback})
+				assert.NoError(t, err)
+				want := ns.authored
+				if want == "" && !tc.cluster {
+					want = ns.fallback
+				}
+				assert.Equal(t, obj.Named().Kind, tc.kind)
+				assert.Equal(t, obj.Named().Namespace, want)
+				defaulted := ns.authored == "" && want != ""
+				assert.Equal(t, changed, defaulted)
+				assert.Diff(t, doc, before)
+				if defaulted {
+					before["metadata"].(map[string]any)["namespace"] = want
+				}
+				assert.Diff(t, authoritative, before)
+				if raw, ok := obj.(*RawObject); ok {
+					info := KindOf(raw)
+					assert.Equal(t, info.Group, apiGroup(DocAPIVersion(doc)))
+					assert.Equal(t, info.Tracked || info.Runnable || info.Status || info.Includes("discovery") || info.Includes("test"), false)
+					spec, _ := doc["spec"].(map[string]any)
+					assert.Diff(t, raw.Spec, spec)
+				}
+			})
+		}
 	}
 }
 
@@ -1262,14 +1312,22 @@ spec: {name: b}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obj, _, _, err := ParseDoc(mustYAML(t, tc.yaml), defaultParseDocOptions())
+			doc := mustYAML(t, tc.yaml)
+			delete(doc["metadata"].(map[string]any), "namespace")
+			before := DeepCopyMap(doc)
+			obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
 			if err != nil {
 				t.Fatalf("ParseDoc: %v", err)
 			}
-			if KindOf(obj).Tracked {
+			info := KindOf(obj)
+			if info.Tracked || info.Runnable || info.Status || info.Includes("discovery") || info.Includes("test") {
 				t.Fatalf("got %T, want *RawObject", obj)
 			}
-			// Raw identity must survive rendering and diff selection.
+			assert.Equal(t, obj.Named().Namespace, "apps")
+			assert.Equal(t, changed, true)
+			assert.Diff(t, doc, before)
+			before["metadata"].(map[string]any)["namespace"] = "apps"
+			assert.Diff(t, authoritative, before)
 			raw := obj.(*RawObject)
 			if raw.Kind != DocKind(mustYAML(t, tc.yaml)) || raw.Name == "" {
 				t.Errorf("RawObject lost identity: %+v", raw)
@@ -1468,11 +1526,11 @@ func TestRawObject_DoesNotAliasParsedDoc(t *testing.T) {
 }
 
 func TestParseDoc_MissingFields(t *testing.T) {
-	if _, _, _, err := ParseDoc(map[string]any{"kind": "Foo"}, defaultParseDocOptions()); err == nil || !strings.Contains(err.Error(), "apiVersion") {
+	if _, _, _, err := ParseDoc(map[string]any{"kind": "Foo"}, ParseDocOptions{DefaultNamespace: "apps"}); err == nil || !strings.Contains(err.Error(), "apiVersion") {
 		t.Errorf("expected apiVersion error, got %v", err)
 	}
 	// Bare data files (no kind:) are not Kubernetes resources.
-	obj, _, _, err := ParseDoc(map[string]any{"apiVersion": "v1"}, defaultParseDocOptions())
+	obj, _, _, err := ParseDoc(map[string]any{"apiVersion": "v1"}, ParseDocOptions{DefaultNamespace: "apps"})
 	if err != nil {
 		t.Errorf("missing-kind docs should not error, got %v", err)
 	}
@@ -1767,6 +1825,40 @@ data:
 			t.Fatalf("CM iter %d: data corrupted post-release %v", i, c.Data)
 		}
 	}
+	for _, input := range []string{string(hr), string(ks), string(cm), "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: app}\nspec: {value: keep}\n"} {
+		docs, err := DecodeDocs(strings.NewReader(input))
+		assert.NoError(t, err)
+		doc := docs[0]
+		delete(doc["metadata"].(map[string]any), "namespace")
+		before := DeepCopyMap(doc)
+		opts := ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
+		obj, authoritative, changed, err := ParseDoc(doc, opts)
+		assert.NoError(t, err)
+		assert.Equal(t, obj.Named().Namespace, "apps")
+		assert.Equal(t, changed, true)
+		replay, retained, changed, err := ParseDoc(authoritative, opts)
+		assert.NoError(t, err)
+		assert.Equal(t, replay.Named(), obj.Named())
+		assert.Equal(t, changed, false)
+		for range 10 {
+			next, err := DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\ndata: {key: next}\n"))
+			assert.NoError(t, err)
+			parsed, _, _, err := ParseDoc(next[0], opts)
+			assert.NoError(t, err)
+			ReleaseIfNotRetained(next[0], parsed)
+		}
+		assert.Diff(t, doc, before)
+		expected := DeepCopyMap(before)
+		expected["metadata"].(map[string]any)["namespace"] = "apps"
+		assert.Diff(t, authoritative, expected)
+		assert.Diff(t, retained, expected)
+		switch obj := obj.(type) {
+		case *Kustomization:
+			assert.Diff(t, obj.Contents, before)
+		case *RawObject:
+			assert.Diff(t, obj.Spec, before["spec"])
+		}
+	}
 }
 
 // TestSplitDocs_AliasAsMapKey pins the home-ops pattern of using a
@@ -1804,7 +1896,7 @@ spec:
 func TestParseDoc_BuildDirectives(t *testing.T) {
 	for _, kind := range []string{"Kustomization", "Component"} {
 		t.Run(kind, func(t *testing.T) {
-			obj, _, _, err := ParseDoc(map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"}, ParseDocOptions{})
+			obj, _, _, err := ParseDoc(map[string]any{"kind": kind, "apiVersion": "kustomize.config.k8s.io/v1beta1"}, ParseDocOptions{DefaultNamespace: "apps"})
 			if err != nil || obj != nil {
 				t.Fatalf("ParseDoc = %T, %v; want nil, nil", obj, err)
 			}

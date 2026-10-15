@@ -61,7 +61,7 @@ stringData:
 			ref:       "ca",
 		},
 		{
-			name: "inherited namespace",
+			name: "target namespace",
 			secret: `metadata:
   name: ca
 stringData:
@@ -69,6 +69,7 @@ stringData:
 `,
 			kustomize: "resources: [secret.yaml]\n",
 			ref:       "ca",
+			postBuild: "  targetNamespace: flux-system\n",
 		},
 		{
 			name: "transformed namespace",
@@ -133,7 +134,8 @@ stringData:
 generatorOptions:
   disableNameSuffixHash: true
 `,
-			ref: "ca",
+			ref:       "ca",
+			postBuild: "  targetNamespace: flux-system\n",
 		},
 		{
 			name: "generated with hash",
@@ -141,7 +143,8 @@ generatorOptions:
   - name: ca
     literals: [ca.crt=rendered-ca]
 `,
-			ref: "ca",
+			ref:       "ca",
+			postBuild: "  targetNamespace: flux-system\n",
 		},
 	}
 	for _, tt := range tests {

@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -275,6 +278,24 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		},
 	}
 
+	for _, namespace := range []string{"", "apps"} {
+		cases = append(cases, struct {
+			name    string
+			files   map[string]string
+			subPath string
+			spec    map[string]any
+		}{
+			name: "namespace identity/" + namespace,
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deployment.yaml", "role.yaml", "gateway.yaml"),
+				"deployment.yaml":    "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: deployment}\n",
+				"role.yaml":          "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: role}\n",
+				"gateway.yaml":       "apiVersion: gateway.networking.k8s.io/v1\nkind: GatewayClass\nmetadata: {name: gateway}\n",
+			},
+			subPath: ".", spec: map[string]any{"targetNamespace": namespace},
+		})
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := writeTree(t, tc.files)
@@ -312,7 +333,9 @@ func renderInMemory(t *testing.T, root, subPath string, doc map[string]any) []by
 	if err := fsys.WriteFile(kfile, data); err != nil {
 		t.Fatalf("write merged kustomization: %v", err)
 	}
+	kustomizestate.BuildMutex.Lock()
 	rm, err := fluxkustomize.Build(fsys, absSub)
+	kustomizestate.BuildMutex.Unlock()
 	if err != nil {
 		t.Fatalf("in-memory build: %v", err)
 	}
@@ -356,6 +379,24 @@ func TestBuild_InMemoryMatchesSecureBuild(t *testing.T) {
 		},
 	}
 
+	for _, namespace := range []string{"", "apps"} {
+		cases = append(cases, struct {
+			name    string
+			files   map[string]string
+			subPath string
+			spec    map[string]any
+		}{
+			name: "namespace identity/" + namespace,
+			files: map[string]string{
+				"kustomization.yaml": existingKustomization("deployment.yaml", "role.yaml", "gateway.yaml"),
+				"deployment.yaml":    "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: deployment}\n",
+				"role.yaml":          "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: role}\n",
+				"gateway.yaml":       "apiVersion: gateway.networking.k8s.io/v1\nkind: GatewayClass\nmetadata: {name: gateway}\n",
+			},
+			subPath: ".", spec: map[string]any{"targetNamespace": namespace},
+		})
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := writeTree(t, tc.files)
@@ -367,7 +408,9 @@ func TestBuild_InMemoryMatchesSecureBuild(t *testing.T) {
 			if _, err := gen.WriteFile(absSub); err != nil {
 				t.Fatalf("flux WriteFile: %v", err)
 			}
+			kustomizestate.BuildMutex.Lock()
 			rm, err := fluxkustomize.SecureBuild(root, absSub, false)
+			kustomizestate.BuildMutex.Unlock()
 			if err != nil {
 				t.Fatalf("SecureBuild: %v", err)
 			}
@@ -383,6 +426,19 @@ func TestBuild_InMemoryMatchesSecureBuild(t *testing.T) {
 			if string(got) != string(want) {
 				t.Fatalf("rendered output mismatch\n--- SecureBuild (want) ---\n%s\n--- in-memory (got) ---\n%s", want, got)
 			}
+			if strings.HasPrefix(tc.name, "namespace identity/") {
+				docs, err := manifest.SplitDocs(got)
+				assert.NoError(t, err)
+				assert.Equal(t, len(docs), 3)
+				for _, doc := range docs {
+					want, _ := tc.spec["targetNamespace"].(string)
+					if manifest.DocKind(doc) == "ClusterRole" {
+						want = ""
+					}
+					_, ns := manifest.DocMetadata(doc)
+					assert.Equal(t, ns, want)
+				}
+			}
 		})
 	}
 }
@@ -396,7 +452,10 @@ func TestBuild_InMemorySandbox(t *testing.T) {
 		root := writeTree(t, map[string]string{
 			"evil/kustomization.yaml": existingKustomization("../../../../../../../../etc/passwd"),
 		})
-		if _, err := fluxkustomize.Build(testTreeFS(t, root), filepath.Join(root, "evil")); err == nil {
+		kustomizestate.BuildMutex.Lock()
+		_, err := fluxkustomize.Build(testTreeFS(t, root), filepath.Join(root, "evil"))
+		kustomizestate.BuildMutex.Unlock()
+		if err == nil {
 			t.Fatal("expected build to fail for an out-of-tree resource, got nil error")
 		}
 	})
@@ -436,7 +495,9 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	if err := fsys.WriteFile(kfile, data); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	kustomizestate.BuildMutex.Lock()
 	rm, err := fluxkustomize.Build(fsys, root)
+	kustomizestate.BuildMutex.Unlock()
 	if err != nil {
 		t.Fatalf("build over ignored tree: %v", err)
 	}

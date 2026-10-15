@@ -154,7 +154,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		doc["spec"].(map[string]any)["suspend"] = true
 		doc["metadata"].(map[string]any)["labels"] = map[string]any{"resourceset.fluxcd.controlplane.io/name": "flux-operator", "resourceset.fluxcd.controlplane.io/namespace": "flux-system"}
 		want = append(want, doc)
-		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -349,7 +349,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			for _, doc := range raw {
 				name, ns := manifest.DocMetadata(doc)
 				names = append(names, name)
-				assert.Equal(t, ns, "ns")
+				assert.Equal(t, ns, rs.Namespace)
 				assert.Equal(t, doc["spec"].(map[string]any)["value"].(string), name)
 			}
 			slices.Sort(names)

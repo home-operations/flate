@@ -75,7 +75,7 @@ spec:
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		b.Fatal(err)
 	}
-	opts := manifest.ParseDocOptions{WipeSecrets: true}
+	opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}
 	reader := readerForTest(dir)
 
 	b.ReportAllocs()
@@ -146,7 +146,7 @@ spec:
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		b.Fatal(err)
 	}
-	opts := manifest.ParseDocOptions{WipeSecrets: true}
+	opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}
 	reader := readerForTest(dir)
 
 	b.ReportAllocs()
@@ -191,7 +191,7 @@ func benchmarkRecordObject(b *testing.B, kind string) {
 				}
 				var err error
 				obj, _, _, err = manifest.ParseDoc(map[string]any{"apiVersion": api, "kind": kind,
-					"metadata": map[string]any{"name": "app", "namespace": "ns"}, "spec": spec}, manifest.ParseDocOptions{})
+					"metadata": map[string]any{"name": "app", "namespace": "ns"}, "spec": spec}, manifest.ParseDocOptions{DefaultNamespace: ""})
 				if err != nil {
 					b.Fatal(err)
 				}

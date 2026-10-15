@@ -83,7 +83,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()
 			for b.Loop() {
-				c.Emit(parent, docs, c.WipeSecrets, tc.publish)
+				c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, tc.publish)
 			}
 		})
 	}

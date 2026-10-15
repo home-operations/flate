@@ -852,7 +852,8 @@ spec:
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", `resources: [rsip.yaml]
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", `namespace: flux-system
+resources: [rsip.yaml]
 generatorOptions:
   disableNameSuffixHash: true
 configMapGenerator:

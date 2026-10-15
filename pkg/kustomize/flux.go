@@ -21,25 +21,12 @@ import (
 	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/kustomize/api/resmap"
 
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-// BuildMutex serializes every krusty/kustomize build flate runs in a
-// process. kustomize's krusty pipeline mutates package-global state
-// (the openapi schema registry + builtin-plugin/transformer factories)
-// that is NOT goroutine-safe — fluxcd/pkg/kustomize guards its own
-// Build with an internal mutex for exactly this reason, but that mutex
-// does not extend to OTHER krusty entrypoints in the same process
-// (flate's helm postRenderer runs krusty.Run directly). Two concurrent
-// builds — one KS Build, one HR postRender — race on the shared globals
-// and produce nondeterministic corruption: empty / torn rendered output
-// surfacing as "missing metadata.name" decode errors, dropped resources,
-// or cascade failures that flip run-to-run. Every flate-owned krusty
-// invocation MUST hold this lock.
-var BuildMutex sync.Mutex
 
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
@@ -153,8 +140,8 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		return nil, err
 	}
 	rm, err := func() (resmap.ResMap, error) {
-		BuildMutex.Lock()
-		defer BuildMutex.Unlock()
+		kustomizestate.BuildMutex.Lock()
+		defer kustomizestate.BuildMutex.Unlock()
 		return fluxkustomize.Build(memFS, subDir)
 	}()
 	if err != nil {

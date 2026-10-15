@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -33,6 +34,9 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media, sourceRef: {kind: GitRepository, name: cluster}}\n",
 			"apps/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"media"}},
+		{name: "claim_only", files: map[string]string{
+			"flux/ks.yaml": "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps}\n",
+		}, scans: []string{"flux", "apps"}, want: []string{""}},
 		{name: "self_claim", files: map[string]string{
 			"apps/kustomization.yaml": "resources: [ks.yaml, hr.yaml]\n",
 			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner}\nspec: {path: ./apps, targetNamespace: media}\n",
@@ -75,10 +79,10 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"base/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "red", "blue"}, want: []string{"red", "blue"}},
 		{name: "shared_fallbacks", files: map[string]string{
-			"flux/red.yaml":           "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: red, namespace: red}\nspec: {path: ./base}\n",
+			"flux/red.yaml":           "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: red, namespace: red}\nspec: {path: ./base, targetNamespace: red}\n",
 			"flux/blue.yaml":          "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: blue, namespace: blue}\nspec: {path: ./base}\n",
 			"base/kustomization.yaml": "resources: [hr.yaml]\n",
-		}, scans: []string{"flux", "base"}, want: []string{"red", "blue"}},
+		}, scans: []string{"flux", "base"}, want: []string{"", "red"}},
 		{name: "shared_transformer_contexts", files: map[string]string{
 			"apps/kustomization.yaml":              "resources: [hr.yaml, ks.yaml]\ntransformers: [./transformers]\n",
 			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
@@ -106,7 +110,7 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"apps/kustomization.yaml": "namespace: games\nresources: [ks.yaml]\n",
 			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: games}\nspec: {path: ./base, dependsOn: [{name: prerequisite}]}\n",
 			"base/kustomization.yaml": "resources: [hr.yaml]\n",
-		}, scans: []string{"apps", "base"}, want: []string{"games"}},
+		}, scans: []string{"apps", "base"}, want: []string{""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -241,7 +245,7 @@ spec:
 				}
 
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); ok {
+			if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); ok && !slices.Contains(tc.want, "") {
 				t.Fatal("stale raw consumer record")
 			}
 			if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}); ok {
@@ -359,9 +363,6 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 					continue
 				}
 				want := ""
-				if owned {
-					want = "owner"
-				}
 				if obj.Named().Namespace != want {
 					t.Errorf("%s namespace = %q, want %q", obj.Named().Kind, obj.Named().Namespace, want)
 				}

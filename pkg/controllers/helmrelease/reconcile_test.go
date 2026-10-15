@@ -21,11 +21,13 @@ import (
 func TestReconcile_OCIChartDigestTracking(t *testing.T) {
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	for _, tc := range []struct {
-		name, pin string
-		disable   bool
+		name, pin       string
+		disable         bool
+		targetNamespace string
 	}{
-		{"tag", "tag", false}, {"digest", "digest", false},
-		{"tag tracking off", "tag", true}, {"digest tracking off", "digest", true},
+		{"tag", "tag", false, "release"}, {"digest", "digest", false, "release"},
+		{"tag tracking off", "tag", true, "release"}, {"digest tracking off", "digest", true, "release"},
+		{"HR namespace fallback", "tag", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, st := newTestController(t, nil)
@@ -40,6 +42,36 @@ metadata:
     helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | quote }}
 data:
   version: {{ .Chart.Version | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: explicit
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: authored, namespace: other}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: workload}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: cluster}
+---
+apiVersion: foreign.example/v1
+kind: ClusterRole
+metadata: {name: foreign}
+---
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata: {name: cluster-policy}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata: {name: issuer}
 `)
 			ref := map[string]any{"tag": "6.15.0"}
 			revision := "6.15.0@" + digest
@@ -47,19 +79,20 @@ data:
 				ref = map[string]any{"digest": digest}
 				revision = digest
 			}
-			src, err := manifest.ParseOCIRepository(map[string]any{
+			obj, _, _, err := manifest.ParseDoc(map[string]any{
 				"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository",
 				"metadata": map[string]any{"name": "podinfo", "namespace": "apps"},
 				"spec":     map[string]any{"url": "oci://example.test/podinfo", "ref": ref},
-			})
+			}, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}
-			obj, _, _, err := manifest.ParseDoc(map[string]any{
+			src := obj.(*manifest.OCIRepository)
+			obj, _, _, err = manifest.ParseDoc(map[string]any{
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
 				"metadata": map[string]any{"name": "podinfo", "namespace": "apps"},
-				"spec":     map[string]any{"chartRef": map[string]any{"kind": "OCIRepository", "name": "podinfo"}},
-			}, manifest.ParseDocOptions{})
+				"spec":     map[string]any{"targetNamespace": tc.targetNamespace, "chartRef": map[string]any{"kind": "OCIRepository", "name": "podinfo"}},
+			}, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,6 +108,28 @@ data:
 				t.Fatalf("reconcile: %+v", info)
 			}
 			art := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			retained := make([]map[string]any, len(art.Manifests))
+			if len(art.Manifests) != 8 {
+				t.Fatalf("chart documents = %d", len(art.Manifests))
+			}
+			for i, doc := range art.Manifests {
+				retained[i] = manifest.DeepCopyMap(doc)
+				name, ns := manifest.DocMetadata(doc)
+				want := hr.ReleaseNamespace()
+				switch name {
+				case "cluster":
+					want = ""
+				case "authored":
+					want = "other"
+				}
+				if ns != want {
+					t.Fatalf("%s namespace = %q, want %q", name, ns, want)
+				}
+				identityNamespace := want
+				if st.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: identityNamespace, Name: name}) == nil {
+					t.Fatalf("chart child %s/%s missing", identityNamespace, name)
+				}
+			}
 			version := "6.15.0"
 			if !tc.disable {
 				version += "+ff3d3e14728f"
@@ -82,19 +137,43 @@ data:
 			if got := renderedConfigMapValue(art.Manifests, "version"); got != version {
 				t.Fatalf("rendered chart version = %q, want %s", got, version)
 			}
-			md := art.Manifests[0]["metadata"].(map[string]any)
-			labels := md["labels"].(map[string]any)
-			if got := labels["helm.sh/chart"]; got != "podinfo-"+strings.ReplaceAll(version, "+", "_") {
-				t.Fatalf("rendered chart label = %v", got)
+			for _, doc := range art.Manifests {
+				if name, _ := manifest.DocMetadata(doc); name == "podinfo" {
+					md := doc["metadata"].(map[string]any)
+					labels := md["labels"].(map[string]any)
+					if got := labels["helm.sh/chart"]; got != "podinfo-"+strings.ReplaceAll(version, "+", "_") {
+						t.Fatalf("rendered chart label = %v", got)
+					}
+				}
 			}
 			if diff := cmp.Diff(original, hr); diff != "" {
 				t.Fatalf("stored release mutated (-want +got):\n%s", diff)
 			}
+			st.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"})
+			st.DeleteObject(manifest.NamedResource{Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"})
+			st.DeleteObject(manifest.NamedResource{Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"})
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("repeat reconcile: %+v", info)
 			}
 			if st.GetArtifact(hr.Named()) != art {
 				t.Fatal("unchanged inputs did not deduplicate")
+			}
+			if delta := cmp.Diff(retained, art.Manifests); delta != "" {
+				t.Fatalf("replay changed retained documents (-want +got):\n%s", delta)
+			}
+			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"}) == nil {
+				t.Fatal("replay lost release namespace identity")
+			}
+			if st.GetObject(manifest.NamedResource{Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"}) == nil {
+				t.Fatal("replay lost defaulted chart child")
+			}
+			if st.GetObject(manifest.NamedResource{Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"}) == nil {
+				t.Fatal("replay lost cluster issuer")
+			}
+			for _, ns := range []string{"", "wrong"} {
+				if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: "podinfo"}) != nil {
+					t.Fatalf("replay published chart child in namespace %q", ns)
+				}
 			}
 			sharedPrefix := digest[:len(digest)-1] + "9"
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -321,7 +400,7 @@ data: {greeting: hi}
 							"values":    map[string]any{"output": "stale-output"},
 						},
 					}
-					obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+					obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -351,7 +430,7 @@ data: {greeting: hi}
 							return
 						}
 						if site.parent {
-							c.Emit(parent.Named(), []map[string]any{replacement}, false, true)
+							c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""}, true)
 						} else {
 							fresh := hr.Clone()
 							fresh.Suspend = suspended

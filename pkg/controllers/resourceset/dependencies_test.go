@@ -16,11 +16,13 @@ import (
 func TestCollectDeps_ScopeAndImmutability(t *testing.T) {
 	c, s := newController(t)
 	for _, tc := range []struct{ api, kind, namespace, want string }{
-		{"", manifest.KindCustomResourceDefinition, "", ""}, {"", "ClusterRole", "", ""}, {"", "Namespace", "", ""},
-		{"", manifest.KindCustomResourceDefinition, "explicit", ""}, {"", "ClusterRole", "explicit", ""}, {"", "Namespace", "explicit", ""},
-		{"", manifest.KindConfigMap, "", "apps"}, {"", "Widget", "other", "other"},
-		{"", manifest.KindSecret, "", "apps"}, {"", "Widget", "", "apps"}, {"", manifest.KindConfigMap, "other", "other"},
-		{"node.k8s.io/v1", "RuntimeClass", "", "apps"}, {"storage.k8s.io/v1", "CSIDriver", "", "apps"}, {"foreign.example/v1", "ClusterRole", "", ""},
+		{"apiextensions.k8s.io/v1", manifest.KindCustomResourceDefinition, "", ""}, {"rbac.authorization.k8s.io/v1", "ClusterRole", "", ""}, {"v1", "Namespace", "", ""},
+		{"apiextensions.k8s.io/v1", manifest.KindCustomResourceDefinition, "explicit", ""}, {"rbac.authorization.k8s.io/v1", "ClusterRole", "explicit", ""}, {"v1", "Namespace", "explicit", ""},
+		{"v1", manifest.KindConfigMap, "", "apps"}, {"example.com/v1", "Widget", "other", "other"},
+		{"v1", manifest.KindSecret, "", "apps"}, {"example.com/v1", "Widget", "", "apps"}, {"v1", manifest.KindConfigMap, "other", "other"},
+		{"nvidia.com/v1", "ClusterPolicy", "", "apps"}, {"nvidia.com/v1", "ClusterPolicy", "explicit", "explicit"},
+		{"foreign.example/v1", "ClusterPolicy", "", "apps"}, {"foreign.example/v1", "ClusterPolicy", "other", "other"},
+		{"node.k8s.io/v1", "RuntimeClass", "", ""}, {"storage.k8s.io/v1", "CSIDriver", "", ""}, {"rbac.authorization.k8s.io/v999", "ClusterRole", "", "apps"}, {"foreign.example/v1", "ClusterRole", "", "apps"}, {"foreign.example/v1", "ClusterRole", "other", "other"},
 	} {
 		t.Run(tc.api+"/"+tc.kind+"/"+tc.namespace, func(t *testing.T) {
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{APIVersion: tc.api, Kind: tc.kind, Name: "dependency", Namespace: tc.namespace, Ready: true, ReadyExpr: "true"}}}

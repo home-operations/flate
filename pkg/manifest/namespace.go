@@ -1,35 +1,5 @@
 package manifest
 
-// StampNamespace defaults omitted metadata.namespace to ns under the emission
-// policy. No-op when ns is empty, the doc already names a namespace, or the kind
-// is excluded. Explicit namespaces are preserved, including on cluster-scoped kinds.
-func StampNamespace(doc map[string]any, ns string) {
-	if ns == "" {
-		return
-	}
-	// Read metadata.namespace without creating the map — a nil-map lookup
-	// returns "" safely, so EnsureMetadata only runs when actually stamping.
-	md, _ := doc["metadata"].(map[string]any)
-	if cur, _ := md["namespace"].(string); cur != "" {
-		return
-	}
-	// Emission defaults use a kind-only policy independent of group-aware scope facts.
-	if i, ok := kindIndex[DocKind(doc)]; ok && kindTable[i].skipNamespaceStamp {
-		return
-	}
-	EnsureMetadata(doc)["namespace"] = ns
-}
-
-// StampNamespaces applies StampNamespace to every doc in docs.
-func StampNamespaces(docs []map[string]any, ns string) {
-	if ns == "" {
-		return
-	}
-	for _, doc := range docs {
-		StampNamespace(doc, ns)
-	}
-}
-
 // EnsureMetadata returns doc["metadata"] as a map[string]any, lazily
 // creating one when absent (or when present as a non-map). Used by
 // writers that mutate metadata.labels / metadata.annotations; readers

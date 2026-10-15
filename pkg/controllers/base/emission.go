@@ -17,14 +17,8 @@ type Child struct {
 // publish=false suppresses tracked publication during fingerprint replay;
 // raw children retain AddObject's deduplication and arrival behavior.
 // Returned documents are authoritative even when a typed child is invalid.
-func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, wipeSecrets, publish bool) ([]Child, []map[string]any) {
-	// HelmRelease documents already carry the release namespace. KS/RS children
-	// inherit their emitter namespace to dedup against file-loaded copies.
+func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions, publish bool) ([]Child, []map[string]any) {
 	helmRelease := parent.Kind == manifest.KindHelmRelease
-	if !helmRelease {
-		manifest.StampNamespaces(docs, parent.Namespace)
-	}
-	opts := manifest.ParseDocOptions{WipeSecrets: wipeSecrets}
 	log := c.Logger()
 	children := make([]Child, 0, len(docs))
 	var emitted []manifest.NamedResource

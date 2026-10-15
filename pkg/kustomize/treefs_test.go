@@ -11,7 +11,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"github.com/home-operations/flate/internal/assert"
@@ -277,26 +280,86 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 		"immutable": treeRef(memoryTree(t, files), "pin"),
 		"local":     localSource(t, writeTree(t, files)),
 	} {
-		t.Run(name, func(t *testing.T) {
-			cache := NewTreeCache(newTestCache(t, t.TempDir()))
-			start := make(chan struct{})
-			var wg sync.WaitGroup
-			for n := range 2 {
-				wg.Go(func() {
-					<-start
-					spec := ksDoc(map[string]any{"namePrefix": fmt.Sprintf("render%d-", n)})
-					out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: artifact, Label: "/absent", SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
-					if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: render%d-shared", n)) {
-						t.Errorf("private output = %s, %v", out, err)
+		for _, workers := range []int{2, 4} {
+			t.Run(fmt.Sprintf("%s/workers%d", name, workers), func(t *testing.T) {
+				cache := NewTreeCache(newTestCache(t, t.TempDir()))
+				start, done := make(chan struct{}), make(chan struct{})
+				var renders, lookups, lookupReady sync.WaitGroup
+				lookupReady.Add(workers)
+				var activeRenders atomic.Int32
+				iterations := make([]int, workers)
+				for n := range workers {
+					renders.Go(func() {
+						<-start
+						lookupReady.Wait()
+						spec := ksDoc(map[string]any{"namePrefix": fmt.Sprintf("render%d-", n)})
+						activeRenders.Add(1)
+						defer activeRenders.Add(-1)
+						out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: artifact, Label: "/absent", SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
+						if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: render%d-shared", n)) {
+							t.Errorf("private output = %s, %v", out, err)
+						}
+					})
+					lookups.Go(func() {
+						<-start
+						for batch := 0; ; batch++ {
+							select {
+							case <-done:
+								return
+							default:
+							}
+							duringRender := activeRenders.Load() != 0
+							for _, tc := range []struct{ version, kind, namespace string }{
+								{"v1", "ConfigMap", "apps"},
+								{"rbac.authorization.k8s.io/v1", "ClusterRole", ""},
+								{"foreign.example/v1", "ClusterRole", "apps"},
+								{"rbac.authorization.k8s.io/v999", "ClusterRole", "apps"},
+								{"nvidia.com/v1", "ClusterPolicy", "apps"},
+							} {
+								doc := map[string]any{"apiVersion": tc.version, "kind": tc.kind, "metadata": map[string]any{"name": "scope"}}
+								obj, authoritative, changed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+								if err != nil {
+									t.Error(err)
+									return
+								}
+								_, ns := manifest.DocMetadata(authoritative)
+								if obj.Named().Namespace != tc.namespace || ns != tc.namespace || changed != (tc.namespace != "") {
+									t.Errorf("%s %s: identity=%s document=%q changed=%t", tc.version, tc.kind, obj.Named(), ns, changed)
+									return
+								}
+								r := &manifest.ResourceSet{Namespace: "apps"}
+								r.DependsOn = []fluxopv1.Dependency{{APIVersion: tc.version, Kind: tc.kind, Name: "scope"}}
+								for ref := range manifest.References(r) {
+									if ref.Namespace != tc.namespace {
+										t.Errorf("%s %s dependency namespace=%q, want %q", tc.version, tc.kind, ref.Namespace, tc.namespace)
+										return
+									}
+								}
+							}
+							if batch == 0 {
+								lookupReady.Done()
+							}
+							if duringRender && activeRenders.Load() != 0 {
+								iterations[n]++
+							}
+						}
+					})
+				}
+				close(start)
+				renders.Wait()
+				close(done)
+				lookups.Wait()
+				for n, count := range iterations {
+					t.Logf("lookup worker %d: %d complete scope batches during render workers", n, count)
+					if count == 0 {
+						t.Errorf("lookup worker %d did no scope work during render workers", n)
 					}
-				})
-			}
-			close(start)
-			wg.Wait()
-			if _, err := fs.Stat(artifact.FS, "kustomization.yaml"); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatal("generated file mutated shared source")
-			}
-		})
+				}
+				if _, err := fs.Stat(artifact.FS, "kustomization.yaml"); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatal("generated file mutated shared source")
+				}
+			})
+		}
 	}
 }
 

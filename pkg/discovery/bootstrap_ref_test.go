@@ -107,19 +107,19 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 				t.Fatal(err)
 			}
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
-			childID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
-			phantom := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "phantom"}
+			childID := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "child"}
+			phantom := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "phantom"}
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
 			artifact := st.GetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
 			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
 				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
 			}
-			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "generated"}
+			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
 			generatedCM, ok := st.GetObject(generated).(*manifest.ConfigMap)
-			if !ok || generatedCM.Data["value"] != "pinned" || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "phantom-generated"}) != nil {
+			if !ok || generatedCM.Data["value"] != "pinned" || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) != nil {
 				t.Fatalf("pinned generators = %v", generatedCM)
 			}
-			fileGenerated, ok := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "file-generated"}).(*manifest.ConfigMap)
+			fileGenerated, ok := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
 			if !ok || fileGenerated.Data["value"] != "pinned" {
 				t.Fatalf("committed generator file = %v", fileGenerated)
 			}

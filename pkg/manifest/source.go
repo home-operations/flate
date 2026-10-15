@@ -133,8 +133,8 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }
 
-// ParseOCIRepository decodes an OCIRepository CR.
-func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
+// parseOCIRepository decodes an OCIRepository CR.
+func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	var cr sourcev1.OCIRepository
 	if err := decodeCR(doc, &cr, "OCIRepository", SourceDomain); err != nil {
 		return nil, err

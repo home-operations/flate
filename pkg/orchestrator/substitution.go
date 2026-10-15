@@ -43,7 +43,7 @@ func snapshotSubstitutions(cfg *Config) error {
 		if doc == nil {
 			return fmt.Errorf("%w: substituteFrom input %d requires a ConfigMap or Secret with name and namespace", manifest.ErrInput, i+1)
 		}
-		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: cfg.WipeSecrets})
+		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: cfg.WipeSecrets, DefaultNamespace: ""})
 		if err != nil || obj.Named().Namespace == "" {
 			return fmt.Errorf("%w: substituteFrom input %d requires a ConfigMap or Secret with name and namespace", manifest.ErrInput, i+1)
 		}

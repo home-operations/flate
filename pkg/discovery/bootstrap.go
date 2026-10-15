@@ -240,7 +240,7 @@ func (d *discoverer) publishBootstrapAlias(ctx context.Context, id manifest.Name
 // returned separately so callers can stamp it onto the SourceArtifact
 // without re-reading the manifest.
 func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.BaseManifest, string, bool) {
-	if id.Kind != manifest.KindGitRepository {
+	if id.Kind != manifest.KindGitRepository || id.Namespace == "" {
 		return nil, "", false
 	}
 	url := "file://" + repoRoot

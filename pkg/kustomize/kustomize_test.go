@@ -239,7 +239,7 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "infra", "namespace": "authored"},
 		"spec":       map[string]any{"path": "./"},
-	}, manifest.ParseDocOptions{})
+	}, manifest.ParseDocOptions{DefaultNamespace: ""})
 	if err != nil {
 		t.Fatal(err)
 	}

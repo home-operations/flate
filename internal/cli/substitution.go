@@ -106,7 +106,7 @@ func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
 					}
 				}
 			}
-			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: false})
+			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 			if err != nil {
 				return fmt.Errorf("%w: --substitute-from %q document %d: invalid substitution source",
 					manifest.ErrInput, path, ordinal)

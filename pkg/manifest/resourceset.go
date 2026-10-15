@@ -5,14 +5,15 @@ import (
 	"fmt"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 // ResourceSet is the flux-operator ResourceSet CRD
 // (fluxcd.controlplane.io/v1). A ResourceSet templates a fixed set of
 // resources across a matrix of input values — the controller renders
-// spec.resources / spec.resourcesTemplate once per input set and emits
-// the resulting objects with metadata.namespace defaulted to the
-// ResourceSet's own namespace when absent.
+// spec.resources / spec.resourcesTemplate once per input set. Standalone rendering
+// preserves document namespaces; controller emission defaults omitted namespaces
+// on namespaced children to the ResourceSet namespace.
 //
 // The embedded fluxopv1.ResourceSetSpec promotes CommonMetadata,
 // Inputs, InputsFrom, Resources, ResourcesTemplate, InputStrategy,
@@ -177,7 +178,7 @@ func (p *ResourceSetInputProvider) derivedID() string {
 func (r *ResourceSet) references(yield func(Reference) bool) {
 	for i, dep := range r.DependsOn {
 		id := Resolve(NamedResource{Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}, "", r.Namespace)
-		if i, ok := kindIndex[dep.Kind]; ok && kindTable[i].skipNamespaceStamp {
+		if !isNamespaceScoped(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind}) {
 			id.Namespace = ""
 		}
 		if !yield(Reference{

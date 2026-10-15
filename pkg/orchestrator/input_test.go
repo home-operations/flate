@@ -126,7 +126,10 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				if name != "cfg-a" {
 					t.Fatalf("side %d producer emitted %q, want cfg-a", side, name)
 				}
-				parent, ok := rendered.Store().EmittedParent(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: name})
+				assert.Equal(t, ns, "")
+				obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+				assert.NoError(t, err)
+				parent, ok := rendered.Store().EmittedParent(obj.Named())
 				if !ok || parent != changed {
 					t.Fatalf("side %d emitted owner = %s, want %s", side, parent, changed)
 				}

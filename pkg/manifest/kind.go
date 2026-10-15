@@ -34,8 +34,7 @@ func (k KindInfo) Includes(use string) bool {
 
 type kindEntry struct {
 	KindInfo
-	decode             func(map[string]any) (BaseManifest, error)
-	skipNamespaceStamp bool
+	decode func(map[string]any) (BaseManifest, error)
 }
 
 const (
@@ -57,7 +56,7 @@ var kindTable = [...]kindEntry{
 	kindKustomization:    {KindInfo: KindInfo{FluxKustomizeDomain, KindKustomization, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
 	kindHelmRelease:      {KindInfo: KindInfo{HelmReleaseDomain, KindHelmRelease, true, true, true, inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) }},
 	kindGitRepository:    {KindInfo: KindInfo{SourceDomain, KindGitRepository, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
-	kindOCIRepository:    {KindInfo: KindInfo{SourceDomain, KindOCIRepository, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return ParseOCIRepository(d) }},
+	kindOCIRepository:    {KindInfo: KindInfo{SourceDomain, KindOCIRepository, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) }},
 	kindHelmRepository:   {KindInfo: KindInfo{SourceDomain, KindHelmRepository, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) }},
 	kindHelmChartSource:  {KindInfo: KindInfo{SourceDomain, KindHelmChart, true, true, true, inDiscovery}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) }},
 	kindExternalArtifact: {KindInfo: KindInfo{SourceDomain, KindExternalArtifact, true, true, true, inDiscovery}, decode: func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) }},
@@ -70,21 +69,6 @@ var kindTable = [...]kindEntry{
 		return parseConfigMap(d)
 	}},
 	kindSecret: {KindInfo: KindInfo{"", KindSecret, true, false, false, 0}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
-	{Kind: "Namespace", skipNamespaceStamp: true},
-	{Kind: "Node", skipNamespaceStamp: true},
-	{Kind: "PersistentVolume", skipNamespaceStamp: true},
-	{Kind: "StorageClass", skipNamespaceStamp: true},
-	{Kind: "PriorityClass", skipNamespaceStamp: true},
-	{Kind: "IngressClass", skipNamespaceStamp: true},
-	{Kind: "ClusterRole", skipNamespaceStamp: true},
-	{Kind: "ClusterRoleBinding", skipNamespaceStamp: true},
-	{Kind: KindCustomResourceDefinition, skipNamespaceStamp: true},
-	{Kind: "MutatingWebhookConfiguration", skipNamespaceStamp: true},
-	{Kind: "ValidatingWebhookConfiguration", skipNamespaceStamp: true},
-	{Kind: "APIService", skipNamespaceStamp: true},
-	{Group: "cert-manager.io", Kind: "ClusterIssuer", skipNamespaceStamp: true},
-	{Group: "external-secrets.io", Kind: "ClusterSecretStore", skipNamespaceStamp: true},
-	{Group: "kyverno.io", Kind: "ClusterPolicy", skipNamespaceStamp: true},
 }
 
 var kindIndex = func() map[string]int {

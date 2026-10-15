@@ -12,6 +12,8 @@ import (
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
+
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 )
 
 // dupDiagBuildLimit caps how many child paths the diagnostic rebuilds, so a
@@ -80,10 +82,10 @@ func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustom
 
 // buildIDs builds one accumulation entry in isolation and returns the resource
 // ids it emits, or nil when the entry doesn't build on its own (it then can't be
-// a producer). BuildMutex guards krusty's process-global state — see flux.go.
+// a producer). BuildMutex guards krusty's process-global state — shared with scope lookup and Helm post-rendering.
 func buildIDs(memFS filesys.FileSystem, dir string) []string {
-	BuildMutex.Lock()
-	defer BuildMutex.Unlock()
+	kustomizestate.BuildMutex.Lock()
+	defer kustomizestate.BuildMutex.Unlock()
 	rm, err := fluxkustomize.Build(memFS, dir)
 	if err != nil {
 		return nil

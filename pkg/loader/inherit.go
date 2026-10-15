@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"cmp"
 	"io/fs"
 	"maps"
 	"path/filepath"
@@ -81,7 +80,7 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 			}
 			local = append(local, ks)
 			v := graphVisit{root: root, dir: l.documents.claimBase(root, ks.Path),
-				namespace: ks.TargetNamespace, fallback: cmp.Or(ks.TargetNamespace, ks.Namespace), owner: ks.Named()}
+				namespace: ks.TargetNamespace, fallback: ks.TargetNamespace, owner: ks.Named()}
 			if root != repoRoot {
 				prefix, err := filepath.Rel(repoRoot, root)
 				if err != nil {
@@ -288,7 +287,7 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 	if len(scopes) == 0 {
 		for _, owner := range owners {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {
-				ns := manifest.Resolve(r.Authored, "", cmp.Or(ks.TargetNamespace, ks.Namespace)).Namespace
+				ns := manifest.Resolve(r.Authored, "", ks.TargetNamespace).Namespace
 				if !slices.Contains(namespaces, ns) {
 					namespaces = append(namespaces, ns)
 				}
@@ -299,7 +298,7 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 			fallback := v.fallback
 			if v.namespace == "" && len(owners) == 1 {
 				if ks, ok := l.Store.Get[*manifest.Kustomization](owners[0]); ok {
-					fallback = cmp.Or(ks.TargetNamespace, ks.Namespace)
+					fallback = ks.TargetNamespace
 				}
 			}
 			ns := manifest.Resolve(r.Authored, v.namespace, fallback).Namespace

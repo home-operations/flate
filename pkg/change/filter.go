@@ -172,7 +172,7 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 	// child is kept here BEFORE its Store.AddObject (the ordering contract
 	// above), so the Store can't see it yet. Walk the child's own
 	// chartRef / sourceRef / valuesFrom straight off the manifest so a
-	// shared, namespace-stamped source (e.g. an OCIRepository every
+	// shared source with its effective namespace (e.g. an OCIRepository every
 	// HelmRelease chartRefs) still joins keep before the consumer is published.
 	for _, dep := range transitiveDepsOf(child) {
 		added = append(added, f.addRecursiveLocked(dep)...)
@@ -584,7 +584,7 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 // readiness dependencies. Reading straight off the manifest
 // (rather than a Store id lookup) lets the runtime keep-extension resolve
 // a render-emitted child's deps BEFORE it lands in the Store, where the
-// child's namespace-stamped chart source is the authority. dependsOn is
+// child's effective chart source identity is the authority. dependsOn is
 // intentionally excluded: it's a reconcile-ordering signal in real Flux,
 // not a content dependency, so it adds nothing to an offline render.
 // Skipped resources still get marked Ready by their controllers, so

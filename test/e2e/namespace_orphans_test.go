@@ -23,6 +23,88 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
+func TestE2E_ChildKustomizationIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, target, authored, namespace string }{
+		{"bare", "", "", ""},
+		{"target", "  targetNamespace: flux-system\n", "", "flux-system"},
+		{"authored", "", ", namespace: flux-system", "flux-system"},
+	} {
+		for _, workers := range []string{"2", "4"} {
+			t.Run(tc.name+"/workers"+workers, func(t *testing.T) {
+				root := t.TempDir()
+				testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
+				testutil.WriteFile(t, root, "flux/parent.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: flux-system}\nspec:\n  path: ./apps\n"+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n")
+				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml]\n")
+				testutil.WriteFile(t, root, "apps/child.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child"+tc.authored+"}\nspec:\n  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system}\n")
+				testutil.WriteFile(t, root, "apps/child/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, root, "apps/child/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output}\n")
+				flags := []string{"--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress"}
+				wantCode, wantMaps := 0, 1
+				if tc.namespace == "" {
+					wantCode, wantMaps = 1, 0
+				}
+				out, stderr, code := runCLIBuffers(append([]string{"get", "ks", "-o", "json"}, flags...)...)
+				if code != wantCode {
+					t.Errorf("get exit=%d want=%d stderr=%s", code, wantCode, stderr)
+				}
+				var objects []struct {
+					Name, Namespace string
+					SourceRef       struct{ Kind, Name, Namespace string }
+				}
+				if err := json.Unmarshal([]byte(out), &objects); err != nil {
+					t.Fatalf("get output=%s: %v", out, err)
+				}
+				children := 0
+				for _, obj := range objects {
+					if obj.Name == "child" {
+						children++
+						if obj.Namespace != tc.namespace {
+							t.Errorf("child identity namespace=%q want=%q", obj.Namespace, tc.namespace)
+						}
+						if obj.SourceRef.Kind != manifest.KindGitRepository || obj.SourceRef.Name != "flux-system" || obj.SourceRef.Namespace != tc.namespace {
+							t.Errorf("implicit source=%+v want GitRepository/%s/flux-system", obj.SourceRef, tc.namespace)
+						}
+					}
+				}
+				if children != 1 {
+					t.Errorf("child identities=%d want=1; output=%s", children, out)
+				}
+				out, stderr, code = runCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+				if code != wantCode {
+					t.Errorf("build exit=%d want=%d stderr=%s", code, wantCode, stderr)
+				}
+				docs, err := manifest.SplitDocs([]byte(out))
+				if err != nil {
+					t.Fatal(err)
+				}
+				children, maps := 0, 0
+				for _, doc := range docs {
+					name, ns := manifest.DocMetadata(doc)
+					if manifest.DocKind(doc) == manifest.KindKustomization && name == "child" {
+						children++
+						if ns != tc.namespace {
+							t.Errorf("child document namespace=%q want=%q", ns, tc.namespace)
+						}
+					}
+					if manifest.DocKind(doc) == manifest.KindConfigMap && name == "child-output" {
+						maps++
+					}
+				}
+				if children != 1 || maps != wantMaps {
+					t.Errorf("rendered children=%d ConfigMaps=%d want=1/%d; output=%s", children, maps, wantMaps, out)
+				}
+				out, stderr, code = runCLIBuffers(append([]string{"test", "all"}, flags...)...)
+				if code != wantCode || strings.Contains(out+stderr, "blocked") != (wantCode == 1) {
+					t.Errorf("test exit=%d want=%d output=%s stderr=%s", code, wantCode, out, stderr)
+				}
+				if wantCode == 1 && !strings.Contains(out+stderr, "blocked by flux-system (not found)") {
+					t.Errorf("bare child must block on its missing implicit source: output=%s stderr=%s", out, stderr)
+				}
+			})
+		}
+	}
+}
+
 func TestE2E_NamespaceOrphans(t *testing.T) {
 	for _, scenario := range []string{"sibling", "explicit", "standalone", "shared"} {
 		t.Run(scenario, func(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/fluxcd/pkg/apis/kustomize"
 
-	flatekustomize "github.com/home-operations/flate/pkg/kustomize"
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 )
 
 func TestNewPostRenderer_NilWhenNoKustomize(t *testing.T) {
@@ -59,7 +59,7 @@ data:
 // TestKustomizePostRenderer_HoldsBuildMutex pins the serialization contract
 // behind the non-determinism fix: the helm kustomize post-render runs krusty,
 // which mutates kustomize's process-global state, so it MUST hold the shared
-// kustomize.BuildMutex — otherwise it races a Kustomization's SecureBuild and
+// kustomizestate.BuildMutex — otherwise it races a Kustomization's SecureBuild and
 // corrupts renders run-to-run. With the mutex held, Run blocks; once released
 // it completes. A regression (missing lock) lets a trivial post-render finish
 // while the mutex is held, tripping the first select.
@@ -79,7 +79,7 @@ func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
 	}
 	in := bytes.NewBufferString("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app, namespace: default}\ndata: {greeting: hello}\n")
 
-	flatekustomize.BuildMutex.Lock()
+	kustomizestate.BuildMutex.Lock()
 	done := make(chan struct{})
 	go func() {
 		_, _ = pr.Run(in)
@@ -89,11 +89,11 @@ func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
 	// no-lock regression would let this trivial post-render complete here).
 	select {
 	case <-done:
-		flatekustomize.BuildMutex.Unlock()
+		kustomizestate.BuildMutex.Unlock()
 		t.Fatal("post-render completed while BuildMutex was held — it does not serialize on the shared krusty lock")
 	case <-time.After(300 * time.Millisecond):
 	}
-	flatekustomize.BuildMutex.Unlock()
+	kustomizestate.BuildMutex.Unlock()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

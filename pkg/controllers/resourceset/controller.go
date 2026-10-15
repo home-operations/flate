@@ -139,7 +139,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 // otherwise — the cached docs were already sunk by the render that set
 // the artifact).
 func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publish bool) []map[string]any {
-	children, docs := c.Emit(id, docs, c.WipeSecrets, publish)
+	children, docs := c.Emit(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: id.Namespace}, publish)
 	if !publish || c.rawSink == nil {
 		return docs
 	}

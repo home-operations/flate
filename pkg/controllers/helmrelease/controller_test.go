@@ -803,7 +803,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 			t.Errorf("source owner at arrival of %s = (%v, %v), want %s", id, got, ok, parent)
 		}
 	}, false)
-	c.Emit(parent, []map[string]any{cmDoc, ociDoc}, c.WipeSecrets, true)
+	c.Emit(parent, []map[string]any{cmDoc, ociDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, true)
 	if arrivals != 2 {
 		t.Fatalf("arrivals = %d, want 2", arrivals)
 	}
@@ -873,7 +873,7 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 
 	// Dedup replay: no AddObject, no event, store untouched — but the keep-set
 	// and provenance side-effects still fire.
-	c.Emit(parent, []map[string]any{ociDoc}, c.WipeSecrets, false)
+	c.Emit(parent, []map[string]any{ociDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, false)
 
 	if events != 0 {
 		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no source re-emit)", events)
@@ -889,7 +889,7 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	}
 
 	// Fresh render publishes: event fires and the source lands in the store.
-	c.Emit(parent, []map[string]any{ociDoc}, c.WipeSecrets, true)
+	c.Emit(parent, []map[string]any{ociDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, true)
 	if events != 1 {
 		t.Errorf("publish=true fired %d EventObjectAdded; want 1", events)
 	}

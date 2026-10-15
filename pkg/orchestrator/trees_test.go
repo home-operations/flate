@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -65,66 +66,135 @@ func configMapNames(res *orchestrator.Result) map[string]bool {
 	return out
 }
 
-// TestRenderTrees_ChangedOnlyAndDiff renders two trees that differ in just
-// app-a's ConfigMap and asserts: both sides render (non-nil Results), the
-// unchanged app-b is scoped OUT of both (changed-only mode), and
-// diff.Changes over the two outputs reports exactly the cfg-a change.
+// Changed-only rendering must follow a nested child's effective namespace on
+// both sides without selecting an unchanged sibling.
 func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
-	baseDir := t.TempDir()
-	headDir := t.TempDir()
-	writeCluster(t, baseDir, "v1", "same")
-	writeCluster(t, headDir, "v2", "same") // only app-a's ConfigMap data differs
+	for _, tc := range []struct{ name, target, namespace string }{
+		{"bare", "", ""},
+		{"target", "targetNamespace: flux-system, ", "flux-system"},
+	} {
+		for _, workers := range []int{2, 4} {
+			t.Run(tc.name+"/workers"+fmt.Sprint(workers), func(t *testing.T) {
+				baseDir := t.TempDir()
+				headDir := t.TempDir()
+				writeCluster(t, baseDir, "v1", "same")
+				writeCluster(t, headDir, "v2", "same")
+				for i, dir := range []string{baseDir, headDir} {
+					testutil.WriteFile(t, dir, "ks-a.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app-a, namespace: flux-system}\nspec: {path: ./apps/app-a, "+tc.target+"sourceRef: {kind: GitRepository, name: flux-system}}\n")
+					if i == 1 && tc.target != "" {
+						testutil.WriteFile(t, dir, "apps/app-a/kustomization.yaml", "namespace: dirty\nresources: [cm.yaml]\n")
+					} else if i == 1 {
+						testutil.WriteFile(t, dir, "apps/app-a/kustomization.yaml", "resources: [cm.yaml]\ncommonAnnotations: {revision: head}\n")
+					}
+					testutil.WriteFile(t, dir, "apps/app-a/cm.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer-a}
+spec:
+  path: ./consumer
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: render-values}]
+`)
+					testutil.WriteFile(t, dir, "inputs/values.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: render-values, namespace: flux-system}\ndata: {VALUE: v%d}\n", i+1))
+					testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
+					testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg-a}\ndata: {k: '${VALUE}'}\n")
+				}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	base, head, err := orchestrator.RenderTrees(ctx,
-		orchestrator.Tree{RepoRoot: baseDir},
-		orchestrator.Tree{RepoRoot: headDir},
-		orchestrator.Config{
-			WipeSecrets: true,
-			Concurrency: 4,
-		})
-	if err != nil {
-		t.Fatalf("RenderTrees: %v", err)
-	}
-	if base.Result == nil || head.Result == nil {
-		t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
-	}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				base, head, err := orchestrator.RenderTrees(ctx,
+					orchestrator.Tree{RepoRoot: baseDir},
+					orchestrator.Tree{RepoRoot: headDir},
+					orchestrator.Config{
+						WipeSecrets: true,
+						Concurrency: workers,
+					})
+				if (err != nil) != (tc.namespace == "") {
+					t.Fatalf("RenderTrees: %v, want blocked=%t", err, tc.namespace == "")
+				}
+				if base.Result == nil || head.Result == nil {
+					t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
+				}
 
-	// Changed-only scoping: cfg-a (changed) renders on both sides; cfg-b
-	// (unchanged) renders on neither.
-	for label, res := range map[string]*orchestrator.Result{"base": base.Result, "head": head.Result} {
-		names := configMapNames(res)
-		if !names["cfg-a"] {
-			t.Errorf("%s: expected cfg-a to render (it changed); got %v", label, names)
+				for _, side := range []orchestrator.Rendered{base, head} {
+					children := 0
+					for _, obj := range side.Store().ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+						if obj.Name == "consumer-a" {
+							children++
+							assert.Equal(t, obj.Namespace, tc.namespace)
+							assert.Equal(t, obj.SourceID().Namespace, tc.namespace)
+						}
+					}
+					assert.Equal(t, children, 1)
+				}
+
+				consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer-a"}
+				for i, side := range []orchestrator.Rendered{base, head} {
+					if tc.namespace == "" {
+						missing := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "flux-system"}
+						if side.Err == nil || !slices.Contains(side.Result.Blocked[consumer], missing) || configMapNames(side.Result)["cfg-a"] {
+							t.Fatalf("side %d bare child: error=%v blockers=%v manifests=%v", i, side.Err, side.Result.Blocked, side.Result.Manifests)
+						}
+					} else {
+						values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: tc.namespace, Name: "render-values"}
+						obj, ok := side.Store().Get[*manifest.ConfigMap](values)
+						if side.Err != nil || len(side.Result.Blocked) != 0 || !ok || obj.Data["VALUE"] != fmt.Sprintf("v%d", i+1) {
+							t.Fatalf("side %d producer %s: error=%v blockers=%v object=%v", i, values, side.Err, side.Result.Blocked, obj)
+						}
+					}
+					if configMapNames(side.Result)["cfg-b"] {
+						t.Fatalf("side %d rendered unchanged sibling", i)
+					}
+				}
+				if tc.namespace == "" {
+					return
+				}
+
+				for i, rendered := range []orchestrator.Rendered{base, head} {
+					obj, ok := rendered.Store().Get[*manifest.Kustomization](consumer)
+					if !ok {
+						t.Fatalf("side %d lost effective consumer identity", i)
+					}
+					owner, emitted := rendered.Store().EmittedParent(consumer)
+					if !emitted || owner != (manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}) {
+						t.Fatalf("side %d consumer owner = %s, emitted=%t", i, owner, emitted)
+					}
+					_, ns := manifest.DocMetadata(obj.Contents)
+					assert.Equal(t, ns, "flux-system")
+					docs := rendered.Result.Manifests[consumer]
+					if len(docs) != 1 {
+						t.Fatalf("side %d consumer documents = %d", i, len(docs))
+					}
+					assert.Equal(t, docs[0]["data"].(map[string]any)["k"], any(fmt.Sprintf("v%d", i+1)))
+					_, ns = manifest.DocMetadata(docs[0])
+					assert.Equal(t, ns, "")
+				}
+
+				selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+					[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+				body, err := diff.Compare(
+					diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+					diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+					selectedErr, diff.Options{Format: diff.FormatJSON})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var output struct {
+					Changes []diff.Change `json:"changes"`
+				}
+				if err := json.Unmarshal(body, &output); err != nil {
+					t.Fatal(err)
+				}
+				changes := output.Changes
+				if len(changes) != 1 {
+					t.Fatalf("want exactly 1 change (cfg-a), got %d: %+v", len(changes), changes)
+				}
+				c := changes[0]
+				if c.Name != "cfg-a" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged {
+					t.Errorf("change = %+v; want ConfigMap cfg-a changed", c)
+				}
+			})
 		}
-		if names["cfg-b"] {
-			t.Errorf("%s: cfg-b is unchanged and must be scoped out of changed-only render; got %v", label, names)
-		}
-	}
-
-	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
-		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
-	body, err := diff.Compare(
-		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
-		selectedErr, diff.Options{Format: diff.FormatJSON})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output struct {
-		Changes []diff.Change `json:"changes"`
-	}
-	if err := json.Unmarshal(body, &output); err != nil {
-		t.Fatal(err)
-	}
-	changes := output.Changes
-	if len(changes) != 1 {
-		t.Fatalf("want exactly 1 change (cfg-a), got %d: %+v", len(changes), changes)
-	}
-	c := changes[0]
-	if c.Name != "cfg-a" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged {
-		t.Errorf("change = %+v; want ConfigMap cfg-a changed", c)
 	}
 }
 

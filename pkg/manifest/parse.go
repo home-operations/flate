@@ -6,6 +6,7 @@ import (
 	"maps"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 // decodeInto re-marshals a parsed YAML document into a typed Flux CR
@@ -101,11 +102,14 @@ func DocMetadata(doc map[string]any) (name, namespace string) {
 type ParseDocOptions struct {
 	// WipeSecrets replaces SOPS ciphertext with offline placeholders.
 	WipeSecrets bool
+	// DefaultNamespace fills omitted namespaced identity and authoritative document metadata.
+	DefaultNamespace string
 }
 
 // ParseDoc decodes recognized group/kind pairs and returns the authoritative
-// document and whether sanitation changed it, including on errors. Foreign kinds
-// become RawObjects; bare data and Kustomize build directives return nil.
+// document and whether sanitation or namespace defaulting changed it, including
+// on errors. Foreign kinds become RawObjects; bare data and Kustomize build
+// directives return nil.
 func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, bool, error) {
 	kind, apiVersion := DocKind(doc), DocAPIVersion(doc)
 	if kind == "" || apiGroup(apiVersion) == KustomizeDomain {
@@ -159,10 +163,22 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	var obj BaseManifest
 	var err error
 	group := apiGroup(apiVersion)
-	if i, ok := kindIndex[kind]; ok && kindTable[i].Group == group && kindTable[i].decode != nil && (group != "" || apiVersion == CoreAPIVersion) {
+	if i, ok := kindIndex[kind]; ok && kindTable[i].Group == group && (group != "" || apiVersion == CoreAPIVersion) {
 		obj, err = kindTable[i].decode(doc)
 	} else {
 		obj, err = parseRawObject(doc)
+	}
+	if err == nil && obj != nil && opts.DefaultNamespace != "" && obj.Named().Namespace == "" {
+		if isNamespaceScoped(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind}) {
+			obj = obj.WithNamespace(opts.DefaultNamespace)
+			if !changed {
+				doc = maps.Clone(doc)
+			}
+			metadata := maps.Clone(doc["metadata"].(map[string]any))
+			metadata["namespace"] = opts.DefaultNamespace
+			doc["metadata"] = metadata
+			changed = true
+		}
 	}
 	return obj, doc, changed, err
 }

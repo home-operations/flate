@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 	"unsafe"
@@ -38,7 +39,18 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	hr.DependsOn = []helmv2.DependencyReference{{Name: "parent"}}
 	hr.ValuesFrom = []ValuesReference{{Kind: KindConfigMap, Name: "vars", Optional: true}}
 	r := &ResourceSet{Namespace: "authored"}
-	r.DependsOn = []fluxopv1.Dependency{{Kind: KindKustomization, Name: "ready", Ready: true, ReadyExpr: "true"}, {Kind: KindKustomization, Name: "exists"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "cluster", Namespace: "ignored"}}
+	r.DependsOn = []fluxopv1.Dependency{
+		{Kind: KindKustomization, Name: "ready", Ready: true, ReadyExpr: "true"},
+		{Kind: KindKustomization, Name: "exists"},
+		{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "cluster", Namespace: "ignored"},
+		{APIVersion: "foreign.example/v1", Kind: "ClusterRole", Name: "foreign"},
+		{APIVersion: "nvidia.com/v1", Kind: "ClusterPolicy", Name: "gpu", Namespace: "ignored"},
+		{APIVersion: "foreign.example/v1", Kind: "ClusterPolicy", Name: "foreign-policy"},
+		{APIVersion: "kyverno.io/v1", Kind: "ClusterPolicy", Name: "policy", Namespace: "ignored"},
+		{APIVersion: "cert-manager.io/v1", Kind: "ClusterIssuer", Name: "issuer", Namespace: "ignored"},
+		{APIVersion: "external-secrets.io/v1beta1", Kind: "ClusterSecretStore", Name: "store", Namespace: "ignored"},
+		{APIVersion: "rbac.authorization.k8s.io/v999", Kind: "ClusterRole", Name: "unknown-version"},
+	}
 	r.InputsFrom = []fluxopv1.InputProviderReference{{Kind: "Unsupported", Name: "inputs"}, {Selector: &metav1.LabelSelector{}}}
 	for _, tc := range []struct {
 		name, namespace string
@@ -63,6 +75,13 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: "true"},
 			{Kind: KindKustomization, Namespace: "apps", Name: "exists", Use: "dependsOn", Position: 1},
 			{Kind: "ClusterRole", Name: "cluster", Use: "dependsOn", Position: 2},
+			{Kind: "ClusterRole", Namespace: "apps", Name: "foreign", Use: "dependsOn", Position: 3},
+			{Kind: "ClusterPolicy", Namespace: "ignored", Name: "gpu", Use: "dependsOn", Position: 4},
+			{Kind: "ClusterPolicy", Namespace: "apps", Name: "foreign-policy", Use: "dependsOn", Position: 5},
+			{Kind: "ClusterPolicy", Namespace: "ignored", Name: "policy", Use: "dependsOn", Position: 6},
+			{Kind: "ClusterIssuer", Namespace: "ignored", Name: "issuer", Use: "dependsOn", Position: 7},
+			{Kind: "ClusterSecretStore", Namespace: "ignored", Name: "store", Use: "dependsOn", Position: 8},
+			{Kind: "ClusterRole", Namespace: "apps", Name: "unknown-version", Use: "dependsOn", Position: 9},
 			{Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Content: true},
 			{Kind: KindResourceSetInputProvider, Namespace: "apps", Use: "inputsFrom", Position: 1, Content: true},
 		}},
@@ -70,6 +89,37 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Diff(t, slices.Collect(References(tc.obj.WithNamespace(tc.namespace))), tc.want)
 			assert.Equal(t, tc.obj.Named().Namespace, "authored")
+			var spec any
+			switch obj := tc.obj.(type) {
+			case *Kustomization:
+				spec = obj.KustomizationSpec
+			case *HelmRelease:
+				spec = obj.HelmReleaseSpec
+			case *ResourceSet:
+				spec = obj.ResourceSetSpec
+			}
+			body, err := json.Marshal(spec)
+			assert.NoError(t, err)
+			var fields map[string]any
+			assert.NoError(t, json.Unmarshal(body, &fields))
+			info := KindOf(tc.obj)
+			doc := map[string]any{"apiVersion": info.Group + "/v1", "kind": info.Kind, "metadata": map[string]any{"name": "projected"}, "spec": fields}
+			before := DeepCopyMap(doc)
+			obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: tc.namespace})
+			assert.NoError(t, err)
+			assert.Diff(t, slices.Collect(References(obj)), tc.want)
+			switch parsed := obj.(type) {
+			case *Kustomization:
+				assert.Diff(t, parsed.KustomizationSpec, spec)
+			case *HelmRelease:
+				assert.Diff(t, parsed.HelmReleaseSpec, spec)
+			case *ResourceSet:
+				assert.Diff(t, parsed.ResourceSetSpec, spec)
+			}
+			assert.Equal(t, changed, true)
+			assert.Diff(t, doc, before)
+			before["metadata"].(map[string]any)["namespace"] = tc.namespace
+			assert.Diff(t, authoritative, before)
 		})
 	}
 	hr = hr.WithNamespace("effective").(*HelmRelease)
@@ -85,7 +135,7 @@ func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": KindHelmRelease,
 				"metadata": map[string]any{"name": "app", "namespace": "authored"},
 				"spec":     map[string]any{"chartRef": map[string]any{"kind": KindHelmChart, "name": "chart", "namespace": tc.namespace}},
-			}, ParseDocOptions{})
+			}, ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -64,36 +64,102 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 // emits it, resolving the bare-dir → subdir-base → component → namespace
 // chain that no path-prefix index can see.
 func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
-	testutil.WriteFile(t, dir, "kubernetes/apps/default/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: default\ncomponents:\n  - ../../components/substitutions\n")
-	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/kustomization.yaml",
-		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ./cluster-settings.yaml\n")
-	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
+	for _, tc := range []struct{ name, target, local, namespace string }{
+		{"bare", "", "", ""},
+		{"target", "target", "", "target"},
+		{"local", "", "namespace: local\n", "local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
+			testutil.WriteFile(t, dir, "kubernetes/apps/default/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: default\ncomponents:\n  - ../../components/substitutions\n")
+			testutil.WriteFile(t, dir, "kubernetes/components/substitutions/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ./cluster-settings.yaml\n")
+			testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
 
-	s := store.New()
-	clusterApps := &manifest.Kustomization{
-		Name:      "cluster-apps",
-		Namespace: "flux-system",
-		Path:      "./kubernetes/apps",
-	}
-	s.AddObject(clusterApps)
+			testutil.WriteFile(t, dir, "kubernetes/apps/bare/kustomization.yaml", tc.local+"resources: [child.yaml]\nconfigMapGenerator:\n  - name: generated\n    literals: [CLUSTER_NAME=home]\nsecretGenerator:\n  - name: generated-secret\n    literals: [KEY=value]\n")
+			testutil.WriteFile(t, dir, "kubernetes/apps/bare/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer}
+spec:
+  path: ./leaf
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: generated}, {kind: Secret, name: generated-secret}]
+`)
+			testutil.WriteFile(t, dir, "leaf/kustomization.yaml", "resources: []\n")
+			s := store.New()
+			clusterApps := &manifest.Kustomization{
+				Name:      "cluster-apps",
+				Namespace: "flux-system",
+				Path:      "./kubernetes/apps",
+			}
+			clusterApps.TargetNamespace = tc.target
+			s.AddObject(clusterApps)
 
-	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+			admitForTest(s, dir)
+			l := loaderFixture(s, nil)
+			l.SourceRoot = dir
+			if _, err := l.Load(t.Context(), filepath.Join(dir, "kubernetes/apps/bare")); err != nil {
+				t.Fatal(err)
+			}
+			l.FinalizeIndex(dir, nil)
+			idx := l.Index
 
-	// Produced in EVERY group's namespace (the namespace transformer stamps
-	// the component's namespace-less ConfigMap per base) — not just the first.
-	for _, ns := range []string{"flux-system", "default"} {
-		if got := renderers(idx, cmID(ns)); !slices.Contains(got, clusterApps.Named()) {
-			t.Errorf("ProducedBy(ConfigMap/%s/cluster-settings) = %v, want to contain cluster-apps", ns, got)
-		}
-	}
-	// A namespace no base stamps is not attributed.
-	if got := renderers(idx, cmID("kube-system")); len(got) != 0 {
-		t.Errorf("ProducedBy(ConfigMap/kube-system/cluster-settings) = %v, want empty", got)
+			// Produced in EVERY group's namespace (the namespace transformer stamps
+			// the component's namespace-less ConfigMap per base) — not just the first.
+			namespaces := []string{"flux-system", "default"}
+			if tc.target != "" {
+				namespaces = []string{tc.target}
+			}
+			for _, ns := range namespaces {
+				if got := renderers(idx, cmID(ns)); !slices.Contains(got, clusterApps.Named()) {
+					t.Errorf("ProducedBy(ConfigMap/%s/cluster-settings) = %v, want to contain cluster-apps", ns, got)
+				}
+			}
+			secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: tc.namespace, Name: "generated-secret"}
+			if got := renderers(idx, secret); !slices.Contains(got, clusterApps.Named()) {
+				t.Errorf("generated secret %s owners=%v", secret, got)
+			}
+			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: tc.namespace, Name: "generated"}
+			if got := renderers(idx, generated); !slices.Contains(got, clusterApps.Named()) {
+				t.Errorf("generated ConfigMap %s owners=%v", generated, got)
+			}
+			consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer"}
+			record, ok := idx.Lookup(consumer)
+			if !ok {
+				t.Fatalf("consumer %s not indexed: records=%+v", consumer, idx.Records)
+			}
+			assert.Diff(t, record.Refs, []manifest.NamedResource{generated})
+			obj, ok := s.Get[*manifest.Kustomization](consumer)
+			if !ok {
+				t.Fatalf("consumer %s not stored", consumer)
+			}
+			refs := 0
+			for ref := range manifest.References(obj) {
+				if ref.Use == "substituteFrom" {
+					refs++
+					assert.Equal(t, ref.Namespace, tc.namespace)
+					if _, ok := idx.Lookup(ref.NamedResource); !ok {
+						t.Errorf("consumer input %s not indexed", ref.NamedResource)
+					}
+				}
+			}
+			assert.Equal(t, refs, 2)
+			for _, id := range []manifest.NamedResource{generated, secret, consumer} {
+				wrong := id
+				wrong.Namespace = "flux-system"
+				if _, ok := idx.Lookup(wrong); ok {
+					t.Errorf("parent namespace leaked into %s", wrong)
+				}
+			}
+			// A namespace no base stamps is not attributed.
+			if got := renderers(idx, cmID("kube-system")); len(got) != 0 {
+				t.Errorf("ProducedBy(ConfigMap/kube-system/cluster-settings) = %v, want empty", got)
+			}
+		})
 	}
 }
 

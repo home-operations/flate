@@ -23,7 +23,6 @@
 //   - spec.resourcesTemplate (multi-document YAML string)
 //   - spec.commonMetadata (labels + annotations applied to every emitted object)
 //   - Deduplication by (API group, kind, namespace, name)
-//   - Default-namespace fallback to the ResourceSet's own namespace
 //
 // Deferred:
 //   - fluxcd.controlplane.io/copyFrom / convertKubeConfigFrom / checksumFrom
@@ -102,7 +101,6 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 		}
 	}
 	for _, doc := range docs {
-		manifest.StampNamespace(doc, rs.Namespace)
 		applyOwnerLabels(doc, rs)
 		applyCommonMetadata(doc, rs.CommonMetadata)
 	}

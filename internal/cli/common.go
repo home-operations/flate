@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -512,7 +511,7 @@ type reportErrors struct {
 func failureModel(result *orchestrator.Result) output.Model {
 	var primary []output.Primary
 	var missing []output.Missing
-	blocked := selection.BlockedCount(result.Failed, result.Blocked, result.Causes)
+	blocked := result.BlockedCount()
 	for root, victims := range result.Causes {
 		if info, isFailed := result.Failed[root]; isFailed {
 			primary = append(primary, output.Primary{ID: root, Msg: info.Message, Blocks: victims})

@@ -22,6 +22,32 @@ func selectedRun(res *Result) Rendered {
 	return Rendered{Orchestrator: &Orchestrator{store: store.New(), index: indexForTest(nil)}, Result: res}
 }
 
+func TestMatchesLabels_Matches(t *testing.T) {
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system",
+		Labels: map[string]string{"env": "prod"},
+	}
+	cases := []struct {
+		name   string
+		obj    manifest.BaseManifest
+		labels map[string]string
+		want   bool
+	}{
+		{name: "empty matches all", obj: ks, want: true},
+		{name: "empty map matches all", obj: ks, labels: map[string]string{}, want: true},
+		{name: "label match", obj: ks, labels: map[string]string{"env": "prod"}, want: true},
+		{name: "label mismatch", obj: ks, labels: map[string]string{"env": "dev"}},
+		{name: "nil"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesLabels(tc.obj, tc.labels); got != tc.want {
+				t.Errorf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "same", Namespace: "apps"}
 	ks := &manifest.Kustomization{Name: "same", Namespace: "apps"}
@@ -29,6 +55,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	run := selectedRun(&Result{Manifests: map[manifest.NamedResource][]map[string]any{ks.Named(): {{"kind": "ConfigMap"}}}})
 	run.store.AddObject(hr)
 	run.store.AddObject(ks)
+	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
 	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.MsgSuspended)
 	roots := []manifest.NamedResource{{Kind: manifest.KindHelmRelease, Name: "same"}, {Kind: manifest.KindKustomization, Name: "same"}}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
@@ -43,6 +70,13 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
 	if err != nil || len(selected[0].Objects) != 2 || selected[0].Objects[0] != hr || selected[0].Objects[1] != ks {
 		t.Fatalf("requested grouping changed: %+v %v", selected, err)
+	}
+	for i := range roots {
+		roots[i].Name = "missing"
+	}
+	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
+	if err != nil || len(selected[0].Objects) != 0 || len(selected[0].Counts) != 0 {
+		t.Fatalf("name mismatch selected objects or counted roots: %+v %v", selected, err)
 	}
 }
 
@@ -230,13 +264,20 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 	parent := ksID("parent")
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
-	for _, disposition := range []store.StatusInfo{
-		{Status: store.StatusFailed, Message: "parent failed"},
-		{Status: store.StatusReady, Message: "skipped: absent source"},
-		{Status: store.StatusReady, Message: store.MsgSuspended},
-		{Status: store.StatusReady, Message: store.MsgUnchanged},
-		{Status: store.StatusReady},
+	for _, tc := range []struct {
+		disposition store.StatusInfo
+		unavailable bool
+	}{
+		{disposition: store.StatusInfo{Status: store.StatusFailed, Message: "parent failed"}, unavailable: true},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Message: "skipped: absent source"}, unavailable: true},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended}, unavailable: true},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Message: store.MsgUnchanged}},
+		{disposition: store.StatusInfo{Status: store.StatusReady}},
+		{disposition: store.StatusInfo{Status: store.StatusPending, Message: "fetching"}},
+		{disposition: store.StatusInfo{Status: store.StatusPending, Message: "skipped: absent source"}},
+		{disposition: store.StatusInfo{Status: store.StatusPending, Message: store.MsgSuspended}},
 	} {
+		disposition := tc.disposition
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.Message, reverse), func(t *testing.T) {
 				orig := selectedRun(&Result{Manifests: map[manifest.NamedResource][]map[string]any{child: {{"kind": "Deployment"}}}})
@@ -262,7 +303,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 				if reverse {
 					index = 0
 				}
-				want := disposition.Status == store.StatusFailed || store.IsSkipped(disposition) || store.IsSuspended(disposition)
+				want := tc.unavailable
 				if _, unavailable := results[index].Unavailable[child]; unavailable != want {
 					t.Fatalf("local ancestor availability = %+v, want unavailable=%t", results[index].Unavailable, want)
 				}

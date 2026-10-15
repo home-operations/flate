@@ -7,10 +7,8 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selector"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -53,7 +51,7 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 	selected := make([]*Result, len(runs))
 	for i, run := range runs {
 		sides[i].run = run
-		sides[i].collect(roots, selector.Metadata{Labels: labels}, len(runs) == 2)
+		sides[i].collect(roots, labels, len(runs) == 2)
 		sides[i].collectWarnings(roots[0].Name, kinds, len(runs) == 2)
 		selected[i] = sides[i].result
 	}
@@ -88,7 +86,7 @@ func validateRoots(roots []manifest.NamedResource) (map[string]bool, error) {
 	return kinds, nil
 }
 
-func (s *selectionSide) collect(roots []manifest.NamedResource, metadata selector.Metadata, comparison bool) {
+func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[string]string, comparison bool) {
 	if namespace := roots[0].Namespace; namespace != "" {
 		s.namespaces = map[string]struct{}{namespace: {}}
 	} else if s.run.filter.Enabled() {
@@ -108,7 +106,7 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, metadata selecto
 			}
 			s.result.Counts[root.Kind]++
 			s.roots = append(s.roots, id)
-			if !metadata.Matches(obj) {
+			if !matchesLabels(obj, labels) {
 				continue
 			}
 			s.result.Objects = append(s.result.Objects, obj)
@@ -126,6 +124,27 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, metadata selecto
 			}
 		}
 	}
+}
+
+func matchesLabels(obj manifest.BaseManifest, filter map[string]string) bool {
+	if obj == nil {
+		return false
+	}
+	if len(filter) == 0 {
+		return true
+	}
+	var labels map[string]string
+	if o, ok := obj.(interface{ GetLabels() map[string]string }); ok {
+		labels = o.GetLabels()
+	}
+	for k, v := range filter {
+		// A missing label MUST NOT match an explicitly empty filter value.
+		got, ok := labels[k]
+		if !ok || got != v {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
@@ -217,7 +236,7 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 		}
 		var unavailable store.StatusInfo
 		unavailable, path = s.walkUnavailable(id, owner, resolved, path)
-		if selection.IsUnavailable(unavailable) {
+		if unavailable.IsUnavailable() {
 			if s.result.Unavailable == nil {
 				s.result.Unavailable = make(map[manifest.NamedResource]store.StatusInfo)
 			}
@@ -246,7 +265,7 @@ func (s *selectionSide) walkUnavailable(
 		if !failed {
 			info, _ = s.run.store.GetStatus(id)
 		}
-		if selection.IsUnavailable(info) {
+		if info.IsUnavailable() {
 			unavailable = info
 			break
 		}

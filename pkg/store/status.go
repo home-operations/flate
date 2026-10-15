@@ -81,6 +81,11 @@ type StatusInfo struct {
 	failure *dependencyFailure
 }
 
+// IsUnavailable reports whether a producer's output cannot be compared.
+func (i StatusInfo) IsUnavailable() bool {
+	return i.Status == StatusFailed || IsSkipped(i) || IsSuspended(i)
+}
+
 // IsDependencyFailure reports whether the Failed status came from failed dependencies.
 func (i StatusInfo) IsDependencyFailure() bool {
 	return i.failure != nil

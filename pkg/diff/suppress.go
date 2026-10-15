@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -76,7 +75,7 @@ func selectedSuppressionPlans(left, right map[manifest.NamedResource]store.Statu
 func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 	lf, rf := left.Status == store.StatusFailed, right.Status == store.StatusFailed
 	ls, rs := store.IsSuspended(left), store.IsSuspended(right)
-	lu, ru := selection.IsUnavailable(left), selection.IsUnavailable(right)
+	lu, ru := left.IsUnavailable(), right.IsUnavailable()
 	plan := suppressionPlan{}
 	switch {
 	case lf && rf:

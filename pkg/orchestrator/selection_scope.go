@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -312,12 +311,25 @@ func (s *selectionSide) prepareStatuses(name string) {
 	}
 }
 
+// BlockedCount excludes dependency-cycle roots promoted to primary failures.
+func (r *Result) BlockedCount() int {
+	count := len(r.Blocked)
+	for root := range r.Causes {
+		if _, isFailed := r.Failed[root]; isFailed {
+			if _, promoted := r.Blocked[root]; promoted {
+				count--
+			}
+		}
+	}
+	return count
+}
+
 func selectedFailures(res *Result) error {
 	if len(res.Failed) == 0 {
 		return nil
 	}
 	msgs := make([]string, 0, len(res.Causes))
-	blocked := selection.BlockedCount(res.Failed, res.Blocked, res.Causes)
+	blocked := res.BlockedCount()
 	for root := range res.Causes {
 		if info, failed := res.Failed[root]; failed {
 			msgs = append(msgs, fmt.Sprintf("%s: %s", root, info.Message))

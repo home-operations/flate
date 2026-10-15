@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"os"
@@ -26,12 +25,6 @@ func parentsForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]m
 func renderersForTest(index *manifest.DiscoveryIndex, id manifest.NamedResource) []manifest.NamedResource {
 	r, _ := index.Lookup(id)
 	return r.Renderers
-}
-
-func discoveryLoaderForTest(s *store.Store) *loader.Loader {
-	l := loader.New(s)
-	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	return l
 }
 
 func admitDiscoveryForTest(s *store.Store, root string) {

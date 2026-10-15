@@ -258,11 +258,16 @@ spec:
 			transport := installSourceRefTransport(t, repo.Storer)
 			var wantError string
 			if tt.noRef || tt.sourceURL != "" {
-				if _, err := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "apps")); err != nil {
-					wantError = "flate error: " + err.Error() + "\n"
-				} else {
-					t.Fatal("expected working-tree decode error")
+				l := loader.New(store.New())
+				l.SourceRoot = root
+				if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+					t.Fatal(err)
 				}
+				decodeError := l.Index.Errors["apps/extra.yaml"]
+				if !errors.Is(decodeError, manifest.ErrInput) {
+					t.Fatalf("expected working-tree decode error, got %v", decodeError)
+				}
+				wantError = "flate error: " + decodeError.Error() + "\n"
 			}
 			for _, command := range []string{"build", "diff"} {
 				t.Run(command, func(t *testing.T) {
@@ -425,7 +430,18 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				inputStore.AddObject(obj)
 				inputStore.SetArtifact(obj.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
 			}
-			_, secondError := loader.New(inputStore).Load(t.Context(), filepath.Join(root, secondPath))
+			secondLoader := loader.New(inputStore)
+			secondLoader.SourceRoot = root
+			_, secondError := secondLoader.Load(t.Context(), filepath.Join(root, secondPath))
+			if !tt.unreadable {
+				if secondError != nil {
+					t.Fatal(secondError)
+				}
+				secondError = secondLoader.Index.Errors[secondPath+"/extra.yaml"]
+				if !errors.Is(secondError, manifest.ErrInput) {
+					t.Fatalf("expected second consumer's decode error, got %v", secondError)
+				}
+			}
 			if tt.unreadable && secondError == nil {
 				t.Skip("OS or current user permits reading a file with no permissions")
 			}
@@ -434,8 +450,13 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 			}
 			wantError, repeats := "flate error: "+secondError.Error()+"\n", 1
 			if tt.bothHeld {
-				_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, heldPath))
-				if heldError == nil {
+				heldLoader := loader.New(store.New())
+				heldLoader.SourceRoot = root
+				if _, err := heldLoader.Load(t.Context(), filepath.Join(root, heldPath)); err != nil {
+					t.Fatal(err)
+				}
+				heldError := heldLoader.Index.Errors[heldPath+"/extra.yaml"]
+				if !errors.Is(heldError, manifest.ErrInput) {
 					t.Fatal("expected held consumer's decode error")
 				}
 				repeats = 16
@@ -524,7 +545,12 @@ spec:
 			mutateFile(t, filepath.Join(root, "broken/cm.yaml"), "value: pinned", "value: newer")
 			gitCommitAll(t, repo)
 			testutil.WriteFile(t, root, "broken/cm.yaml", "metadata: {name: broken\n")
-			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "broken"))
+			l := loader.New(store.New())
+			l.SourceRoot = root
+			if _, err := l.Load(t.Context(), filepath.Join(root, "broken")); err != nil {
+				t.Fatal(err)
+			}
+			heldError := l.Index.Errors["broken/cm.yaml"]
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected working-tree decode error, got %v", heldError)
 			}
@@ -639,7 +665,12 @@ spec:
 	mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
 	gitCommitAll(t, repo)
 	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
-	_, wantError := loader.New(store.New()).Load(t.Context(), root)
+	l := loader.New(store.New())
+	l.SourceRoot = root
+	if _, err := l.Load(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	wantError := l.Index.Errors["apps/cm.yaml"]
 	if !errors.Is(wantError, manifest.ErrInput) {
 		t.Fatalf("expected a working-tree decode error, got %v", wantError)
 	}
@@ -754,7 +785,12 @@ spec:
 				mutateFile(t, filepath.Join(root, "sources/repo.yaml"), "{branch: master}", "{commit: "+head.Hash().String()+"}")
 			}
 			testutil.WriteFile(t, root, "held/broken.yaml", "metadata: {name: held\n")
-			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "held"))
+			l := loader.New(store.New())
+			l.SourceRoot = root
+			if _, err := l.Load(t.Context(), filepath.Join(root, "held")); err != nil {
+				t.Fatal(err)
+			}
+			heldError := l.Index.Errors["held/broken.yaml"]
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}
@@ -933,7 +969,12 @@ spec:
 `)
 			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
 			mutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
-			_, heldError := loader.New(store.New()).Load(t.Context(), filepath.Join(root, "apps/broken"))
+			l := loader.New(store.New())
+			l.SourceRoot = root
+			if _, err := l.Load(t.Context(), filepath.Join(root, "apps/broken")); err != nil {
+				t.Fatal(err)
+			}
+			heldError := l.Index.Errors["apps/broken/extra.yaml"]
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}

@@ -102,7 +102,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	}
 	consumer := consumerObj.Named()
 	producer := producerObj.Named()
-	// DiscoveryOnly-indexed CM (Namespace="") — kustomize's namespace
+	// discovery-indexed CM (Namespace="") — kustomize's namespace
 	// directive hasn't run yet at file-walk time.
 	cmObj := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
 	cmID := cmObj.Named()

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -48,7 +47,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	}
 }
 
-func TestLoader_DiscoveryOnlyBootstrapScanSkipsCoveredDir(t *testing.T) {
+func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
 		alias, listed, external bool
@@ -83,7 +82,7 @@ spec:
 `)
 			st := store.New()
 			l := loaderFixture(st, nil)
-			l.Options.DiscoveryOnly, l.SourceRoot = true, root
+			l.SourceRoot = root
 			parent := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system", Path: "apps/test"}
 			if tc.alias {
 				testutil.WriteFile(t, root, "flux/parent.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -136,14 +135,14 @@ spec:
 	}
 }
 
-// TestLoader_DiscoveryOnlyBootstrapScanSkipsPatchFragment pins the no-path
+// TestLoader_DiscoveryBootstrapScanSkipsPatchFragment pins the no-path
 // guard: a sibling YAML that is a kind: Kustomization with only spec.patches
 // (no spec.path, no spec.sourceRef) is a kustomize patch fragment — referenced
 // via `patches:`, never a reconcilable Flux KS — and must NOT be surfaced by
 // the bootstrap-sibling scan, even though a real entry KS sibling is. No
 // covering KS is pre-seeded, so this pins the order-independence (the guard
 // reads only the parsed object, unlike the dir-coverage guard).
-func TestLoader_DiscoveryOnlyBootstrapScanSkipsPatchFragment(t *testing.T) {
+func TestLoader_DiscoveryBootstrapScanSkipsPatchFragment(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -176,7 +175,6 @@ spec:
 
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	l.SourceRoot = dir
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -214,12 +212,13 @@ data:
 	testutil.WriteFile(t, dir, "README.md", "ignored")
 
 	s := store.New()
-	n, err := loaderFixture(s, nil).Load(t.Context(), dir)
+	l := New(s)
+	n, err := l.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if n != 2 {
-		t.Errorf("expected 2 objects, got %d", n)
+	if n != 1 || len(l.Index.Records) != 2 {
+		t.Errorf("admitted %d objects with %d records, want 1 and 2", n, len(l.Index.Records))
 	}
 	if got := len(s.ListObjects(manifest.KindKustomization)); got != 1 {
 		t.Errorf("expected 1 Kustomization, got %d", got)
@@ -302,12 +301,13 @@ func TestLoader_SkipsTemplatesDir(t *testing.T) {
 kind: ConfigMap
 metadata: {name: a, namespace: ns}
 `)
-	n, err := New(store.New()).Load(t.Context(), dir)
+	l := New(store.New())
+	n, err := l.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 (templates skipped), got %d", n)
+	if n != 0 || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
+		t.Errorf("templates scan: admitted=%d records=%v errors=%v", n, l.Index.Records, l.Index.Errors)
 	}
 }
 
@@ -361,12 +361,13 @@ kind: ConfigMap
 metadata: {name: real, namespace: ns}
 `)
 	s := store.New()
-	n, err := loaderFixture(s, nil).Load(context.Background(), dir)
+	l := New(s)
+	n, err := l.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 object loaded (only the real ConfigMap); got %d", n)
+	if n != 0 || len(l.Index.Records) != 1 {
+		t.Errorf("admitted %d objects with records %v, want only the real ConfigMap indexed", n, l.Index.Records)
 	}
 	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-db"}); got != nil {
 		t.Errorf("Component-subtree resource should not be loaded; got %v", got)
@@ -467,16 +468,16 @@ spec:
 `)
 
 	s := store.New()
-	n, err := loaderFixture(s, nil).Load(context.Background(), dir)
+	l := New(s)
+	n, err := l.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// Exactly one object loaded: the HelmRelease.
-	if n != 1 {
-		t.Errorf("expected 1 object loaded (HelmRelease only); got %d", n)
+	if n != 0 || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
+		t.Errorf("generator scan: admitted=%d records=%v errors=%v", n, l.Index.Records, l.Index.Errors)
 	}
-	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}); got == nil {
-		t.Errorf("HelmRelease should still load")
+	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}); !ok {
+		t.Errorf("HelmRelease should still be indexed")
 	}
 }
 
@@ -513,8 +514,12 @@ secretGenerator:
 `)
 
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	l := New(s)
+	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
+	}
+	if len(l.Index.Errors) != 0 {
+		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
 	}
 }
 
@@ -536,11 +541,13 @@ configMapGenerator:
 	testutil.WriteFile(t, dir, "data/unkeyed.yaml", "- another: top\n- level: seq\n")
 
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	l := New(s)
+	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// No objects added — both files excluded. The test passes as long
-	// as Load returns nil (i.e. didn't hit a decode error on either).
+	if len(l.Index.Errors) != 0 {
+		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
+	}
 }
 
 // TestLoader_ResourceWinsOverGenerator pins the conflict-resolution
@@ -563,10 +570,14 @@ kind: ConfigMap
 metadata: {name: shared, namespace: ns}
 `)
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	l := New(s)
+	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "shared"}); got == nil {
+	if len(l.Index.Errors) != 0 {
+		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
+	}
+	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "shared"}); !ok {
 		t.Errorf("a path declared in both resources: and configMapGenerator must still load as a resource")
 	}
 }
@@ -598,10 +609,14 @@ kind: ConfigMap
 metadata: {name: real, namespace: ns}
 `)
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	l := New(s)
+	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "real"}) == nil {
+	if len(l.Index.Errors) != 0 {
+		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
+	}
+	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "real"}); !ok {
 		t.Errorf("the real manifest under the same kustomization dir must still load")
 	}
 }
@@ -724,7 +739,10 @@ spec:
     namespace: flux-system
 `)
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	s.AddObject(&manifest.Kustomization{Name: "games", Path: "./apps/games"})
+	l := New(s)
+	l.SourceRoot = dir
+	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	// valheim is referenced — must load. Kustomization namespace
@@ -740,16 +758,9 @@ spec:
 	}
 }
 
-// TestLoader_DiscoveryOnlyRecordsComponentDataResources pins the
-// Phase 1B contract: under DiscoveryOnly, kustomize Component
-// subtrees still skip publishing standalone Flux CRs (the templated
-// ones don't render outside their parent KS) but the loader walks
-// the Component's `resources:` for ConfigMap/Secret data files and
-// records them in Existence + SourceFiles. This is what lets the
-// change filter's producer index resolve a downstream KS's
-// substituteFrom dep to the unchanged renderer KS that owns the
-// Component (issue #418).
-func TestLoader_DiscoveryOnlyRecordsComponentDataResources(t *testing.T) {
+// Component data must retain producer evidence for substituteFrom dependencies
+// without admitting templated Flux resources outside their parent's render.
+func TestLoader_DiscoveryRecordsComponentDataResources(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
@@ -775,7 +786,6 @@ spec:
 `)
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	l.SourceRoot = dir
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -783,13 +793,13 @@ spec:
 
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
 	if _, ok := l.Index.Lookup(cmID); !ok {
-		t.Errorf("Component-housed CM must be recorded in Existence under DiscoveryOnly")
+		t.Errorf("Component-housed CM must be recorded in Existence during discovery")
 	}
 	if _, ok := filesForTest(l.Index)[cmID]; !ok {
-		t.Errorf("Component-housed CM must be recorded in SourceFiles under DiscoveryOnly")
+		t.Errorf("Component-housed CM must be recorded in SourceFiles during discovery")
 	}
 	if s.GetObject(cmID) != nil {
-		t.Errorf("Component-housed CM must NOT be in Store under DiscoveryOnly (existence-only)")
+		t.Errorf("Component-housed CM must NOT be in Store during discovery (existence-only)")
 	}
 	// The templated KS would be filtered upstream by parseFile's
 	// envsubst guard even if walkComponentData tried to publish it,
@@ -801,14 +811,14 @@ spec:
 	}
 }
 
-// DiscoveryOnly keeps HelmRelease references even when it defers admission.
-func TestLoader_DiscoveryOnlyRecordsSourceRefs(t *testing.T) {
+// Discovery keeps HelmRelease references even when it defers admission.
+func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hr.yaml")
 	testutil.WriteFile(t, dir, "hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: envoy-gateway, namespace: envoy-gateway}\nspec: {chartRef: {kind: OCIRepository, name: envoy-gateway, namespace: flux-system}}\n")
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly, l.SourceRoot = true, dir
+	l.SourceRoot = dir
 	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
@@ -841,13 +851,13 @@ func TestLoader_DiscoveryOnlyRecordsSourceRefs(t *testing.T) {
 	}
 }
 
-// TestLoader_DiscoveryOnlyRecordsNestedComponentData pins the
+// TestLoader_DiscoveryRecordsNestedComponentData pins the
 // Component-of-Component recursion in walkComponentData: an outer
 // Component that references an inner Component via `components:`
 // must surface the inner Component's CM/Secret data files into the
 // producer index. The reference PR (tjwallace/flate#1) walked only
 // `resources:` and missed this graph shape — this test is the fence.
-func TestLoader_DiscoveryOnlyRecordsNestedComponentData(t *testing.T) {
+func TestLoader_DiscoveryRecordsNestedComponentData(t *testing.T) {
 	dir := t.TempDir()
 	// Outer Component points at inner via `components:`. The path is
 	// relative to the outer Component's directory; resolveComponentPath
@@ -872,7 +882,6 @@ data:
 `)
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	l.SourceRoot = dir
 	// Drive the loader at the outer Component directly — same shape
 	// as TestLoader_SkipsKustomizeComponentSubtree's entry pattern.
@@ -889,12 +898,12 @@ data:
 	}
 }
 
-// TestLoader_DiscoveryOnlyComponentCycleTerminates pins the
+// TestLoader_DiscoveryComponentCycleTerminates pins the
 // w.visited cycle protection in walkComponentData: a pair of
 // Components that reference each other via `components:` must not
 // infinite-loop. The same primitive descend uses; verify here so a
 // future change can't drop it.
-func TestLoader_DiscoveryOnlyComponentCycleTerminates(t *testing.T) {
+func TestLoader_DiscoveryComponentCycleTerminates(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/a/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
@@ -908,7 +917,6 @@ components:
 `)
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	// No timeout context: if cycle protection fails, the test hangs
 	// and the test framework's overall timeout surfaces the bug.
 	if _, err := l.Load(context.Background(), filepath.Join(dir, "components/a")); err != nil {
@@ -916,48 +924,7 @@ components:
 	}
 }
 
-// TestLoader_NonDiscoveryOnlyStillSkipsComponents is the pre-existing
-// behavior fence: when DiscoveryOnly is OFF, Component subtrees stay
-// fully invisible — no CM/Secret data files surface in Existence or
-// SourceFiles. Without this fence the new walkComponentData gate
-// could be loosened by mistake and silently leak Component-housed
-// CMs into non-DiscoveryOnly Store-loading consumers.
-func TestLoader_NonDiscoveryOnlyStillSkipsComponents(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "components/settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
-kind: Component
-resources:
-  - ./cluster-settings.yaml
-`)
-	testutil.WriteFile(t, dir, "components/settings/cluster-settings.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-settings
-  namespace: flux-system
-data:
-  FOO: bar
-`)
-	s := store.New()
-	l := loaderFixture(s, nil)
-	// DiscoveryOnly intentionally OFF.
-	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
-	if _, ok := l.Index.Lookup(cmID); ok {
-		t.Errorf("non-DiscoveryOnly walk must not record Component-housed CMs in Existence")
-	}
-	if _, ok := filesForTest(l.Index)[cmID]; ok {
-		t.Errorf("non-DiscoveryOnly walk must not record Component-housed CMs in SourceFiles")
-	}
-	if s.GetObject(cmID) != nil {
-		t.Errorf("non-DiscoveryOnly walk must not publish Component-housed CMs to the Store")
-	}
-}
-
-// TestLoader_DiscoveryOnlyPicksUpBootstrapSiblingKS pins the
+// TestLoader_DiscoveryPicksUpBootstrapSiblingKS pins the
 // bootstrap-sibling scan: a Flux Kustomization CR authored in a YAML
 // file next to a kustomization.yaml but NOT listed in its `resources:`
 // is a real Flux pattern (the KS is kubectl-applied directly). Without
@@ -966,7 +933,7 @@ data:
 // are picked up — a sibling HelmRelease must stay invisible, since
 // extending the scan to every CR would silently relax the
 // "kustomize package = resources only" contract for unrelated kinds.
-func TestLoader_DiscoveryOnlyPicksUpBootstrapSiblingKS(t *testing.T) {
+func TestLoader_DiscoveryPicksUpBootstrapSiblingKS(t *testing.T) {
 	dir := t.TempDir()
 	// kustomization.yaml exists but does NOT list bootstrap.yaml.
 	testutil.WriteFile(t, dir, "repositories/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -1014,7 +981,6 @@ spec:
 
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	l.SourceRoot = dir
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1022,7 +988,7 @@ spec:
 
 	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "flux-entry-repos"}
 	if s.GetObject(ksID) == nil {
-		t.Errorf("bootstrap-sibling Flux KS must reach the Store under DiscoveryOnly")
+		t.Errorf("bootstrap-sibling Flux KS must reach the Store during discovery")
 	}
 	if got, want := filesForTest(l.Index)[ksID], "repositories/flux-entry.yaml"; got != want {
 		t.Errorf("SourceFiles[KS] = %q; want %q", got, want)
@@ -1062,46 +1028,12 @@ spec:
 `)
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	l.SourceRoot = dir
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if got := len(s.ListObjects(manifest.KindKustomization)); got != 1 {
 		t.Errorf("expected exactly 1 Kustomization (no double-load), got %d", got)
-	}
-}
-
-// TestLoader_NonDiscoveryOnlySkipsBootstrapSibling fences the gating
-// rule: without DiscoveryOnly, sibling Flux KS files stay invisible —
-// non-DiscoveryOnly callers (SDK consumers) opted into the strict
-// "kustomize package = resources only" contract and a silent change
-// in that contract would break them.
-func TestLoader_NonDiscoveryOnlySkipsBootstrapSibling(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources: []
-`)
-	testutil.WriteFile(t, dir, "flux-entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: bootstrap
-  namespace: flux-system
-spec:
-  path: ./
-  sourceRef:
-    kind: GitRepository
-    name: cluster
-  interval: 10m
-`)
-	s := store.New()
-	l := loaderFixture(s, nil) // DiscoveryOnly intentionally OFF.
-	if _, err := l.Load(context.Background(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := len(s.ListObjects(manifest.KindKustomization)); got != 0 {
-		t.Errorf("non-DiscoveryOnly must NOT pick up bootstrap-sibling KS, got %d in Store", got)
 	}
 }
 
@@ -1131,7 +1063,6 @@ spec:
 `)
 	s := store.New()
 	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
 	l.SourceRoot = dir
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1196,28 +1127,93 @@ brokenPointer: [ unclosed
 			}
 			l := New(store.New())
 			l.SourceRoot = filepath.Dir(dir)
-			_, err := l.Load(t.Context(), dir)
-			if !errors.Is(err, manifest.ErrInput) {
-				t.Fatalf("Load error = %v, want one wrapping manifest.ErrInput", err)
-			}
-			if !strings.Contains(err.Error(), "blackbox-exporter.yaml") {
-				t.Errorf("Load error must name the malformed file; got: %v", err)
-			}
-			l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-			l.SourceRoot = dir
 			if _, err := l.Load(t.Context(), dir); err != nil {
 				t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
 			}
-			if err := l.Index.Errors["blackbox-exporter.yaml"]; !errors.Is(err, manifest.ErrInput) {
+			if err := l.Index.Errors["app/blackbox-exporter.yaml"]; !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("deferred decode error = %v, want manifest.ErrInput", err)
 			}
-			first := l.Index.Errors["blackbox-exporter.yaml"]
+			first := l.Index.Errors["app/blackbox-exporter.yaml"]
 			parent := filepath.Dir(dir)
 			if _, err := l.Load(t.Context(), parent); err != nil {
 				t.Fatal(err)
 			}
-			if got := l.Index.Errors["blackbox-exporter.yaml"]; got != first {
+			if got := l.Index.Errors["app/blackbox-exporter.yaml"]; got != first {
 				t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
+			}
+		})
+	}
+}
+
+func TestLoader_IndependentRoots(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		bounded bool
+		nested  bool
+	}{
+		{name: "independent"},
+		{name: "bounded", bounded: true},
+		{name: "nested", nested: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			roots := []string{t.TempDir(), t.TempDir()}
+			if tc.nested {
+				roots[0] = filepath.Join(roots[1], "child")
+			}
+			ids := []manifest.NamedResource{
+				{Kind: manifest.KindKustomization, Name: "first"},
+				{Kind: manifest.KindKustomization, Name: "second"},
+			}
+			for i, root := range roots {
+				testutil.WriteFile(t, root, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+ids[i].Name+"}\nspec: {path: ./apps}\n")
+			}
+			l := New(store.New())
+			if tc.bounded {
+				l.SourceRoot = roots[0]
+			}
+			if _, err := l.Load(t.Context(), roots[0]); err != nil {
+				t.Fatal(err)
+			}
+			bootstrap := l.Store.GetArtifact(manifest.BootstrapSourceID)
+			view := l.documents.views[roots[0]]
+			for _, root := range []string{roots[1], roots[0]} {
+				_, err := l.Load(t.Context(), root)
+				if tc.bounded && root == roots[1] {
+					if !errors.Is(err, manifest.ErrInput) {
+						t.Fatalf("outside SourceRoot error = %v, want unavailable source", err)
+					}
+					if l.documents.views[roots[0]] != view {
+						t.Fatal("outside SourceRoot load replaced the mounted view")
+					}
+					if _, indexed := l.Index.Lookup(ids[1]); indexed || l.Store.GetObject(ids[1]) != nil || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
+						t.Fatal("unrelated root supplied objects or evidence outside SourceRoot")
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				if l.Store.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+					t.Fatal("independent load replaced the first bootstrap artifact")
+				}
+				if tc.nested {
+					input, file := l.documents.input(filepath.Join(roots[0], "ks.yaml"))
+					if input != view || file != "ks.yaml" {
+						t.Fatalf("child source binding = (%v, %q), want original view and ks.yaml", input, file)
+					}
+				}
+				for i, id := range ids {
+					if tc.bounded && i == 1 {
+						continue
+					}
+					r, indexed := l.Index.Lookup(id)
+					path := filepath.Join(roots[i], "ks.yaml")
+					file := filepath.ToSlash(path)
+					if tc.bounded {
+						file = "ks.yaml"
+					}
+					if !indexed || r.Path != path || r.File != file || l.Store.GetObject(id) == nil {
+						t.Fatalf("%s record = %+v, present = %t; want path %s, file %s and stored object", id, r, indexed, path, file)
+					}
+				}
 			}
 		})
 	}

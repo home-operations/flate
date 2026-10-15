@@ -9,13 +9,7 @@ import (
 
 // FinalizeIndex records immutable ownership facts and seeds the runtime producer registry.
 func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerIndex) {
-	if l.documents.cache == nil {
-		l.documents.cache = map[string]document{}
-	}
 	l.mountSources()
-	if l.Index == nil {
-		l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	}
 	if l.scopes == nil || !l.scopes.complete {
 		l.ensureScopes()
 		for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {

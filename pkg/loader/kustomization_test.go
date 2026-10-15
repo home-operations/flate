@@ -129,7 +129,7 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, tc.name, "resources: [included.yaml]\nunknownDirective: ignored\n")
 			for _, file := range []string{"included.yaml", "unlisted.yaml"} {
-				testutil.WriteFile(t, root, file, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+file+"}\n")
+				testutil.WriteFile(t, root, file, "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: "+file+"}\nspec: {url: https://example.test/repo.git}\n")
 			}
 			if loaded, err := New(store.New()).Load(t.Context(), root); err != nil || loaded != tc.loaded {
 				t.Fatalf("Load = %d, %v; want %d objects", loaded, err, tc.loaded)
@@ -171,6 +171,29 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	if got, _ := r.read(missing); got != nil {
 		t.Fatal("negative result was re-read")
 	}
+	t.Run("load missing mounted child", func(t *testing.T) {
+		child := filepath.Join(committed, "child")
+		testutil.WriteFile(t, child, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: decoy}\nspec: {path: ./apps}\n")
+		st := store.New()
+		input := &store.SourceArtifact{LocalPath: committed, FS: fstest.MapFS{
+			"Kustomization": {Data: []byte("namespace: committed\n")},
+		}}
+		st.SetArtifact(manifest.BootstrapSourceID, input)
+		l := New(st)
+		if _, err := l.Load(t.Context(), child); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("missing mounted child error = %v, want absent source content", err)
+		}
+		if len(st.ListObjects(manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(l.Index.Errors) != 0 {
+			t.Fatal("physical decoy supplied an object or indexed evidence")
+		}
+		if st.GetArtifact(manifest.BootstrapSourceID) != input || l.documents.mountedRoot(child) != committed {
+			t.Fatal("missing child replaced the authoritative mounted view")
+		}
+		if k, _ := l.documents.read(committed); k == nil || k.Namespace != "committed" {
+			t.Fatal("virtual view lost authority over physical content")
+		}
+	})
+
 	t.Run("unavailable source", func(t *testing.T) {
 		st := store.New()
 		repo := &manifest.GitRepository{Name: "released", Namespace: "n"}

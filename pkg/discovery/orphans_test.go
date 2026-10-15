@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -28,7 +29,7 @@ spec:
 `)
 	st := store.New()
 	admitDiscoveryForTest(st, dir)
-	l := discoveryLoaderForTest(st)
+	l := loader.New(st)
 	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "self"}
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, id := range []manifest.NamedResource{self, child} {
@@ -76,7 +77,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 		t.Fatal(err)
 	}
 	st.AddObject(ks)
-	l := discoveryLoaderForTest(st)
+	l := loader.New(st)
 	l.Options.WipeSecrets = false
 	l.FinalizeIndex(dir, nil)
 	self := ks.Named()
@@ -101,7 +102,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			dir := t.TempDir()
 			st := store.New()
 			admitDiscoveryForTest(st, dir)
-			l := discoveryLoaderForTest(st)
+			l := loader.New(st)
 			l.Claims(dir)
 			d := &discoverer{cfg: Config{Store: st, WipeSecrets: true}, loader: l}
 			ids := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "secure", Name: "a"}}
@@ -144,7 +145,6 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 					t.Fatal(err)
 				}
 				st.AddObject(ks)
-				l.Options.DiscoveryOnly = true
 				l.SourceRoot = dir
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)

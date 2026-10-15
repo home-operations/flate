@@ -43,9 +43,6 @@ func (l *Loader) ensureScopes() {
 
 // ApplyNamespaces closes authored namespace contexts using the shared document reader.
 func (l *Loader) ApplyNamespaces(repoRoot string) {
-	if l.Index == nil {
-		return
-	}
 	l.mountSources()
 	l.ensureScopes()
 	if repoRoot == "" {
@@ -207,7 +204,7 @@ func (l *Loader) projectAuthoredRecord(r manifest.DiscoveryRecord, authored mani
 			record.Refs = old.Refs
 		}
 		records[id] = record
-		if info := manifest.KindOf(projected); info.Tracked && (!l.Options.DiscoveryOnly || info.Includes("discovery")) {
+		if info := manifest.KindOf(projected); info.Tracked && info.Includes("discovery") {
 			objects[id] = projected
 		}
 	}

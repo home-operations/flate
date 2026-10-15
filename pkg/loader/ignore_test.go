@@ -224,7 +224,7 @@ func TestLoader_KrmignoreEnvironmentAllowlist(t *testing.T) {
 	appID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	commonID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "common-settings"}
 
-	writeTree := func(t *testing.T, ignore string) *store.Store {
+	writeTree := func(t *testing.T, ignore string) *Loader {
 		t.Helper()
 		dir := t.TempDir()
 		testutil.WriteFile(t, dir, ".krmignore", ignore)
@@ -240,15 +240,19 @@ data: {env: `+env+`}
 `)
 		}
 		s := store.New()
-		if _, err := loaderFixture(s, nil).Load(t.Context(), dir); err != nil {
+		l := New(s)
+		if _, err := l.Load(t.Context(), dir); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		return s
+		return l
 	}
 
-	envOf := func(t *testing.T, s *store.Store) string {
+	envOf := func(t *testing.T, l *Loader) string {
 		t.Helper()
-		obj := s.GetObject(appID)
+		if !Promote(l.Store, appID, l.Index.Records[appID], PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}) {
+			t.Fatal("app-config was not indexed for promotion")
+		}
+		obj := l.Store.GetObject(appID)
 		if obj == nil {
 			t.Fatal("app-config was not loaded at all")
 		}
@@ -275,7 +279,7 @@ data: {env: `+env+`}
 		if got := envOf(t, s); got != "production" {
 			t.Errorf("allowlist walk: app-config env = %q, want %q", got, "production")
 		}
-		if s.GetObject(commonID) == nil {
+		if _, indexed := s.Index.Lookup(commonID); !indexed {
 			t.Error("common-settings must be re-included by !/common/**/*.yaml")
 		}
 	})
@@ -285,7 +289,7 @@ data: {env: `+env+`}
 		if got := envOf(t, s); got != "production" {
 			t.Errorf("exclusion walk: app-config env = %q, want %q", got, "production")
 		}
-		if s.GetObject(commonID) == nil {
+		if _, indexed := s.Index.Lookup(commonID); !indexed {
 			t.Error("common-settings must still load")
 		}
 	})
@@ -316,6 +320,9 @@ data: {env: `+env+`}
 		l.IgnoreFile = ignoreFile
 		if _, err := l.Load(t.Context(), dir); err != nil {
 			t.Fatalf("Load: %v", err)
+		}
+		if !Promote(s, appID, l.Index.Records[appID], PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}) {
+			t.Fatal("app-config was not indexed for promotion")
 		}
 		cm, ok := s.GetObject(appID).(*manifest.ConfigMap)
 		if !ok {

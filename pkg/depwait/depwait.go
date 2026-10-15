@@ -39,7 +39,7 @@ type Waiter struct {
 //
 // The orchestrator's implementation reads from the loader's
 // discovery index — file-indexed objects (CMs/Secrets/HRs the
-// DiscoveryOnly loader kept out of the Store) get lazy-promoted
+// discovery loader kept out of the Store) get lazy-promoted
 // the moment a depwait edge needs them, while render-only ids
 // (no file record) stay absent until a parent render's
 // emitRenderedChildren chain produces them.

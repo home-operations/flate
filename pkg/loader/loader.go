@@ -44,11 +44,6 @@ import (
 type Options struct {
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets bool
-
-	// DiscoveryOnly publishes discovery drivers and sources immediately. Other
-	// resources retain raw locations for render emission, orphan promotion or
-	// depwait admission; publishing them early would bypass parent transforms.
-	DiscoveryOnly bool
 }
 
 // Loader walks source views and adds Flux objects to a Store. Source membership
@@ -64,8 +59,8 @@ type Loader struct {
 	// standalone input admission. Source artifacts supply their own FS.
 	SourceRoot string
 
-	// Index optionally records static discovery facts. Its maps MUST be initialized
-	// before Load and are mutable only until FinalizeIndex returns.
+	// Index records static discovery facts and is initialized by New. Caller
+	// replacements MUST initialize Records before Load. Mutable until FinalizeIndex returns.
 	Index     *manifest.DiscoveryIndex
 	documents documentReader
 	scopes    *scopeConstruction
@@ -86,9 +81,13 @@ type Loader struct {
 	PreferExisting bool
 }
 
-// New returns a Loader configured to wipe secrets.
+// New initializes discovery state and configures the Loader to wipe secrets.
 func New(s *store.Store) *Loader {
-	return &Loader{Store: s, Options: Options{WipeSecrets: true}}
+	return &Loader{
+		Store: s, Options: Options{WipeSecrets: true},
+		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
+		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
+	}
 }
 
 // Load discovers Flux objects under root by walking the kustomize
@@ -102,20 +101,16 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if l.Store == nil {
 		return 0, errors.New("loader: Store is nil")
 	}
-	if l.Index != nil && l.documents.cache == nil {
-		l.documents.cache = map[string]document{}
-	}
 	l.mountSources()
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return 0, err
 	}
-	mounted := len(l.documents.views) != 0
-	if !mounted {
-		inputRoot, err := filepath.Abs(cmp.Or(l.SourceRoot, abs))
-		if err != nil {
-			return 0, err
-		}
+	inputRoot, err := filepath.Abs(cmp.Or(l.SourceRoot, abs))
+	if err != nil {
+		return 0, err
+	}
+	if l.documents.mountedRoot(abs) == "" && (l.SourceRoot == "" || l.documents.mountedRoot(inputRoot) == "") {
 		input, err := gittree.AdmitDirectory(ctx, inputRoot)
 		if err != nil {
 			if l.IgnoreFile != "" && errors.Is(err, fs.ErrNotExist) {
@@ -123,15 +118,17 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			}
 			return 0, err
 		}
-		l.Store.SetArtifact(manifest.BootstrapSourceID, input)
-		l.mountSources()
-	}
-	if l.Index != nil {
-		l.ensureScopes()
-		l.scopes.complete = false
-		if _, scanned := l.scopes.scanned[abs]; scanned {
-			return 0, nil
+		if l.Store.GetArtifact(manifest.BootstrapSourceID) == nil {
+			l.Store.SetArtifact(manifest.BootstrapSourceID, input)
+			l.mountSources()
+		} else {
+			l.documents.views[inputRoot] = input.FS
 		}
+	}
+	l.ensureScopes()
+	l.scopes.complete = false
+	if _, scanned := l.scopes.scanned[abs]; scanned {
+		return 0, nil
 	}
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
@@ -158,7 +155,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		ignoreCache: map[ignoreKey]bool{},
 	}
 	n, err := w.descend(ctx, abs)
-	if err == nil && l.scopes != nil {
+	if err == nil {
 		l.scopes.scanned[abs] = struct{}{}
 	}
 	return n, err
@@ -247,18 +244,9 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 	if k != nil {
 		if isKustomizeComponent(k) {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
-			// DiscoveryOnly callers still need the change filter's
-			// producer index to see ConfigMap/Secret data files that
-			// happen to live inside a Component subtree — a sibling
-			// KS's substituteFrom dep can't resolve to its producing
-			// KS otherwise. walkComponentData records those files
-			// without publishing Component-housed Flux CRs (which are
-			// frequently `${VAR}`-templated and not renderable
-			// standalone).
-			if w.loader.Options.DiscoveryOnly {
-				return w.walkComponentData(ctx, dir, k)
-			}
-			return 0, nil
+			// Component data must retain producer evidence without admitting
+			// templated Flux resources before their parent's render.
+			return w.walkComponentData(ctx, dir, k)
 		}
 		return w.walkKustomize(ctx, dir, k, kpath)
 	}
@@ -376,9 +364,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 		count += n
 	}
 
-	if w.loader.Options.DiscoveryOnly {
-		count += w.scanBootstrapFluxKS(dir, k, kpath)
-	}
+	count += w.scanBootstrapFluxKS(dir, k, kpath)
 	return count, nil
 }
 
@@ -391,8 +377,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 // invisible. Scope is intentionally narrow to *Flux Kustomization*
 // kinds; broadening here would silently undo the "kustomize package
 // = resources only" rule the loader otherwise enforces for HRs /
-// sources / data files. Gated on DiscoveryOnly so non-DiscoveryOnly
-// callers keep that strict semantic.
+// sources / data files.
 func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath string) int {
 	// A genuine bootstrap *entry* KS is a root — no other Kustomization's
 	// spec.path covers its directory. A KS commented-out of (excluded from)
@@ -496,7 +481,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 }
 
 // walkComponentData records direct ConfigMap/Secret resources from
-// kustomize Components during DiscoveryOnly loads without publishing
+// kustomize Components without publishing
 // templated Flux CRs as standalone objects. The change filter's
 // producer index needs the data files source-recorded so a downstream
 // substituteFrom consumer can resolve its producing KS, but a
@@ -602,14 +587,8 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			// second time.
 			if k, kpath := w.loader.documents.read(path); k != nil {
 				if isKustomizeComponent(k) {
-					// Mirror descend's DiscoveryOnly gate: harvest
-					// CM/Secret data files from Component subtrees so
-					// the producer index can resolve substituteFrom
-					// deps even when the entry was the ad-hoc walk.
-					if w.loader.Options.DiscoveryOnly {
-						if _, err := w.walkComponentData(ctx, path, k); err != nil {
-							return err
-						}
+					if _, err := w.walkComponentData(ctx, path, k); err != nil {
+						return err
 					}
 					return filepath.SkipDir
 				}
@@ -647,7 +626,7 @@ func (l *Loader) skipExisting(id manifest.NamedResource) bool {
 	return l.PreferExisting && l.Store.GetObject(id) != nil
 }
 
-// Indexed discovery defers decode errors; Load without an index remains strict.
+// Decode errors retain their file coordinate until scope attribution.
 func (l *Loader) loadFile(path string) (int, error) {
 	if l.documents.cache[path].loaded {
 		return 0, nil
@@ -667,10 +646,10 @@ func (l *Loader) loadFile(path string) (int, error) {
 			collect(obj)
 		}
 	} else {
-		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents.cache != nil, collect)
+		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, true, collect)
 	}
 	if err != nil {
-		if l.Index == nil || !errors.Is(err, manifest.ErrInput) {
+		if !errors.Is(err, manifest.ErrInput) {
 			return 0, err
 		}
 		if l.Index.Errors == nil {
@@ -696,7 +675,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if l.skipExisting(id) {
 			continue
 		}
-		if l.Options.DiscoveryOnly && !info.Includes("discovery") {
+		if !info.Includes("discovery") {
 			// Under render-driven discovery, HRs / ConfigMaps /
 			// Secrets / raw manifests stay out of the Store at file-
 			// load time. They reach the Store via KS render
@@ -711,9 +690,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		l.addObject(obj, path)
 		count++
 	}
-	if l.documents.cache != nil {
-		l.documents.cache[path] = document{objects: objs, loaded: true}
-	}
+	l.documents.cache[path] = document{objects: objs, loaded: true}
 	return count, nil
 }
 
@@ -748,9 +725,6 @@ func (l *Loader) recordDataFile(absPath string) error {
 
 // recordObject retains raw locations and authored source references for deferred admission.
 func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
-	if l.Index == nil {
-		return
-	}
 	id := obj.Named()
 	r := manifest.DiscoveryRecord{Authored: id, Path: absPath, File: l.fileCoordinate(absPath)}
 	var buf [16]manifest.NamedResource

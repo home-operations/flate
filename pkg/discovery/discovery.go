@@ -36,7 +36,7 @@ type Result struct {
 	// stay wiped on demand the same way they were at file-load.
 	WipeSecrets bool
 	// DisableChartDigestTracking reflects inline instance patches in file-parsed
-	// HelmReleases, including releases kept out of the store by DiscoveryOnly.
+	// HelmReleases, including releases deferred until render emission or exact promotion.
 	DisableChartDigestTracking bool
 }
 
@@ -77,15 +77,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, errors.New("discovery: Store is required")
 	}
 	l := loader.New(cfg.Store)
-	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	l.Options.WipeSecrets = cfg.WipeSecrets
-	// Render-driven discovery: only Kustomizations and the discovery-
-	// meta pair (ResourceSet, RSIP) reach the Store from the file
-	// walker. HRs, sources, CMs, Secrets, and raw manifests flow
-	// through Existence — picked up later by KS render via
-	// emitRenderedChildren, the orchestrator's orphan-promotion
-	// sweep, or depwait's lazy-promotion fallback.
-	l.Options.DiscoveryOnly = true
+	// Discovery drivers and sources reach the Store immediately; other resources
+	// retain indexed evidence for render emission and exact promotion.
 	d := &discoverer{cfg: cfg, loader: l, aliasViews: make(map[string]fs.FS)}
 	repoRoot, err := d.seedBootstrapSource(ctx)
 	if err != nil {

@@ -22,9 +22,6 @@ func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
 
 // Claims reuses discovery's source-view documents while the Loader is mutable.
 func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
-	if l.documents.cache == nil {
-		l.documents.cache = map[string]document{}
-	}
 	l.mountSources()
 	return buildClaims(l.Store, repoRoot, l.documents, localKustomizations(l.Store, repoRoot))
 }

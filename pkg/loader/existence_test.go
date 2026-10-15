@@ -16,7 +16,7 @@ import (
 )
 
 // Discovery drivers stay in the Store; deferred content stays in the file index.
-func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
+func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {
 		kind, api, spec string
@@ -33,8 +33,8 @@ func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
 		testutil.WriteFile(t, dir, tc.kind+".yaml", fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: fixture, namespace: flux-system}\n%s\n", tc.api, tc.kind, tc.spec))
 	}
 	st := store.New()
-	l := loaderFixture(st, nil)
-	l.Options.DiscoveryOnly = true
+	l := New(st)
+	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
@@ -50,11 +50,11 @@ func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
 	assert.Equal(t, slices.ContainsFunc(cached, func(obj manifest.BaseManifest) bool { return obj.Named().Kind == manifest.KindGitRepository }), true)
 }
 
-// TestDiscoveryOnly_PromoteMaterializesFromIndex covers the
+// TestDiscovery_PromoteMaterializesFromIndex covers the
 // lazy-promotion contract: when depwait hits a missing dep that the
 // Existence index knows about, Promote re-parses the file and
 // AddObjects it into the Store so the wait can clear.
-func TestDiscoveryOnly_PromoteMaterializesFromIndex(t *testing.T) {
+func TestDiscovery_PromoteMaterializesFromIndex(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
@@ -68,7 +68,6 @@ data:
 
 	st := store.New()
 	l := loaderFixture(st, nil)
-	l.Options.DiscoveryOnly = true
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -117,7 +116,6 @@ data:
 `)
 	st := store.New()
 	l := loaderFixture(st, nil)
-	l.Options.DiscoveryOnly = true
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -161,7 +159,6 @@ data:
 `)
 	st := store.New()
 	l := loaderFixture(st, nil)
-	l.Options.DiscoveryOnly = true
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -229,13 +226,9 @@ stringData: {value: fixture}
 	}
 }
 
-// TestDiscoveryOnly_SourcesStayFileLoaded pins the regression fix
-// found on JJGadgets/Biohazard: sources (GitRepository,
-// OCIRepository, HelmRepository) must remain in the Store under
-// DiscoveryOnly, otherwise aliasBootstrapSources can't recognize
-// them and aliases every source URL to the working tree (silently
-// redirecting every KS render to the wrong source root).
-func TestDiscoveryOnly_SourcesStayFileLoaded(t *testing.T) {
+// Sources must remain admitted so bootstrap aliasing can resolve their URLs
+// without redirecting unrelated source references to the working tree.
+func TestDiscovery_SourcesStayFileLoaded(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "src.yaml", `
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -265,7 +258,6 @@ spec:
 
 	st := store.New()
 	l := loaderFixture(st, nil)
-	l.Options.DiscoveryOnly = true
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -276,7 +268,7 @@ spec:
 		{Kind: manifest.KindHelmRepository, Namespace: "default", Name: "podinfo"},
 	} {
 		if st.GetObject(want) == nil {
-			t.Errorf("source %s must stay in Store under DiscoveryOnly; got nil", want.String())
+			t.Errorf("source %s must stay in Store during discovery; got nil", want.String())
 		}
 	}
 }

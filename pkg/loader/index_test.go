@@ -13,8 +13,6 @@ import (
 
 func loaderFixture(s *store.Store, files map[manifest.NamedResource]string) *Loader {
 	l := New(s)
-	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	l.documents = documentReader{cache: map[string]document{}}
 	for id, file := range files {
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: file}
 	}

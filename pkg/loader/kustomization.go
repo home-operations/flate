@@ -92,9 +92,6 @@ func (l *Loader) mountSources() {
 			}
 		}
 	}
-	if l.Index == nil {
-		return
-	}
 	for _, root := range changed {
 		for id, r := range l.Index.Files() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {

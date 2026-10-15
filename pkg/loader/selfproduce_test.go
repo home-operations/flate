@@ -639,7 +639,11 @@ data: {value: fixture}
 				testutil.WriteFile(t, root, "flux/shadow.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {value: shadow}\n")
 			}
 			l := loaderFixture(store.New(), nil)
-			l.Options.DiscoveryOnly = mode != "duplicate_store_object"
+			var existing *manifest.ConfigMap
+			if mode == "duplicate_store_object" {
+				existing = &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"value": "shadow"}}
+				l.Store.AddObject(existing)
+			}
 			l.PreferExisting = true
 			l.SourceRoot = root
 			for _, dir := range []string{"flux", "apps"} {
@@ -652,6 +656,9 @@ data: {value: fixture}
 			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
 			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 			values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
+			if existing != nil && l.Store.GetObject(values) != existing {
+				t.Fatal("pre-existing data object was replaced")
+			}
 			if record, _ := l.Index.Lookup(child); record.Parent != owner {
 				t.Fatalf("child parent = %s, want %s", record.Parent, owner)
 			}
@@ -686,7 +693,8 @@ func TestLoader_DotDotPaths(t *testing.T) {
 			documents := readerForTest(root)
 			documents.read(dir)
 
-			l := &Loader{documents: documents}
+			l := New(store.New())
+			l.documents = documents
 			var wantRoots []string
 			if tc.accepted {
 				wantRoots = []string{tc.path}

@@ -983,7 +983,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 		Path: "kubernetes/apps/communication/ntfy/app",
 	}
 	hrObj := &manifest.HelmRelease{Name: "ntfy", Namespace: "communication"}
-	// rawSettings is the DiscoveryOnly-indexed pre-render form:
+	// rawSettings is the discovery-indexed pre-render form:
 	// Namespace="" because kustomize's namespace directive hasn't
 	// run yet at file-walk time.
 	rawSettings := &manifest.ConfigMap{Name: "cluster-settings", Namespace: ""}
@@ -1058,7 +1058,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 		Path: "kubernetes/apps/settings",
 	}
 	producer := producerObj.Named()
-	// CM with namespace="" mirrors the DiscoveryOnly pre-render form.
+	// CM with namespace="" mirrors the discovery pre-render form.
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "", Name: "shared-settings"}
 	cmObj := &manifest.ConfigMap{Name: cmID.Name, Namespace: cmID.Namespace}
 
@@ -1232,7 +1232,7 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	}
 	a, b := aObj.Named(), bObj.Named()
 
-	// The DiscoveryOnly-indexed CMs are in their respective on-disk
+	// The discovery-indexed CMs are in their respective on-disk
 	// paths but have explicit namespace already (so they land in
 	// producersByID only — NOT producersByName).
 	cmNS1 := &manifest.ConfigMap{Name: "shared", Namespace: "ns1"}

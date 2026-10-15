@@ -11,6 +11,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -39,7 +40,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned"}
 			artifact.FS = os.DirFS(artifact.LocalPath)
 			d := discoverer{
-				cfg: Config{Store: st}, loader: discoveryLoaderForTest(st),
+				cfg: Config{Store: st}, loader: loader.New(st),
 				resolvedSources: map[manifest.NamedResource]*manifest.GitRepository{other.Named(): other},
 			}
 			d.loader.SourceRoot = root
@@ -110,7 +111,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
 		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named()))
-		d := discoverer{cfg: Config{Path: root, Store: st}, loader: discoveryLoaderForTest(st)}
+		d := discoverer{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
 		if err := d.loadManifests(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +126,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 			t.Run(backing+"/"+scenario, func(t *testing.T) {
 				root := t.TempDir()
 				st := store.New()
-				d := discoverer{cfg: Config{Store: st}, loader: discoveryLoaderForTest(st)}
+				d := discoverer{cfg: Config{Store: st}, loader: loader.New(st)}
 				d.loader.IgnoreFile = filepath.Join(root, "override.krmignore")
 				target := filepath.Join(root, "missing")
 				if scenario == "missing-ignore" {

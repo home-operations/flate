@@ -46,7 +46,6 @@ spec: {}
 `)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	idx := loader.New(store.New())
-	idx.Index = indexForTest(nil)
 	idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
 	st := store.New()
 	idx.Store = st
@@ -105,7 +104,6 @@ spec: {url: https://example.test/excluded.git}
 	files := map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", selected: "bundle.yaml", excluded: "bundle.yaml", chart: "bundle.yaml", excludedSource: "bundle.yaml"}
 	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), indexForTest(files), st)
 	idx := loader.New(store.New())
-	idx.Index = indexForTest(nil)
 	for id := range files {
 		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
 		if id == selected {
@@ -153,7 +151,6 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			idx := loader.New(store.New())
-			idx.Index = indexForTest(nil)
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
 			if tc.raw {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: "target.yaml"}

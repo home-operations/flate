@@ -196,7 +196,7 @@ func benchmarkRecordObject(b *testing.B, kind string) {
 					b.Fatal(err)
 				}
 			}
-			l := &Loader{Index: &manifest.DiscoveryIndex{}}
+			l := New(store.New())
 			b.ReportAllocs()
 			for b.Loop() {
 				l.Index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}

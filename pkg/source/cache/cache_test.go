@@ -31,6 +31,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/errdef"
 )
 
 func newCache(t *testing.T, root string) *Cache {
@@ -77,6 +78,9 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				root = t.TempDir()
 			}
 			c := newCache(t, root)
+			if !disk && c.root != nil {
+				t.Fatal("memory cache opened a disk root")
+			}
 			key := ArchiveKey{ID: "source-test-generations"}
 			want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"flate.revision": "v1", "other": "preserved"}}
 			_, got, err := c.Acquire(t.Context(), key, time.Hour, producer(archive(t, "file", "v1"), want))
@@ -278,7 +282,22 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if shared != c {
 		t.Fatal("canonical directory has multiple owners")
 	}
+	reader, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-held"}, Forever, producer([]byte("held"), ocispec.Descriptor{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	disk := c.root
 	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := disk.Stat("."); err != nil {
+		t.Fatalf("first Close closed shared root: %v", err)
+	}
+	if data, err := io.ReadAll(reader); err != nil || string(data) != "held" {
+		t.Fatalf("reader after first Close: %q, %v", data, err)
+	}
+	if err := reader.Close(); err != nil {
 		t.Fatal(err)
 	}
 	lock := flock.New(layout{Root: root}.OCILock())
@@ -293,6 +312,9 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	}
 	if err := shared.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := disk.Stat("."); err == nil {
+		t.Fatal("last Close retained root")
 	}
 	if acquired, err := lock.TryLock(); err != nil || !acquired {
 		t.Fatalf("last Close retained lock: acquired=%v, err=%v", acquired, err)
@@ -807,7 +829,7 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			failure := errors.New("incomplete clone")
-			_, err := c.Git(ctx, GitKey{ID: "source-git-failed", RecurseSubmodules: true}, 0, func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			g, err := c.Git(ctx, GitKey{ID: "source-git-failed", RecurseSubmodules: true}, 0, func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				file, err := worktree.Create("partial")
 				if err != nil {
 					return plumbing.ZeroHash, err
@@ -817,7 +839,7 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 				}
 				if scenario == "publication" {
 					index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
-					if err := os.Remove(index); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					if err := os.Rename(index, index+"-saved"); err != nil {
 						return plumbing.ZeroHash, err
 					}
 					return plumbing.ZeroHash, os.Mkdir(index, 0o750)
@@ -828,6 +850,9 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 				}
 				return plumbing.ZeroHash, failure
 			})
+			if g != nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("failed Git acquisition: generation=%v, error=%v", g, err)
+			}
 			want := failure
 			if scenario == "cancelled" {
 				want = context.Canceled
@@ -843,19 +868,43 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 			if err != nil || len(entries) != 0 {
 				t.Fatalf("failed generation directories = %v, %v", entries, err)
 			}
+			if v, ok := c.entries.Load("source-git-failed"); ok && !v.(*entry).resolved.IsZero() {
+				t.Fatal("failed Git acquisition installed a successful entry")
+			}
+			if scenario == "publication" {
+				index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
+				if err := os.Remove(index); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(index+"-saved", index); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened := newCache(t, c.layout.Root)
+			if _, err := reopened.store.Resolve(t.Context(), "source-git-failed"); !errors.Is(err, errdef.ErrNotFound) {
+				t.Fatalf("failed generation published a durable tag: %v", err)
+			}
 		})
 	}
 }
 
 func TestCache_RootedWritesRejectEscape(t *testing.T) {
-	for _, sink := range []string{"staging", "last-use", "git-generation"} {
+	for _, sink := range []string{"staging", "last-use", "last-use-parent", "git-generation", "staging-cleanup-parent", "staging-cleanup-final"} {
 		t.Run(sink, func(t *testing.T) {
 			c := newCache(t, t.TempDir())
 			outside := t.TempDir()
+			testutil.WriteFile(t, outside, "marker", "untouched")
 			key := BlobKey{ID: "rooted-write"}
-			link := c.layout.OCI()
-			target := outside
-			if sink == "last-use" {
+			if sink == "git-generation" {
+				key.ID = "source-git-rooted"
+			}
+			link, target := c.layout.OCI(), outside
+			hit := strings.HasPrefix(sink, "last-use")
+			cleanup := strings.HasPrefix(sink, "staging-cleanup")
+			if hit {
 				r, _, err := c.Blob(t.Context(), key, Forever, producer([]byte("content"), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
@@ -864,121 +913,241 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 					t.Fatal(err)
 				}
 				e, _ := c.entries.Load(key.ID)
-				link = filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest))
-				testutil.WriteFile(t, outside, "untouched", "sentinel")
-				target = filepath.Join(outside, "untouched")
-				old := time.Now().Add(-48 * time.Hour)
-				if err := os.Chtimes(target, old, old); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Remove(link); err != nil {
-					t.Fatal(err)
+				payload := blobPath(e.(*entry).stored.Digest)
+				link = filepath.Join(c.layout.Root, payload)
+				target = filepath.Join(outside, "marker")
+				if sink == "last-use-parent" {
+					link = filepath.Dir(link)
+					target = outside
+					testutil.WriteFile(t, outside, filepath.Base(payload), "outside payload")
 				}
 			} else if sink == "git-generation" {
 				link = filepath.Join(c.layout.OCI(), "git")
-			} else if err := os.Rename(link, link+"-saved"); err != nil {
-				t.Fatal(err)
+				if err := os.Mkdir(link, 0o750); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := os.Symlink(target, link); err != nil {
-				t.Fatal(err)
+			if !cleanup {
+				if err := os.Rename(link, link+"-saved"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
 			}
-			before, err := os.Stat(target)
-			if err != nil {
-				t.Fatal(err)
-			}
+			before := sweepSnapshot(t, outside)
+			failure := errors.New("producer failed after staging replacement")
 			called := false
+			var err error
 			if sink == "git-generation" {
-				_, err = c.Git(t.Context(), GitKey{ID: "source-git-rooted"}, 0, func(storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+				var g *GitGeneration
+				g, err = c.Git(t.Context(), GitKey{ID: key.ID}, 0, func(storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 					called = true
 					return plumbing.ZeroHash, nil
 				})
+				if g != nil {
+					t.Fatal("escape returned a Git generation")
+				}
 			} else {
 				var r io.ReadCloser
 				r, _, err = c.Blob(t.Context(), key, Forever, func(io.Writer) (ocispec.Descriptor, error) {
 					called = true
-					return ocispec.Descriptor{}, nil
+					if !cleanup {
+						return ocispec.Descriptor{}, nil
+					}
+					entries, err := fs.ReadDir(c.root.FS(), "oci")
+					if err != nil {
+						t.Fatal(err)
+					}
+					var staging []string
+					for _, entry := range entries {
+						if strings.HasPrefix(entry.Name(), "acquire-") {
+							staging = append(staging, entry.Name())
+						}
+					}
+					if len(staging) != 1 {
+						t.Fatalf("exclusive staging files = %v", staging)
+					}
+					name := filepath.Join("oci", staging[0])
+					info, err := c.root.Stat(name)
+					if err != nil || info.Mode().Perm() != 0o600 {
+						t.Fatalf("staging permissions: %v, %v", info, err)
+					}
+					testutil.WriteFile(t, outside, staging[0], "outside staging")
+					if sink == "staging-cleanup-final" {
+						link = filepath.Join(c.layout.Root, name)
+						target = filepath.Join(outside, staging[0])
+					}
+					if err := os.Rename(link, link+"-saved"); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(target, link); err != nil {
+						t.Fatal(err)
+					}
+					before = sweepSnapshot(t, outside)
+					return ocispec.Descriptor{}, failure
 				})
 				if r != nil {
 					_ = r.Close()
+					t.Fatal("escape returned a blob reader")
 				}
 			}
-			if _, ok := errors.AsType[*CacheError](err); !ok || called {
+			if cleanup {
+				if !called || !errors.Is(err, failure) || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("staging cleanup: producer=%v, error=%v", called, err)
+				}
+			} else if _, ok := errors.AsType[*CacheError](err); !ok || called || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("escape: producer=%v, error=%v", called, err)
 			}
-			after, err := os.Stat(target)
-			if err != nil {
+			if diff := cmp.Diff(before, sweepSnapshot(t, outside)); diff != "" {
+				t.Fatalf("outside changed (-want +got):\n%s", diff)
+			}
+			if v, ok := c.entries.Load(key.ID); ok && !v.(*entry).resolved.IsZero() {
+				t.Fatal("failed acquisition installed a successful entry")
+			}
+			if sink == "staging-cleanup-final" {
+				if _, err := os.Lstat(link); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("staging cleanup retained final link: %v", err)
+				}
+			} else if err := os.Remove(link); err != nil {
 				t.Fatal(err)
 			}
-			if !after.ModTime().Equal(before.ModTime()) {
-				t.Fatal("outside target timestamp changed")
-			}
-			entries, err := os.ReadDir(outside)
-			if err != nil {
+			if err := os.Rename(link+"-saved", link); err != nil {
 				t.Fatal(err)
 			}
-			want := 0
-			if sink == "last-use" {
-				want = 1
-			}
-			if len(entries) != want {
-				t.Fatalf("outside entries = %v", entries)
+			_, err = c.store.Resolve(t.Context(), key.ID)
+			if hit && err != nil || !hit && !errors.Is(err, errdef.ErrNotFound) {
+				t.Fatalf("publication after failure: %v", err)
 			}
 		})
 	}
 }
 
 func TestNew_IndexRecoveryRejectsEscapingParent(t *testing.T) {
-	c := newCache(t, t.TempDir())
-	outside := newCache(t, t.TempDir())
-	if err := errors.Join(c.Close(), outside.Close()); err != nil {
-		t.Fatal(err)
-	}
-	index := filepath.Join(outside.layout.OCI(), ocispec.ImageIndexFile)
-	want := []byte(`{"schemaVersion":`)
-	if err := os.WriteFile(index, want, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(c.layout.OCI(), c.layout.OCI()+"-saved"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside.layout.OCI(), c.layout.OCI()); err != nil {
-		t.Fatal(err)
-	}
-	if escaped, err := New(t.Context(), c.layout.Root); err == nil {
-		_ = escaped.Close()
-		t.Fatal("index recovery escaped root")
-	}
-	if got, err := os.ReadFile(index); err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("outside index = %q, %v", got, err)
+	for _, component := range []string{"parent", "final"} {
+		t.Run(component, func(t *testing.T) {
+			c := newCache(t, t.TempDir())
+			outside := newCache(t, t.TempDir())
+			if err := errors.Join(c.Close(), outside.Close()); err != nil {
+				t.Fatal(err)
+			}
+			index := filepath.Join(outside.layout.OCI(), ocispec.ImageIndexFile)
+			testutil.WriteFile(t, outside.layout.OCI(), ocispec.ImageIndexFile, `{"schemaVersion":`)
+			link, target := c.layout.OCI(), outside.layout.OCI()
+			if component == "final" {
+				link = filepath.Join(link, ocispec.ImageIndexFile)
+				target = index
+			}
+			if err := os.Rename(link, link+"-saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			before := sweepSnapshot(t, outside.layout.Root)
+			recovered, err := New(t.Context(), c.layout.Root)
+			if component == "parent" {
+				if _, ok := errors.AsType[*CacheError](err); !ok || recovered != nil || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("parent recovery: cache=%v, error=%v", recovered, err)
+				}
+				if err := os.Remove(link); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(link+"-saved", link); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := recovered.Close(); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Lstat(link)
+				if err != nil || !info.Mode().IsRegular() {
+					t.Fatalf("rebuilt index: %v, %v", info, err)
+				}
+				if err := os.Remove(link + "-saved"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if diff := cmp.Diff(before, sweepSnapshot(t, outside.layout.Root)); diff != "" {
+				t.Fatalf("outside index changed (-want +got):\n%s", diff)
+			}
+			reopened := newCache(t, c.layout.Root)
+			if err := reopened.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
 func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
-	c := newCache(t, t.TempDir())
-	outside := t.TempDir()
-	var marker string
-	failure := errors.New("producer failed after parent replacement")
-	_, err := c.Git(t.Context(), GitKey{ID: "source-git-escaping-cleanup", RecurseSubmodules: true}, 0,
-		func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
-			id := filepath.Base(filepath.Dir(worktree.Root()))
-			marker = filepath.Join(id, "marker")
-			testutil.WriteFile(t, outside, marker, "untouched")
+	for _, phase := range []string{"producer", "publication"} {
+		t.Run(phase, func(t *testing.T) {
+			c := newCache(t, t.TempDir())
+			outside := t.TempDir()
+			key := GitKey{ID: "source-git-escaping-cleanup", RecurseSubmodules: true}
 			parent := filepath.Dir(c.layout.GitObjects(""))
-			if err := os.Rename(parent, parent+"-saved"); err != nil {
-				return plumbing.ZeroHash, err
+			index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
+			failure := errors.New("producer failed after parent replacement")
+			var before map[string]string
+			g, err := c.Git(t.Context(), key, 0,
+				func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+					id := filepath.Base(filepath.Dir(worktree.Root()))
+					testutil.WriteFile(t, outside, filepath.Join(id, "marker"), "untouched")
+					before = sweepSnapshot(t, outside)
+					if err := os.Rename(parent, parent+"-saved"); err != nil {
+						return plumbing.ZeroHash, err
+					}
+					if err := os.Symlink(outside, parent); err != nil {
+						return plumbing.ZeroHash, err
+					}
+					if phase == "publication" {
+						if err := os.Rename(index, index+"-saved"); err != nil {
+							return plumbing.ZeroHash, err
+						}
+						return plumbing.ZeroHash, os.Mkdir(index, 0o750)
+					}
+					return plumbing.ZeroHash, failure
+				})
+			if g != nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("failed Git acquisition: generation=%v, error=%v", g, err)
 			}
-			if err := os.Symlink(outside, parent); err != nil {
-				return plumbing.ZeroHash, err
+			if phase == "publication" {
+				if _, ok := errors.AsType[*CacheError](err); !ok {
+					t.Fatalf("publication error = %v", err)
+				}
+			} else if !errors.Is(err, failure) {
+				t.Fatalf("producer error = %v", err)
 			}
-			return plumbing.ZeroHash, failure
+			if diff := cmp.Diff(before, sweepSnapshot(t, outside)); diff != "" {
+				t.Fatalf("outside changed (-want +got):\n%s", diff)
+			}
+			if v, ok := c.entries.Load(key.ID); ok && !v.(*entry).resolved.IsZero() {
+				t.Fatal("failed Git acquisition installed a successful entry")
+			}
+			if err := os.Remove(parent); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(parent+"-saved", parent); err != nil {
+				t.Fatal(err)
+			}
+			if phase == "publication" {
+				if err := os.Remove(index); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(index+"-saved", index); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened := newCache(t, c.layout.Root)
+			if _, err := reopened.store.Resolve(t.Context(), key.ID); !errors.Is(err, errdef.ErrNotFound) {
+				t.Fatalf("failed generation published a durable tag: %v", err)
+			}
 		})
-	if !errors.Is(err, failure) {
-		t.Fatalf("Git error = %v", err)
-	}
-	if got, err := os.ReadFile(filepath.Join(outside, marker)); err != nil || string(got) != "untouched" {
-		t.Fatalf("outside marker = %q, %v", got, err)
-	}
-	if _, err := c.store.Resolve(t.Context(), "source-git-escaping-cleanup"); err == nil {
-		t.Fatal("failed generation published")
 	}
 }

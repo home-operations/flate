@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -52,7 +54,14 @@ func sweepSnapshot(t *testing.T, root string) map[string]string {
 			return err
 		}
 		var data []byte
-		if !d.IsDir() {
+		if info.Mode()&os.ModeSymlink != 0 {
+			var target string
+			target, err = os.Readlink(filepath.Join(root, path))
+			if err != nil {
+				return err
+			}
+			data = []byte(target)
+		} else if !d.IsDir() {
 			data, err = os.ReadFile(filepath.Join(root, path))
 			if err != nil {
 				return err
@@ -67,7 +76,7 @@ func sweepSnapshot(t *testing.T, root string) map[string]string {
 }
 
 func TestSweep_GitGenerations(t *testing.T) {
-	for _, scenario := range []string{"unheld", "held", "dry-run", "bad-index", "missing-payload", "bad-anchor", "bad-graph"} {
+	for _, scenario := range []string{"unheld", "held", "dry-run", "bad-index", "missing-payload", "bad-anchor", "bad-graph", "escaping-index", "escaping-index-dry-run", "escaping-payload", "escaping-payload-dry-run"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			c := newCache(t, root)
@@ -109,8 +118,38 @@ func TestSweep_GitGenerations(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			outside := t.TempDir()
+			if strings.HasPrefix(scenario, "escaping-") {
+				link := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
+				if strings.HasPrefix(scenario, "escaping-payload") {
+					link = filepath.Join(root, blobPath(desc.Digest))
+				}
+				data, err := os.ReadFile(link)
+				if err != nil {
+					t.Fatal(err)
+				}
+				testutil.WriteFile(t, outside, "target", string(data))
+				if err := os.Rename(link, link+"-saved"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "target"), link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			outsideBefore := sweepSnapshot(t, outside)
 			before := sweepSnapshot(t, root)
-			res, err := Sweep(t.Context(), root, SweepOpts{MaxAge: time.Hour, DryRun: scenario == "dry-run"})
+			res, err := Sweep(t.Context(), root, SweepOpts{MaxAge: time.Hour, DryRun: scenario == "dry-run" || strings.HasSuffix(scenario, "-dry-run")})
+			if strings.HasPrefix(scenario, "escaping-") {
+				if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || len(res.Errors) != 0 {
+					t.Fatalf("escape failed after selection: %+v, %v", res, err)
+				}
+				if _, ok := errors.AsType[*os.PathError](err); !ok {
+					t.Fatalf("escape did not report a read failure: %v", err)
+				}
+			}
+			if diff := cmp.Diff(outsideBefore, sweepSnapshot(t, outside)); diff != "" {
+				t.Fatalf("outside changed (-want +got):\n%s", diff)
+			}
 			fails := scenario != "unheld" && scenario != "dry-run"
 			if fails {
 				if err == nil || len(res.Removed) != 0 {
@@ -132,6 +171,68 @@ func TestSweep_GitGenerations(t *testing.T) {
 			for _, input := range []billy.Filesystem{second.Backing, second.Worktree} {
 				if _, err := input.Stat("marker"); err != nil {
 					t.Fatalf("reachable generation removed: %v", err)
+				}
+			}
+		})
+	}
+	for _, component := range []string{"parent", "final"} {
+		t.Run("selected-"+component+"-replacement", func(t *testing.T) {
+			c := newCache(t, t.TempDir())
+			orphan, _ := sweepGit(t, c, "source-git-replacement")
+			retained, _ := sweepGit(t, c, "source-git-replacement")
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			r, err := os.OpenRoot(c.layout.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = r.Close() }()
+			selection, err := selectSweep(t.Context(), r, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := generationPath(orphan.id)
+			if !slices.Equal(selection.generations, []string{path}) || !slices.Equal(selection.result.Removed, []string{filepath.Join(c.layout.Root, path)}) || len(selection.tags) != 0 {
+				t.Fatalf("selected relative orphan: %+v", selection)
+			}
+			outside := t.TempDir()
+			link, target := filepath.Join(c.layout.Root, generationPath("")), outside
+			marker := filepath.Join(orphan.id, "marker")
+			if component == "final" {
+				link = filepath.Join(c.layout.Root, path)
+				marker = "marker"
+			}
+			testutil.WriteFile(t, outside, marker, "untouched")
+			before := sweepSnapshot(t, outside)
+			if err := os.Rename(link, link+"-saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range selection.generations {
+				err := r.RemoveAll(name)
+				if component == "parent" && err == nil || component == "final" && err != nil {
+					t.Fatalf("remove selected %s: %v", component, err)
+				}
+			}
+			if diff := cmp.Diff(before, sweepSnapshot(t, outside)); diff != "" {
+				t.Fatalf("outside changed (-want +got):\n%s", diff)
+			}
+			if component == "parent" {
+				if err := os.Remove(link); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := os.Lstat(link); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("selected final link remains: %v", err)
+			}
+			if err := os.Rename(link+"-saved", link); err != nil {
+				t.Fatal(err)
+			}
+			for _, input := range []billy.Filesystem{retained.Backing, retained.Worktree} {
+				if _, err := input.Stat("marker"); err != nil {
+					t.Fatalf("retained generation removed: %v", err)
 				}
 			}
 		})

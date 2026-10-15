@@ -133,7 +133,7 @@ func sameKindDepTargets(obj manifest.BaseManifest, out []manifest.NamedResource)
 func (o *Orchestrator) refireClearedPreflightFailures(ids []manifest.NamedResource) {
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
 	for _, id := range ids {
-		if isReconcilableKind(id.Kind) {
+		if id.KindInfo().Includes("render") {
 			o.store.Refire(id)
 		}
 	}

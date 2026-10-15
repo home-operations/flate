@@ -33,16 +33,12 @@ import (
 var reconcilableKinds = func() []string {
 	var kinds []string
 	for info := range manifest.Kinds() {
-		if info.Status && info.Group != manifest.SourceDomain {
+		if info.Includes("render") {
 			kinds = append(kinds, info.Kind)
 		}
 	}
 	return kinds
 }()
-
-func isReconcilableKind(kind string) bool {
-	return slices.Contains(reconcilableKinds, kind)
-}
 
 // SubstitutionSource supplies a ConfigMap or Secret only for postBuild references.
 // Path identifies its input file in collision diagnostics; empty denotes SDK input.

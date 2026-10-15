@@ -6,6 +6,19 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
+// ChartVersion returns a source's declared chart version, or empty for other objects.
+func ChartVersion(obj BaseManifest) string {
+	switch obj := obj.(type) {
+	case *OCIRepository:
+		if obj.Reference != nil {
+			return cmp.Or(obj.Reference.Digest, obj.Reference.SemVer, obj.Reference.Tag)
+		}
+	case *HelmChartSource:
+		return obj.Version
+	}
+	return ""
+}
+
 // HelmChartSource is the Flux HelmChart CR — the standalone source-
 // kind that emits a chart artifact a HelmRelease can reference via
 // spec.chartRef. Distinct from the inline HelmChart projection that

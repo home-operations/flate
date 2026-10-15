@@ -7,9 +7,6 @@ import (
 	"sync"
 
 	"cel.dev/cel-go/cel"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -191,7 +188,7 @@ func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
 	}
 	return map[string]any{
 		"kind":       id.Kind,
-		"apiVersion": kindAPIVersion[id.Kind],
+		"apiVersion": id.KindInfo().APIVersion(),
 		"metadata":   meta,
 		"status": map[string]any{
 			"observedGeneration": int64(1),
@@ -236,19 +233,4 @@ func conditionToMap(c metav1.Condition) map[string]any {
 		"message":            c.Message,
 		"observedGeneration": c.ObservedGeneration,
 	}
-}
-
-// kindAPIVersion maps each tracked Kind to its canonical apiVersion.
-// Used by projectObject so CEL expressions inspecting object.apiVersion
-// behave sensibly. Kinds absent from the map return "" — most ReadyExpr
-// formulations don't read it, so the empty value is a safe default.
-var kindAPIVersion = map[string]string{
-	manifest.KindKustomization:    kustomizev1.GroupVersion.String(),
-	manifest.KindHelmRelease:      helmv2.GroupVersion.String(),
-	manifest.KindGitRepository:    sourcev1.GroupVersion.String(),
-	manifest.KindOCIRepository:    sourcev1.GroupVersion.String(),
-	manifest.KindHelmRepository:   sourcev1.GroupVersion.String(),
-	manifest.KindHelmChart:        sourcev1.GroupVersion.String(),
-	manifest.KindBucket:           sourcev1.GroupVersion.String(),
-	manifest.KindExternalArtifact: sourcev1.GroupVersion.String(),
 }

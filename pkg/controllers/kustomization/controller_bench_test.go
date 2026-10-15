@@ -43,7 +43,7 @@ func BenchmarkSubstitutionProvider_Lookup(b *testing.B) {
 			c.Configure(opts, sourcecache.RetryConfig{})
 			b.ReportAllocs()
 			for b.Loop() {
-				if c.substitutionProvider.ConfigMap("apps", "external") != cm {
+				if c.substitutionProvider.Data(cm.Named()) != cm {
 					b.Fatal("lookup failed")
 				}
 			}

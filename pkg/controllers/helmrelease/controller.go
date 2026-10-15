@@ -111,10 +111,7 @@ func (c *Controller) Start(_ context.Context) {
 // dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.HelmRelease]{
-		Suspended: (*manifest.HelmRelease).Suspended,
-		Reconcile: c.reconcile,
-	})
+	return c.DispatchNode(ctx, id, level, c.reconcile)
 }
 
 // onRawProducerAdded returns a listener that indexes RawObject producers

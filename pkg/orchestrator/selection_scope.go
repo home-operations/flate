@@ -106,7 +106,7 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 				add(ref.NamedResource)
 			}
 		}
-		if id.Kind == manifest.KindHelmRelease || id.Kind == manifest.KindKustomization {
+		if id.KindInfo().Includes("render") {
 			for _, dep := range s.run.requiredDataDependencies(id) {
 				add(dep)
 			}
@@ -284,7 +284,7 @@ func (s *selectionSide) prepareStatuses(name string) {
 		}
 	}
 	for id := range s.run.Result.Failed {
-		if seen[id] || id == manifest.BootstrapSourceID || id.Kind == manifest.KindHelmChart ||
+		if seen[id] || id == manifest.BootstrapSourceID || id.KindInfo().Includes("report-hidden") ||
 			(name != "" && id.Name != name) || !s.includes(id.Namespace) {
 			continue
 		}

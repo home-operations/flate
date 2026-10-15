@@ -2,6 +2,7 @@ package depwait
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -23,13 +24,29 @@ func celDep(name string) manifest.NamedResource {
 // TestReadyExpr_ProjectsObservedGeneration: the common Flux readiness idiom
 // `status.observedGeneration == metadata.generation` projects and compares.
 func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
-	s := store.New()
-	dep := celDep("infra")
-	s.UpdateStatus(dep, store.StatusReady, "")
-
-	ok, err := evaluateReadyExpr(`dep.status.observedGeneration == dep.metadata.generation`, s, manifest.NamedResource{}, dep)
-	if err != nil || !ok {
-		t.Errorf("observedGeneration projection: ok=%v err=%v, want true/nil", ok, err)
+	for _, tc := range []struct{ kind, version string }{
+		{manifest.KindKustomization, "kustomize.toolkit.fluxcd.io/v1"},
+		{manifest.KindHelmRelease, "helm.toolkit.fluxcd.io/v2"},
+		{manifest.KindGitRepository, "source.toolkit.fluxcd.io/v1"},
+		{manifest.KindOCIRepository, "source.toolkit.fluxcd.io/v1"},
+		{manifest.KindHelmRepository, "source.toolkit.fluxcd.io/v1"},
+		{manifest.KindHelmChart, "source.toolkit.fluxcd.io/v1"},
+		{manifest.KindBucket, "source.toolkit.fluxcd.io/v1"},
+		{manifest.KindExternalArtifact, "source.toolkit.fluxcd.io/v1"},
+		{manifest.KindResourceSet, ""},
+		{manifest.KindConfigMap, ""},
+		{"Unknown", ""},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			s := store.New()
+			dep := manifest.NamedResource{Kind: tc.kind, Namespace: "ns", Name: "infra"}
+			s.UpdateStatus(dep, store.StatusReady, "")
+			expr := fmt.Sprintf(`dep.status.observedGeneration == dep.metadata.generation && dep.apiVersion == %q`, tc.version)
+			ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
+			if err != nil || !ok {
+				t.Errorf("readiness projection: ok=%v err=%v, want true/nil", ok, err)
+			}
+		})
 	}
 }
 

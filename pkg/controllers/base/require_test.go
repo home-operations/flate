@@ -71,12 +71,14 @@ func TestRequire_Classifications(t *testing.T) {
 }
 
 func TestRequireRefresh_CanonicalManifest(t *testing.T) {
-	for _, found := range []bool{true, false} {
-		t.Run(map[bool]string{true: "active", false: "missing"}[found], func(t *testing.T) {
+	for _, mode := range []string{"active", "missing", "suspended"} {
+		t.Run(mode, func(t *testing.T) {
+			found := mode != "missing"
 			st := store.New()
 			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Values: map[string]any{"value": "old"}}
 			fresh := obj.Clone()
 			fresh.Values["value"] = "fresh"
+			fresh.Suspend = mode == "suspended"
 			var want *manifest.HelmRelease
 			if found {
 				st.AddObject(fresh)
@@ -87,10 +89,15 @@ func TestRequireRefresh_CanonicalManifest(t *testing.T) {
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "consumer.yaml"}},
 			}, st))
 			got, ok, err := c.RequireRefresh[*manifest.HelmRelease](t.Context(), obj.Named(), nil, manifest.DrainNone)
-			if err != nil || ok != found || got != want || obj.Values["value"] != "old" {
+			if (err != nil) != (mode == "suspended") || ok != found || got != want || obj.Values["value"] != "old" {
 				t.Fatalf("refresh = %v, %v, %v; want canonical %v, original=%v", got, ok, err, want, obj.Values)
 			}
-			if info, has := st.GetStatus(obj.Named()); has {
+			info, has := st.GetStatus(obj.Named())
+			if mode == "suspended" {
+				if !has || !store.IsSuspended(info) {
+					t.Fatalf("suspended refresh status: %+v", info)
+				}
+			} else if has {
 				t.Fatalf("active/missing refresh changed status: %+v", info)
 			}
 		})

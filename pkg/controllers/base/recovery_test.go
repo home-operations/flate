@@ -17,7 +17,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 	for _, mode := range []string{"recovered", "vanished", "suspended", "filtered", "preflight", "primary error", "primary status", "blocked", "new dependency failure", "prior primary failure"} {
 		t.Run(mode, func(t *testing.T) {
 			st := store.New()
-			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
 			id := obj.Named()
 			old := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "old"}
 			fresh := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "fresh"}
@@ -36,26 +36,23 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle", true })
 			}
 			ran := false
-			blocked := c.DispatchNode(t.Context(), id, manifest.DrainNone, base.Dispatch[*manifest.HelmRelease]{
-				Suspended: func(*manifest.HelmRelease) bool { return mode == "suspended" },
-				Reconcile: func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-					ran = true
-					info, _ := st.GetStatus(id)
-					if got := info.BlockedBy(); len(got) != 0 {
-						t.Errorf("reconcile inherited old blockers: %v", got)
-					}
-					switch mode {
-					case "primary error":
-						return errors.New("render failed")
-					case "primary status":
-						st.UpdateStatus(id, store.StatusFailed, "render failed")
-					case "blocked":
-						return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
-					case "new dependency failure":
-						return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
-					}
-					return nil
-				},
+			blocked := c.DispatchNode(t.Context(), id, manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+				ran = true
+				info, _ := st.GetStatus(id)
+				if got := info.BlockedBy(); len(got) != 0 {
+					t.Errorf("reconcile inherited old blockers: %v", got)
+				}
+				switch mode {
+				case "primary error":
+					return errors.New("render failed")
+				case "primary status":
+					st.UpdateStatus(id, store.StatusFailed, "render failed")
+				case "blocked":
+					return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
+				case "new dependency failure":
+					return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
+				}
+				return nil
 			})
 			wantStatus := store.StatusReady
 			wantRan := true

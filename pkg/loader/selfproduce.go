@@ -74,7 +74,7 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		l.Store.AddObject(b.secrets[id])
 	}
 	for id, r := range l.Index.Files() {
-		if id.Kind == manifest.KindKustomization && r.Parent == (manifest.NamedResource{}) {
+		if id.KindInfo().Includes("structural") && r.Parent == (manifest.NamedResource{}) {
 			if parents := b.emittedFiles[r.File]; len(parents) == 1 && parents[0] != id {
 				r.Parent = parents[0]
 				l.Index.Records[id] = r
@@ -275,24 +275,29 @@ type selfProduceBuilder struct {
 
 func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.BaseManifest) {
 	record := func(obj manifest.BaseManifest) {
-		switch o := obj.(type) {
-		case *manifest.ConfigMap, *manifest.Secret:
-			b.recordDataObject(o, v.namespace, v.fallback, v.owner)
-			if s, ok := o.(*manifest.Secret); ok {
+		info := manifest.KindOf(obj)
+		switch {
+		case info.Includes("data"):
+			b.recordDataObject(obj, v.namespace, v.fallback, v.owner)
+			if s, ok := obj.(*manifest.Secret); ok {
 				b.materializeSecret(s, v.namespace, v.fallback)
 			}
-		case *manifest.Kustomization:
+		case info.Includes("structural"):
 			b.emittedFiles[v.coordinate] = appendUniqueProducer(b.emittedFiles[v.coordinate], v.owner)
-		case *manifest.RawObject:
-			if len(manifest.ProducerTargets(o)) != 0 {
-				id := manifest.Resolve(o.Named(), v.namespace, v.fallback)
+		default:
+			raw, ok := obj.(*manifest.RawObject)
+			if !ok {
+				return
+			}
+			if len(manifest.ProducerTargets(raw)) != 0 {
+				id := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
 				r := b.idx.Records[id]
 				if r.Authored == (manifest.NamedResource{}) {
-					r.Authored, r.Path, r.File = o.Named(), v.file, v.coordinate
+					r.Authored, r.Path, r.File = obj.Named(), v.file, v.coordinate
 					b.idx.Records[id] = r
 				}
 			}
-			b.recordProducer(o, v.namespace, v.fallback, v.owner)
+			b.recordProducer(raw, v.namespace, v.fallback, v.owner)
 		}
 	}
 	if objects != nil {
@@ -312,7 +317,7 @@ func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootN
 	if !b.wipeSecrets || b.store == nil || ns == "" {
 		return
 	}
-	if !manifest.ContainsValuePlaceholder(s.StringData) && !manifest.ContainsValuePlaceholder(s.Data) {
+	if !s.HasPlaceholder() {
 		return
 	}
 	c := *s

@@ -150,7 +150,7 @@ func (m barModel) View() tea.View {
 // top). Excluding the same two id-classes aligns the bar's population exactly
 // with `flate test all`'s "collected N".
 func barExcluded(id manifest.NamedResource) bool {
-	return id == manifest.BootstrapSourceID || id.Kind == manifest.KindHelmChart
+	return id == manifest.BootstrapSourceID || id.KindInfo().Includes("report-hidden")
 }
 
 // inflightLabels returns the in-flight resource names ordered by first-seen

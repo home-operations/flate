@@ -15,13 +15,10 @@ func BenchmarkDispatchNodeReady(b *testing.B) {
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusReady, "")
 	c := base.New(st, nil, "benchmark")
-	suspended := func(*manifest.HelmRelease) bool { return false }
 	reconcile := func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil }
 	b.ReportAllocs()
 	for b.Loop() {
-		c.DispatchNode(b.Context(), obj.Named(), manifest.DrainNone, base.Dispatch[*manifest.HelmRelease]{
-			Suspended: suspended, Reconcile: reconcile,
-		})
+		c.DispatchNode(b.Context(), obj.Named(), manifest.DrainNone, reconcile)
 	}
 }
 

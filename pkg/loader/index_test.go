@@ -81,30 +81,41 @@ func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifes
 
 func TestFinalizeIndex_DataOwners(t *testing.T) {
 	for _, tc := range []struct {
-		name, namespace string
-		owners          bool
+		name, namespace, kind string
+		owners                bool
 	}{
-		{"raw namespace bridge", "", true},
-		{"file-backed explicit identity", "apps", true},
-		{"projected renderer only", "other", false},
+		{"raw namespace bridge", "", manifest.KindConfigMap, true},
+		{"file-backed explicit identity", "apps", manifest.KindConfigMap, true},
+		{"projected renderer only", "other", manifest.KindConfigMap, false},
+		{"secret raw namespace bridge", "", manifest.KindSecret, true},
+		{"secret explicit identity", "apps", manifest.KindSecret, true},
+		{"secret projected renderer only", "other", manifest.KindSecret, false},
+		{"non-data identity", "apps", manifest.KindHelmRelease, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "raw/kustomization.yaml", "namespace: raw\nresources: [input.yaml]\n")
 			testutil.WriteFile(t, root, "overlay/kustomization.yaml", "namespace: apps\nresources: [../raw]\n")
-			testutil.WriteFile(t, root, "raw/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: '"+tc.namespace+"'}\ndata: {value: fixture}\n")
+			testutil.WriteFile(t, root, "raw/input.yaml", "apiVersion: v1\nkind: "+tc.kind+"\nmetadata: {name: input, namespace: '"+tc.namespace+"'}\ndata: {value: fixture}\n")
 			st := store.New()
 			raw := &manifest.Kustomization{Name: "raw", Namespace: "flux-system", Path: "./raw"}
 			overlay := &manifest.Kustomization{Name: "overlay", Namespace: "flux-system", Path: "./overlay"}
 			st.AddObject(raw)
 			st.AddObject(overlay)
-			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: tc.namespace}
+			id := manifest.NamedResource{Kind: tc.kind, Name: "input", Namespace: tc.namespace}
 			l := loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
 			rendererFixture(t, l, root, nil)
+			if st.GetObject(id) != nil {
+				t.Fatal("indexed data must remain absent from the store")
+			}
 			projected := id
 			projected.Namespace = "apps"
 			r, _ := l.Index.Lookup(projected)
-			if !slices.Equal(r.Renderers, []manifest.NamedResource{overlay.Named()}) {
+			wantRenderers := []manifest.NamedResource{overlay.Named()}
+			if tc.kind == manifest.KindHelmRelease {
+				wantRenderers = nil
+			}
+			if !slices.Equal(r.Renderers, wantRenderers) {
 				t.Fatalf("projected renderers = %v", r.Renderers)
 			}
 			want := []manifest.NamedResource{overlay.Named(), raw.Named()}

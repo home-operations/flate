@@ -324,7 +324,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	victim := ksID("victim")
-	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "chart"}
+	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: victim.Name}
 	extra := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "victim"}
 	run := selectedRun(&Result{})
 	run.store.AddObject(&manifest.Kustomization{Name: victim.Name, Namespace: victim.Namespace})
@@ -339,7 +339,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Kind: victim.Kind, Name: victim.Name}}, nil)
 	res := results[0]
 	assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{victim, extra})
-	assert.Equal(t, res.Statuses[victim].Message, "blocked by flux-system/chart: chart failed")
+	assert.Equal(t, res.Statuses[victim].Message, "blocked by "+chart.NamespacedName()+": chart failed")
 	assert.Equal(t, res.Statuses[victim].IsDependencyFailure(), true)
 	assert.Diff(t, res.Statuses[victim].BlockedBy(), []manifest.NamedResource{chart})
 	if _, exists := res.Statuses[chart]; exists || res.Counts[victim.Kind] != 1 {
@@ -549,27 +549,53 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 }
 
 func TestSelect_ExplicitChartVersion(t *testing.T) {
-	for _, tc := range []struct{ namespace, source string }{{"", "apps"}, {"foreign", "foreign"}} {
-		namespace := tc.namespace
-		t.Run("source_"+namespace, func(t *testing.T) {
-			run := selectedRun(&Result{})
-			hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", Chart: manifest.HelmChart{Version: "9.9.9", RepoKind: manifest.KindOCIRepository, RepoNamespace: namespace, RepoName: "chart"}}
-			hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
-			source := &manifest.OCIRepository{Name: "chart", Namespace: tc.source}
-			source.Reference = &manifest.OCIRepositoryRef{Tag: "1.2.3"}
-			run.store.AddObject(hr)
-			run.store.AddObject(source)
-			selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
-			if err != nil || selected[0].ChartVersions != nil || hr.Chart.Version != "9.9.9" {
-				t.Fatalf("explicit version replaced: %+v %v", selected[0].ChartVersions, err)
-			}
-			updated := hr.Clone()
-			updated.Chart.Version = ""
-			run.store.AddObject(updated)
-			selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
-			if err != nil || selected[0].ChartVersions[hr.Named()] != "1.2.3" {
-				t.Fatalf("effective source version: %+v %v", selected[0].ChartVersions, err)
-			}
-		})
+	for _, ns := range []struct{ namespace, source string }{{"", "apps"}, {"foreign", "foreign"}} {
+		for _, tc := range []struct {
+			name, kind, want string
+			ref              *manifest.OCIRepositoryRef
+			absent           bool
+		}{
+			{name: "digest", ref: &manifest.OCIRepositoryRef{Digest: "sha256:abc", SemVer: ">=1.0.0", Tag: "1.2.3"}, want: "sha256:abc"},
+			{name: "semver", ref: &manifest.OCIRepositoryRef{SemVer: ">=1.0.0", Tag: "1.2.3"}, want: ">=1.0.0"},
+			{name: "tag", ref: &manifest.OCIRepositoryRef{Tag: "1.2.3"}, want: "1.2.3"},
+			{name: "empty reference", ref: &manifest.OCIRepositoryRef{}},
+			{name: "nil reference"},
+			{name: "missing source", absent: true},
+			{name: "helm chart", kind: manifest.KindHelmChart, want: "2.3.4"},
+			{name: "missing helm chart", kind: manifest.KindHelmChart, absent: true},
+		} {
+			t.Run(tc.name+"/source_"+ns.namespace, func(t *testing.T) {
+				run := selectedRun(&Result{})
+				kind := tc.kind
+				if kind == "" {
+					kind = manifest.KindOCIRepository
+				}
+				hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", Chart: manifest.HelmChart{Version: "9.9.9", RepoKind: kind, RepoNamespace: ns.namespace, RepoName: "chart"}}
+				hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
+				run.store.AddObject(hr)
+				if !tc.absent {
+					if kind == manifest.KindHelmChart {
+						source := &manifest.HelmChartSource{Name: "chart", Namespace: ns.source}
+						source.Version = tc.want
+						run.store.AddObject(source)
+					} else {
+						source := &manifest.OCIRepository{Name: "chart", Namespace: ns.source}
+						source.Reference = tc.ref
+						run.store.AddObject(source)
+					}
+				}
+				selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
+				if err != nil || selected[0].ChartVersions != nil || hr.Chart.Version != "9.9.9" {
+					t.Fatalf("explicit version replaced: %+v %v", selected[0].ChartVersions, err)
+				}
+				updated := hr.Clone()
+				updated.Chart.Version = ""
+				run.store.AddObject(updated)
+				selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
+				if err != nil || selected[0].ChartVersions[hr.Named()] != tc.want {
+					t.Fatalf("effective source version: %+v %v, want %q", selected[0].ChartVersions, err, tc.want)
+				}
+			})
+		}
 	}
 }

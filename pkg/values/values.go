@@ -27,12 +27,9 @@ var varsubRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
 // ValidSubstitutionName reports whether name follows Flux's variable-name rule.
 func ValidSubstitutionName(name string) bool { return varsubRegex.MatchString(name) }
 
-// Provider exposes the ConfigMap/Secret lookups needed for value
-// reference expansion. The controllers implement it against the central
-// store (see NewStoreProvider); tests use SliceProvider.
+// Provider exposes lazy ConfigMap/Secret data by canonical identity.
 type Provider interface {
-	ConfigMap(namespace, name string) *manifest.ConfigMap
-	Secret(namespace, name string) *manifest.Secret
+	Data(manifest.NamedResource) manifest.Data
 }
 
 // NewStoreProvider returns a Provider backed by the central Store.
@@ -40,14 +37,9 @@ func NewStoreProvider(s *store.Store) Provider { return &storeProvider{s: s} }
 
 type storeProvider struct{ s *store.Store }
 
-func (p *storeProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
-	c, _ := p.s.GetByName[*manifest.ConfigMap](manifest.KindConfigMap, namespace, name)
-	return c
-}
-
-func (p *storeProvider) Secret(namespace, name string) *manifest.Secret {
-	s, _ := p.s.GetByName[*manifest.Secret](manifest.KindSecret, namespace, name)
-	return s
+func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
+	data, _ := p.s.GetObject(id).(manifest.Data)
+	return data
 }
 
 // DeepMergeInto merges override into dst using Helm's merge semantics.
@@ -231,16 +223,15 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 // Empty bags retain the same missing-resource disposition as absent objects.
 func resourceData(kind, namespace, name string, p Provider) (manifest.Data, error) {
 	switch kind {
-	case manifest.KindSecret:
-		if s := p.Secret(namespace, name); s != nil && len(s.Data)+len(s.StringData) > 0 {
-			return s, nil
-		}
-	case manifest.KindConfigMap:
-		if c := p.ConfigMap(namespace, name); c != nil && len(c.Data) > 0 {
-			return c, nil
-		}
+	case manifest.KindSecret, manifest.KindConfigMap:
 	default:
 		return nil, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
+	}
+	data := p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name})
+	if data != nil {
+		for range data.Keys() {
+			return data, nil
+		}
 	}
 	return nil, nil
 }

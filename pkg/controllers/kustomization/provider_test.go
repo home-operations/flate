@@ -42,22 +42,32 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 }
 
 func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
-	st := store.New()
-	external := &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
-	other := &manifest.Secret{Name: "other", Namespace: "apps", StringData: map[string]any{"VALUE": "repository"}}
-	st.AddObject(other)
-	c := New(st, task.NewBounded(2), nil, true)
-	c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}}, sourcecache.RetryConfig{})
-	st.AddObject(&manifest.Secret{Name: external.Name, Namespace: external.Namespace, StringData: map[string]any{"VALUE": "late"}})
-	if c.substitutionProvider.Secret("apps", "external") != external || c.substitutionProvider.Secret("apps", "other") != other || c.substitutionProvider.Secret("other", "external") != nil {
-		t.Fatal("provider lost exact frozen precedence or fallback")
-	}
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Secret", Name: "external"}}}}
-	if got := values.UnreadableSubstituteSecrets(ks, c.substitutionProvider); len(got) != 0 {
-		t.Fatalf("readable supplied Secret reported unreadable: %v", got)
-	}
-	if got := values.NewStoreProvider(st).Secret("apps", "external").StringData["VALUE"]; got != "late" {
-		t.Fatal("ordinary provider used supplied values")
+	for _, tc := range []struct{ external, late manifest.BaseManifest }{
+		{&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}},
+			&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "late"}}},
+		{&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}},
+			&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "late"}}},
+	} {
+		t.Run(tc.external.Named().Kind, func(t *testing.T) {
+			external := tc.external
+			st := store.New()
+			other := external.WithNamespace("other")
+			st.AddObject(other)
+			c := New(st, task.NewBounded(2), nil, true)
+			c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}}, sourcecache.RetryConfig{})
+			st.AddObject(tc.late)
+			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
+			if c.substitutionProvider.Data(external.Named()) != external.(manifest.Data) || c.substitutionProvider.Data(other.Named()) != other.(manifest.Data) || c.substitutionProvider.Data(missing) != nil {
+				t.Fatal("provider lost exact frozen precedence or fallback")
+			}
+			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: external.Named().Kind, Name: "external"}}}}
+			if got := values.UnreadableSubstituteSecrets(ks, c.substitutionProvider); len(got) != 0 {
+				t.Fatalf("readable supplied source reported unreadable: %v", got)
+			}
+			if got, _, err := values.NewStoreProvider(st).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
+				t.Fatal("ordinary provider used supplied values")
+			}
+		})
 	}
 }
 

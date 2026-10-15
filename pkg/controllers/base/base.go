@@ -191,7 +191,7 @@ func (c *Controller) Configure(opts Options) {
 }
 
 // KeepEmitted extends the change filter's keep set so render-emitted
-// children pass the changed-only-mode preGate check. Without this, a
+// children pass the changed-only filter. Without this, a
 // parent whose render emits a child that wasn't on disk at filter-build
 // time (kustomize component+replacement KSes, charts that render source
 // CRs) would silently drop that child from the diff comparison. Routed
@@ -199,7 +199,7 @@ func (c *Controller) Configure(opts Options) {
 // unrelated file-loaded children into keep (#204/#260/#308).
 //
 // Newly-kept source and Kustomization ids are refired because their listeners
-// preGate-skipped before a consumer joined keep (#260, #418). Other kinds are never
+// unchanged-filtered before a consumer joined keep (#260, #418). Other kinds are never
 // refired: nothing moves a refired HelmChart's Pending status back to Ready.
 //
 // MUST be called BEFORE Store.AddObject so the listener that fires
@@ -207,10 +207,7 @@ func (c *Controller) Configure(opts Options) {
 func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest) {
 	if f := c.filter; f != nil {
 		for _, id := range f.AddEmitted(parent, child) {
-			switch id.Kind {
-			case manifest.KindGitRepository, manifest.KindOCIRepository,
-				manifest.KindHelmRepository, manifest.KindBucket,
-				manifest.KindExternalArtifact, manifest.KindKustomization:
+			if id.KindInfo().Includes("refire") {
 				c.Store.Refire(id)
 			}
 		}
@@ -372,19 +369,10 @@ func (c *Controller) Close() {
 	}
 }
 
-// preGate is the canonical Suspend/Filter pre-reconcile check.
-// Returns true when the resource is gated out — caller MUST bail.
-//
-//   - suspended → marks Ready "suspended", returns true
-//   - filter excludes the id → marks Ready "unchanged", returns true
-//   - otherwise → returns false, caller proceeds to Submit/reconcile
-func (c *Controller) preGate(id manifest.NamedResource, suspended bool) bool {
-	if suspended {
-		c.Store.UpdateStatus(id, store.StatusReady, store.MsgSuspended)
-		return true
-	}
-	if c.filterActive() && !c.filter.ShouldReconcile(id) {
-		c.Store.UpdateStatus(id, store.StatusReady, store.MsgUnchanged)
+// preGate marks suspended objects Ready; refresh MUST never apply changed-only filtering.
+func (c *Controller) preGate(obj manifest.BaseManifest) bool {
+	if s, ok := obj.(source.Suspendable); ok && s.Suspended() {
+		c.Store.UpdateStatus(obj.Named(), store.StatusReady, store.MsgSuspended)
 		return true
 	}
 	return false
@@ -453,8 +441,7 @@ func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 		return zero, false, err
 	}
 	obj, ok := c.Store.Get[T](id)
-	if s, suspendable := any(obj).(source.Suspendable); ok && suspendable && s.Suspended() {
-		c.preGate(id, true)
+	if ok && c.preGate(obj) {
 		return obj, true, errSuspended
 	}
 	return obj, ok, nil
@@ -540,34 +527,32 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 	return nil
 }
 
-// Dispatch bundles a controller's suspension check and typed reconcile body.
-type Dispatch[T manifest.BaseManifest] struct {
-	Suspended func(T) bool
-	Reconcile func(context.Context, T, manifest.DrainLevel) error
-}
-
 // DispatchNode runs id's reconcile body under the dag engine and reports the
-// blocked dependency set (nil = terminalized). It performs the preGate /
-// preflight pre-checks, then RunWithStatusOutcome. level threads the
+// blocked dependency set (nil = terminalized). It checks suspension, the
+// unchanged filter, and preflight before RunWithStatusOutcome. level threads the
 // scheduler's fixpoint level into Require. The orchestrator's Dispatcher
 // calls this, routing by Kind, so no per-kind match check is needed here.
 func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
-	dispatch Dispatch[T],
+	fn func(context.Context, T, manifest.DrainLevel) error,
 ) []manifest.NamedResource {
 	prior, _ := c.Store.GetStatus(id)
 	reconcile := func(ctx context.Context, obj T) error {
-		return dispatch.Reconcile(ctx, obj, level)
+		return fn(ctx, obj, level)
 	}
 	obj, ok := c.Store.Get[T](id)
 	if !ok {
 		// Vanished — RunWithStatusOutcome's vanished branch records a terminal status.
 		return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
 	}
-	if c.preGate(id, dispatch.Suspended(obj)) {
-		return nil // gated out (suspended/unchanged)
+	if c.preGate(obj) {
+		return nil
+	}
+	if c.filterActive() && !c.filter.ShouldReconcile(id) {
+		c.Store.UpdateStatus(id, store.StatusReady, store.MsgUnchanged)
+		return nil
 	}
 	if msg, failed := c.PreflightFailure(id); failed {
 		c.Store.UpdateStatus(id, store.StatusFailed, msg)

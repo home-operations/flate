@@ -78,7 +78,9 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 			testutil.WriteFile(t, dir, "kubernetes/components/substitutions/kustomization.yaml",
 				"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - ./cluster-settings.yaml\n")
 			testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
-				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
+				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n"+
+					"---\napiVersion: foreign.example/v1\nkind: ConfigMap\nmetadata: {name: foreign-config}\ndata: {VALUE: foreign}\n"+
+					"---\napiVersion: foreign.example/v1\nkind: Secret\nmetadata: {name: foreign-secret}\nstringData: {VALUE: foreign}\n")
 
 			testutil.WriteFile(t, dir, "kubernetes/apps/bare/kustomization.yaml", tc.local+"resources: [child.yaml]\nconfigMapGenerator:\n  - name: generated\n    literals: [CLUSTER_NAME=home]\nsecretGenerator:\n  - name: generated-secret\n    literals: [KEY=value]\n")
 			testutil.WriteFile(t, dir, "kubernetes/apps/bare/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -107,6 +109,17 @@ spec:
 			}
 			l.FinalizeIndex(dir, nil)
 			idx := l.Index
+			for _, id := range []manifest.NamedResource{
+				{Kind: manifest.KindConfigMap, Name: "foreign-config"},
+				{Kind: manifest.KindSecret, Name: "foreign-secret"},
+			} {
+				for _, ns := range []string{"", "flux-system", "default", "target"} {
+					id.Namespace = ns
+					if _, ok := idx.Lookup(id); ok {
+						t.Fatalf("foreign data lookalike indexed: %s", id)
+					}
+				}
+			}
 
 			// Produced in EVERY group's namespace (the namespace transformer stamps
 			// the component's namespace-less ConfigMap per base) — not just the first.
@@ -654,7 +667,7 @@ func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
 		t.Run(order, func(t *testing.T) {
 			id := secretID("apps", "input")
 			b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, secrets: map[manifest.NamedResource]*manifest.Secret{}}
-			first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"first": "..PLACEHOLDER_first.."}}
+			first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"first": "..PLACEHOLDER_first.."}}
 			second := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"second": "..PLACEHOLDER_second.."}}
 			want := first
 			switch order {

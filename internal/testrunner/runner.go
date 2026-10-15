@@ -45,7 +45,7 @@ func Run(result *orchestrator.Result) output.TestReport {
 			continue
 		}
 		// A synthetic HelmChart's failure is included in its consuming HR's reason.
-		if id == manifest.BootstrapSourceID || id.Kind == manifest.KindHelmChart {
+		if id == manifest.BootstrapSourceID || id.KindInfo().Includes("report-hidden") {
 			continue
 		}
 		extra = append(extra, id)

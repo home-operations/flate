@@ -82,13 +82,6 @@ func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
 	c.producers = opts.Producers
 }
 
-// suspendedSource reports whether a source object is suspended, via the
-// optional Suspendable interface.
-func suspendedSource(obj manifest.BaseManifest) bool {
-	s, _ := obj.(src.Suspendable)
-	return s != nil && s.Suspended()
-}
-
 // Owns reports whether id is a node this controller reconciles — the dag
 // Dispatcher uses it to route source nodes to ReconcileNode. A registered
 // kind is not enough: kind names are not unique across API groups, and a
@@ -108,10 +101,7 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 // blocked Secret dependencies, or nil when the fetch terminalizes. The
 // orchestrator's scheduler Dispatcher calls this for source-kind nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, base.Dispatch[manifest.BaseManifest]{
-		Suspended: suspendedSource,
-		Reconcile: c.reconcile,
-	})
+	return c.DispatchNode(ctx, id, level, c.reconcile)
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and

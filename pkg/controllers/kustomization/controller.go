@@ -91,10 +91,7 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 // dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.Kustomization]{
-		Suspended: (*manifest.Kustomization).Suspended,
-		Reconcile: c.reconcile,
-	})
+	return c.DispatchNode(ctx, id, level, c.reconcile)
 }
 
 func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, level manifest.DrainLevel) error {

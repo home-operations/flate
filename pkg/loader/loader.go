@@ -709,7 +709,7 @@ func (l *Loader) recordDataFile(absPath string) error {
 	}
 	for _, obj := range objs {
 		id := obj.Named()
-		if id.Kind != manifest.KindConfigMap && id.Kind != manifest.KindSecret {
+		if !manifest.KindOf(obj).Includes("data") {
 			// Non-data kinds (most commonly templated Flux CRs in a
 			// Component subtree) intentionally stay invisible — the
 			// producer-index use case is data-only.

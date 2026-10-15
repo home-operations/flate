@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // SliceProvider is a test-only Provider backed by in-memory slices.
@@ -23,20 +24,15 @@ type SliceProvider struct {
 	Secrets    []*manifest.Secret
 }
 
-// ConfigMap finds a ConfigMap by namespace+name.
-func (p *SliceProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
+// Data finds data by its full identity.
+func (p *SliceProvider) Data(id manifest.NamedResource) manifest.Data {
 	for _, c := range p.ConfigMaps {
-		if c.Name == name && c.Namespace == namespace {
+		if c.Named() == id {
 			return c
 		}
 	}
-	return nil
-}
-
-// Secret finds a Secret by namespace+name.
-func (p *SliceProvider) Secret(namespace, name string) *manifest.Secret {
 	for _, s := range p.Secrets {
-		if s.Name == name && s.Namespace == namespace {
+		if s.Named() == id {
 			return s
 		}
 	}
@@ -105,46 +101,38 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 }
 
 func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
-	cm := &manifest.ConfigMap{
-		Name: "extra", Namespace: "default",
-		Data: map[string]any{
-			"values.yaml": "replicaCount: 3\n",
-			// A non-scalar value bagValueAsString cannot coerce. decodeBag
-			// would error on this sibling regardless of map iteration order;
-			// the single-key path never reads it.
-			"broken": map[string]any{"nested": true},
-		},
-	}
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-	}
-	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
-		t.Fatalf("malformed sibling must not fail the ref (Flux reads only the named key): %v", err)
-	}
-	if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
-		t.Errorf("replicaCount = %v, want 3 (values.yaml read despite broken sibling)", got)
+	for _, obj := range []manifest.BaseManifest{
+		&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": "replicaCount: 3\n", "broken": map[string]any{"nested": true}}},
+		&manifest.Secret{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": "cmVwbGljYUNvdW50OiAzCg==", "broken": "!"}},
+	} {
+		t.Run(obj.Named().Kind, func(t *testing.T) {
+			st := store.New()
+			st.AddObject(obj)
+			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}}}
+			assert.NoError(t, ExpandValueReferences(hr, NewStoreProvider(st), nil))
+			if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
+				t.Errorf("replicaCount = %v, want 3", got)
+			}
+		})
 	}
 }
 
-// TestExpandValueReferences_MalformedRequestedKeyStillFails pins that the
-// error surface narrows ONLY for siblings: a malformed value at the REQUESTED
-// key still fails the ref, with decodeBag's original "stringData[key]" wording.
 func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
-	cm := &manifest.ConfigMap{
-		Name: "extra", Namespace: "default",
-		Data: map[string]any{"values.yaml": []any{"not", "a", "scalar"}},
-	}
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
-	}
-	err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
-	if err == nil {
-		t.Fatal("malformed requested key must still fail the ref")
-	}
-	if !strings.Contains(err.Error(), "stringData[values.yaml]") {
-		t.Errorf("error should name the requested key as decodeBag did: %v", err)
+	for _, obj := range []manifest.BaseManifest{
+		&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": []any{"not", "a", "scalar"}}},
+		&manifest.Secret{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": "!"}},
+	} {
+		for _, optional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/optional=%t", obj.Named().Kind, optional), func(t *testing.T) {
+				st := store.New()
+				st.AddObject(obj)
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
+				err := ExpandValueReferences(hr, NewStoreProvider(st), nil)
+				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "Data[values.yaml]") {
+					t.Fatalf("malformed requested key must fail with its name: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -249,17 +237,46 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 	}
 }
 
-func TestExpandValueReferences_MissingRequiredTargetPathFails(t *testing.T) {
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{
-			{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k"},
-		},
-	}
-
-	err := ExpandValueReferences(hr, &SliceProvider{}, nil)
-	if !errors.Is(err, manifest.ErrObjectNotFound) {
-		t.Fatalf("missing required targetPath ref = %v, want ErrObjectNotFound", err)
+func TestExpandValueReferences_MissingReferences(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		object     manifest.BaseManifest
+		want       error
+	}{
+		{"absent configmap", manifest.KindConfigMap, nil, manifest.ErrObjectNotFound},
+		{"absent secret", manifest.KindSecret, nil, manifest.ErrObjectNotFound},
+		{"empty configmap", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default"}, manifest.ErrObjectNotFound},
+		{"empty secret", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default"}, manifest.ErrObjectNotFound},
+		{"empty bags", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{}, StringData: map[string]any{}}, manifest.ErrObjectNotFound},
+		{"nonempty configmap", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default", Data: map[string]any{"other": "!"}}, manifest.ErrInvalidValuesReference},
+		{"nonempty secret data", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{"other": "!"}}, manifest.ErrInvalidValuesReference},
+		{"nonempty secret stringdata", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", StringData: map[string]any{"other": ""}}, manifest.ErrInvalidValuesReference},
+		{"wrong namespace", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "other", StringData: map[string]any{"v": "present"}}, manifest.ErrObjectNotFound},
+		{"wrong kind", manifest.KindSecret, &manifest.ConfigMap{Name: "vars", Namespace: "default", Data: map[string]any{"v": "present"}}, manifest.ErrObjectNotFound},
+		{"unsupported kind", "Deployment", nil, manifest.ErrInvalidValuesReference},
+	} {
+		for _, optional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/optional=%t", tc.name, optional), func(t *testing.T) {
+				st := store.New()
+				if tc.object != nil {
+					st.AddObject(tc.object)
+				}
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"existing": "kept"},
+					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional}}}
+				err := ExpandValueReferences(hr, NewStoreProvider(st), nil)
+				if optional && tc.kind != "Deployment" {
+					assert.NoError(t, err)
+					assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})
+					return
+				}
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("got %v, want %v", err, tc.want)
+				}
+				if tc.kind != "Deployment" && strings.Contains(err.Error(), `key "v"`) != errors.Is(tc.want, manifest.ErrInvalidValuesReference) {
+					t.Fatalf("wrong missing-resource/key disposition: %v", err)
+				}
+			})
+		}
 	}
 }
 

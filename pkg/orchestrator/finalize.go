@@ -30,7 +30,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		return external
 	})
 	for id, info := range failed {
-		if !isReconcilableKind(id.Kind) {
+		if !id.KindInfo().Includes("render") {
 			continue
 		}
 		// A resource that any parent's render also emitted is by
@@ -180,7 +180,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 // Walks the parent ownership chain per child so a deep render tree (grand-
 // parent → parent → child) propagates failures all the way down in
 // one pass. Cycle-guard via a visited set keeps the walk bounded.
-func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) (ksCount, hrCount int) {
+func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) (int, int) {
 	ancestorFailure := func(child manifest.NamedResource) (manifest.NamedResource, store.StatusInfo, bool) {
 		visited := map[manifest.NamedResource]struct{}{child: {}}
 		cur := child
@@ -221,23 +221,15 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 			"parent", parent.String(),
 			"reason", parentInfo.Message)
 	}
-	// Count KS/HR while we already hold the listings, so logSummary
-	// doesn't re-scan the store for the same two counts. cascade only
-	// mutates status (never adds/removes objects), so these counts equal
-	// what a later ListObjects would report.
-	for _, kind := range reconcilableKinds {
-		objs := o.store.ListObjects(kind)
-		switch kind {
-		case manifest.KindKustomization:
-			ksCount = len(objs)
-		case manifest.KindHelmRelease:
-			hrCount = len(objs)
-		}
-		for _, obj := range objs {
-			cascade(obj.Named())
-		}
+	kss := o.store.ListObjects(manifest.KindKustomization)
+	hrs := o.store.ListObjects(manifest.KindHelmRelease)
+	for _, ks := range kss {
+		cascade(ks.Named())
 	}
-	return ksCount, hrCount
+	for _, hr := range hrs {
+		cascade(hr.Named())
+	}
+	return len(kss), len(hrs)
 }
 
 func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo, ksCount, hrCount int) {

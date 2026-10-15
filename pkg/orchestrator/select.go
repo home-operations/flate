@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -153,15 +152,7 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 		return ""
 	}
 	src := hr.ChartSource()
-	switch source := s.run.store.GetObject(src).(type) {
-	case *manifest.OCIRepository:
-		if source.Reference != nil {
-			return cmp.Or(source.Reference.Digest, source.Reference.SemVer, source.Reference.Tag)
-		}
-	case *manifest.HelmChartSource:
-		return source.Version
-	}
-	return ""
+	return manifest.ChartVersion(s.run.store.GetObject(src))
 }
 
 func (s *selectionSide) collectWarnings(name string, kinds map[string]bool, comparison bool) {
@@ -185,7 +176,7 @@ func selectionCandidates(sides []selectionSide) []manifest.NamedResource {
 	for _, side := range sides {
 		for _, obj := range side.result.Objects {
 			id := obj.Named()
-			if id.Kind == manifest.KindKustomization || id.Kind == manifest.KindHelmRelease {
+			if manifest.KindOf(obj).Includes("render") {
 				producers[id] = struct{}{}
 			}
 		}

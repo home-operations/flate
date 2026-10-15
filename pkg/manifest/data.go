@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// Data is a lazy view of ConfigMap or Secret variables.
+// Data provides lazy ConfigMap/Secret variables and owned snapshot documents.
 type Data interface {
 	Value(string) (string, bool, error)
 	Keys() iter.Seq[string]
+	Snapshot() map[string]any
 }
 
 func scalarString(v any) (string, error) {

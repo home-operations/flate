@@ -81,6 +81,13 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 						}
 					}
 					if id == rs {
+						if s.GetObject(consumer) != nil {
+							t.Error("render leaf admitted before ResourceSet publication")
+						}
+						info, _ := s.GetStatus(source.Named())
+						if info.Status != store.StatusPending || !c.filter.ShouldReconcile(source.Named()) {
+							t.Errorf("ResourceSet arrived before source publication: %+v", info)
+						}
 						sets++
 						bucket, _ := s.Get[*manifest.Bucket](source.Named())
 						updated := *bucket
@@ -91,6 +98,9 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 						refires++
 					}
 					if id == consumer {
+						if sets != 1 {
+							t.Error("render leaf arrived before ResourceSet publication")
+						}
 						consumers++
 						info, _ := s.GetStatus(source.Named())
 						if info.Status != store.StatusPending || !c.filter.ShouldReconcile(consumer) {
@@ -145,6 +155,41 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != tc.want {
 			t.Errorf("%s status = %s, want %s", tc.obj.Named(), info.Status, tc.want)
 		}
+	}
+	for _, tc := range []struct {
+		obj    manifest.BaseManifest
+		refire bool
+	}{
+		{&manifest.GitRepository{Name: "child"}, true},
+		{&manifest.OCIRepository{Name: "child"}, true},
+		{&manifest.HelmRepository{Name: "child"}, true},
+		{&manifest.Bucket{Name: "child"}, true},
+		{&manifest.ExternalArtifact{Name: "child"}, true},
+		{&manifest.Kustomization{Name: "child"}, true},
+		{&manifest.HelmChartSource{Name: "child"}, false},
+		{&manifest.HelmRelease{Name: "child"}, false},
+		{&manifest.ResourceSet{Name: "child"}, false},
+		{&manifest.ResourceSetInputProvider{Name: "child"}, false},
+		{&manifest.ConfigMap{Name: "child"}, false},
+		{&manifest.Secret{Name: "child"}, false},
+	} {
+		t.Run(tc.obj.Named().Kind, func(t *testing.T) {
+			s := store.New()
+			c := New(s, nil, "test")
+			obj := tc.obj.WithNamespace("apps")
+			s.AddObject(obj)
+			s.UpdateStatus(obj.Named(), store.StatusReady, "unchanged")
+			c.SetFilter(change.NewFilter(change.NewSet([]string{"parent.yaml"}), &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
+			}, s))
+			c.KeepEmitted(parent, obj)
+			want := store.StatusReady
+			if tc.refire {
+				want = store.StatusPending
+			}
+			info, _ := s.GetStatus(obj.Named())
+			assert.Equal(t, info.Status, want)
+		})
 	}
 }
 

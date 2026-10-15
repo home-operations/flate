@@ -11,18 +11,9 @@ type substitutionProvider struct {
 	fallback values.Provider
 }
 
-func (p *substitutionProvider) ConfigMap(namespace, name string) *manifest.ConfigMap {
-	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: name}
-	if obj, ok := p.sources[id].(*manifest.ConfigMap); ok {
+func (p *substitutionProvider) Data(id manifest.NamedResource) manifest.Data {
+	if obj, ok := p.sources[id].(manifest.Data); ok {
 		return obj
 	}
-	return p.fallback.ConfigMap(namespace, name)
-}
-
-func (p *substitutionProvider) Secret(namespace, name string) *manifest.Secret {
-	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: namespace, Name: name}
-	if obj, ok := p.sources[id].(*manifest.Secret); ok {
-		return obj
-	}
-	return p.fallback.Secret(namespace, name)
+	return p.fallback.Data(id)
 }

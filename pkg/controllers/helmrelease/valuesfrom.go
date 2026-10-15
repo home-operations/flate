@@ -53,7 +53,8 @@ func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, hr *manifes
 			break
 		}
 		c.Store.UpdateStatus(id, store.StatusPending, "awaiting pre-render references")
-		if err := c.Require(ctx, id, preDeps, level); err != nil {
+		fresh, found, err := c.RequireRefresh[*manifest.HelmRelease](ctx, id, preDeps, level)
+		if err != nil {
 			if failed, ok := errors.AsType[*manifest.DependencyFailedError](err); ok && c.allowMissingSecrets {
 				if next, ok := c.omitFailedValuesFrom(hr, failed.Failed); ok {
 					for _, omitted := range omittedValuesRefIDs(hr, next) {
@@ -65,9 +66,9 @@ func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, hr *manifes
 			}
 			return nil, nil, err
 		}
-		if obj, ok := c.Store.Get[*manifest.HelmRelease](id); ok {
-			hr = obj
-			unfiltered = obj
+		if found {
+			hr = fresh
+			unfiltered = fresh
 		}
 		if len(omittedValuesRefs) > 0 {
 			hr = removeValuesRefs(hr, omittedValuesRefs)

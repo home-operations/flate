@@ -8,7 +8,6 @@ package depwait
 
 import (
 	"errors"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -52,18 +51,6 @@ type ExistenceLookup interface {
 	Promote(id manifest.NamedResource) bool
 }
 
-// Bucket names by their first byte to avoid hashing statusless dependencies.
-var statusKinds = func() [256][]string {
-	var kinds [256][]string
-	for kind := range manifest.Kinds() {
-		if kind.Status {
-			first := kind.Kind[0]
-			kinds[first] = append(kinds[first], kind.Kind)
-		}
-	}
-	return kinds
-}()
-
 type dependencyState uint8
 
 const (
@@ -80,7 +67,11 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) dependencyState {
 			return depAbsent
 		}
 	}
-	if !supportsStatus(id.Kind, obj) {
+	facts := manifest.KindOf(obj)
+	if obj == nil {
+		facts = id.KindInfo()
+	}
+	if !facts.Status {
 		return depReady
 	}
 	if dep.ReadyExpr != "" {
@@ -94,17 +85,6 @@ func (w *Waiter) readyNow(dep manifest.DependencyRef) dependencyState {
 		return depReady
 	}
 	return depPending
-}
-
-// Status-only entries have no API group; preserve their kind-based readiness.
-func supportsStatus(kind string, obj manifest.BaseManifest) bool {
-	if kind == "" || !slices.Contains(statusKinds[kind[0]], kind) {
-		return false
-	}
-	if obj != nil {
-		return manifest.KindOf(obj).Status
-	}
-	return true
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:

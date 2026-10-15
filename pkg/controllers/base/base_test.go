@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -290,16 +291,13 @@ func TestDispatchNode(t *testing.T) {
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
 	var ran atomic.Int64
-	suspended := func(hr *manifest.HelmRelease) bool { return hr.Name == "suspended" }
 	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error { ran.Add(1); return nil }
 	dispatch := func(id manifest.NamedResource) {
-		c.DispatchNode(t.Context(), id, manifest.DrainNone, base.Dispatch[*manifest.HelmRelease]{
-			Suspended: suspended, Reconcile: reconcile,
-		})
+		c.DispatchNode(t.Context(), id, manifest.DrainNone, reconcile)
 	}
 
 	// Suspended → preGate bails to Ready/"suspended", no reconcile.
-	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns"}
+	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns", Suspend: true}
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
 	if info, _ := s.GetStatus(susHR.Named()); info.Message != "suspended" {
@@ -324,6 +322,48 @@ func TestDispatchNode(t *testing.T) {
 
 	if got := ran.Load(); got != 1 {
 		t.Errorf("reconcile ran %d times; want 1 (only the clean, preflight-clean HR)", got)
+	}
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+	chart.Suspend = true
+	for _, tc := range []struct {
+		name      string
+		obj       manifest.BaseManifest
+		filtered  bool
+		preflight bool
+		message   string
+		run       bool
+	}{
+		{"filtered", &manifest.HelmRelease{Name: "active"}, true, false, store.MsgUnchanged, false},
+		{"suspended before filter", &manifest.HelmRelease{Name: "suspended", Suspend: true}, true, false, store.MsgSuspended, false},
+		{"suspended before preflight", &manifest.HelmRelease{Name: "suspended", Suspend: true}, false, true, store.MsgSuspended, false},
+		{"nonimplementing chart", chart, false, false, "", true},
+		{"nonimplementing data", &manifest.ConfigMap{Name: "data"}, false, false, "", true},
+		{"external artifact", &manifest.ExternalArtifact{Name: "source"}, false, false, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			st.AddObject(tc.obj)
+			id := tc.obj.Named()
+			c := base.New(st, nil, "test")
+			if tc.filtered {
+				c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
+				}, st))
+			}
+			if tc.preflight {
+				c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle", true })
+			}
+			c.StartLifecycle()
+			ran := false
+			c.DispatchNode(t.Context(), id, manifest.DrainNone, func(_ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+				ran = true
+				return nil
+			})
+			info, _ := st.GetStatus(id)
+			if ran != tc.run || info.Status != store.StatusReady || info.Message != tc.message {
+				t.Fatalf("ran=%t status=%+v, want ran=%t Ready/%s", ran, info, tc.run, tc.message)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,7 +69,12 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 	cm.Data["nested"] = map[string]any{"items": []any{"owned"}}
 	raw := []byte("b3duZWQ=")
 	cm.Data["BINARY"] = raw
-	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"VALUE": "b3duZWQ="}, StringData: map[string]any{"VALUE": "owned"}}
+	const cipher = "ENC[AES256_GCM,data:fixture,type:str]"
+	cm.Data["CIPHER"] = cipher
+	secretData, secretStringData := []byte("b3duZWQ="), []byte("owned")
+	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"VALUE": "b3duZWQ=", "BINARY": secretData}, StringData: map[string]any{"VALUE": "owned", "BINARY": secretStringData}}
+	secret.Data["ENCODED"] = base64.StdEncoding.EncodeToString([]byte(cipher))
+	secret.StringData["CIPHER"] = cipher
 	overlay := map[string]string{"VALUE": "owned"}
 	sources := []SubstitutionSource{source, {Object: secret, Path: "secret-values.yaml"}}
 	o := newSubstitutionOrchestrator(t, Config{Path: t.TempDir(), SubstituteFrom: sources, Substitute: overlay})
@@ -76,6 +82,7 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 	cm.Data["VALUE"] = "changed"
 	cm.Data["nested"].(map[string]any)["items"].([]any)[0] = "changed"
 	raw[0] = 'A'
+	secretData[0], secretStringData[0] = 'A', 'A'
 	secret.Data["VALUE"] = "changed"
 	secret.StringData["VALUE"] = "changed"
 	sources[0].Path = "changed"
@@ -85,8 +92,12 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 		t.Fatal("SDK inputs alias caller memory")
 	}
 	ownedSecret := o.cfg.SubstituteFrom[1].Object.(*manifest.Secret)
-	if ownedSecret.Data["VALUE"] != "b3duZWQ=" || ownedSecret.StringData["VALUE"] != "owned" {
+	if ownedSecret.Data["VALUE"] != "b3duZWQ=" || ownedSecret.StringData["VALUE"] != "owned" || string(ownedSecret.Data["BINARY"].([]byte)) != "b3duZWQ=" || string(ownedSecret.StringData["BINARY"].([]byte)) != "owned" {
 		t.Fatal("Secret bags alias caller memory")
+	}
+	decoded, _, err := ownedSecret.Value("ENCODED")
+	if err != nil || !manifest.HasValuePlaceholder(decoded) || !manifest.HasValuePlaceholder(owned.Data["CIPHER"].(string)) || !manifest.HasValuePlaceholder(ownedSecret.StringData["CIPHER"].(string)) || cm.Data["CIPHER"] != cipher || secret.StringData["CIPHER"] != cipher {
+		t.Fatal("snapshot sanitation lost ciphertext handling or mutated SDK input")
 	}
 	plain := newSubstitutionOrchestrator(t, Config{Path: t.TempDir()})
 	if plain.cfg.Substitute != nil || plain.cfg.SubstituteFrom != nil || plain.substitutionSources != nil {

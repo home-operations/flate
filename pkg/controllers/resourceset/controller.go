@@ -73,10 +73,7 @@ func (c *Controller) Configure(opts Options) {
 // The orchestrator's scheduler Dispatcher calls this for ResourceSet
 // nodes. Reconciliation-disabled ResourceSets use the shared suspension gate.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, base.Dispatch[*manifest.ResourceSet]{
-		Suspended: (*manifest.ResourceSet).Suspended,
-		Reconcile: c.reconcile,
-	})
+	return c.DispatchNode(ctx, id, level, c.reconcile)
 }
 
 func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {

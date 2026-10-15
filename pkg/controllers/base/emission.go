@@ -18,7 +18,7 @@ type Child struct {
 // raw children retain AddObject's deduplication and arrival behavior.
 // Returned documents are authoritative even when a typed child is invalid.
 func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions, publish bool) ([]Child, []map[string]any) {
-	helmRelease := parent.Kind == manifest.KindHelmRelease
+	sourceOnly := parent.KindInfo().Includes("source-only")
 	log := c.Logger()
 	children := make([]Child, 0, len(docs))
 	var emitted []manifest.NamedResource
@@ -42,7 +42,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		}
 		children = append(children, Child{Obj: obj, Doc: doc})
 		info := manifest.KindOf(obj)
-		if info.Tracked && (!helmRelease || info.Group == manifest.SourceDomain) {
+		if info.Tracked && (!sourceOnly || info.Group == manifest.SourceDomain) {
 			if emitted == nil {
 				emitted = make([]manifest.NamedResource, 0, len(docs))
 			}
@@ -55,9 +55,9 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		id := obj.Named()
 		info := manifest.KindOf(obj)
 		switch {
-		case !info.Tracked || helmRelease && info.Group != manifest.SourceDomain:
+		case !info.Tracked || sourceOnly && info.Group != manifest.SourceDomain:
 			c.Store.AddObject(obj)
-		case info.Status && info.Group != manifest.SourceDomain:
+		case info.Includes("render"):
 			continue
 		default:
 			c.KeepEmitted(parent, obj)
@@ -66,14 +66,14 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 			}
 		}
 	}
-	if helmRelease {
+	if sourceOnly {
 		return children, docs
 	}
 	var leaves []manifest.BaseManifest
 	for _, child := range children {
 		obj := child.Obj
 		info := manifest.KindOf(obj)
-		if !info.Status || info.Group == manifest.SourceDomain {
+		if !info.Includes("render") {
 			continue
 		}
 		id := obj.Named()

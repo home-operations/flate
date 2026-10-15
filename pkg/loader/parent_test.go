@@ -109,7 +109,24 @@ func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest
 }
 
 func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
-	for _, kind := range []string{manifest.KindHelmRelease, manifest.KindResourceSet} {
+	for _, tc := range []struct {
+		kind   string
+		parent bool
+	}{
+		{manifest.KindKustomization, true},
+		{manifest.KindHelmRelease, true},
+		{manifest.KindResourceSet, true},
+		{manifest.KindGitRepository, false},
+		{manifest.KindOCIRepository, false},
+		{manifest.KindHelmRepository, false},
+		{manifest.KindHelmChart, false},
+		{manifest.KindBucket, false},
+		{manifest.KindExternalArtifact, false},
+		{manifest.KindResourceSetInputProvider, false},
+		{manifest.KindConfigMap, false},
+		{manifest.KindSecret, false},
+	} {
+		kind, eligible := tc.kind, tc.parent
 		t.Run(kind, func(t *testing.T) {
 			s := store.New()
 			outer := &manifest.Kustomization{Name: "outer", Namespace: "flux-system", Path: "./apps"}
@@ -134,12 +151,23 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
 					id := manifest.NamedResource{Kind: kind, Namespace: tc.namespace, Name: tc.name}
-					if got := parents[id]; got != tc.want {
-						t.Errorf("parent[%s] = %v, want %v", id, got, tc.want)
+					want := tc.want
+					if !eligible {
+						want = manifest.NamedResource{}
+					}
+					if s.GetObject(id) != nil {
+						t.Fatal("indexed child must stay absent from store")
+					}
+					if got := parents[id]; got != want {
+						t.Errorf("parent[%s] = %v, want %v", id, got, want)
 					}
 				})
 			}
-			if len(parents) != 2 || len(s.ListObjects(kind)) != 0 {
+			want := 0
+			if eligible {
+				want = 2
+			}
+			if len(parents) != want {
 				t.Errorf("parents = %v; indexed children must stay absent from store", parents)
 			}
 		})

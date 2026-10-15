@@ -358,12 +358,14 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 
 func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 	for _, site := range []struct {
-		name, message string
-		parent        bool
+		name, message    string
+		parent, retained bool
 	}{
-		{"parent", "waiting for parent KS", true},
-		{"dependencies_after_parent", "resolving dependencies", true},
-		{"dependencies_without_parent", "resolving dependencies", false},
+		{"parent", "waiting for parent KS", true, false},
+		{"dependencies_after_parent", "resolving dependencies", true, false},
+		{"dependencies_without_parent", "resolving dependencies", false, false},
+		{"pre_render", "awaiting pre-render references", false, false},
+		{"pre_render_retained", "awaiting pre-render references", true, true},
 	} {
 		t.Run(site.name, func(t *testing.T) {
 			for _, suspended := range []bool{false, true} {
@@ -400,6 +402,11 @@ data: {greeting: hi}
 							"values":    map[string]any{"output": "stale-output"},
 						},
 					}
+					if site.message == "awaiting pre-render references" {
+						input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "{}"}}
+						st.AddObject(input)
+						doc["spec"].(map[string]any)["valuesFrom"] = []any{map[string]any{"kind": manifest.KindConfigMap, "name": input.Name}}
+					}
 					obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 					if err != nil {
 						t.Fatal(err)
@@ -408,16 +415,24 @@ data: {greeting: hi}
 					original := hr.Clone()
 					st.AddObject(hr)
 					st.UpdateStatus(id, store.StatusPending, "")
+					var retained *store.HelmReleaseArtifact
+					if site.retained {
+						retained = &store.HelmReleaseArtifact{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
+						st.SetArtifact(id, retained)
+					}
 					replacement := manifest.DeepCopyMap(doc)
 					spec := replacement["spec"].(map[string]any)
 					spec["suspend"] = suspended
 					spec["values"].(map[string]any)["output"] = "hr-refresh-output"
-					var observations, parentEvents atomic.Int64
+					var observations, parentEvents, renders atomic.Int64
 					var fired, published atomic.Bool
 					unsub := st.AddListener(store.EventStatusUpdated, func(other manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
 						if other != id || !ok {
 							return
+						}
+						if info.Message == "rendering chart" {
+							renders.Add(1)
 						}
 						if info.Message == "waiting for parent KS" {
 							parentEvents.Add(1)
@@ -471,10 +486,10 @@ data: {greeting: hi}
 						if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 							t.Errorf("status = %+v, want Ready/suspended", info)
 						}
-						if art != nil || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[id]) != 0 {
+						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[id]) != 0 {
 							t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
 						}
-					} else if info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1 || st.GetObject(output) == nil {
+					} else if info.Status != store.StatusReady || art == nil || art == retained || renders.Load() != 1 || len(art.Manifests) != 1 || st.GetObject(output) == nil {
 						t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v", output, info, art)
 					}
 				})

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"slices"
 )
 
 // ConfigMap is the core/v1 ConfigMap.
@@ -41,6 +42,13 @@ func (c *ConfigMap) Value(key string) (string, bool, error) {
 
 // Keys yields the data keys without imposing output order.
 func (c *ConfigMap) Keys() iter.Seq[string] { return maps.Keys(c.Data) }
+
+// Snapshot returns an owned document for sanitation through ParseDoc.
+func (c *ConfigMap) Snapshot() map[string]any {
+	return map[string]any{"apiVersion": "v1", "kind": KindConfigMap,
+		"metadata": map[string]any{"name": c.Name, "namespace": c.Namespace},
+		"data":     copyData(c.Data)}
+}
 
 func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 	name, ns, err := requireMetadata(KindConfigMap, doc)
@@ -110,6 +118,28 @@ func (s *Secret) Keys() iter.Seq[string] {
 			}
 		}
 	}
+}
+
+// HasPlaceholder reports whether the payload contains a wiped value.
+func (s *Secret) HasPlaceholder() bool {
+	return ContainsValuePlaceholder(s.StringData) || ContainsValuePlaceholder(s.Data)
+}
+
+// Snapshot returns an owned document for sanitation through ParseDoc.
+func (s *Secret) Snapshot() map[string]any {
+	return map[string]any{"apiVersion": "v1", "kind": KindSecret,
+		"metadata": map[string]any{"name": s.Name, "namespace": s.Namespace},
+		"data":     copyData(s.Data), "stringData": copyData(s.StringData)}
+}
+
+func copyData(data map[string]any) map[string]any {
+	owned := DeepCopyMap(data)
+	for name, value := range owned {
+		if bytes, ok := value.([]byte); ok {
+			owned[name] = slices.Clone(bytes)
+		}
+	}
+	return owned
 }
 
 func parseSecret(doc map[string]any) (*Secret, error) {

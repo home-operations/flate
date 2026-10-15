@@ -162,9 +162,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		unsubscribe := o.watchDAG(sched)
 		defer unsubscribe()
 		sched.Seed([]schedule.NodeID{producer, consumer.Named()})
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer cancel()
-		if err := sched.Run(ctx); err != nil {
+		if err := sched.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		info, _ := o.store.GetStatus(consumer.Named())

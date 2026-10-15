@@ -43,7 +43,6 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, err
 	rf.start.Do(func() {
 		go func() {
 			rf.body, rf.err = httpGetURL(context.Background(), urlStr)
-			close(rf.done)
 			// On transient failure (network / 5xx / timeout — anything
 			// that isn't a definitive 4xx), drop the cache entry so
 			// the next caller retries instead of inheriting our
@@ -53,6 +52,7 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string) ([]byte, err
 			if rf.err != nil && !isHTTPClientError(rf.err) {
 				c.remoteFetches.CompareAndDelete(urlStr, rf)
 			}
+			close(rf.done)
 		}()
 	})
 	select {

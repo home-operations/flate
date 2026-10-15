@@ -193,10 +193,7 @@ func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 	}
 }
 
-// BenchmarkLoadChart_Cached measures LoadChart on a warm chart — the
-// mtime+size fingerprint hits and the cached pointer (cloned for
-// per-call mutation safety) returns. The clone walk is the dominant
-// cost on the cached path.
+// BenchmarkLoadChart_Cached validates mutable content and reuses its canonical chart.
 func BenchmarkLoadChart_Cached(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(newTestCache(b, ""))
@@ -216,15 +213,15 @@ func BenchmarkLoadChart_Cached(b *testing.B) {
 	}
 	ctx := context.Background()
 	// Prime the cache so b.Loop measures the warm path.
-	if _, err := cli.LoadChart(ctx, hr); err != nil {
-		b.Fatalf("warm LoadChart: %v", err)
+	if _, err := cli.loadChart(ctx, hr); err != nil {
+		b.Fatalf("warm loadChart: %v", err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := cli.LoadChart(ctx, hr); err != nil {
-			b.Fatalf("LoadChart: %v", err)
+		if _, err := cli.loadChart(ctx, hr); err != nil {
+			b.Fatalf("loadChart: %v", err)
 		}
 	}
 }
@@ -259,7 +256,7 @@ func BenchmarkMergeChartValuesFiles(b *testing.B) {
 
 // stageBenchChartDir copies the testdata/simple/charts/mychart layout
 // into a fresh temp dir under b.TempDir() so the bench is hermetic
-// (the helm client's LoadChart caches by on-disk path; reusing the
+// (the helm client's loader caches captured content; reusing the
 // repo's checked-in chart would couple every run's cache to that
 // path's mtime).
 func stageBenchChartDir(b *testing.B) string {

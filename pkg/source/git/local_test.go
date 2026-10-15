@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 )
 
 func TestResolveLocal_References(t *testing.T) {
@@ -96,6 +97,16 @@ func TestResolveLocal_References(t *testing.T) {
 			if artifact.FS == nil || (artifact.Key == "") != (tc.want == b) {
 				t.Fatalf("FS/Key state did not distinguish HEAD from committed content: %+v", artifact)
 			}
+			view, pin, err := source.ReadView(t.Context(), artifact.FS, false)
+			assert.NoError(t, err)
+			assert.Equal(t, pin, "")
+			data, err := fs.ReadFile(view, "value.txt")
+			assert.NoError(t, err)
+			wantBody := "A"
+			if tc.want == b {
+				wantBody = "dirty"
+			}
+			assert.Equal(t, string(data), wantBody)
 			if (artifact.LocalPath == root) != (tc.want == b) {
 				t.Fatalf("unexpected artifact path %q", artifact.LocalPath)
 			}

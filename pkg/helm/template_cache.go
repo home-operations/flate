@@ -20,10 +20,8 @@ import (
 // pointer returns a stable sentinel digest distinct from any
 // well-formed chart.
 //
-// Memoized by Client.LoadChart at chart-cache fill time so repeat
-// Template calls against the same path never recompute it; the
-// fingerprint then participates in the template-output key built
-// by computeTemplateKey.
+// Archive loads memoize this at chart-cache publication. Directory loads
+// fingerprint captured records before parsing instead.
 func chartFingerprint(ch *chart.Chart) string {
 	h := sha256.New()
 	if !writeChartFingerprint(h, ch) {
@@ -38,7 +36,7 @@ func chartFingerprint(ch *chart.Chart) string {
 // stale entry never serves a different render. Unmarshalable values return
 // an empty key; callers MUST skip cache reads and writes for that render.
 //
-// loaded.Fingerprint is computed by LoadChart; when empty, the chart
+// loaded.fingerprint is computed by loadChart; when empty, the chart
 // content is fingerprinted here. Cache owns persistent build identity isolation.
 //
 // Inputs folded into the key:
@@ -80,27 +78,27 @@ func chartFingerprint(ch *chart.Chart) string {
 //     its own metadata afterward.
 //
 // Cost of computing the key: dominated by JSON-marshaling
-// finalValues when loaded.Fingerprint is precomputed. A 50 KB values map
+// finalValues when loaded.fingerprint is precomputed. A 50 KB values map
 // marshals in ~50 µs — cheap vs. the 5-50 ms render the cache hit
 // avoids.
 func computeTemplateKey(
-	loaded ChartLoadResult,
+	loaded chartLoadResult,
 	finalValues map[string]any,
 	opts Options,
 	hr *manifest.HelmRelease,
 ) string {
 	h := sha256.New()
 
-	// Chart fingerprint. Precomputed at LoadChart time when the
+	// Chart fingerprint. Precomputed at chart-load time when the
 	// chart is loaded; fall back to a fresh walk when
 	// callers pass an empty fingerprint (tests, direct compute calls).
-	if loaded.Fingerprint == "" {
-		if !writeChartFingerprint(h, loaded.Chart) {
+	if loaded.fingerprint == "" {
+		if !writeChartFingerprint(h, loaded.chart) {
 			return ""
 		}
 	} else {
 		_, _ = h.Write([]byte("chart-fp:"))
-		_, _ = h.Write([]byte(loaded.Fingerprint))
+		_, _ = h.Write([]byte(loaded.fingerprint))
 		_, _ = h.Write([]byte{0})
 	}
 

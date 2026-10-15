@@ -30,7 +30,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 				}
 				cli := newClient()
 				if warm {
-					if _, err := cli.LoadChart(b.Context(), hr); err != nil {
+					if _, err := cli.loadChart(b.Context(), hr); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -39,7 +39,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 					if !warm {
 						cli = newClient()
 					}
-					if _, err := cli.LoadChart(b.Context(), hr); err != nil {
+					if _, err := cli.loadChart(b.Context(), hr); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -87,7 +87,7 @@ func BenchmarkChartValues_Cached(b *testing.B) {
 		b.Fatal(err)
 	}
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	loaded, err := cli.LoadChart(b.Context(), hr)
+	loaded, err := cli.loadChart(b.Context(), hr)
 	if err != nil {
 		b.Fatal(err)
 	}

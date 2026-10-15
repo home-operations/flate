@@ -59,7 +59,7 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	if s.base.backing != nil {
 		backing = s.base.backing
 	}
-	baseline, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Mode: gittree.Direct, Current: s.current, Changes: routing})
+	baseline, _, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Mode: gittree.Direct, Current: s.current, Changes: routing})
 	if err != nil {
 		return nil, nil, err
 	}

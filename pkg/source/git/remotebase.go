@@ -68,13 +68,13 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		input, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Commit: hash}, gittree.ViewOptions{Mode: gittree.RemoteBase}, nil)
+		input, _, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Commit: hash}, gittree.ViewOptions{Mode: gittree.RemoteBase}, nil)
 		return hash, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	input, err = generationView(ctx, generation, gittree.ViewOptions{Mode: gittree.RemoteBase}, input)
+	input, _, err = generationView(ctx, generation, gittree.ViewOptions{Mode: gittree.RemoteBase}, input)
 	if err != nil {
 		return nil, fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
 	}

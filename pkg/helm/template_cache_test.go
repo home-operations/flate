@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/assert"
@@ -77,7 +79,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 			t.Run(fmt.Sprintf("disabled_%t/%s", disable, tc.name), func(t *testing.T) {
 				st, hr, dir := ociRenderFixture(t)
 				original := hr.Clone()
-				cli, err := NewClient(newTestCache(t, ""))
+				cli, err := NewClient(newTestCache(t, t.TempDir()))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -91,19 +93,26 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					loaded, err := cli.LoadChart(t.Context(), hr)
+					loaded, err := cli.loadChart(t.Context(), hr)
 					if err != nil {
 						t.Fatal(err)
 					}
-					assert.Equal(t, loaded.Chart.Metadata.Version, "6.15.0")
-					assert.Equal(t, loaded.Chart.Dependencies()[0].Metadata.Version, "1.2.3+child")
-					fp := ociChartFingerprint(loaded.Fingerprint, &identity, disable)
-					valuesKey := chartValuesCacheKey(fp, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+					assert.Equal(t, loaded.chart.Metadata.Version, "6.15.0")
+					assert.Equal(t, loaded.chart.Dependencies()[0].Metadata.Version, "1.2.3+child")
+					fp := ociChartFingerprint(loaded.fingerprint, &identity, disable)
+					valuesKey := chartValuesCacheKey(loaded.fingerprint, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 					merged, ok := cli.chartValuesCache[valuesKey]
 					if !ok || fp == "" {
-						t.Fatal("render did not cache values under its effective fingerprint")
+						t.Fatal("render did not cache values under captured content")
 					}
-					key := computeTemplateKey(ChartLoadResult{Fingerprint: fp, Chart: loaded.Chart}, merged, opts, hr)
+					key := computeTemplateKey(chartLoadResult{fingerprint: fp, chart: loaded.chart}, merged, opts, hr)
+					if renderPersistenceEligible(t) {
+						reader, _, err := cli.cache.Blob(t.Context(), cache.BlobKey{ID: key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+						assert.NoError(t, err)
+						data, readErr := io.ReadAll(reader)
+						assert.NoError(t, errors.Join(readErr, reader.Close()))
+						assert.Equal(t, string(data), out)
+					}
 					repeated, err := cli.Template(t.Context(), hr, nil, opts)
 					if err != nil || repeated != out {
 						t.Fatalf("repeat render differs: %v", err)
@@ -130,7 +139,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				assert.Equal(t, first == second, tc.wantSameOutput)
 				assert.Equal(t, fp != nextFP, tc.wantFingerprintChanged)
 				assert.Equal(t, key != nextKey, tc.wantFingerprintChanged)
-				assert.Equal(t, valuesKey != nextValuesKey, tc.wantFingerprintChanged)
+				assert.Equal(t, valuesKey != nextValuesKey, tc.marker != "")
 				if tc.marker != "" && !strings.Contains(second, `marker: "`+tc.marker+`"`) {
 					t.Fatal(second)
 				}
@@ -144,6 +153,26 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 			})
 		}
 	}
+
+	t.Run("one admitted artifact", func(t *testing.T) {
+		st, hr, dir := ociRenderFixture(t)
+		reads := map[string]int{}
+		input := os.DirFS(dir)
+		observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) { reads[name]++; return input.Open(name) }}
+		first := &store.SourceArtifact{FS: observed, Key: "untrusted", Revision: "6.15.0@" + digest, Digest: digest}
+		second := &store.SourceArtifact{Revision: "invalid", FS: fstest.MapFS{}}
+		resolver := &changingChartResolver{SourceResolver: NewStoreSourceResolver(st), artifacts: []*store.SourceArtifact{first, second}}
+		cli, err := NewClient(newTestCache(t, ""))
+		assert.NoError(t, err)
+		cli.SetSourceResolver(resolver)
+		out, err := cli.Template(t.Context(), hr, nil, Options{})
+		assert.NoError(t, err)
+		assert.Equal(t, resolver.calls, 1)
+		assert.Equal(t, reads[".helmignore"], 1)
+		assert.Equal(t, reads["templates/cm.yaml"], 1)
+		assert.Equal(t, strings.Contains(out, "6.15.0+ff3d3e14728f"), true)
+		assert.Equal(t, first.Key, "untrusted")
+	})
 }
 
 func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
@@ -169,7 +198,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				loaded, err := cli.LoadChart(t.Context(), hr)
+				loaded, err := cli.loadChart(t.Context(), hr)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -198,8 +227,8 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 	values2 := map[string]any{"b": 2, "a": 1} // different in-memory order
 	opts := Options{KubeVersion: "1.33"}
 
-	k1 := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values1, opts, hr)
-	k2 := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values2, opts, hr)
+	k1 := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values1, opts, hr)
+	k2 := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values2, opts, hr)
 	if k1 != k2 {
 		t.Errorf("same logical values must produce same key:\nk1=%s\nk2=%s", k1, k2)
 	}
@@ -208,7 +237,7 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	ch, hr := minimalChart(), minimalHR()
 	values := map[string]any{"k": "v"}
-	base := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, Options{}, hr)
+	base := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values, Options{}, hr)
 	if base == "" {
 		t.Fatal("valid inputs produced an empty key")
 	}
@@ -232,7 +261,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			default:
 				t.Fatalf("new option %s requires an explicit cache-key decision", field.Name)
 			}
-			key := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, hr)
+			key := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values, opts, hr)
 			if key == "" {
 				t.Fatal("valid option produced an empty key")
 			}
@@ -269,17 +298,17 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			default:
 				t.Fatalf("field %s requires an explicit cache-key decision", field)
 			}
-			key := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, Options{}, alt)
+			key := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values, Options{}, alt)
 			if key == "" || key == base {
 				t.Fatal("changed release input did not produce a distinct valid key")
 			}
 		})
 	}
 	t.Run("ChartFingerprint", func(t *testing.T) {
-		assert.Equal(t, computeTemplateKey(ChartLoadResult{Fingerprint: "different", Chart: ch}, values, Options{}, hr) == base, false)
+		assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: "different", chart: ch}, values, Options{}, hr) == base, false)
 	})
 	t.Run("Values", func(t *testing.T) {
-		assert.Equal(t, computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, map[string]any{"k": "different"}, Options{}, hr) == base, false)
+		assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, map[string]any{"k": "different"}, Options{}, hr) == base, false)
 	})
 }
 
@@ -296,7 +325,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	values := map[string]any{"k": "v"}
 	opts := Options{KubeVersion: "1.33"}
 	base := minimalHR()
-	baseKey := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, base)
+	baseKey := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values, opts, base)
 
 	t.Run("CommonMetadata does not change the key", func(t *testing.T) {
 		alt := *base
@@ -304,7 +333,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 			Labels:      map[string]string{"team": "platform"},
 			Annotations: map[string]string{"note": "x"},
 		}
-		if got := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, &alt); got != baseKey {
+		if got := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values, opts, &alt); got != baseKey {
 			t.Errorf("CommonMetadata must NOT affect the cache key (applied downstream of Template):\nbase=%s\nalt =%s", baseKey, got)
 		}
 	})
@@ -312,7 +341,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	t.Run("control: PostRenderers still diverges", func(t *testing.T) {
 		alt := *base
 		alt.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
-		if got := computeTemplateKey(ChartLoadResult{Fingerprint: "fp", Chart: ch}, values, opts, &alt); got == baseKey {
+		if got := computeTemplateKey(chartLoadResult{fingerprint: "fp", chart: ch}, values, opts, &alt); got == baseKey {
 			t.Error("PostRenderers changes rendered output and must still diverge the key (guards against dropping a real input)")
 		}
 	})
@@ -355,7 +384,7 @@ data:
 				t.Fatal(err)
 			}
 			assert.Equal(t, third == first, false)
-			loaded, err := cli.LoadChart(t.Context(), newHR())
+			loaded, err := cli.loadChart(t.Context(), newHR())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -396,7 +425,7 @@ data:
 }
 
 // minimalChart returns a tiny *chart.Chart fixture for the key-derivation
-// tests; it shares the same shape the real LoadChart path produces.
+// tests; it shares the same shape the real chart-loading path produces.
 func minimalChart() *chart.Chart {
 	return &chart.Chart{
 		Metadata: &chart.Metadata{Name: "test", Version: "0.1.0", APIVersion: "v2"},
@@ -484,4 +513,16 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+type changingChartResolver struct {
+	SourceResolver
+	artifacts []*store.SourceArtifact
+	calls     int
+}
+
+func (r *changingChartResolver) LocalSourceArtifact(_, _, _ string) *store.SourceArtifact {
+	artifact := r.artifacts[min(r.calls, len(r.artifacts)-1)]
+	r.calls++
+	return artifact
 }

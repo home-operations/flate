@@ -51,58 +51,69 @@ func chartPathInFS(input fs.FS) (string, error) {
 	return selected, nil
 }
 
-// The second result identifies an absent requested location, never a read failure
-// within an existing chart.
-func loadFSChart(input fs.FS, name string) (*chart.Chart, bool, error) {
+func loadFSChart(input fs.FS, name string) (*chart.Chart, string, bool, error) {
+	files, fingerprint, missing, err := captureChartDir(input, name)
+	if err != nil {
+		return nil, "", missing, err
+	}
+	if files != nil {
+		ch, err := loader.LoadFiles(files)
+		return ch, fingerprint, false, err
+	}
+	r, err := input.Open(name)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
+	}
+	ch, loadErr := loader.LoadArchive(r)
+	if err := errors.Join(loadErr, r.Close()); err != nil {
+		return nil, "", false, err
+	}
+	return ch, chartFingerprint(ch), false, nil
+}
+
+// A missing requested location is distinct from a read failure within a chart.
+func captureChartDir(input fs.FS, name string) ([]*archive.BufferedFile, string, bool, error) {
 	info, err := fs.Stat(input, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, true, fmt.Errorf("%w: chart not found at %s", manifest.ErrInput, name)
+			return nil, "", true, fmt.Errorf("%w: chart not found at %s", manifest.ErrInput, name)
 		}
-		return nil, false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
+		return nil, "", false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
 	}
 	if !info.IsDir() {
-		r, err := input.Open(name)
-		if err != nil {
-			return nil, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
-		}
-		ch, loadErr := loader.LoadArchive(r)
-		return ch, false, errors.Join(loadErr, r.Close())
+		return nil, "", false, nil
 	}
 	input, err = fs.Sub(input, name)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
+		return nil, "", false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
 	}
-	rules, err := chartIgnoreRules(input)
-	if err != nil {
-		return nil, false, fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
-	}
-	files, err := chartFilesInFS(input, rules)
-	if err != nil {
-		return nil, false, fmt.Errorf("%w: %w", manifest.ErrInput, err)
-	}
-	ch, err := loader.LoadFiles(files)
-	return ch, false, err
+	files, fingerprint, err := chartFilesInFS(input)
+	return files, fingerprint, false, err
 }
 
-func chartIgnoreRules(input fs.FS) (*ignore.Rules, error) {
+// The records and their identity MUST be finalized before LoadFiles consumes them.
+func chartFilesInFS(input fs.FS) ([]*archive.BufferedFile, string, error) {
 	rules := ignore.Empty()
+	var policy []byte
+	present := false
 	if r, err := input.Open(ignore.HelmIgnore); err == nil {
-		parsed, parseErr := ignore.Parse(r)
-		closeErr := r.Close()
-		if err := errors.Join(parseErr, closeErr); err != nil {
-			return nil, err
+		data, readErr := io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
+		if err := errors.Join(readErr, r.Close()); err != nil {
+			return nil, "", fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
 		}
-		rules = parsed
+		if int64(len(data)) > archive.MaxDecompressedChartSize {
+			return nil, "", fmt.Errorf("%w: chart ignore rules exceed maximum decompressed size", manifest.ErrInput)
+		}
+		policy, present = data, true
+		rules, err = ignore.Parse(bytes.NewReader(policy))
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
+		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+		return nil, "", fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
 	}
 	rules.AddDefaults()
-	return rules, nil
-}
-
-func chartFilesInFS(input fs.FS, rules *ignore.Rules) ([]*archive.BufferedFile, error) {
-	var files []*archive.BufferedFile
+	files := []*archive.BufferedFile{}
 	remaining := archive.MaxDecompressedChartSize
 	err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -127,23 +138,32 @@ func chartFilesInFS(input fs.FS, rules *ignore.Rules) ([]*archive.BufferedFile, 
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("cannot load irregular file %s as it has file mode type bits set", name)
 		}
-		r, err := input.Open(name)
-		if err != nil {
-			return err
-		}
-		data, readErr := io.ReadAll(io.LimitReader(r, remaining+1))
-		if err := errors.Join(readErr, r.Close()); err != nil {
-			return err
+		data := policy
+		if name != ignore.HelmIgnore || !present {
+			r, err := input.Open(name)
+			if err != nil {
+				return err
+			}
+			var readErr error
+			data, readErr = io.ReadAll(io.LimitReader(r, remaining+1))
+			if err := errors.Join(readErr, r.Close()); err != nil {
+				return err
+			}
 		}
 		remaining -= int64(len(data))
 		if remaining < 0 {
 			return fmt.Errorf("chart exceeds maximum decompressed size")
 		}
-		files = append(files, &archive.BufferedFile{Name: name, ModTime: info.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})})
+		file := &archive.BufferedFile{Name: name, ModTime: info.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})}
+		files = append(files, file)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", fmt.Errorf("%w: %w", manifest.ErrInput, err)
 	}
-	return files, nil
+	content := make([][2]any, len(files))
+	for i, file := range files {
+		content[i] = [2]any{file.Name, file.Data}
+	}
+	return files, manifest.Fingerprint(content), nil
 }

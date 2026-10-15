@@ -12,7 +12,10 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
 )
@@ -32,27 +35,25 @@ func NewLocalFS(ctx context.Context, root string) (fs.FS, error) {
 		return nil, fmt.Errorf("%w: local source root: %w", manifest.ErrInput, err)
 	}
 	l := &localFS{root: resolved}
-	l.ignored = sync.OnceValues(func() (localIgnore, error) {
-		matcher, err := sourceignore.New(resolved, nil, true)
-		if err != nil {
-			return localIgnore{}, err
-		}
-		key, err := sourceignore.Fingerprint(resolved)
-		return localIgnore{matcher: matcher, key: key}, err
+	l.ignored = sync.OnceValues(func() (*sourceignore.Matcher, error) {
+		return sourceignore.New(resolved, nil, true)
 	})
 	return l, nil
 }
 
-// ReadView creates private observations for one local consumer operation.
-// Other filesystems pass through unchanged. The string fingerprints local ignore
-// policy, never content; re-admission refreshes that policy.
+// ReadView refreshes mutable observations for one consumer operation.
+// Its string is the returned view's acquisition identity, empty for mutable input.
+// Local ignore policy belongs to the admission and refreshes on re-admission.
 func ReadView(ctx context.Context, input fs.FS, applyIgnore bool) (fs.FS, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
 	l, ok := input.(*localFS)
 	if !ok {
-		return input, "", nil
+		if git, ok := input.(*gittree.FS); ok {
+			return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: git})
+		}
+		return input, cache.AcquisitionIdentity(input), nil
 	}
 	v := &localReadView{root: l.root, dirs: make(map[string]localDirectory)}
 	if !applyIgnore {
@@ -65,13 +66,13 @@ func ReadView(ctx context.Context, input fs.FS, applyIgnore bool) (fs.FS, string
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	v.matcher, v.hiddenDirs = policy.matcher, make(map[string]bool)
-	return v, policy.key, nil
+	v.matcher, v.hiddenDirs = policy, make(map[string]bool)
+	return v, "", nil
 }
 
 type localFS struct {
 	root    string
-	ignored func() (localIgnore, error)
+	ignored func() (*sourceignore.Matcher, error)
 }
 
 // Descriptor calls have ephemeral observations so the descriptor is shareable.
@@ -83,11 +84,6 @@ func (l *localFS) Open(name string) (fs.File, error) {
 func (l *localFS) Stat(name string) (fs.FileInfo, error) {
 	v := &localReadView{root: l.root}
 	return v.Stat(name)
-}
-
-type localIgnore struct {
-	matcher *sourceignore.Matcher
-	key     string
 }
 
 type localReadView struct {

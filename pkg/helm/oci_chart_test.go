@@ -125,7 +125,11 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 					t.Fatalf("release mutated (-want +got):\n%s", diff)
 				}
 			}
-			canonical := cli.chartCache["local\x00\x00"+dir+"\x00."].chart
+			loaded, err := cli.loadChart(t.Context(), hr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical := loaded.chart
 			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
 				t.Fatal("parallel renders mutated canonical metadata")
 			}

@@ -21,7 +21,7 @@ type SourceResolver interface {
 	// or nil. Used for index.yaml fetch + SecretRef/CertSecretRef.
 	HelmRepository(namespace, name string) *manifest.HelmRepository
 	// LocalSourceArtifact returns an admitted source artifact or nil.
-	// FS supplies content; Key selects immutable or mutable cache validity.
+	// FS supplies content and acquisition authority through source.ReadView.
 	LocalSourceArtifact(kind, namespace, name string) *store.SourceArtifact
 	// HelmChart returns the HelmChartSource at the given (ns, name) or
 	// nil. Used by HelmRelease.ResolveChartRef to materialize a

@@ -223,7 +223,7 @@ func (c *TreeCache) sourceRootFor(ctx context.Context, source *store.SourceArtif
 	}
 	// Shared admission belongs to the cache lifetime, not the first reader's cancellation.
 	load := sync.OnceValues(func() (*sourceRoot, error) {
-		input, err := gittree.New(context.Background(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: source.FS})
+		input, _, err := gittree.New(context.Background(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: source.FS})
 		if err != nil {
 			return nil, err
 		}

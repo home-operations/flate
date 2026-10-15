@@ -102,6 +102,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 	}
 	viewOptions := gittree.ViewOptions{Sparse: repo.SparseCheckout, Ignore: ignore}
 	var input *gittree.FS
+	var pin string
 	generation, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{repo, opts})
@@ -121,18 +122,20 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 				return plumbing.ZeroHash, err
 			}
 		}
-		input, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Worktree: worktree, Commit: hash}, viewOptions, nil)
+		viewOptions.Identity = key.ID + "@" + hash.String()
+		input, pin, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Worktree: worktree, Commit: hash}, viewOptions, nil)
 		return hash, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", gitID(repo), err)
 	}
-	input, err = generationView(ctx, generation, viewOptions, input)
+	viewOptions.Identity = key.ID + "@" + generation.Commit.String()
+	input, pin, err = generationView(ctx, generation, viewOptions, input)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", manifest.ErrInput, gitID(repo), err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: key.ID + "@" + generation.Commit.String()}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: pin}, nil
 }
 
 type gitAcquisition struct {
@@ -214,9 +217,9 @@ func initRemote(storer storage.Storer, worktree billy.Filesystem, url string) (*
 	return repo, err
 }
 
-func generationView(ctx context.Context, generation *sourcecache.GitGeneration, options gittree.ViewOptions, validated *gittree.FS) (*gittree.FS, error) {
+func generationView(ctx context.Context, generation *sourcecache.GitGeneration, options gittree.ViewOptions, validated *gittree.FS) (*gittree.FS, string, error) {
 	if validated != nil {
-		return validated, nil
+		return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: validated, Identity: options.Identity})
 	}
 	options.Worktree = generation.Worktree
 	return gittree.New(ctx, generation.Backing, generation.Commit, options)

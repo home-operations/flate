@@ -63,7 +63,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	}
 	local := repo.Storer.(*filesystem.Storage).Filesystem()
 	worktree := osfs.New(root, osfs.WithBoundOS())
-	current, err := gittree.New(ctx, local, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: worktree})
+	current, _, err := gittree.New(ctx, local, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: worktree})
 	if err != nil {
 		return nil, err
 	}

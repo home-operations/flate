@@ -28,7 +28,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				t.Fatal(err)
 			}
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			_, err = cli.LoadChart(t.Context(), hr)
+			_, err = cli.loadChart(t.Context(), hr)
 			_, typed := errors.AsType[chart.ValidationError](err)
 			if !typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("validation chain = %v", err)
@@ -53,11 +53,11 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	var previous string
 	for i, dir := range []string{first, second} {
 		st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
-		loaded, err := cli.LoadChart(t.Context(), hr)
+		loaded, err := cli.loadChart(t.Context(), hr)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loaded.Fingerprint == "" || loaded.Fingerprint == previous {
+		if loaded.fingerprint == "" || loaded.fingerprint == previous {
 			t.Fatal("different chart content shared a fingerprint")
 		}
 		merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)
@@ -65,7 +65,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 		assert.Equal(t, merged["marker"], any([]string{"original", "second"}[i]))
-		previous = loaded.Fingerprint
+		previous = loaded.fingerprint
 	}
 }
 
@@ -79,17 +79,17 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	withoutFiles := hr.Clone()
 	withoutFiles.ChartValuesFiles = nil
-	loaded, err := cli.LoadChart(t.Context(), withoutFiles)
+	loaded, err := cli.loadChart(t.Context(), withoutFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, loaded.Fingerprint, chartFingerprint(loaded.Chart))
-	var results [2]ChartLoadResult
+	assert.Equal(t, loaded.fingerprint == "", false)
+	var results [2]chartLoadResult
 	var failures [2]error
 	var wg sync.WaitGroup
 	for i := range results {
 		wg.Go(func() {
-			results[i], failures[i] = cli.LoadChart(t.Context(), hr)
+			results[i], failures[i] = cli.loadChart(t.Context(), hr)
 		})
 	}
 	wg.Wait()
@@ -97,7 +97,8 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 		if failures[i] != nil {
 			t.Fatal(failures[i])
 		}
-		assert.Equal(t, result.Fingerprint, chartFingerprint(result.Chart))
+		assert.Equal(t, result.fingerprint, loaded.fingerprint)
+		assert.Equal(t, result.chart == loaded.chart, true)
 	}
 	loaded = results[0]
 	merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)

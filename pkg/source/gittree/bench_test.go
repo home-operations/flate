@@ -78,7 +78,7 @@ func BenchmarkView_Packed(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	current, err := New(b.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: wt.Filesystem})
+	current, _, err := New(b.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: wt.Filesystem})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func BenchmarkView_Packed(b *testing.B) {
 				if name == "LazyBase" || name == "SelectedBody" {
 					opts = ViewOptions{Mode: Direct, Current: current, Changes: []string{"d00/f00000.bin"}}
 				}
-				input, err := New(b.Context(), backing, commit, opts)
+				input, _, err := New(b.Context(), backing, commit, opts)
 				if err != nil {
 					b.Fatal(err)
 				}

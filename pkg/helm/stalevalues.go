@@ -42,11 +42,11 @@ func (c *Client) StaleValuePaths(ctx context.Context, hr *manifest.HelmRelease, 
 	if len(values) == 0 {
 		return nil
 	}
-	loaded, err := c.LoadChart(ctx, hr)
-	if err != nil || loaded.Chart == nil {
+	loaded, err := c.loadChart(ctx, hr)
+	if err != nil || loaded.chart == nil {
 		return nil
 	}
-	return unreferencedValuePaths(chartTemplateText(loaded.Chart), values, knownTopLevelKeys(loaded.Chart))
+	return unreferencedValuePaths(chartTemplateText(loaded.chart), values, knownTopLevelKeys(loaded.chart))
 }
 
 // unreferencedValuePaths returns the sorted top-level value keys absent from the

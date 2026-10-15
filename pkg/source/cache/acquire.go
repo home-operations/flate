@@ -156,7 +156,7 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, maxAge time.Dur
 						e = nil
 					}
 				} else if key.archive {
-					index := &tarFS{root: c.root, digest: desc.Digest}
+					index := &tarFS{root: c.root, digest: desc.Digest, identity: manifest.Fingerprint([3]any{desc.Digest, key.Ignore, key.WithDefaults})}
 					file, err := c.root.Open(blobPath(desc.Digest))
 					if err != nil {
 						return nil, &CacheError{err}
@@ -167,7 +167,7 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, maxAge time.Dur
 						return nil, &CacheError{err}
 					}
 				} else {
-					e.fs = fileFS{name: "content", size: desc.Size, open: func() (io.ReadCloser, error) {
+					e.fs = fileFS{name: "content", identity: desc.Digest.String(), size: desc.Size, open: func() (io.ReadCloser, error) {
 						return c.root.Open(blobPath(desc.Digest))
 					}}
 				}
@@ -283,9 +283,11 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 	}
 	e.resolved = time.Now().UTC()
 	if c.store == nil {
-		if !key.archive {
+		if key.archive {
+			e.fs.(*tarFS).identity = uuid.NewString()
+		} else {
 			data := buf.Bytes()
-			e.fs = fileFS{name: "content", size: int64(len(data)), open: func() (io.ReadCloser, error) {
+			e.fs = fileFS{name: "content", identity: uuid.NewString(), size: int64(len(data)), open: func() (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(data)), nil
 			}}
 		}
@@ -297,12 +299,13 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 	}
 	if key.archive {
 		index.digest = stored.Digest
+		index.identity = manifest.Fingerprint([3]any{stored.Digest, key.Ignore, key.WithDefaults})
 		if err := pruneArchive(index, index.nodes, key.ArchiveKey); err != nil {
 			return nil, err
 		}
 		index.list()
 	} else {
-		e.fs = fileFS{name: "content", size: stored.Size, open: func() (io.ReadCloser, error) {
+		e.fs = fileFS{name: "content", identity: stored.Digest.String(), size: stored.Size, open: func() (io.ReadCloser, error) {
 			return c.root.Open(blobPath(stored.Digest))
 		}}
 	}

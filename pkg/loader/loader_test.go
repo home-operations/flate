@@ -95,7 +95,7 @@ spec:
 				input, err := gittree.AdmitDirectory(t.Context(), root)
 				assert.NoError(t, err)
 				st.SetArtifact(manifest.BootstrapSourceID, input)
-				view, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
 				assert.NoError(t, err)
 				source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: "file://" + root}
 				st.AddObject(source)

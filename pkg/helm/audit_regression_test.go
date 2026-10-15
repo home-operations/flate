@@ -32,7 +32,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, computeTemplateKey(ChartLoadResult{Fingerprint: "", Chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
+			assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: "", chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
 		})
 	}
 }
@@ -68,7 +68,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	hr := newHR()
 	hr.DisableSchemaValidation = true
-	loaded, err := cli.LoadChart(t.Context(), hr)
+	loaded, err := cli.loadChart(t.Context(), hr)
 	if err != nil {
 		t.Fatal(err)
 	}

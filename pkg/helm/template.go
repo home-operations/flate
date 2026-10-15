@@ -42,19 +42,14 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	}
 	var trackedVersion string
 	if hr.UsesDirectOCIRepository() {
-		art := c.resolveLocalSource(hr)
-		if art == nil {
-			return "", fmt.Errorf("track oci chart version: %w: OCIRepository %s artifact not available",
-				manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
-		}
-		version, err := ociChartVersion(loaded.Chart.Metadata.Version, art.Revision)
+		art := &loaded.artifact
+		version, err := ociChartVersion(loaded.chart.Metadata.Version, art.Revision)
 		if err != nil {
 			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
 		if !opts.DisableChartDigestTracking {
 			trackedVersion = version
 		}
-		loaded.Fingerprint = ociChartFingerprint(loaded.Fingerprint, art, opts.DisableChartDigestTracking)
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
@@ -77,7 +72,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		finalValues = loader.MergeMaps(base, hrValues)
 	}
 
-	key := computeTemplateKey(loaded, finalValues, opts, hr)
+	rendered := loaded
+	if hr.UsesDirectOCIRepository() {
+		rendered.fingerprint = ociChartFingerprint(loaded.fingerprint, &loaded.artifact, opts.DisableChartDigestTracking)
+	}
+	key := computeTemplateKey(rendered, finalValues, opts, hr)
 	blobKey := cache.BlobKey{ID: key, PersistOnly: true}
 	if key != "" {
 		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, nil)
@@ -93,9 +92,9 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 	}
 
-	loaded.Chart = cloneChartForRender(loaded.Chart)
+	loaded.chart = cloneChartForRender(loaded.chart)
 	if trackedVersion != "" {
-		loaded.Chart.Metadata.Version = trackedVersion
+		loaded.chart.Metadata.Version = trackedVersion
 	}
 
 	cfg := new(action.Configuration)
@@ -117,7 +116,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
 	inst.SkipSchemaValidation = schemaValidationSkipped(opts, hr, hrValues)
 
-	rel, err := inst.RunWithContext(ctx, loaded.Chart, finalValues)
+	rel, err := inst.RunWithContext(ctx, loaded.chart, finalValues)
 	if err != nil {
 		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
 	}
@@ -128,7 +127,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 	// Disabled dependencies must be pruned before validating their CRDs.
 	if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
-		crds := loaded.Chart.CRDObjects()
+		crds := loaded.chart.CRDObjects()
 		for _, crd := range crds {
 			docs, err := manifest.DecodeDocs(crdReader(crd))
 			for _, doc := range docs {
@@ -251,18 +250,18 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 // mergeChartValuesFiles caches by loaded content and ordered filenames. Returned
 // maps MUST be cloned because downstream values layering mutates them. The
 // missing-file policy separates requests that skip files from those that fail.
-func (c *Client) mergeChartValuesFiles(loaded ChartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
-	if loaded.Fingerprint == "" {
-		return mergeChartValuesFilesUncached(loaded.Chart, names, ignoreMissing)
+func (c *Client) mergeChartValuesFiles(loaded chartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
+	if loaded.fingerprint == "" {
+		return mergeChartValuesFilesUncached(loaded.chart, names, ignoreMissing)
 	}
-	key := chartValuesCacheKey(loaded.Fingerprint, names, ignoreMissing)
+	key := chartValuesCacheKey(loaded.fingerprint, names, ignoreMissing)
 	c.chartMu.RLock()
 	cached, ok := c.chartValuesCache[key]
 	c.chartMu.RUnlock()
 	if ok {
 		return manifest.DeepCopyMap(cached), nil
 	}
-	merged, err := mergeChartValuesFilesUncached(loaded.Chart, names, ignoreMissing)
+	merged, err := mergeChartValuesFilesUncached(loaded.chart, names, ignoreMissing)
 	if err != nil {
 		return nil, err
 	}

@@ -1,8 +1,12 @@
 package helm
 
 import (
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
@@ -235,4 +239,22 @@ func TestKnownTopLevelKeys(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStaleValuePaths_MutableCapture(t *testing.T) {
+	input := fstest.MapFS{
+		"Chart.yaml":        {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")},
+		"templates/cm.yaml": {Data: []byte("{{ .Values.first }}")},
+	}
+	cli, err := NewClient(newTestCache(t, ""))
+	assert.NoError(t, err)
+	st := store.New()
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
+	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, Key: "misleading"})
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second")), []string{"second"})
+	input["templates/cm.yaml"].Data = []byte("{{ .Values.second }}")
+	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second")), []string{"first"})
+	input["Chart.yaml"].Data = []byte("invalid")
+	assert.Equal(t, len(cli.StaleValuePaths(t.Context(), hr, vals("first", "second"))), 0)
 }

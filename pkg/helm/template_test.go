@@ -296,7 +296,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 			{Name: "values-prod.yaml", Data: []byte("replicaCount: 3\nimage:\n  tag: v1\n")},
 		},
 	}
-	loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
+	loaded := chartLoadResult{chart: ch, fingerprint: chartFingerprint(ch)}
 	names := []string{"values-prod.yaml"}
 
 	first, err := cli.mergeChartValuesFiles(loaded, names, false)
@@ -307,7 +307,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 		t.Fatalf("first call missing replicaCount: %+v", first)
 	}
 
-	loaded.Chart.Files = nil
+	loaded.chart.Files = nil
 	second, err := cli.mergeChartValuesFiles(loaded, names, false)
 	if err != nil {
 		t.Fatalf("second call (cache hit expected): %v", err)
@@ -353,11 +353,11 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		},
 	}
 
-	a, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: chA, Fingerprint: chartFingerprint(chA)}, []string{"values.yaml"}, false)
+	a, err := cli.mergeChartValuesFiles(chartLoadResult{chart: chA, fingerprint: chartFingerprint(chA)}, []string{"values.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartA: %v", err)
 	}
-	b, err := cli.mergeChartValuesFiles(ChartLoadResult{Chart: chB, Fingerprint: chartFingerprint(chB)}, []string{"values.yaml"}, false)
+	b, err := cli.mergeChartValuesFiles(chartLoadResult{chart: chB, fingerprint: chartFingerprint(chB)}, []string{"values.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartB: %v", err)
 	}
@@ -380,8 +380,8 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 					{Name: "values.yaml", Data: []byte("k: " + name + "\n")},
 				},
 			}
-			loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
-			assert.Equal(t, loaded.Fingerprint, "")
+			loaded := chartLoadResult{chart: ch, fingerprint: chartFingerprint(ch)}
+			assert.Equal(t, loaded.fingerprint, "")
 			values, err := cli.mergeChartValuesFiles(loaded, []string{"values.yaml"}, false)
 			if err != nil {
 				t.Fatal(err)
@@ -400,7 +400,7 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 		{Name: "first.yaml", Data: []byte("marker: first\n")},
 		{Name: "second.yaml", Data: []byte("marker: second\n")},
 	}}
-	loaded := ChartLoadResult{Chart: ch, Fingerprint: chartFingerprint(ch)}
+	loaded := chartLoadResult{chart: ch, fingerprint: chartFingerprint(ch)}
 	for _, tc := range []struct {
 		name   string
 		files  []string

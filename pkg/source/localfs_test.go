@@ -1,7 +1,13 @@
 package source
 
 import (
+	"archive/tar"
+	"context"
 	"errors"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/tree"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -31,7 +37,8 @@ func TestLocalFS_Reads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, _, err := ReadView(t.Context(), input, false)
+	view, pin, err := ReadView(t.Context(), input, false)
+	assert.Equal(t, pin, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,14 +105,16 @@ func TestLocalFS_ReadView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed, _, err := ReadView(t.Context(), input, false)
+	observed, pin, err := ReadView(t.Context(), input, false)
+	assert.Equal(t, pin, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.ReadFile(observed, "dir/arrived"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("initial missing file = %v", err)
 	}
-	hidden, _, err := ReadView(t.Context(), input, true)
+	hidden, pin, err := ReadView(t.Context(), input, true)
+	assert.Equal(t, pin, "")
 	assert.Equal(t, err, nil)
 	if _, err := fs.Stat(hidden, "dir"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("directory without survivors = %v", err)
@@ -117,19 +126,23 @@ func TestLocalFS_ReadView(t *testing.T) {
 		t.Fatalf("unfiltered empty directory = %v", err)
 	}
 	testutil.WriteFile(t, root, "dir/arrived", "arrived")
-	fresh, _, err := ReadView(t.Context(), input, true)
+	fresh, pin, err := ReadView(t.Context(), input, true)
+	assert.Equal(t, pin, "")
 	assert.Equal(t, err, nil)
 	testutil.WriteFile(t, root, ".sourceignore", "/*\n")
 	readmitted, err := NewLocalFS(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ignored, _, err := ReadView(t.Context(), readmitted, true)
+	ignored, pin, err := ReadView(t.Context(), readmitted, true)
+	assert.Equal(t, pin, "")
 	assert.Equal(t, err, nil)
-	plain, _, err := ReadView(t.Context(), readmitted, false)
+	plain, pin, err := ReadView(t.Context(), readmitted, false)
+	assert.Equal(t, pin, "")
 	assert.Equal(t, err, nil)
 	memory := fstest.MapFS{"kept": {Data: []byte("content")}}
-	passthrough, _, err := ReadView(t.Context(), memory, true)
+	passthrough, pin, err := ReadView(t.Context(), memory, true)
+	assert.Equal(t, pin, "")
 	assert.Equal(t, err, nil)
 	memory["later"] = &fstest.MapFile{Data: []byte("same FS")}
 	for _, tc := range []struct {
@@ -155,7 +168,8 @@ func TestLocalFS_ReadView(t *testing.T) {
 	for range 2 {
 		wg.Go(func() {
 			<-start
-			view, _, err := ReadView(t.Context(), input, true)
+			view, pin, err := ReadView(t.Context(), input, true)
+			assert.Equal(t, pin, "")
 			if err != nil {
 				t.Error(err)
 				return
@@ -177,4 +191,48 @@ func TestLocalFS_ReadView(t *testing.T) {
 			t.Fatalf("fresh lookup through directory link: %s: %v", name, err)
 		}
 	}
+
+	t.Run("acquisition boundary", func(t *testing.T) {
+		owner, err := cache.New(t.Context(), "")
+		assert.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+		acquired, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{ID: "admission"}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			tw := tar.NewWriter(w)
+			if err := tw.WriteHeader(&tar.Header{Name: "file", Mode: 0o600, Size: 7}); err != nil {
+				return ocispec.Descriptor{}, err
+			}
+			_, err := io.WriteString(tw, "content")
+			return ocispec.Descriptor{}, errors.Join(err, tw.Close())
+		})
+		assert.NoError(t, err)
+		r, _, err := owner.Blob(t.Context(), cache.BlobKey{ID: "blob"}, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			_, err := io.WriteString(w, "content")
+			return ocispec.Descriptor{}, err
+		})
+		assert.NoError(t, err)
+		blob := cache.FileFS("file", r)
+		assert.NoError(t, r.Close())
+		builder := tree.NewBuilder(nil)
+		assert.NoError(t, builder.AddFile("file", []byte("content"), 0o600))
+		bare, err := builder.Build()
+		assert.NoError(t, err)
+		for _, tc := range []struct {
+			name     string
+			input    fs.FS
+			acquired bool
+		}{
+			{"archive", acquired, true}, {"blob", blob, true}, {"bare tree", bare, false}, {"anonymous", fstest.MapFS{"file": {Data: []byte("content")}}, false}, {"opaque wrapper", struct{ fs.FS }{acquired}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				for _, applyIgnore := range []bool{false, true} {
+					view, pin, err := ReadView(t.Context(), tc.input, applyIgnore)
+					assert.NoError(t, err)
+					assert.Equal(t, pin != "", tc.acquired)
+					data, err := fs.ReadFile(view, "file")
+					assert.NoError(t, err)
+					assert.Equal(t, string(data), "content")
+				}
+			})
+		}
+	})
 }

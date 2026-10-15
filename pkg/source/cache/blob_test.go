@@ -34,10 +34,23 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			if _, ok := c.entries.Load(key.ID); ok {
 				t.Fatal("lookup miss installed an entry")
 			}
+			var held fs.FS
+			var heldPin, heldPayload string
 			for _, payload := range []string{"first", ""} {
 				r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(payload), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
+				}
+				view := FileFS("chart.tgz", r)
+				pin := AcquisitionIdentity(view)
+				if pin == "" || pin == AcquisitionIdentity(FileFS("other.tgz", r)) || AcquisitionIdentity(struct{ fs.FS }{view}) != "" {
+					t.Fatal("blob identity lost generation, filename or confinement")
+				}
+				if held != nil {
+					data, err := fs.ReadFile(held, "chart.tgz")
+					if err != nil || string(data) != heldPayload || AcquisitionIdentity(held) != heldPin || heldPin == pin {
+						t.Fatalf("held generation changed: %q, %v", data, err)
+					}
 				}
 				if err := r.Close(); err != nil {
 					t.Fatal(err)
@@ -59,6 +72,19 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				first, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 				if err != nil {
 					t.Fatal(err)
+				}
+				restored := FileFS("chart.tgz", first)
+				if AcquisitionIdentity(restored) != pin {
+					t.Fatal("blob restoration changed identity")
+				}
+				held, heldPin, heldPayload = restored, pin, payload
+				var data []byte
+				if backing == "memory" {
+					data, err = fs.ReadFile(view, "chart.tgz")
+				}
+				// The copied view retains its generation after the original cursor closes.
+				if backing == "memory" && (err != nil || string(data) != payload) {
+					t.Fatalf("closed cursor invalidated view: %q, %v", data, err)
 				}
 				// The same key must remain usable while a returned reader is retained.
 				var wg sync.WaitGroup

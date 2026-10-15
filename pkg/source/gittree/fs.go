@@ -45,6 +45,8 @@ const (
 
 // ViewOptions shapes a commit view without changing its object backing.
 type ViewOptions struct {
+	// Identity carries the acquisition authority supplied by the Git fetcher.
+	Identity string
 	Mode     ViewMode
 	Sparse   []string
 	Ignore   string
@@ -77,6 +79,8 @@ type gitView struct {
 	current  fs.FS
 	changes  map[string]bool
 	refresh  *ViewOptions
+	commit   plumbing.Hash
+	identity string
 	mode     ViewMode
 }
 
@@ -114,31 +118,32 @@ func (i gitInfo) Sys() any           { return nil }
 // Direct with a zero commit retains Current admitted semantics. Mutable Source
 // views are refreshed for one operation; pinned views retain their backing.
 // Source without additional shaping retains an already shaped Current view.
-func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, error) {
+func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if current, ok := opts.Current.(*FS); ok && commit == plumbing.ZeroHash {
+	if current, ok := opts.Current.(*FS); ok {
 		switch v := current.view.(type) {
 		case *localView:
 			opts.Current = newLocal(v.root)
-			if opts.Mode == Direct {
-				return opts.Current.(*FS), nil
+			if opts.Mode == Direct && commit == plumbing.ZeroHash {
+				return opts.Current.(*FS), "", nil
 			}
 		case *gitView:
 			if v.refresh != nil {
-				refreshed, err := New(ctx, nil, plumbing.ZeroHash, *v.refresh)
+				refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
 				if err != nil {
-					return nil, err
+					return nil, "", err
 				}
 				opts.Current = refreshed
+				v = refreshed.view.(*gitView)
 			}
-			if opts.Mode == Direct || (opts.Mode == Source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0) {
-				return opts.Current.(*FS), nil
+			if commit == plumbing.ZeroHash && (opts.Mode == Direct || (opts.Mode == Source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0)) {
+				return opts.Current.(*FS), v.identity, nil
 			}
 		case *directView:
-			if opts.Mode == Direct {
-				return current, nil
+			if opts.Mode == Direct && commit == plumbing.ZeroHash {
+				return current, "", nil
 			}
 		}
 	}
@@ -148,14 +153,14 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			directView
 		}{directView: directView{FS: opts.Current}}
 		input.view = &input.directView
-		return &input.FS, nil
+		return &input.FS, "", nil
 	}
 	if opts.Mode == Direct && opts.Current == nil && opts.Worktree != nil {
 		root := opts.Worktree.Root()
 		if _, err := os.Stat(root); err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return newLocal(root), nil
+		return newLocal(root), "", nil
 	}
 	input, err := newTree(ctx, backing, commit, opts)
 	if err != nil {
@@ -164,18 +169,18 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 				if mounted, ok := current.view.(*localView); ok {
 					// Flux reads .sourceignore before listing each directory; retain its diagnostic.
 					if _, ignoreErr := sourceignore.New(mounted.root, nil, true); ignoreErr != nil {
-						return nil, ignoreErr
+						return nil, "", ignoreErr
 					}
 				}
 			}
-			return nil, fmt.Errorf("sourceignore load: %w", err)
+			return nil, "", fmt.Errorf("sourceignore load: %w", err)
 		}
-		return nil, err
+		return nil, "", err
 	}
-	if err := input.view.(*gitView).shape(opts, commit == plumbing.ZeroHash); err != nil {
-		return nil, err
+	if err := input.view.(*gitView).shape(opts); err != nil {
+		return nil, "", err
 	}
-	return input, nil
+	return input, input.view.(*gitView).identity, nil
 }
 
 func currentTree(input fs.FS) *gitView {
@@ -192,7 +197,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	combined := &struct {
 		FS
 		gitView
-	}{mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
+	}{commit: commit, identity: opts.Identity, mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
 	input := &combined.gitView
 	combined.view = input
 	input.storers.New = func() any {
@@ -233,9 +238,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	return &combined.FS, nil
 }
 
-func (g *gitView) shape(opts ViewOptions, mutable bool) error {
-	current := currentTree(opts.Current)
-	native := current != nil
+func (g *gitView) shape(opts ViewOptions) error {
 	visible := func(name string) bool {
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
 			base := path.Base(parent)
@@ -248,10 +251,12 @@ func (g *gitView) shape(opts ViewOptions, mutable bool) error {
 	if opts.Mode == Direct {
 		visible = func(name string) bool { return g.nodes[name].mode&fs.ModeSymlink == 0 }
 	}
+	if g.identity == "" && (opts.Current != nil || opts.Worktree != nil) {
+		refresh := opts
+		refresh.Sparse, refresh.Changes = slices.Clone(opts.Sparse), slices.Clone(opts.Changes)
+		g.refresh = &refresh
+	}
 	if opts.Mode == Source {
-		if opts.Current != nil && mutable && (!native || current.refresh != nil || current.backing == nil && current.worktree == nil) {
-			g.refresh = &ViewOptions{Mode: Source, Current: opts.Current, Ignore: opts.Ignore, Sparse: slices.Clone(opts.Sparse)}
-		}
 		matcher, err := sourceignore.NewFS(g, nil, opts.Ignore, true)
 		if err != nil {
 			return err

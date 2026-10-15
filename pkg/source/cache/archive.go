@@ -23,9 +23,11 @@ import (
 var maxExtractedBytes int64 = 1 << 30
 
 type tarFS struct {
-	root   *os.Root
-	digest digest.Digest
-	nodes  map[string]*tarNode
+	root     *os.Root
+	memory   *tree.Tree
+	identity string
+	digest   digest.Digest
+	nodes    map[string]*tarNode
 }
 type tarNode struct {
 	fs.FileInfo
@@ -68,6 +70,9 @@ func (f *tarFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 func (t *tarFS) Open(name string) (fs.File, error) {
+	if t.memory != nil {
+		return t.memory.Open(name)
+	}
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
@@ -211,7 +216,12 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 	if err := pruneArchive(builder, index.nodes, key); err != nil {
 		return nil, err
 	}
-	return builder.Build()
+	memory, err := builder.Build()
+	if err != nil {
+		return nil, err
+	}
+	index.memory, index.nodes = memory, nil
+	return index, nil
 }
 
 func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {

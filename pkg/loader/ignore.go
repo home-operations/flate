@@ -63,7 +63,7 @@ func (r documentReader) loadIgnoreFile(ctx context.Context, path, root string) (
 	mounted := r.mountedRoot(abs)
 	if mounted == "" {
 		// Only the explicitly named option may admit a file outside source mounts.
-		input, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: osfs.New(filepath.Dir(abs), osfs.WithBoundOS())})
+		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: osfs.New(filepath.Dir(abs), osfs.WithBoundOS())})
 		if err != nil {
 			return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 		}

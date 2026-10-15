@@ -1,11 +1,17 @@
 package helm
 
 import (
+	"archive/tar"
+	"context"
+	"errors"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"io"
+	"io/fs"
 	"testing"
 )
 
@@ -51,4 +57,30 @@ func newTestCache(t testing.TB, root string) *cache.Cache {
 		}
 	})
 	return owner
+}
+
+func acquireChartFS(t testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
+	t.Helper()
+	acquired, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{ID: t.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		tw := tar.NewWriter(w)
+		err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			data, err := fs.ReadFile(input, name)
+			if err != nil {
+				return err
+			}
+			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data))}); err != nil {
+				return err
+			}
+			_, err = tw.Write(data)
+			return err
+		})
+		return ocispec.Descriptor{}, errors.Join(err, tw.Close())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return acquired
 }

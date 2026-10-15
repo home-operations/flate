@@ -24,8 +24,11 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestFetcher_PackedContent(t *testing.T) {
@@ -155,6 +158,9 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
+	_, pin, err := source.ReadView(t.Context(), art.FS, false)
+	assert.NoError(t, err)
+	assert.Equal(t, pin, art.Key)
 	sa := art
 	if sa.FS == nil || sa.Key == "" || sa.URL == "" {
 		t.Errorf("incomplete artifact: %+v", sa)
@@ -167,6 +173,9 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
+	_, nextPin, err := source.ReadView(t.Context(), art2.FS, false)
+	assert.NoError(t, err)
+	assert.Equal(t, nextPin, pin)
 	if art2.Revision != sa.Revision {
 		t.Errorf("unchanged default ref revision changed: %s vs %s", sa.Revision, art2.Revision)
 	}
@@ -304,6 +313,45 @@ func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
 	}
 	if _, err := fs.Stat(art2.FS, path.Join("later.txt")); !os.IsNotExist(err) {
 		t.Fatalf("fresh interval cache should not include later commit, stat err=%v", err)
+	}
+}
+
+func TestFetcher_MutableRefreshRetainsAcquisitionIdentity(t *testing.T) {
+	src := t.TempDir()
+	mustInitRepo(t, src)
+	firstCommit := mustHead(t, src)
+	f := &Fetcher{Cache: newGitCache(t, t.TempDir())}
+	repo := &manifest.GitRepository{
+		Name: "test", Namespace: "flux-system", URL: "file://" + src,
+		RecurseSubmodules: true,
+	}
+	first, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	secondCommit := mustCommitFile(t, src, "hello.txt", "updated")
+	second, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	cachedRepo := *repo
+	cachedRepo.Interval.Duration = time.Hour
+	hit, err := f.Fetch(t.Context(), &cachedRepo, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	assert.Equal(t, first.Revision, firstCommit)
+	assert.Equal(t, second.Revision, secondCommit)
+	assert.Equal(t, hit.Revision, secondCommit)
+	assert.Equal(t, first.Key != second.Key, true)
+	assert.Equal(t, second.Key, hit.Key)
+	for _, art := range []*store.SourceArtifact{first, second, hit} {
+		view, pin, err := source.ReadView(t.Context(), art.FS, false)
+		assert.NoError(t, err)
+		assert.Equal(t, pin != "", true)
+		assert.Equal(t, pin, art.Key)
+		assert.Equal(t, view == art.FS, true)
+		data, err := fs.ReadFile(view, "hello.txt")
+		assert.NoError(t, err)
+		want := "updated"
+		if art == first {
+			want = "hi"
+		}
+		assert.Equal(t, string(data), want)
 	}
 }
 

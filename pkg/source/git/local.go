@@ -121,7 +121,7 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		if repository.Ignore != nil {
 			ignore = *repository.Ignore
 		}
-		input, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Sparse: repository.SparseCheckout, Ignore: ignore})
+		input, _, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Sparse: repository.SparseCheckout, Ignore: ignore})
 		if err != nil {
 			return nil, localError(repository, err)
 		}

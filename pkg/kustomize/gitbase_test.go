@@ -123,7 +123,7 @@ func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := gittree.New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, gittree.ViewOptions{Mode: gittree.RemoteBase})
+	input, _, err := gittree.New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, gittree.ViewOptions{Mode: gittree.RemoteBase})
 	if err != nil {
 		t.Fatal(err)
 	}

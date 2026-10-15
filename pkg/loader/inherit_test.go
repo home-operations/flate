@@ -138,7 +138,7 @@ spec:
 				input, err := gittree.AdmitDirectory(t.Context(), root)
 				assert.NoError(t, err)
 				l.Store.SetArtifact(manifest.BootstrapSourceID, input)
-				view, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
 				assert.NoError(t, err)
 				id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 				l.Store.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + root})

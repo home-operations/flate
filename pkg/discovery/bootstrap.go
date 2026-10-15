@@ -208,9 +208,14 @@ func (d *discoverer) publishBootstrapAlias(ctx context.Context, id manifest.Name
 	viewKey := manifest.Fingerprint(append(tuple, repo.SparseCheckout...))
 	viewRoot := filepath.Join(filepath.Dir(repoRoot), ".flate-sources", viewKey)
 	input := d.aliasViews[viewKey]
-	if input == nil {
-		var err error
-		input, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, Ignore: ignore, Sparse: repo.SparseCheckout})
+	var err error
+	if input != nil {
+		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
+		if err != nil {
+			return false, err
+		}
+	} else {
+		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, Ignore: ignore, Sparse: repo.SparseCheckout})
 		if err != nil {
 			return false, err
 		}
@@ -225,9 +230,7 @@ func (d *discoverer) publishBootstrapAlias(ctx context.Context, id manifest.Name
 	artifact.InputAlias = true
 	artifact.LocalPath = filepath.Join(viewRoot, id.Namespace, id.Name)
 	artifact.LocalRoot = repoRoot
-	if bootstrap.Key != "" {
-		artifact.Key = manifest.Fingerprint([]string{viewKey, id.Namespace, id.Name})
-	}
+	artifact.Key = ""
 	d.cfg.Store.AddObject(obj)
 	d.cfg.Store.SetArtifact(id, &artifact)
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias")

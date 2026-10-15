@@ -14,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source"
 )
 
 func TestAutoResolve_LazyBaseReads(t *testing.T) {
@@ -81,6 +82,28 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, string(data), file.body)
 			}
+			initial, err := fs.Stat(res.BaseInput.FS, "unchanged.yaml")
+			assert.NoError(t, err)
+			assert.Equal(t, initial.Size(), int64(len("same")))
+			for _, body := range []string{"fresh-one", "fresh-two"} {
+				testutil.WriteFile(t, root, "unchanged.yaml", body)
+				if tc.changed && tc.name != "executable_directory" {
+					testutil.WriteFile(t, root, "file", "live-mutated")
+				}
+				view, pin, err := source.ReadView(t.Context(), res.BaseInput.FS, false)
+				assert.NoError(t, err)
+				assert.Equal(t, pin, "")
+				data, err := fs.ReadFile(view, "unchanged.yaml")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), body)
+				info, err := fs.Stat(view, "unchanged.yaml")
+				assert.NoError(t, err)
+				assert.Equal(t, info.Size(), int64(len(body)))
+				data, err = fs.ReadFile(view, "file")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), "base")
+			}
+
 			for _, hash := range absent {
 				assert.Equal(t, errors.Is(repo.Storer.HasEncodedObject(hash), plumbing.ErrObjectNotFound), true)
 			}

@@ -86,7 +86,11 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			}
 			key := ArchiveKey{ID: "source-test-generations"}
 			want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"flate.revision": "v1", "other": "preserved"}}
-			_, got, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "file", "v1"), want))
+			first, got, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "file", "v1"), want))
+			firstPin := AcquisitionIdentity(first)
+			if firstPin == "" {
+				t.Fatal("acquired archive has no identity")
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,6 +114,9 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Fatal(diff)
 			}
+			if AcquisitionIdentity(warm) != firstPin {
+				t.Fatal("restoration changed held archive identity")
+			}
 			if data, err := fs.ReadFile(warm, "file"); err != nil || string(data) != "v1" {
 				t.Fatalf("warm: %q, %v", data, err)
 			}
@@ -132,8 +139,12 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 					t.Fatal("access extended resolution TTL")
 				}
 			}
-			if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(archive(t, "file", "v2"), want)); err != nil {
+			replacement, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(archive(t, "file", "v2"), want))
+			if err != nil {
 				t.Fatal(err)
+			}
+			if AcquisitionIdentity(replacement) == firstPin || AcquisitionIdentity(warm) != firstPin {
+				t.Fatal("replacement aliased or mutated held generation identity")
 			}
 			if data, err := fs.ReadFile(warm, "file"); err != nil || string(data) != "v1" {
 				t.Fatalf("held generation: %q, %v", data, err)
@@ -172,6 +183,22 @@ func TestAcquire_ArchivePolicy(t *testing.T) {
 				}
 				if got, err := fs.ReadFile(input, "dir/keep"); err != nil || string(got) != "last" {
 					t.Fatalf("reincluded duplicate: %q, %v", got, err)
+				}
+				pin := AcquisitionIdentity(input)
+				if pin == "" {
+					t.Fatal("archive policy view has no acquisition identity")
+				}
+				for _, policy := range []ArchiveKey{
+					{ID: "source-test-policy", WithDefaults: !defaults},
+					{ID: "source-test-policy", WithDefaults: defaults, Ignore: "image.png\n"},
+				} {
+					other, _, err := c.Acquire(t.Context(), policy, Policy{MaxAge: 0}, producer(data, ocispec.Descriptor{}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if AcquisitionIdentity(other) == pin || AcquisitionIdentity(input) != pin {
+						t.Fatal("archive policy identity collision")
+					}
 				}
 				for _, name := range []string{"dir/drop", "empty"} {
 					if _, err := fs.Stat(input, name); !errors.Is(err, fs.ErrNotExist) {
@@ -792,7 +819,10 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			if err != nil || calls != 1 {
 				t.Fatalf("restart hit: calls=%d, %v", calls, err)
 			}
-			input, err := gittree.New(t.Context(), second.Backing, second.Commit, gittree.ViewOptions{})
+			input, pin, err := gittree.New(t.Context(), second.Backing, second.Commit, gittree.ViewOptions{Identity: key.ID + "@" + second.Commit.String()})
+			if pin != key.ID+"@"+second.Commit.String() {
+				t.Fatal("restored Git identity lost")
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -819,6 +849,100 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				}
 				if _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce); err == nil || calls != 2 {
 					t.Fatalf("poisoned hit reused: calls=%d, %v", calls, err)
+				}
+			}
+		})
+	}
+
+	for _, disk := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recursive-held-%t", disk), func(t *testing.T) {
+			src := t.TempDir()
+			repo, err := git.PlainInit(src, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFile(t, src, "nested/file", "first")
+			wt, err := repo.Worktree()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := wt.Add("."); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := wt.Commit("first", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}}); err != nil {
+				t.Fatal(err)
+			}
+			root := ""
+			if disk {
+				root = t.TempDir()
+			}
+			c := newCache(t, root)
+			key := GitKey{ID: "recursive-held", RecurseSubmodules: true}
+			produce := func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+				repo, err := git.CloneContext(ctx, storer, worktree, &git.CloneOptions{URL: "file://" + src})
+				if err != nil {
+					return plumbing.ZeroHash, err
+				}
+				head, err := repo.Head()
+				if err != nil {
+					return plumbing.ZeroHash, err
+				}
+				return head.Hash(), nil
+			}
+			admit := func(generation *GitGeneration) (*gittree.FS, string) {
+				t.Helper()
+				input, pin, err := gittree.New(t.Context(), generation.Backing, generation.Commit, gittree.ViewOptions{Worktree: generation.Worktree, Identity: key.ID + "@" + generation.Commit.String()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return input, pin
+			}
+			first, err := c.Git(t.Context(), key, Policy{MaxAge: 0}, produce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, pin := admit(first)
+			for _, changed := range []bool{false, true} {
+				if changed {
+					testutil.WriteFile(t, src, "nested/file", "second")
+					if _, err := wt.Add("."); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := wt.Commit("second", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				next, err := c.Git(t.Context(), key, Policy{MaxAge: 0}, produce)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, nextPin := admit(next)
+				if (nextPin != pin) != changed {
+					t.Fatal("Git identity differs from acquired key/commit")
+				}
+				if data, err := fs.ReadFile(held, "nested/file"); err != nil || string(data) != "first" {
+					t.Fatalf("held recursive generation changed: %q, %v", data, err)
+				}
+				_, retained, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: held})
+				if err != nil || retained != pin {
+					t.Fatalf("held recursive identity changed: %q, %v", retained, err)
+				}
+			}
+			if disk {
+				if err := c.Close(); err != nil {
+					t.Fatal(err)
+				}
+				c = newCache(t, root)
+				restored, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, pin := admit(restored)
+				if pin != key.ID+"@"+restored.Commit.String() {
+					t.Fatal("recursive restored identity lost")
+				}
+				if data, err := fs.ReadFile(input, "nested/file"); err != nil || string(data) != "second" {
+					t.Fatalf("recursive restoration: %q, %v", data, err)
 				}
 			}
 		})

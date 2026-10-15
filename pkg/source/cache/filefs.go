@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"io"
 	"io/fs"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // FileFS names an acquired Blob generation; discarded PersistOnly publications
@@ -13,6 +15,7 @@ import (
 func FileFS(name string, r io.ReadCloser) fs.FS {
 	input := r.(*blobHandle).input
 	input.name = name
+	input.identity = manifest.Fingerprint([2]string{input.identity, name})
 	return input
 }
 
@@ -32,9 +35,10 @@ func (b *blobHandle) Close() error {
 }
 
 type fileFS struct {
-	name string
-	size int64
-	open func() (io.ReadCloser, error)
+	name     string
+	identity string
+	size     int64
+	open     func() (io.ReadCloser, error)
 }
 
 func (f fileFS) Open(name string) (fs.File, error) {
@@ -62,3 +66,16 @@ type blobFile struct {
 }
 
 func (f *blobFile) Stat() (fs.FileInfo, error) { return f.tarNode, nil }
+
+// AcquisitionIdentity reports the held generation and shaping of cache-owned readers.
+// Anonymous filesystems and wrappers have no acquisition authority.
+func AcquisitionIdentity(input fs.FS) string {
+	switch input := input.(type) {
+	case *tarFS:
+		return input.identity
+	case fileFS:
+		return input.identity
+	default:
+		return ""
+	}
+}

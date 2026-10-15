@@ -21,8 +21,10 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
@@ -273,7 +275,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 						t.Fatalf("pinned HEAD content = %q, %v; want B", content, err)
 					}
 				}
-				if artifact.Revision != revision || artifact.Key == "" || artifact.LocalRoot != side || artifact.LocalPath == side || artifact.InputAlias != tc.head || d.hasPins == tc.head || (len(aliased) == 1) != tc.head {
+				if artifact.Revision != revision || (artifact.Key == "") != tc.head || artifact.LocalRoot != side || artifact.LocalPath == side || artifact.InputAlias != tc.head || d.hasPins == tc.head || (len(aliased) == 1) != tc.head {
 					t.Fatalf("pinned HEAD identity/classification = %+v, pins=%t aliases=%v", artifact, d.hasPins, aliased)
 				}
 				if !tc.head && artifact.URL != repository.URL {
@@ -403,6 +405,68 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	if artifact.LocalPath != root || st.GetObject(repository.Named()) != repository {
 		t.Fatalf("canonical bootstrap or authored object changed: %+v", artifact)
 	}
+	t.Run("mutable alias refresh", func(t *testing.T) {
+		testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
+		testutil.WriteFile(t, root, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: main\n")
+		testutil.WriteFile(t, root, "excluded/file", "hidden")
+		alias := &manifest.GitRepository{Name: "alias", Namespace: "flux-system", URL: repository.URL}
+		alias.Ignore = new("excluded/\n")
+		st.AddObject(alias)
+		ok, err := d.publishBootstrapAlias(t.Context(), alias.Named(), root)
+		if err != nil || !ok {
+			t.Fatalf("alias: %t, %v", ok, err)
+		}
+		art := st.GetArtifact(alias.Named()).(*store.SourceArtifact)
+		if art.Key != "" || !art.InputAlias || art.LocalRoot != root || art.LocalPath == root {
+			t.Fatalf("alias coordinates: %+v", art)
+		}
+		owner, err := sourcecache.New(t.Context(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := owner.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		cli, err := helm.NewClient(owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cli.SetSourceResolver(helm.NewStoreSourceResolver(st))
+		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", RepoKind: alias.Named().Kind, RepoName: alias.Name, RepoNamespace: alias.Namespace}}
+		for _, exists := range []bool{false, true, false} {
+			if exists {
+				testutil.WriteFile(t, root, "chart/templates/arrived/deep/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: arrived\n")
+			} else if err := os.RemoveAll(filepath.Join(root, "chart/templates/arrived")); err != nil {
+				t.Fatal(err)
+			}
+			out, err := cli.Template(t.Context(), hr, nil, helm.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(out, "name: arrived") != exists {
+				t.Fatalf("alias membership stale: %s", out)
+			}
+			if st.GetArtifact(alias.Named()) != art {
+				t.Fatal("Template republished alias")
+			}
+			view, pin, err := source.ReadView(t.Context(), art.FS, false)
+			if err != nil || pin != "" {
+				t.Fatalf("alias admission: %q, %v", pin, err)
+			}
+			if _, err := fs.Stat(view, "excluded/file"); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("alias lost shaping: %v", err)
+			}
+		}
+		if _, err := d.publishBootstrapAlias(t.Context(), alias.Named(), root); err != nil {
+			t.Fatal(err)
+		}
+		if len(d.aliasViews) != 1 || st.GetObject(alias.Named()) != alias {
+			t.Fatal("alias refresh changed registry or authored object")
+		}
+	})
+
 }
 
 func discoveryRefFixture(t *testing.T) string {

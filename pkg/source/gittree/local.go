@@ -21,7 +21,7 @@ import (
 // AdmitDirectory constructs the direct input artifact at a normalized local root.
 // Synthetic source labels MUST use their already admitted filesystem instead.
 func AdmitDirectory(ctx context.Context, root string) (*store.SourceArtifact, error) {
-	input, err := New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())})
+	input, _, err := New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())})
 	if err != nil {
 		return nil, err
 	}

@@ -176,6 +176,7 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 	// HelmRelease chartRefs) still joins keep before the consumer is published.
 	for _, dep := range transitiveDepsOf(child) {
 		added = append(added, f.addRecursiveLocked(dep)...)
+		added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)
 	}
 	return added
 }
@@ -578,8 +579,9 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 }
 
 // transitiveDepsOf returns the references obj needs to render — chart
-// sources, KS sourceRef, valuesFrom, and non-Optional
-// postBuild.substituteFrom ConfigMaps. Reading straight off the manifest
+// sources, KS sourceRef, valuesFrom, and named postBuild.substituteFrom inputs.
+// Optional inputs must participate in selection without becoming required
+// readiness dependencies. Reading straight off the manifest
 // (rather than a Store id lookup) lets the runtime keep-extension resolve
 // a render-emitted child's deps BEFORE it lands in the Store, where the
 // child's namespace-stamped chart source is the authority. dependsOn is
@@ -590,7 +592,7 @@ func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.Nam
 func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
 	var out []manifest.NamedResource
 	for ref := range manifest.References(obj) {
-		if ref.Content {
+		if ref.Content || (ref.Use == "substituteFrom" && ref.Name != "") {
 			out = append(out, ref.NamedResource)
 		}
 	}

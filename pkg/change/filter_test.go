@@ -1066,7 +1066,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 		parent:   "kubernetes/parent/parent.yaml",
 		producer: "kubernetes/apps/settings/ks.yaml",
 		cmID:     "kubernetes/apps/settings/cm.yaml",
-	}, root: "", objects: testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj}}.index(), testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj})
+	}, root: "", objects: testutil.MapLister{producer: producerObj, cmID: cmObj}}.index(), testutil.MapLister{producer: producerObj, cmID: cmObj})
 
 	if !f.ShouldReconcile(parent) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
@@ -1075,16 +1075,17 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 		t.Fatalf("precondition: producer must NOT be in keep before AddEmitted runs; keep=%v", f.KeepNames())
 	}
 
-	// Primary parent emits child at render time. AddEmitted walks
-	// child's transitiveDeps, hits the substituteFrom CM, and pulls
-	// the producer in dependency-only.
-	f.AddEmitted(parent, refObj(child))
+	added := f.AddEmitted(parent, childObj)
 
-	if !f.ShouldReconcile(child) {
-		t.Errorf("child must be in keep after AddEmitted from primary parent; keep=%v", f.KeepNames())
-	}
-	if !f.ShouldReconcile(producer) {
-		t.Errorf("producer of child's substituteFrom CM must be in keep; keep=%v", f.KeepNames())
+	data := cmID
+	data.Namespace = child.Namespace
+	for _, id := range []manifest.NamedResource{child, data, producer} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
+		}
+		if !slices.Contains(added, id) {
+			t.Errorf("AddEmitted must return %s; added=%v", id, added)
+		}
 	}
 	// Producer is dependency-only: AddEmitted from producer to a
 	// sentinel child must reject because producer is not primary.
@@ -1102,7 +1103,7 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 		Name: "child-app", Namespace: "apps",
 		Path: "kubernetes/apps/child",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-			{Kind: manifest.KindConfigMap, Name: "shared-settings"},
+			{Kind: manifest.KindSecret, Name: "shared-settings", Optional: true},
 		}},
 	}
 	child := childObj.Named()
@@ -1111,40 +1112,47 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 		Path: "kubernetes/apps/settings",
 	}
 	producer := producerObj.Named()
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "", Name: "shared-settings"}
-	cmObj := &manifest.ConfigMap{Name: cmID.Name, Namespace: cmID.Namespace}
+	dataID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "", Name: "shared-settings"}
+	dataObj := &manifest.Secret{Name: dataID.Name, Namespace: dataID.Namespace}
 
 	f := NewFilter(NewSet([]string{"kubernetes/parent/parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{
 		parent:   "kubernetes/parent/parent.yaml",
 		producer: "kubernetes/apps/settings/ks.yaml",
-		cmID:     "kubernetes/apps/settings/cm.yaml",
-	}, root: "", objects: testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj}}.index(), testutil.MapLister{producer: producerObj, child: childObj, cmID: cmObj})
+		dataID:   "kubernetes/apps/settings/secret.yaml",
+	}, root: "", objects: testutil.MapLister{producer: producerObj, dataID: dataObj}}.index(), testutil.MapLister{producer: producerObj, dataID: dataObj})
 
-	added := f.AddEmitted(parent, refObj(child))
+	added := f.AddEmitted(parent, childObj)
 
-	if !slices.Contains(added, producer) {
-		t.Errorf("AddEmitted must return the runtime-added producer KS; added=%v", added)
+	data := dataID
+	data.Namespace = child.Namespace
+	for _, id := range []manifest.NamedResource{child, data, producer} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
+		}
+		if !slices.Contains(added, id) {
+			t.Errorf("AddEmitted must return %s; added=%v", id, added)
+		}
+	}
+	sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "unrelated", Name: "sentinel"}
+	if added := f.AddEmitted(producer, refObj(sentinel)); len(added) != 0 || f.ShouldReconcile(sentinel) {
+		t.Errorf("dependency-only producer must reject unrelated child; added=%v, keep=%v", added, f.KeepNames())
 	}
 }
 
-// TestFilter_ChainedSubstituteFromProducers covers the chained
-// producer case: KS A has substituteFrom CM-a (produced by KS B);
-// KS B has substituteFrom CM-b (produced by KS C). C must land in
-// keep as ancestor — without the chain walk, an unchanged C would
-// silently be skipped and B's render would fail. See #418.
+// Optional producer inputs must retain the complete chain as dependency-only.
 func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 	aObj := &manifest.Kustomization{
 		Name: "consumer", Namespace: "flux-system",
 		Path: "kubernetes/consumer",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-			{Kind: manifest.KindConfigMap, Name: "cm-a"},
+			{Kind: manifest.KindConfigMap, Name: "cm-a", Optional: true},
 		}},
 	}
 	bObj := &manifest.Kustomization{
 		Name: "producer-b", Namespace: "flux-system",
 		Path: "kubernetes/b",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-			{Kind: manifest.KindConfigMap, Name: "cm-b"},
+			{Kind: manifest.KindSecret, Name: "cm-b", Optional: true},
 		}},
 	}
 	cObj := &manifest.Kustomization{
@@ -1155,7 +1163,7 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 
 	cmA := &manifest.ConfigMap{Name: "cm-a", Namespace: ""}
 	cmAID := cmA.Named()
-	cmB := &manifest.ConfigMap{Name: "cm-b", Namespace: ""}
+	cmB := &manifest.Secret{Name: "cm-b", Namespace: ""}
 	cmBID := cmB.Named()
 
 	f := NewFilter(NewSet([]string{"kubernetes/consumer/file.yaml"}), filterFixture{files: map[manifest.NamedResource]string{
@@ -1261,17 +1269,24 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind string
 		optional   bool
+		emptyName  bool
 	}{
 		{name: "ConfigMap", kind: manifest.KindConfigMap},
 		{name: "Secret", kind: manifest.KindSecret},
 		{name: "optional ConfigMap", kind: manifest.KindConfigMap, optional: true},
 		{name: "optional Secret", kind: manifest.KindSecret, optional: true},
+		{name: "empty optional ConfigMap", kind: manifest.KindConfigMap, optional: true, emptyName: true},
+		{name: "empty optional Secret", kind: manifest.KindSecret, optional: true, emptyName: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			name := "settings"
+			if tc.emptyName {
+				name = ""
+			}
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "app",
-				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: "settings", Optional: tc.optional}}}}
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: tc.kind, Name: name, Optional: tc.optional}}}}
 			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "data"}
-			data := manifest.NamedResource{Kind: tc.kind, Namespace: "apps", Name: "settings"}
+			data := manifest.NamedResource{Kind: tc.kind, Namespace: "apps", Name: name}
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer.Named(): {File: "flux/consumer.yaml"},
@@ -1281,8 +1296,14 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 				Claims: map[string][]manifest.NamedResource{"app/": {consumer.Named()}, "data/": {producer.Named()}},
 			}
 			f := NewFilter(NewSet([]string{"app/cm.yaml"}), index, testutil.MapLister{consumer.Named(): consumer, producer.Named(): producer})
-			if got := f.ShouldReconcile(producer.Named()); got == tc.optional {
-				t.Fatalf("producer retained = %t, optional reference = %t", got, tc.optional)
+			for _, id := range []manifest.NamedResource{data, producer.Named()} {
+				if got := f.ShouldReconcile(id); got == tc.emptyName {
+					t.Errorf("%s retained = %t, empty reference name = %t", id, got, tc.emptyName)
+				}
+			}
+			sentinel := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "unrelated"}
+			if added := f.AddEmitted(producer.Named(), refObj(sentinel)); len(added) != 0 || f.ShouldReconcile(sentinel) {
+				t.Errorf("dependency-only producer must reject unrelated child; added=%v, keep=%v", added, f.KeepNames())
 			}
 		})
 	}

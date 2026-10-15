@@ -141,9 +141,9 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 			want: "${VAR:=default}",
 		},
 		{
-			name: "missing Secret",
+			name: "missing optional Secret",
 			postBuild: map[string]any{"substituteFrom": []any{
-				map[string]any{"kind": "Secret", "name": "missing"},
+				map[string]any{"kind": "Secret", "name": "missing", "optional": true},
 			}},
 			want: "${VAR:=default}",
 		},

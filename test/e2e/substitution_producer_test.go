@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,14 +11,116 @@ import (
 
 func TestE2E_SubstitutionProducerRendering(t *testing.T) {
 	for _, kind := range []string{"ConfigMap", "Secret"} {
-		t.Run(kind, func(t *testing.T) {
-			root := t.TempDir()
-			testutil.WriteSubstitutionProducerCluster(t, root, kind)
-			stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress")
-			if code != 0 || !strings.Contains(stdout, "version: 4.6.2") || strings.Contains(stdout, "version: discovered") {
-				t.Fatalf("rendered substitution: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-			}
-		})
+		modes := []string{"full", "direct", "inherited"}
+		if kind == "ConfigMap" {
+			modes = append(modes, "env", "path-orig", "diff")
+		}
+		for _, mode := range modes {
+			t.Run(kind+"/"+mode, func(t *testing.T) {
+				root := t.TempDir()
+				testutil.WriteSubstitutionProducerCluster(t, root, kind)
+				testutil.WriteFile(t, root, "flux/unrelated.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: unrelated, namespace: flux-system}
+spec:
+  path: ./unrelated
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+				testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [deployment.yaml]\n")
+				testutil.WriteFile(t, root, "unrelated/deployment.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: unrelated-workload}\n")
+				consumer, err := os.ReadFile(filepath.Join(root, "flux/consumer.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				postBuild := "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"
+				if mode == "inherited" {
+					testutil.WriteFile(t, root, "children/consumer.yaml", strings.Replace(string(consumer), postBuild, "", 1))
+					testutil.WriteFile(t, root, "children/kustomization.yaml", "resources: [consumer.yaml]\n")
+					testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: parent, namespace: flux-system}
+spec:
+  path: ./children
+  sourceRef: {kind: GitRepository, name: flux-system}
+  dependsOn: [{name: producer}]
+  postBuild: {substituteFrom: [{kind: `+kind+`, name: settings, optional: true}]}
+  patches:
+  - target: {kind: Kustomization}
+    patch: |-
+      apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata: {name: ignored}
+      spec:
+        postBuild: {substituteFrom: [{kind: `+kind+`, name: settings, optional: true}]}
+`)
+				} else {
+					testutil.WriteFile(t, root, "flux/consumer.yaml", strings.Replace(string(consumer), postBuild,
+						"  dependsOn: [{name: producer}]\n  postBuild: {substituteFrom: [{kind: "+kind+", name: settings, optional: true}]}\n", 1))
+				}
+				const deployment = `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: output}
+spec:
+  selector: {matchLabels: {app: output}}
+  template:
+    metadata: {labels: {app: output}}
+    spec:
+      containers:
+      - name: app
+        image: example.invalid/app:${VERSION:=empty}-old
+`
+				if mode == "diff" {
+					testutil.WriteFile(t, root, "app/cm.yaml", deployment)
+				}
+				var original string
+				if mode == "path-orig" {
+					original = copyTree(t, root)
+				}
+				repo := gitInit(t, root)
+				gitCommitAll(t, repo)
+				if mode == "diff" {
+					testutil.WriteFile(t, root, "app/cm.yaml", strings.Replace(deployment, "-old", "-new", 1))
+				} else {
+					testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, labels: {changed: consumer}}\ndata: {version: '${VERSION:=empty}'}\n")
+				}
+				wt, err := repo.Worktree()
+				if err != nil {
+					t.Fatal(err)
+				}
+				status, err := wt.Status()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, dirty := status["app/cm.yaml"]; len(status) != 1 || !dirty {
+					t.Fatalf("consumer-only change: %v", status)
+				}
+				args := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+				switch mode {
+				case "full":
+				case "env":
+					t.Setenv("FLATE_BASE", "HEAD")
+				case "path-orig":
+					args = append(args, "--path-orig", original)
+				default:
+					args = append(args, "--base", "HEAD")
+				}
+				if mode == "diff" {
+					args[0] = "diff"
+					args = append(args, "-o", "diff")
+				}
+				stdout, stderr, code := runCLIBuffers(args...)
+				if mode != "full" && strings.Contains(stdout, "unrelated-workload") {
+					t.Fatalf("unchanged workload retained: stdout=%s stderr=%s", stdout, stderr)
+				}
+				if mode == "diff" {
+					if code != 0 || !strings.Contains(stdout, "image: example.invalid/app:4.6.2-old") || !strings.Contains(stdout, "image: example.invalid/app:4.6.2-new") {
+						t.Fatalf("diff substitution: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+					}
+				} else if code != 0 || !strings.Contains(stdout, "version: 4.6.2") || strings.Contains(stdout, "version: discovered") {
+					t.Fatalf("rendered substitution: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+			})
+		}
 	}
 }
 

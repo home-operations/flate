@@ -4,13 +4,14 @@ import (
 	"cmp"
 	"fmt"
 	"io/fs"
-	"iter"
 	"log/slog"
 	"maps"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
@@ -26,16 +27,11 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}}
 	var generators []generatorRecord
-	kss := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
 	remaining := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
 		if doc.body != nil && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
 			remaining[dir] = struct{}{}
 		}
-	}
-	var standalone []string
-	if len(remaining) != 0 {
-		standalone = l.standaloneRoots(repoRoot, kss)
 	}
 	record := func(v graphVisit) {
 		if v.owner != (manifest.NamedResource{}) {
@@ -58,12 +54,19 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 			b.recordProduced(v, l.documents.cache[v.file].objects)
 		}
 	}
-	for v := range l.graphVisits(repoRoot, kss, standalone) {
-		record(v)
+	for _, root := range l.scopes.roots {
+		for _, v := range l.scopes.walks[root.graphContext] {
+			v.owner = root.owner
+			record(v)
+		}
 	}
 	if len(remaining) != 0 {
-		for v := range l.graphVisits(repoRoot, nil, l.unreachedGeneratorRoots(repoRoot, remaining)) {
-			record(v)
+		for _, dir := range l.unreachedGeneratorRoots(repoRoot, remaining) {
+			root := graphVisit{root: repoRoot, dir: dir}
+			for _, v := range l.visitScope(root) {
+				v.owner = manifest.NamedResource{}
+				record(v)
+			}
 		}
 	}
 	l.addGenerated(generators)
@@ -138,8 +141,7 @@ type graphVisit struct {
 	file               string
 	prefix, coordinate string
 	owner              manifest.NamedResource
-	peers              []manifest.NamedResource
-	document           *kustomizationDocument
+	document           *types.Kustomization
 	readable           bool
 	localAlias         bool
 }
@@ -149,102 +151,6 @@ func (v graphVisit) localCoordinate() string {
 		return ""
 	}
 	return strings.TrimPrefix(v.coordinate, v.prefix+"/")
-}
-
-// graphVisits projects each source and namespace separately. Visits borrow cached
-// documents; consumers must never mutate them or alter the traversal's sources.
-func (l *Loader) graphVisits(repoRoot string, kss []*manifest.Kustomization, standalone []string) iter.Seq[graphVisit] {
-	return func(yield func(graphVisit) bool) {
-		w := graphWalker{documents: l.documents, visited: map[graphContext]struct{}{}}
-		var scopes map[string][]namespaceContext
-		for _, ks := range kss {
-			if ks.Namespace == "" {
-				scopes = map[string][]namespaceContext{}
-				break
-			}
-		}
-		emit := func(v graphVisit) bool {
-			if scopes != nil {
-				scope := namespaceContext{namespace: v.namespace, fallback: v.fallback}
-				if !slices.Contains(scopes[v.file], scope) {
-					scopes[v.file] = append(scopes[v.file], scope)
-				}
-			}
-			peers := v.peers
-			v.peers = nil
-			if !yield(v) {
-				return false
-			}
-			for _, owner := range peers {
-				v.owner = owner
-				if !yield(v) {
-					return false
-				}
-			}
-			return true
-		}
-		for _, dir := range standalone {
-			if !w.walk(graphVisit{root: repoRoot, dir: dir}, emit) {
-				return
-			}
-		}
-		for _, v := range l.graphRoots(repoRoot, kss, scopes) {
-			clear(w.visited)
-			if d, _ := l.documents.read(filepath.Join(v.root, v.dir)); d != nil {
-				if !w.walk(v, emit) {
-					return
-				}
-				continue
-			}
-			input, name := l.documents.input(filepath.Join(v.root, v.dir))
-			entries, _ := fs.ReadDir(input, name)
-			for _, e := range entries {
-				if e.IsDir() {
-					child := v
-					child.dir = path.Join(v.dir, e.Name())
-					if !w.walk(child, emit) {
-						return
-					}
-				}
-			}
-		}
-	}
-}
-
-func (l *Loader) graphRoots(repoRoot string, kss []*manifest.Kustomization, scopes map[string][]namespaceContext) []graphVisit {
-	var roots []graphVisit
-	grouped := map[graphContext]int{}
-	for _, ks := range kss {
-		if ks.IsFragment() {
-			continue
-		}
-		root, pinned, external := SourceView(l.Store, ks, repoRoot)
-		if external {
-			continue
-		}
-		ns := ks.Namespace
-		if ns == "" {
-			if contexts := scopes[l.Index.Records[ks.Named()].Path]; len(contexts) != 0 {
-				ns = cmp.Or(contexts[0].namespace, contexts[0].fallback)
-			}
-		}
-		v := graphVisit{root: root, dir: l.documents.claimBase(root, ks.Path), namespace: ks.TargetNamespace, fallback: cmp.Or(ks.TargetNamespace, ns), owner: ks.Named()}
-		if root != repoRoot {
-			prefix, err := filepath.Rel(repoRoot, root)
-			if err != nil {
-				continue
-			}
-			v.prefix = filepath.ToSlash(prefix)
-			v.localAlias = !pinned
-		}
-		if i, found := grouped[v.graphContext]; found {
-			roots[i].peers = append(roots[i].peers, v.owner)
-		} else {
-			grouped[v.graphContext] = len(roots)
-			roots = append(roots, v)
-		}
-	}
-	return roots
 }
 
 func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization) []string {
@@ -378,6 +284,14 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 		case *manifest.Kustomization:
 			b.emittedFiles[v.coordinate] = appendUniqueProducer(b.emittedFiles[v.coordinate], v.owner)
 		case *manifest.RawObject:
+			if len(manifest.ProducerTargets(o)) != 0 {
+				id := manifest.Resolve(o.Named(), v.namespace, v.fallback)
+				r := b.idx.Records[id]
+				if r.Authored == (manifest.NamedResource{}) {
+					r.Authored, r.Path, r.File = o.Named(), v.file, v.coordinate
+					b.idx.Records[id] = r
+				}
+			}
 			b.recordProducer(o, v.namespace, v.fallback, v.owner)
 		}
 	}
@@ -394,7 +308,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 // self-produced substituteFrom inputs are available before reconciliation.
 // Real Store objects win; the last SOPS Secret replaces earlier stand-ins.
 func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootNS string) {
-	ns := cmp.Or(baseNS, s.Namespace, rootNS)
+	ns := manifest.Resolve(s.Named(), baseNS, rootNS).Namespace
 	if !b.wipeSecrets || b.store == nil || ns == "" {
 		return
 	}
@@ -410,12 +324,10 @@ func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootN
 
 // Rendered data uses graph namespace, then authored namespace, then consumer fallback.
 func (b *selfProduceBuilder) recordDataObject(obj manifest.BaseManifest, baseNS, rootNS string, ks manifest.NamedResource) {
-	id := obj.Named()
-	ns := cmp.Or(baseNS, id.Namespace, rootNS)
-	if ns == "" || ks == (manifest.NamedResource{}) {
+	id := manifest.Resolve(obj.Named(), baseNS, rootNS)
+	if id.Namespace == "" || ks == (manifest.NamedResource{}) {
 		return
 	}
-	id.Namespace = ns
 	r := b.idx.Records[id]
 	r.Renderers = appendUniqueProducer(r.Renderers, ks)
 	b.idx.Records[id] = r
@@ -428,15 +340,13 @@ func (b *selfProduceBuilder) recordDataObject(obj manifest.BaseManifest, baseNS,
 // Non-producer kinds are no-ops. Ownership is recorded before rendering.
 func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, rootNS string, ks manifest.NamedResource) {
 	for _, target := range manifest.ProducerTargets(raw) {
-		ns := cmp.Or(baseNS, target.Namespace, rootNS)
-		if ns == "" {
+		target.NamedResource = manifest.Resolve(target.NamedResource, baseNS, rootNS)
+		if target.Namespace == "" {
 			continue
 		}
-		target.Namespace = ns
-		b.producers.Record(target.NamedResource, raw.Named())
 		producer := raw.Named()
-		projected := producer
-		projected.Namespace = ns
+		projected := manifest.Resolve(producer, baseNS, rootNS)
+		b.producers.Record(target.NamedResource, projected)
 		for _, producer := range []manifest.NamedResource{producer, projected} {
 			if ks == (manifest.NamedResource{}) {
 				continue

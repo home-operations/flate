@@ -26,7 +26,7 @@ type orchestratorExistence struct {
 
 func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
 	record, _ := e.index.Lookup(id)
-	return loader.Promote(e.store, id, record.Path, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit})
+	return loader.Promote(e.store, id, record, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit})
 }
 
 func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {

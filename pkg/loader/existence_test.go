@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"slices"
 )
 
 // Discovery drivers stay in the Store; deferred content stays in the file index.
@@ -46,7 +47,7 @@ func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
 		})
 	}
 	cached := l.documents.cache[filepath.Join(dir, manifest.KindGitRepository+".yaml")].objects
-	assert.Equal(t, slices.ContainsFunc(cached, func(obj manifest.BaseManifest) bool { return obj.Named().Kind == manifest.KindGitRepository }), false)
+	assert.Equal(t, slices.ContainsFunc(cached, func(obj manifest.BaseManifest) bool { return obj.Named().Kind == manifest.KindGitRepository }), true)
 }
 
 // TestDiscoveryOnly_PromoteMaterializesFromIndex covers the
@@ -76,7 +77,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !Promote(l.Store, id, l.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+	if !Promote(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -92,7 +93,7 @@ data:
 func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got := Promote(idx.Store, id, idx.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got := Promote(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
@@ -125,7 +126,7 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got := Promote(l.Store, id, l.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got := Promote(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -166,7 +167,7 @@ data:
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
-	if !Promote(l.Store, cmID, l.Index.Records[cmID].Path, PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+	if !Promote(l.Store, cmID, l.Index.Records[cmID], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 		t.Fatalf("Promote(cm) should succeed")
 	}
 	if st.GetObject(cmID) == nil {
@@ -208,14 +209,14 @@ stringData: {value: fixture}
 			admitForTest(st, dir)
 			idx := loaderFixture(st, nil)
 			for _, id := range []manifest.NamedResource{cm.Named(), secret} {
-				idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
+				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
 			}
 			id := cm.Named()
 			if tc.secret {
 				id = secret
 			}
 			admit := func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }
-			if got := Promote(idx.Store, id, idx.Index.Records[id].Path, PromoteOptions{WipeSecrets: true, Admit: admit}); got == tc.secret {
+			if got := Promote(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: admit}); got == tc.secret {
 				t.Errorf("Promote returned %v, want %v", got, !tc.secret)
 			}
 			if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
@@ -280,30 +281,73 @@ spec:
 	}
 }
 
-func TestPromote_BareDocumentProjection(t *testing.T) {
+func TestPromote_AuthoredDocumentProjection(t *testing.T) {
 	const doc = `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
-metadata: {name: podinfo%s}
+metadata: {name: podinfo, namespace: %q}
 spec:
   interval: 1h
   chart: {spec: {chart: podinfo, version: %s, sourceRef: {kind: HelmRepository, name: podinfo}}}
 `
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "bundle.yaml", fmt.Sprintf(doc, "", "1.0.0")+"---\n"+fmt.Sprintf(doc, ", namespace: other", "2.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
-	for _, tc := range []struct{ namespace, version string }{{"apps", "1.0.0"}, {"other", "2.0.0"}} {
-		t.Run(tc.namespace, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, authored, namespace, version string
+		evidence                           bool
+	}{
+		{"bare projected", "", "apps", "1.0.0", true},
+		{"authored wins over foreign exact identity", "authored", "other", "1.0.0", true},
+		{"no evidence exact identity", "authored", "other", "2.0.0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "bundle.yaml", fmt.Sprintf(doc, "other", "2.0.0")+"---\n"+fmt.Sprintf(doc, tc.authored, "1.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
 			st := store.New()
 			admitForTest(st, dir)
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.namespace, Name: "podinfo"}
-			admit := func(manifest.BaseManifest) bool { return true }
-			if !Promote(st, id, filepath.Join(dir, "bundle.yaml"), PromoteOptions{Admit: admit}) {
-				t.Fatalf("Promote(%s) = false", id)
+			record := manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
+			if tc.evidence {
+				record.Authored = id
+				record.Authored.Namespace = tc.authored
+			}
+			if got := Promote(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != (tc.version != "") {
+				t.Fatalf("Promote(%s) = %v, want %v", id, got, tc.version != "")
 			}
 			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
 				t.Errorf("%s chart version = %s, want %s", id, got, tc.version)
 			}
-			if sibling := (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: tc.namespace, Name: "note"}); st.GetObject(sibling) != nil {
-				t.Errorf("sibling %s must keep its own identity", sibling)
+			sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
+			if st.GetObject(sibling) == nil {
+				t.Error("admitted sibling must retain its authored identity")
+			}
+			sibling.Namespace = tc.namespace
+			if st.GetObject(sibling) != nil {
+				t.Errorf("sibling %s acquired the requested namespace", sibling)
+			}
+		})
+	}
+}
+
+func TestPromote_SourceView(t *testing.T) {
+	const doc = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: authored}\ndata: {source: %s}\n"
+	for _, present := range []bool{true, false} {
+		t.Run(fmt.Sprintf("present=%v", present), func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "values.yaml", fmt.Sprintf(doc, "working"))
+			input := fstest.MapFS{}
+			if present {
+				input["values.yaml"] = &fstest.MapFile{Data: []byte(fmt.Sprintf(doc, "committed"))}
+			}
+			st := store.New()
+			source := &manifest.GitRepository{Name: "source"}
+			st.AddObject(source)
+			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: dir, FS: input})
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
+			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml")}
+			record.Authored.Namespace = "authored"
+			if got := Promote(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != present {
+				t.Fatalf("Promote = %v, want %v", got, present)
+			}
+			if present && st.GetObject(id).(*manifest.ConfigMap).Data["source"] != "committed" {
+				t.Fatal("promotion read the working file instead of the mounted view")
 			}
 		})
 	}

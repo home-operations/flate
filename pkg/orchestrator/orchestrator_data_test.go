@@ -95,9 +95,6 @@ spec:
 			o.store.AddObject(clone)
 			gotInput := o.requiredDataDependencies(hr.Named())
 			want := 4
-			if namespace == "foreign" {
-				want = 3
-			}
 			if len(gotInput) != want || !slices.IsSortedFunc(got, manifest.NamedResource.Compare) || len(slices.Compact(slices.Clone(got))) != len(got) {
 				t.Fatalf("ownership/dedup/sort violated: all=%v input=%v", got, gotInput)
 			}

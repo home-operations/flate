@@ -12,11 +12,21 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 	if l.documents.cache == nil {
 		l.documents.cache = map[string]document{}
 	}
-	l.documents.mountSources(l.Store)
+	l.mountSources()
 	if l.Index == nil {
 		l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	}
-	claims := l.Claims(repoRoot)
+	if l.scopes == nil || !l.scopes.complete {
+		l.ensureScopes()
+		for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+			l.scopes.ready[l.sourceState(ks.SourceID())] = struct{}{}
+		}
+		l.ApplyNamespaces(repoRoot)
+	}
+	var claims []manifest.KSClaim
+	if l.scopes != nil {
+		claims = l.scopes.claims
+	}
 	l.Index.Claims = make(map[string][]manifest.NamedResource, len(claims))
 	l.Index.Readers = map[string][]manifest.NamedResource{}
 	own := map[manifest.NamedResource]map[string]struct{}{}
@@ -63,6 +73,7 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 	// Graph traversal supplies readers before file-backed data ownership is frozen.
 	l.buildRenderers(repoRoot, producers)
 	l.fillOwners()
+	l.scopes = nil
 	for id, r := range l.Index.Records {
 		slices.SortFunc(r.Renderers, manifest.NamedResource.Compare)
 		slices.SortFunc(r.DeclarationOwners, manifest.NamedResource.Compare)

@@ -24,7 +24,13 @@ func loaderFixture(s *store.Store, files map[manifest.NamedResource]string) *Loa
 func stampForTest(s *store.Store, files map[manifest.NamedResource]string, root string) {
 	l := loaderFixture(s, files)
 	l.documents = readerForTest(root)
-	l.stampTransformerTargetNamespaces(root)
+	cache := map[string]nsResolution{}
+	for id, file := range files {
+		if ks, ok := s.Get[*manifest.Kustomization](id); ok {
+			predicted, _ := l.predictNamespaces(ks, root, manifest.DiscoveryRecord{File: file}, cache)
+			s.AddObject(predicted)
+		}
+	}
 }
 
 func readerForTest(root string) documentReader {
@@ -38,6 +44,7 @@ func admitForTest(s *store.Store, root string) {
 func rendererFixture(t *testing.T, l *Loader, root string, producers *manifest.ProducerIndex) *manifest.DiscoveryIndex {
 	t.Helper()
 	admitForTest(l.Store, root)
+	l.documents.mountSources(l.Store)
 	l.FinalizeIndex(root, producers)
 	return l.Index
 }
@@ -72,15 +79,6 @@ func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifes
 		}
 	}
 	return manifest.NamedResource{}, false
-}
-
-func defaultNamespacesForTest(s *store.Store, files map[manifest.NamedResource]string) {
-	l := loaderFixture(s, files)
-	l.applyDefaultNamespaces()
-	clear(files)
-	for id, r := range l.Index.Files() {
-		files[id] = r.File
-	}
 }
 
 func TestFinalizeIndex_DataOwners(t *testing.T) {

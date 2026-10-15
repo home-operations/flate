@@ -69,6 +69,7 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			l.Options.WipeSecrets = tc.wipe
 			l.documents = readerForTest(root)
 			admitForTest(st, root)
+			l.mountSources()
 			l.documents.read(filepath.Join(root, "apps/a"))
 			l.FinalizeIndex(root, nil)
 			obj := st.GetObject(id)

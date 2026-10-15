@@ -2,7 +2,6 @@ package loader
 
 import (
 	"log/slog"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -14,9 +13,11 @@ type PromoteOptions struct {
 	Admit       func(manifest.BaseManifest) bool // Admission applies to the requested object and every sibling.
 }
 
-// Promote materializes admitted objects from path and reports whether id is available.
-// Existing objects take precedence over raw files. The caller supplies an indexed raw path.
-func Promote(st *store.Store, id manifest.NamedResource, path string, opts PromoteOptions) bool {
+// Promote materializes admitted objects from record.Path and reports whether id is available.
+// Authored proves which raw identity may be projected; absent evidence requires an exact id.
+// Existing objects take precedence over raw files.
+func Promote(st *store.Store, id manifest.NamedResource, record manifest.DiscoveryRecord, opts PromoteOptions) bool {
+	path := record.Path
 	if st == nil || path == "" {
 		return false
 	}
@@ -30,14 +31,17 @@ func Promote(st *store.Store, id manifest.NamedResource, path string, opts Promo
 		slog.Debug("loader: promote re-parse failed", "id", id.String(), "path", path, "err", err)
 		return false
 	}
-	bare := id
-	bare.Namespace = ""
-	authored := slices.ContainsFunc(objs, func(obj manifest.BaseManifest) bool { return obj.Named() == id })
+	authored := record.Authored
+	if authored == (manifest.NamedResource{}) {
+		authored = id
+	}
 	for _, obj := range objs {
-		if !authored && obj.Named() == bare {
-			if updated := cloneWithNamespace(obj, id.Namespace); updated != nil {
-				obj = updated
+		if obj.Named() == authored {
+			if authored.Namespace != id.Namespace {
+				obj = obj.WithNamespace(id.Namespace)
 			}
+		} else if obj.Named() == id {
+			continue
 		}
 		if !opts.Admit(obj) || st.GetObject(obj.Named()) != nil {
 			continue

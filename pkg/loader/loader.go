@@ -33,6 +33,8 @@ import (
 	"slices"
 	"strings"
 
+	"sigs.k8s.io/kustomize/api/types"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -66,6 +68,7 @@ type Loader struct {
 	// before Load and are mutable only until FinalizeIndex returns.
 	Index     *manifest.DiscoveryIndex
 	documents documentReader
+	scopes    *scopeConstruction
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
 	// reads in place of <root>/.krmignore, with its patterns anchored
@@ -102,7 +105,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if l.Index != nil && l.documents.cache == nil {
 		l.documents.cache = map[string]document{}
 	}
-	l.documents.mountSources(l.Store)
+	l.mountSources()
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return 0, err
@@ -121,7 +124,14 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			return 0, err
 		}
 		l.Store.SetArtifact(manifest.BootstrapSourceID, input)
-		l.documents.mountSources(l.Store)
+		l.mountSources()
+	}
+	if l.Index != nil {
+		l.ensureScopes()
+		l.scopes.complete = false
+		if _, scanned := l.scopes.scanned[abs]; scanned {
+			return 0, nil
+		}
 	}
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
@@ -147,7 +157,11 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		scanRoot:    abs,
 		ignoreCache: map[ignoreKey]bool{},
 	}
-	return w.descend(ctx, abs)
+	n, err := w.descend(ctx, abs)
+	if err == nil && l.scopes != nil {
+		l.scopes.scanned[abs] = struct{}{}
+	}
+	return n, err
 }
 
 // walker carries the per-Load state — ignore matcher, visited-dir
@@ -266,7 +280,7 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 // kustomize's directive fields) reference YAMLs that are kustomize
 // directives, NOT Flux manifests — they're not in `resources:` so
 // they don't load. Matches `kustomize build` precisely.
-func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomizationDocument, kpath string) (int, error) {
+func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomization, kpath string) (int, error) {
 	dataFiles := dataFilesFor(dir, k)
 	count := 0
 
@@ -379,7 +393,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *kustomization
 // = resources only" rule the loader otherwise enforces for HRs /
 // sources / data files. Gated on DiscoveryOnly so non-DiscoveryOnly
 // callers keep that strict semantic.
-func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath string) int {
+func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath string) int {
 	// A genuine bootstrap *entry* KS is a root — no other Kustomization's
 	// spec.path covers its directory. A KS commented-out of (excluded from)
 	// a kustomization.yaml lives inside a tree another KS already renders
@@ -448,8 +462,8 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *kustomizationDocument, kpath
 // directory) sits under some loaded Flux Kustomization's spec.path — i.e. it
 // is part of a tree another KS renders, where a sibling KS excluded from the
 // local kustomization.yaml is a disabled app rather than a bootstrap entry.
-// No-ops (returns false) when SourceRoot is unset, so SDK / unit-test callers
-// that set DiscoveryOnly without a repo root keep the legacy scan behavior.
+// Claims MUST use the scanned source view, never another alias or pin.
+// Without SourceRoot, discovery retains direct-input bootstrap admission.
 //
 // A KS being surfaced by scanBootstrapFluxKS is not yet in the Store at its
 // own dir's first scan, so a true entry KS reads as uncovered and is still
@@ -459,7 +473,8 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 	if l.SourceRoot == "" {
 		return false
 	}
-	rel, err := filepath.Rel(l.SourceRoot, dir)
+	root := l.documents.mountedRoot(dir)
+	rel, err := filepath.Rel(root, dir)
 	if err != nil {
 		return false
 	}
@@ -468,9 +483,9 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 		if ks.IsFragment() {
 			continue
 		}
-		root := l.SourceRoot
-		if strings.Contains(ks.Path, "..") {
-			root, _, _ = SourceView(l.Store, ks, root)
+		sourceRoot, _, _ := SourceView(l.Store, ks, l.SourceRoot)
+		if sourceRoot != root {
+			continue
 		}
 		base := l.documents.claimBase(root, ks.Path)
 		if strings.HasPrefix(dirRel, base+"/") {
@@ -495,7 +510,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 // any non-Component YAMLs from the Component subtree, defeating the
 // whole point of the skip. Stay limited to CM/Secret data-file
 // recording.
-func (w *walker) walkComponentData(ctx context.Context, dir string, k *kustomizationDocument) (int, error) {
+func (w *walker) walkComponentData(ctx context.Context, dir string, k *types.Kustomization) (int, error) {
 	for _, r := range k.Resources {
 		if cerr := ctx.Err(); cerr != nil {
 			return 0, cerr
@@ -634,15 +649,26 @@ func (l *Loader) skipExisting(id manifest.NamedResource) bool {
 
 // Indexed discovery defers decode errors; Load without an index remains strict.
 func (l *Loader) loadFile(path string) (int, error) {
+	if l.documents.cache[path].loaded {
+		return 0, nil
+	}
 	reader := l.documents
 	reader.regular = true
 	objs := []manifest.BaseManifest{}
-	err := reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents.cache != nil, func(obj manifest.BaseManifest) {
+	collect := func(obj manifest.BaseManifest) {
 		if raw, ok := obj.(*manifest.RawObject); ok && len(manifest.ProducerTargets(raw)) == 0 {
 			return
 		}
 		objs = append(objs, obj)
-	})
+	}
+	var err error
+	if cached := l.documents.cache[path].objects; cached != nil {
+		for _, obj := range cached {
+			collect(obj)
+		}
+	} else {
+		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets}, l.documents.cache != nil, collect)
+	}
 	if err != nil {
 		if l.Index == nil || !errors.Is(err, manifest.ErrInput) {
 			return 0, err
@@ -660,6 +686,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 	for _, obj := range objs {
 		info := manifest.KindOf(obj)
 		if !info.Tracked {
+			l.recordObject(obj, path)
 			continue
 		}
 		if hr, ok := obj.(*manifest.HelmRelease); ok {
@@ -685,11 +712,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		count++
 	}
 	if l.documents.cache != nil {
-		objects := slices.DeleteFunc(objs, func(obj manifest.BaseManifest) bool {
-			info := manifest.KindOf(obj)
-			return !info.Includes("cache")
-		})
-		l.documents.cache[path] = document{objects: objects}
+		l.documents.cache[path] = document{objects: objs, loaded: true}
 	}
 	return count, nil
 }
@@ -729,7 +752,7 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 		return
 	}
 	id := obj.Named()
-	r := manifest.DiscoveryRecord{Path: absPath, File: l.fileCoordinate(absPath)}
+	r := manifest.DiscoveryRecord{Authored: id, Path: absPath, File: l.fileCoordinate(absPath)}
 	var buf [16]manifest.NamedResource
 	refs := buf[:0]
 	for ref := range manifest.References(obj) {

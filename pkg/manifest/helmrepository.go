@@ -21,8 +21,12 @@ func (h *HelmRepository) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
 }
 
-// RepoName delegates to the canonical NamedResource helper.
-func (h *HelmRepository) RepoName() string { return h.Named().FluxResourceName() }
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (h *HelmRepository) WithNamespace(namespace string) BaseManifest {
+	out := *h
+	out.Namespace = namespace
+	return &out
+}
 
 // parseHelmRepository decodes a HelmRepository CR via the
 // source-controller typed schema.

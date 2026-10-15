@@ -2,6 +2,7 @@ package loader
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -11,6 +12,9 @@ import (
 	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
+	"sigs.k8s.io/kustomize/api/filters/namespace"
+	"sigs.k8s.io/kustomize/api/types"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -22,40 +26,35 @@ import (
 // running away even though visited already breaks true cycles.
 const transformerScanMaxDepth = 6
 
-func (l *Loader) stampTransformerTargetNamespaces(repoRoot string) {
-	s := l.Store
-	if l.Index == nil || len(l.Index.Records) == 0 {
-		return
+func (l *Loader) predictNamespaces(ks *manifest.Kustomization, repoRoot string, record manifest.DiscoveryRecord, cache map[string]nsResolution) (*manifest.Kustomization, string) {
+	file := record.File
+	for root := filepath.Dir(record.Path); record.Path != "" && root != filepath.Dir(root); root = filepath.Dir(root) {
+		if l.documents.views[root] != nil {
+			repoRoot = root
+			rel, _ := filepath.Rel(root, record.Path)
+			file = filepath.ToSlash(rel)
+			break
+		}
 	}
-	// Per-directory resolution cache: many KSes share the same overlay
-	// ancestry, and resolution re-reads kustomization.yaml files off
-	// disk. Live only for this pass.
-	cache := map[string]nsResolution{}
-	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
-		if ks.TargetNamespace != "" {
-			continue
-		}
-		record, ok := l.Index.Lookup(ks.Named())
-		if !ok {
-			continue
-		}
-		ns := l.documents.resolveOverlayInjectedNamespace(repoRoot, record.File, cache)
-		if ns == "" {
-			continue
-		}
-		// Store immutability contract: clone before mutating, then
-		// AddObject the copy. The id is unchanged (targetNamespace isn't
-		// part of NamedResource), so this updates in place.
-		updated := ks.Clone()
-		updated.SetTargetNamespace(ns)
-		s.AddObject(updated)
+	res := l.documents.resolveOverlayInjectedNamespace(repoRoot, file, cache)
+	forced := ""
+	if res.transformer {
+		// The builtin namespace filter also sets metadata.namespace.
+		forced = res.ns
 	}
+	if res.ns == "" || ks.TargetNamespace != "" {
+		return ks, forced
+	}
+	updated := ks.Clone()
+	updated.SetTargetNamespace(res.ns)
+	return updated, forced
 }
 
 // nsResolution memoizes a per-directory transformer-namespace lookup.
 type nsResolution struct {
-	ns string
-	ok bool
+	ns          string
+	ok          bool
+	transformer bool
 }
 
 // resolveOverlayInjectedNamespace walks up the ancestor directories of a
@@ -64,20 +63,21 @@ type nsResolution struct {
 // targetNamespace-injecting `replacements:` rule. Deepest enclosing overlay
 // wins (first hit walking up), matching kustomize's "closest overlay"
 // semantics.
-func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) string {
+func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) nsResolution {
 	dir := path.Dir(filepath.ToSlash(file))
 	for dir != "." && dir != "/" && dir != "" {
-		res, ok := cache[dir]
+		key := filepath.Join(repoRoot, filepath.FromSlash(dir))
+		res, ok := cache[key]
 		if !ok {
 			res = reader.resolveInjectedTargetNamespace(repoRoot, dir)
-			cache[dir] = res
+			cache[key] = res
 		}
 		if res.ok {
-			return res.ns
+			return res
 		}
 		dir = path.Dir(dir)
 	}
-	return ""
+	return nsResolution{}
 }
 
 func (reader documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
@@ -107,7 +107,7 @@ func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir s
 			continue
 		}
 		if reader.subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}, 0) {
-			return nsResolution{ns: td.Namespace, ok: true}
+			return nsResolution{ns: td.Namespace, ok: true, transformer: true}
 		}
 	}
 	return nsResolution{}
@@ -128,7 +128,7 @@ func (reader documentReader) replacementInjectedNamespace(repoRoot, overlayDir s
 		return nsResolution{}
 	}
 	for _, r := range d.Replacements {
-		if r.injectsKustomizationTargetNamespace(reader, repoRoot, overlayDir) {
+		if replacementInjectsTargetNamespace(r, reader, repoRoot, overlayDir) {
 			return nsResolution{ns: d.Namespace, ok: true}
 		}
 	}
@@ -174,48 +174,52 @@ func (reader documentReader) fileHasNamespaceTransformer(repoRoot, target string
 	if err != nil {
 		return false
 	}
-	// Decode every document up front and bail on any malformed one, matching
-	// the prior whole-file SplitDocs parse (all-or-nothing) exactly.
+	// Every document MUST decode successfully before any prediction is accepted.
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	var docs []namespaceTransformerDoc
+	found := false
 	for {
-		var doc namespaceTransformerDoc
-		err := dec.Decode(&doc)
+		var raw map[string]any
+		err := dec.Decode(&raw)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return false
 		}
-		docs = append(docs, doc)
+		data, err := json.Marshal(raw)
+		var doc namespaceTransformerDoc
+		if err != nil || json.Unmarshal(data, &doc) != nil {
+			return false
+		}
+		if doc.Kind == "NamespaceTransformer" {
+			switch doc.SetRoleBindingSubjects {
+			case namespace.SubjectModeUnspecified, namespace.DefaultSubjectsOnly,
+				namespace.AllServiceAccountSubjects, namespace.NoSubjects:
+			default:
+				return false
+			}
+		}
+		found = doc.injectsKustomizationTargetNamespace() || found
 	}
-	return slices.ContainsFunc(docs, namespaceTransformerDoc.injectsKustomizationTargetNamespace)
+	return found
 }
 
-// namespaceTransformerDoc is the subset of a builtin NamespaceTransformer that
-// targetNamespace detection reads: a fieldSpec writing spec/targetNamespace on
-// Kustomizations is what injects a Flux KS's targetNamespace.
+// NamespaceTransformerPlugin is upstream-internal; only its public field specs
+// and options needed to prove unconditional target creation are decoded here.
 type namespaceTransformerDoc struct {
-	Kind       string                 `yaml:"kind"`
-	FieldSpecs []transformerFieldSpec `yaml:"fieldSpecs"`
+	Kind                   string                           `json:"kind"`
+	FieldSpecs             []types.FieldSpec                `json:"fieldSpecs"`
+	UnsetOnly              bool                             `json:"unsetOnly"`
+	SetRoleBindingSubjects namespace.RoleBindingSubjectMode `json:"setRoleBindingSubjects"`
 }
 
-// transformerFieldSpec is one `fieldSpecs:` entry: the kind it applies to and
-// the object path it writes.
-type transformerFieldSpec struct {
-	Kind string `yaml:"kind"`
-	Path string `yaml:"path"`
-}
-
-// injectsKustomizationTargetNamespace reports whether doc is a builtin
-// NamespaceTransformer with a fieldSpec that writes spec/targetNamespace on
-// Kustomizations — the precise shape that injects a Flux KS's targetNamespace.
 func (d namespaceTransformerDoc) injectsKustomizationTargetNamespace() bool {
-	if d.Kind != "NamespaceTransformer" {
+	if d.Kind != "NamespaceTransformer" || d.UnsetOnly {
 		return false
 	}
-	return slices.ContainsFunc(d.FieldSpecs, func(fs transformerFieldSpec) bool {
-		return fs.Kind == manifest.KindKustomization && fs.Path == "spec/targetNamespace"
+	return slices.ContainsFunc(d.FieldSpecs, func(fs types.FieldSpec) bool {
+		return fs.Kind == manifest.KindKustomization && fs.Group == manifest.FluxKustomizeDomain &&
+			(fs.Version == "" || fs.Version == "v1") && fs.Path == "spec/targetNamespace" && fs.CreateIfNotPresent
 	})
 }
 
@@ -234,48 +238,11 @@ func resolveRef(baseDir, ref string) (string, bool) {
 	return resolved, true
 }
 
-// replacementDirective captures a single `replacements:` entry. kustomize
-// allows two shapes: an external file ref (`{path: <file>}`, where the file is a
-// YAML list of replacement objects) or an inline replacement (`{source,
-// targets}`). Both decode into this one struct: the file form leaves
-// Source/Targets nil, the inline form leaves Path empty.
-type replacementDirective struct {
-	Path    string              `yaml:"path"`
-	Source  *replacementSource  `yaml:"source"`
-	Targets []replacementTarget `yaml:"targets"`
-}
-
-// replacementSource / replacementTarget / replacementSelect model only the
-// fields targetNamespace detection reads. A replacement field path may be given
-// singular (`fieldPath`) or plural (`fieldPaths`); both are accepted on either
-// side. Selector keys beyond kind/group (version, name, namespace) are
-// intentionally ignored — same as the prior map-based check.
-type replacementSource struct {
-	Kind       string   `yaml:"kind"`
-	FieldPath  string   `yaml:"fieldPath"`
-	FieldPaths []string `yaml:"fieldPaths"`
-}
-
-type replacementTarget struct {
-	Select     replacementSelect `yaml:"select"`
-	FieldPath  string            `yaml:"fieldPath"`
-	FieldPaths []string          `yaml:"fieldPaths"`
-}
-
-type replacementSelect struct {
-	Kind  string `yaml:"kind"`
-	Group string `yaml:"group"`
-}
-
-// injectsKustomizationTargetNamespace reports whether r is a
-// Namespace-name → Kustomization.spec.targetNamespace replacement, resolving the
-// external `{path:}` form (a YAML list of replacement objects) against
-// overlayDir.
-func (r replacementDirective) injectsKustomizationTargetNamespace(reader documentReader, repoRoot, overlayDir string) bool {
-	if r.Source != nil {
-		return r.copiesNamespaceNameToKustomizationTargetNamespace()
-	}
+func replacementInjectsTargetNamespace(r types.ReplacementField, reader documentReader, repoRoot, overlayDir string) bool {
 	if r.Path == "" {
+		return copiesNamespaceNameToTargetNamespace(r.Replacement)
+	}
+	if r.Source != nil || len(r.Targets) != 0 || r.SourceValue != nil {
 		return false
 	}
 	ref, ok := resolveRef(overlayDir, r.Path)
@@ -287,32 +254,32 @@ func (r replacementDirective) injectsKustomizationTargetNamespace(reader documen
 	if err != nil {
 		return false
 	}
-	var rules []replacementDirective
-	if err := yaml.Unmarshal(data, &rules); err != nil {
+	var rules []types.Replacement
+	if sigsyaml.Unmarshal(data, &rules) != nil {
 		return false
 	}
-	return slices.ContainsFunc(rules, replacementDirective.copiesNamespaceNameToKustomizationTargetNamespace)
+	return slices.ContainsFunc(rules, copiesNamespaceNameToTargetNamespace)
 }
 
-// copiesNamespaceNameToKustomizationTargetNamespace reports whether r's inline
-// source/targets copy a Namespace's metadata.name into the spec.targetNamespace
-// of Flux Kustomizations — the precise shape
-// kubernetes/components/replacements/ks.yaml uses.
-func (r replacementDirective) copiesNamespaceNameToKustomizationTargetNamespace() bool {
-	if r.Source == nil || r.Source.Kind != "Namespace" ||
-		!fieldMatches(r.Source.FieldPath, r.Source.FieldPaths, "metadata.name") {
+// Prediction requires an unrestricted selector and field creation. Existing
+// explicit targetNamespace values remain authoritative; other shapes are left
+// to the actual render, including no-create rules and external map definitions.
+func copiesNamespaceNameToTargetNamespace(r types.Replacement) bool {
+	if r.Source == nil || r.SourceValue != nil || r.Source.Kind != "Namespace" ||
+		r.Source.Group != "" || (r.Source.Version != "" && r.Source.Version != "v1") ||
+		r.Source.Name != "" || r.Source.Namespace != "" || r.Source.Options != nil ||
+		(r.Source.FieldPath != "" && r.Source.FieldPath != types.DefaultReplacementFieldPath) {
 		return false
 	}
-	return slices.ContainsFunc(r.Targets, func(t replacementTarget) bool {
-		return t.Select.Kind == manifest.KindKustomization &&
-			t.Select.Group == manifest.FluxKustomizeDomain &&
-			fieldMatches(t.FieldPath, t.FieldPaths, "spec.targetNamespace")
-	})
-}
-
-// fieldMatches reports whether a replacement field path equals want in either
-// the singular (`fieldPath`) or plural (`fieldPaths`) form. Accepting both on
-// either side costs nothing and tolerates hand-written variants.
-func fieldMatches(single string, plural []string, want string) bool {
-	return single == want || slices.Contains(plural, want)
+	for _, t := range r.Targets {
+		if t == nil || t.Select == nil || len(t.Reject) != 0 ||
+			t.Select.Kind != manifest.KindKustomization || t.Select.Group != manifest.FluxKustomizeDomain ||
+			(t.Select.Version != "" && t.Select.Version != "v1") || t.Select.Name != "" || t.Select.Namespace != "" ||
+			t.Select.LabelSelector != "" || t.Select.AnnotationSelector != "" ||
+			!slices.Contains(t.FieldPaths, "spec.targetNamespace") ||
+			t.Options == nil || *t.Options != (types.FieldOptions{Create: true}) {
+			return false
+		}
+	}
+	return len(r.Targets) != 0
 }

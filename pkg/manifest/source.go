@@ -44,13 +44,15 @@ func (g *GitRepository) Named() NamedResource {
 	return NamedResource{Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
 }
 
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (g *GitRepository) WithNamespace(namespace string) BaseManifest {
+	out := *g
+	out.Namespace = namespace
+	return &out
+}
+
 // Suspended reports whether reconciliation is paused on this resource.
 func (g *GitRepository) Suspended() bool { return g.Suspend }
-
-// RepoName delegates to the canonical NamedResource helper so all
-// three source kinds (Git, OCI, Helm) produce identical strings on
-// the same id.
-func (g *GitRepository) RepoName() string { return g.Named().FluxResourceName() }
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
 func validateSecretReference(id NamedResource, err *error) func(Reference) bool {
@@ -121,11 +123,15 @@ func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
 }
 
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
+	out := *o
+	out.Namespace = namespace
+	return &out
+}
+
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }
-
-// RepoName delegates to the canonical NamedResource helper.
-func (o *OCIRepository) RepoName() string { return o.Named().FluxResourceName() }
 
 // ParseOCIRepository decodes an OCIRepository CR.
 func ParseOCIRepository(doc map[string]any) (*OCIRepository, error) {
@@ -187,6 +193,13 @@ type ExternalArtifact struct {
 // Named identifies the ExternalArtifact.
 func (e *ExternalArtifact) Named() NamedResource {
 	return NamedResource{Kind: KindExternalArtifact, Namespace: e.Namespace, Name: e.Name}
+}
+
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (e *ExternalArtifact) WithNamespace(namespace string) BaseManifest {
+	out := *e
+	out.Namespace = namespace
+	return &out
 }
 
 // Suspended is always false for ExternalArtifact — the CR has no

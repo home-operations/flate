@@ -14,7 +14,7 @@ func TestPromoteOrphans_ChecksEachSiblingsProducer(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/bundle.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata: {name: self, namespace: apps}
+metadata: {name: self, namespace: authored}
 spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -32,7 +32,11 @@ spec:
 	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "self"}
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml"}
+		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml"}
+		if id == self {
+			record.Authored.Namespace = "authored"
+		}
+		l.Index.Records[id] = record
 	}
 	d := &discoverer{
 		cfg: Config{Store: st, WipeSecrets: true}, loader: l,
@@ -79,7 +83,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.DeleteObject(self)
 	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, id := range []manifest.NamedResource{self, child} {
-		l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
+		l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 	}
 	d := &discoverer{cfg: Config{Store: st}, loader: l}
 	d.promoteOrphans(nil)
@@ -98,6 +102,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			st := store.New()
 			admitDiscoveryForTest(st, dir)
 			l := discoveryLoaderForTest(st)
+			l.Claims(dir)
 			d := &discoverer{cfg: Config{Store: st, WipeSecrets: true}, loader: l}
 			ids := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "secure", Name: "a"}}
 			if scenario == "siblings" {
@@ -107,7 +112,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			var saved []*manifest.Secret
 			for _, id := range ids {
 				body += "---\napiVersion: v1\nkind: Secret\nmetadata: {name: " + id.Name + ", namespace: secure}\nstringData: {HOST: fixture-value}\n"
-				l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
+				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 				if scenario == "unknown-file" {
 					r := l.Index.Records[id]
 					r.File = ""
@@ -139,6 +144,11 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 					t.Fatal(err)
 				}
 				st.AddObject(ks)
+				l.Options.DiscoveryOnly = true
+				l.SourceRoot = dir
+				if _, err := l.Load(t.Context(), dir); err != nil {
+					t.Fatal(err)
+				}
 				l.FinalizeIndex(dir, nil)
 			}
 			if scenario == "failed" {

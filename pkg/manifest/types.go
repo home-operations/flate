@@ -31,6 +31,12 @@ type NamedResource struct {
 	Name      string `json:"name"                yaml:"name"`
 }
 
+// Resolve applies forced, authored and fallback namespace precedence without changing other fields.
+func Resolve(id NamedResource, forced, fallback string) NamedResource {
+	id.Namespace = cmp.Or(forced, id.Namespace, fallback)
+	return id
+}
+
 // NamespacedName returns "namespace/name", or just "name" when
 // cluster-scoped.
 func (n NamedResource) NamespacedName() string {
@@ -38,16 +44,6 @@ func (n NamedResource) NamespacedName() string {
 		return n.Name
 	}
 	return n.Namespace + "/" + n.Name
-}
-
-// FluxResourceName is the canonical "<namespace>-<name>" identifier
-// every Flux source CR uses for cache slots, OCI auth scopes, etc.
-// Single source of truth so GitRepository / OCIRepository /
-// HelmRepository all return identical strings on the same id and a
-// future format change (e.g. adding a kind prefix) only touches this
-// function.
-func (n NamedResource) FluxResourceName() string {
-	return n.Namespace + "-" + n.Name
 }
 
 // String returns "kind/namespace/name" — the canonical id form.
@@ -68,6 +64,8 @@ func (n NamedResource) Compare(other NamedResource) int {
 // BaseManifest is the sealed interface for parsed domain objects.
 // Implementations own their dependency walk and MUST keep embedded specs immutable.
 type BaseManifest interface {
+	// WithNamespace changes only the internal namespace, retaining immutable borrowed payloads.
+	WithNamespace(string) BaseManifest
 	Named() NamedResource
 	kind() KindInfo
 }
@@ -123,7 +121,7 @@ func References(obj BaseManifest) iter.Seq[Reference] {
 func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) {
 	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {
-		if ref != nil && !yield(Reference{Kind: KindSecret, Namespace: namespace, Name: ref.Name,
+		if ref != nil && !yield(Reference{NamedResource: Resolve(NamedResource{Kind: KindSecret, Name: ref.Name}, "", namespace),
 			Use: uses[i], Position: i, Content: true}) {
 			return
 		}
@@ -155,6 +153,13 @@ type RawObject struct {
 // Named identifies the resource.
 func (r *RawObject) Named() NamedResource {
 	return NamedResource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
+}
+
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (r *RawObject) WithNamespace(namespace string) BaseManifest {
+	out := *r
+	out.Namespace = namespace
+	return &out
 }
 
 // Clone deep-copies the spec to preserve store and parsed-document immutability.

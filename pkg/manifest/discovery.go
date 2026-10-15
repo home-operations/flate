@@ -11,6 +11,7 @@ import (
 // Path is empty for generated or projected objects that have no raw resource file.
 // Slices are borrowed and MUST remain immutable after discovery publishes the index.
 type DiscoveryRecord struct {
+	Authored          NamedResource   // Proven raw identity; zero for generated records.
 	Path              string          // Absolute raw resource path; empty for generated or projected records.
 	File              string          // Diff coordinate; generator records use the declaration file.
 	Refs              []NamedResource // Authored chart/source references under the discovery identity.

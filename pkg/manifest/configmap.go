@@ -19,6 +19,13 @@ func (c *ConfigMap) Named() NamedResource {
 	return NamedResource{Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
 }
 
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
+	out := *c
+	out.Namespace = namespace
+	return &out
+}
+
 // Value reads only the requested data key; binaryData is never a Flux variable source.
 func (c *ConfigMap) Value(key string) (string, bool, error) {
 	v, ok := c.Data[key]
@@ -55,6 +62,13 @@ type Secret struct {
 // Named identifies the Secret.
 func (s *Secret) Named() NamedResource {
 	return NamedResource{Kind: KindSecret, Namespace: s.Namespace, Name: s.Name}
+}
+
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (s *Secret) WithNamespace(namespace string) BaseManifest {
+	out := *s
+	out.Namespace = namespace
+	return &out
 }
 
 // Value gives stringData membership precedence, including empty values.

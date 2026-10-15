@@ -1,24 +1,16 @@
 package orchestrator
 
 import (
-	"context"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// TestOrchestrator_TransformerTargetNamespace reproduces issue #528: a
-// namespace-less HelmRelease under a leaf Flux Kustomization whose
-// namespace is supplied by a builtin NamespaceTransformer (flatops
-// pattern). The leaf KS has no file-loaded structural parent, so its
-// first reconcile fires before any render could inject targetNamespace.
-//
-// Pre-fix: the leaf renders with targetNamespace="" and emits an
-// empty-namespace HelmRelease that lingers in the store. Post-fix:
-// StampTransformerTargetNamespaces resolves the NamespaceTransformer's
-// namespace at load time and stamps it onto the leaf KS, so the render
-// produces exactly one correctly-namespaced HelmRelease.
+// Prediction must precede the leaf's first render so children receive the
+// overlay's target namespace even without a structural parent.
 func TestOrchestrator_TransformerTargetNamespace(t *testing.T) {
 	dir := t.TempDir()
 
@@ -87,13 +79,23 @@ spec:
     name: myapp
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	res, err := o.Render(t.Context())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
+	}
+
+	canonical := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "myns", Name: "myapp"}
+	if o.store.GetObject(canonical) == nil {
+		t.Error("transformer-projected Kustomization is missing")
+	}
+	stale := canonical
+	stale.Namespace = "flux-system"
+	if o.store.GetObject(stale) != nil {
+		t.Error("authored Kustomization identity survived the namespace transformer")
 	}
 
 	namespaced := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "myns", Name: "myapp"}
@@ -113,6 +115,105 @@ spec:
 			t.Errorf("unexpected HelmRelease failure: %s = %v", id, res.Failed[id])
 		}
 	}
+
+	testutil.WriteFile(t, dir, "apps/shared/kustomization.yaml", "namespace: other\nresources: [../myapp/myapp/ks.yaml]\n")
+	testutil.WriteFile(t, dir, "cluster/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-a, namespace: flux-system}
+spec: {path: ./apps/myapp}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-b, namespace: flux-system}
+spec: {path: ./apps/shared}
+`)
+	path := dir + "/cluster"
+	o, err = New(Config{Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = o.Render(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("shared-context failures: %v", res.Failed)
+	}
+	for _, ns := range []string{"myns", "other"} {
+		for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+			id := manifest.NamedResource{Kind: kind, Namespace: ns, Name: "myapp"}
+			if o.store.GetObject(id) == nil {
+				t.Errorf("shared-context render omitted %s", id)
+			}
+		}
+	}
+
+	t.Run("changed_only_second_source", func(t *testing.T) {
+		testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: myapp, namespace: flux-system}
+spec:
+  path: ./apps/myapp/myapp/app
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+`)
+		for _, ns := range []string{"myns", "other"} {
+			testutil.WriteFile(t, dir, "cluster/source-"+ns+".yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: `+ns+`}
+spec:
+  url: https://fixture.invalid/cluster
+`)
+		}
+		const dirty = "cluster/source-other.yaml"
+		o, err := New(Config{
+			Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4,
+			SelfURLs:        []string{"https://fixture.invalid/cluster"},
+			ExternalChanges: change.NewSet([]string{dirty}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := o.Bootstrap(t.Context()); err != nil {
+			t.Fatalf("Bootstrap: %v", err)
+		}
+		for _, ns := range []string{"myns", "other"} {
+			source := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ns, Name: "flux-system"}
+			record, ok := o.index.Lookup(source)
+			if !ok || record.File != "cluster/source-"+ns+".yaml" {
+				t.Fatalf("source fixture %s: indexed=%t record=%+v", source, ok, record)
+			}
+			owners, ancestors := o.index.OwnersOfFile(record.File)
+			t.Logf("source %s: File=%s owners=%v ancestors=%v", source, record.File, owners, ancestors)
+			if len(owners) != 0 || len(ancestors) != 0 {
+				t.Fatalf("source fixture %s has unrelated ownership selection", source)
+			}
+			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
+			record, ok = o.index.Lookup(id)
+			t.Logf("consumer %s: indexed=%t File=%s Authored=%s Refs=%v", id, ok, record.File, record.Authored, record.Refs)
+			authored := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
+			if !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored || !slices.Equal(record.Refs, []manifest.NamedResource{source}) {
+				t.Errorf("projected consumer %s: indexed=%t record=%+v", id, ok, record)
+			}
+		}
+		other := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "other", Name: "myapp"}
+		t.Logf("dirty=%s ShouldReconcile(%s)=%t keep=%v", dirty, other, o.filter.ShouldReconcile(other), o.filter.KeepNames())
+		if !o.filter.Enabled() || !o.filter.ShouldReconcile(other) {
+			t.Errorf("second-source change did not select %s", other)
+		}
+		res, err := o.Render(t.Context())
+		if err != nil || len(res.Failed) != 0 {
+			t.Fatalf("changed-only Render: %v; failures=%v", err, res.Failed)
+		}
+		docs := res.Manifests[other]
+		if len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindHelmRelease {
+			t.Fatalf("rendered children of %s = %v, want one HelmRelease", other, docs)
+		}
+		if name, _ := manifest.DocMetadata(docs[0]); name != "myapp" {
+			t.Errorf("rendered child name = %q, want myapp", name)
+		}
+	})
 }
 
 func hrIDs(o *Orchestrator) []string {

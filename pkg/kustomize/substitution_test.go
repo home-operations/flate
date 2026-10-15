@@ -59,22 +59,26 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	}
 	original := obj.(*manifest.Kustomization)
 	snapshot := original.Clone()
+	projected := original.WithNamespace("effective").(*manifest.Kustomization)
 	overlay := map[string]string{"VALUE": "overlay", "EXTRA": "one\ntwo"}
 	st := store.New()
 	for _, cm := range []*manifest.ConfigMap{
-		{Name: "first", Namespace: "apps", Data: map[string]any{"VALUE": "first", "REF": "first", "NORMALIZED": "one\ntwo"}},
-		{Name: "second", Namespace: "apps", Data: map[string]any{"VALUE": "second", "REF": "second"}},
+		{Name: "first", Namespace: "effective", Data: map[string]any{"VALUE": "first", "REF": "first", "NORMALIZED": "one\ntwo"}},
+		{Name: "second", Namespace: "effective", Data: map[string]any{"VALUE": "second", "REF": "second"}},
 	} {
 		st.AddObject(cm)
 	}
 	provider := values.NewStoreProvider(st)
-	prepared, err := Prepare(original, provider, overlay)
+	prepared, err := Prepare(projected, provider, overlay)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]any{"VALUE": "overlay", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
 	if d := cmp.Diff(want, prepared.PostBuildSubstitute); d != "" {
 		t.Fatalf("layers (-want +got): %s", d)
+	}
+	if got := prepared.Contents["metadata"].(map[string]any)["namespace"]; got != projected.Namespace {
+		t.Fatalf("prepared namespace = %v, want %s", got, projected.Namespace)
 	}
 	if d := cmp.Diff(snapshot, original); d != "" {
 		t.Fatalf("stored input mutated (-want +got): %s", d)
@@ -88,7 +92,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if manifest.VarsMap(prepared.PostBuildSubstitute)["EXTRA"] != "onetwo" {
 		t.Fatal("overlay normalization changed")
 	}
-	ordinary, err := Prepare(original, provider, nil)
+	ordinary, err := Prepare(projected, provider, nil)
 	if err != nil || ordinary.PostBuildSubstitute["VALUE"] != "inline" {
 		t.Fatalf("exported Prepare changed: %v", err)
 	}

@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 
@@ -40,6 +39,13 @@ func (r *ResourceSet) Suspended() bool { return r.Suspend }
 // Named identifies the ResourceSet.
 func (r *ResourceSet) Named() NamedResource {
 	return NamedResource{Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}
+}
+
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (r *ResourceSet) WithNamespace(namespace string) BaseManifest {
+	out := *r
+	out.Namespace = namespace
+	return &out
 }
 
 // GetLabels returns the ResourceSet's metadata.labels.
@@ -84,6 +90,13 @@ type ResourceSetInputProvider struct {
 // Named identifies the ResourceSetInputProvider.
 func (p *ResourceSetInputProvider) Named() NamedResource {
 	return NamedResource{Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
+}
+
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (p *ResourceSetInputProvider) WithNamespace(namespace string) BaseManifest {
+	out := *p
+	out.Namespace = namespace
+	return &out
 }
 
 // GetLabels returns the ResourceSetInputProvider's metadata.labels.
@@ -163,21 +176,21 @@ func (p *ResourceSetInputProvider) derivedID() string {
 
 func (r *ResourceSet) references(yield func(Reference) bool) {
 	for i, dep := range r.DependsOn {
-		ns := cmp.Or(dep.Namespace, r.Namespace)
+		id := Resolve(NamedResource{Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}, "", r.Namespace)
 		if i, ok := kindIndex[dep.Kind]; ok && kindTable[i].skipNamespaceStamp {
-			ns = ""
+			id.Namespace = ""
 		}
 		if !yield(Reference{
-			Kind: dep.Kind, Namespace: ns, Name: dep.Name,
-			Use: "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
+			NamedResource: id,
+			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return
 		}
 	}
 	for i, ref := range r.InputsFrom {
 		if !yield(Reference{
-			Kind: KindResourceSetInputProvider, Namespace: r.Namespace, Name: ref.Name,
-			Use: "inputsFrom", Position: i, Content: true,
+			NamedResource: Resolve(NamedResource{Kind: KindResourceSetInputProvider, Name: ref.Name}, "", r.Namespace),
+			Use:           "inputsFrom", Position: i, Content: true,
 		}) {
 			return
 		}

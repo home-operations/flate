@@ -158,47 +158,24 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	} else if !info.IsDir() {
 		return fmt.Errorf("--path %q is not a directory", d.cfg.Path)
 	}
-	scanned := map[string]struct{}{}
 	total := 0
 	l.IgnoreFile = d.cfg.KRMIgnoreFile
-	if err := d.loadAt(ctx, scanRoot, scanned, &total); err != nil {
+	if err := d.loadAt(ctx, scanRoot, &total); err != nil {
 		return err
 	}
 	l.IgnoreFile = ""
-	// Pins resolve on final namespace ids. Extra inheritance passes are needed
-	// only when both an authored ref and a self-matching URL make a pin possible;
-	// unpinned followed paths must wait for the complete Kustomization set in Run.
-	d.loader.ApplyNamespaces(repoRoot)
-	namespaced := total
-
-	// Pins must be resolved before any spec.path is followed so a pinned
-	// Kustomization's subtree comes from its committed artifact, never the
-	// working tree. Sources found through followed paths resolve on the next pass.
-	// PreferExisting lets repeated AddObject re-emission
-	// be a no-op so the loop terminates on convergence (no new objects
-	// added). ResourceSets that emit child Kustomizations referencing new
-	// spec.paths are handled at run time — the RS controller emits the
-	// child KS via AddObject and the scheduler discovers it as a new node;
-	// discovery no longer pre-expands RSes.
+	// Projection may introduce a new effective source reference. Resolve it
+	// before Load admits the selected spec.path edge to scope construction.
 	l.PreferExisting = true
-	ksExpanded := map[manifest.NamedResource]struct{}{}
+	type expansion struct {
+		ks     *manifest.Kustomization
+		source *store.SourceArtifact
+		object manifest.BaseManifest
+	}
+	ksExpanded := map[expansion]struct{}{}
 	var aliased []manifest.NamedResource
 	for {
-		if total != namespaced {
-			for id := range d.loader.Index.Records {
-				if id.Kind != manifest.KindGitRepository {
-					continue
-				}
-				repo, ok := d.cfg.Store.Get[*manifest.GitRepository](id)
-				if ok && repo.Reference != nil && manifest.GitRefString(*repo.Reference) != "" {
-					if _, match := d.remotes[normalizeGitURL(repo.URL)]; match {
-						d.loader.ApplyNamespaces(repoRoot)
-						break
-					}
-				}
-			}
-			namespaced = total
-		}
+		l.ApplyNamespaces(repoRoot)
 		overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
 		if err != nil {
 			return err
@@ -208,21 +185,14 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
 		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
-		if d.hasPins {
-			// A source discovered through a followed path can pin an expanded consumer.
-			for _, ks := range kustomizations {
-				if _, pinned, _ := loader.SourceView(d.cfg.Store, ks, repoRoot); pinned {
-					delete(ksExpanded, ks.Named())
-				}
-			}
-		}
 		added := 0
 		for _, ks := range kustomizations {
-			id := ks.Named()
-			if _, seen := ksExpanded[id]; seen {
+			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
+			if _, seen := ksExpanded[key]; seen {
 				continue
 			}
-			ksExpanded[id] = struct{}{}
+			ksExpanded[key] = struct{}{}
 			if ks.IsFragment() {
 				continue
 			}
@@ -232,27 +202,26 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			target := filepath.Join(sourceRoot, manifest.NormalizeClaimBase(ks.Path))
-			if _, seen := scanned[target]; seen {
-				continue
-			}
 			if !safepath.Contains(sourceRoot, target) {
 				continue
 			}
-			if err := d.loadAt(ctx, target, scanned, &total); err != nil {
+			if err := d.loadAt(ctx, target, &total); err != nil {
 				return err
 			}
 			added++
 		}
 		if added == 0 {
-			break
+			missing, err := d.aliasMissingKustomizationSources(ctx, repoRoot)
+			if err != nil {
+				return err
+			}
+			if len(missing) == 0 {
+				break
+			}
+			aliased = append(aliased, missing...)
 		}
 	}
 	l.PreferExisting = false
-	missing, err := d.aliasMissingKustomizationSources(ctx, repoRoot)
-	if err != nil {
-		return err
-	}
-	aliased = append(missing, aliased...)
 	warnIfMultipleBootstrapAliases(aliased, repoRoot)
 	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
 	return nil
@@ -281,6 +250,13 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	if len(prefixes) == 0 {
 		return
 	}
+	var aliases []string
+	for _, repo := range d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository) {
+		art, ok := d.cfg.Store.GetArtifact(repo.Named()).(*store.SourceArtifact)
+		if ok && art.InputAlias && art.LocalRoot == repoRoot {
+			aliases = append(aliases, art.LocalPath)
+		}
+	}
 	for id, record := range d.loader.Index.Files() {
 		file := record.File
 		if _, resolved := d.resolvedSources[id]; resolved {
@@ -290,7 +266,16 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 			continue
 		}
 		if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
-			continue
+			for _, root := range aliases {
+				if safepath.Contains(root, record.Path) {
+					rel, _ := filepath.Rel(root, record.Path)
+					file = filepath.ToSlash(rel)
+					break
+				}
+			}
+			if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
+				continue
+			}
 		}
 		_, owned := manifest.StrictParent(prefixes, file, id, nil)
 		if !owned {
@@ -301,13 +286,8 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	}
 }
 
-// loadAt scans dir if not already scanned, marks it, and accumulates
-// the loaded object count.
-func (d *discoverer) loadAt(ctx context.Context, dir string, scanned map[string]struct{}, total *int) error {
-	if _, seen := scanned[dir]; seen {
-		return nil
-	}
-	scanned[dir] = struct{}{}
+// The Loader deduplicates unchanged source views; missing followed paths are deferred.
+func (d *discoverer) loadAt(ctx context.Context, dir string, total *int) error {
 	n, err := d.loader.Load(ctx, dir)
 	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
 		return nil

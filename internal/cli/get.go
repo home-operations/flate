@@ -55,18 +55,24 @@ func newGetHRCmd() *cobra.Command {
 		use: "hr", aliases: []string{"helmrelease", "helmreleases"},
 		short: "List HelmReleases", kind: manifest.KindHelmRelease, cols: hrColumns,
 		mapper: func(res *orchestrator.Result, o *manifest.HelmRelease) (row map[string]string, doc map[string]any) {
+			source := o.ChartSource()
+			chart := o.Chart
+			if source.Name != "" {
+				chart.RepoName, chart.RepoNamespace = source.Name, source.Namespace
+			}
+			chartName := chart.ChartName()
 			version := o.Chart.Version
 			if version == "" {
 				version = res.ChartVersions[o.Named()]
 			}
 			doc = map[string]any{
 				"kind": manifest.KindHelmRelease, "namespace": o.Namespace,
-				"name": o.Name, "chart": o.Chart.ChartName(),
-				"version": version, "source": o.Chart.RepoName,
+				"name": o.Name, "chart": chartName,
+				"version": version, "source": source.Name,
 				"sourceRef": map[string]string{
-					"kind":      o.Chart.RepoKind,
-					"name":      o.Chart.RepoName,
-					"namespace": o.Chart.RepoNamespace,
+					"kind":      source.Kind,
+					"name":      source.Name,
+					"namespace": source.Namespace,
 				},
 				"releaseName": o.ReleaseName(),
 			}
@@ -78,8 +84,8 @@ func newGetHRCmd() *cobra.Command {
 			}
 			return map[string]string{
 				"namespace": o.Namespace, "name": o.Name,
-				"chart": o.Chart.ChartName(), "version": version,
-				"source": o.Chart.RepoName,
+				"chart": chartName, "version": version,
+				"source": source.Name,
 			}, doc
 		},
 	})

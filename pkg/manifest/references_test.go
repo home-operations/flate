@@ -25,51 +25,82 @@ func refsForUse(t *testing.T, obj BaseManifest, use string) []Reference {
 	return refs
 }
 
-func TestReferences_KustomizationPolicy(t *testing.T) {
-	k := &Kustomization{Namespace: "effective"}
+func TestReferences_EffectiveNamespace(t *testing.T) {
+	k := &Kustomization{Namespace: "authored"}
 	assert.Equal(t, len(slices.Collect(References(k))), 0)
 	k.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: KindGitRepository, Name: "source"}
 	k.DependsOn = []kustomizev1.DependencyReference{{Name: "relative", ReadyExpr: "true"}, {Name: "explicit", Namespace: "other"}}
 	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{
 		{Kind: KindConfigMap, Name: "shared"}, {Kind: "Unsupported"}, {Kind: KindSecret, Name: "shared"}, {Kind: KindConfigMap, Name: "shared", Optional: true}, {Kind: KindConfigMap, Name: "shared"},
 	}}
-	assert.Diff(t, slices.Collect(References(k)), []Reference{
-		{Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true},
-		{Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: "true"},
-		{Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
-		{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Content: true},
-		{Kind: KindSecret, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 2, Content: true},
-		{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 3, Optional: true},
-		{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 4, Content: true},
-	})
-}
-
-func TestReferences_HelmReleaseEffectiveNamespace(t *testing.T) {
-	hr := &HelmRelease{Namespace: "effective", Chart: HelmChart{RepoKind: KindOCIRepository, RepoNamespace: "authored", RepoName: "chart"}}
+	hr := &HelmRelease{Namespace: "authored", Chart: HelmChart{RepoKind: KindOCIRepository, RepoNamespace: "authored", RepoName: "chart"}}
 	hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}
 	hr.DependsOn = []helmv2.DependencyReference{{Name: "parent"}}
 	hr.ValuesFrom = []ValuesReference{{Kind: KindConfigMap, Name: "vars", Optional: true}}
-	assert.Diff(t, slices.Collect(References(hr)), []Reference{
-		{Kind: KindOCIRepository, Namespace: "effective", Name: "chart", Use: "chart", Content: true},
-		{Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
-		{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
-	})
-	hr.Chart = HelmChart{RepoKind: KindGitRepository, RepoName: "resolved"}
-	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true}})
-}
-
-func TestReferences_ResourceSetEdgeSemantics(t *testing.T) {
-	r := &ResourceSet{Namespace: "apps"}
+	r := &ResourceSet{Namespace: "authored"}
 	r.DependsOn = []fluxopv1.Dependency{{Kind: KindKustomization, Name: "ready", Ready: true, ReadyExpr: "true"}, {Kind: KindKustomization, Name: "exists"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "cluster", Namespace: "ignored"}}
 	r.InputsFrom = []fluxopv1.InputProviderReference{{Kind: "Unsupported", Name: "inputs"}, {Selector: &metav1.LabelSelector{}}}
-	assert.Diff(t, slices.Collect(References(r)), []Reference{
-		{Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: "true"},
-		{Kind: KindKustomization, Namespace: "apps", Name: "exists", Use: "dependsOn", Position: 1},
-		{Kind: "ClusterRole", Name: "cluster", Use: "dependsOn", Position: 2},
-		{Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Content: true},
-		{Kind: KindResourceSetInputProvider, Namespace: "apps", Use: "inputsFrom", Position: 1, Content: true},
-	})
+	for _, tc := range []struct {
+		name, namespace string
+		obj             BaseManifest
+		want            []Reference
+	}{
+		{"kustomization", "effective", k, []Reference{
+			{Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true},
+			{Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: "true"},
+			{Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
+			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Content: true},
+			{Kind: KindSecret, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 2, Content: true},
+			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 3, Optional: true},
+			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 4, Content: true},
+		}},
+		{"helmrelease", "effective", hr, []Reference{
+			{Kind: KindOCIRepository, Namespace: "effective", Name: "chart", Use: "chart", Content: true},
+			{Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
+			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
+		}},
+		{"resourceset", "apps", r, []Reference{
+			{Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: "true"},
+			{Kind: KindKustomization, Namespace: "apps", Name: "exists", Use: "dependsOn", Position: 1},
+			{Kind: "ClusterRole", Name: "cluster", Use: "dependsOn", Position: 2},
+			{Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Content: true},
+			{Kind: KindResourceSetInputProvider, Namespace: "apps", Use: "inputsFrom", Position: 1, Content: true},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Diff(t, slices.Collect(References(tc.obj.WithNamespace(tc.namespace))), tc.want)
+			assert.Equal(t, tc.obj.Named().Namespace, "authored")
+		})
+	}
+	hr = hr.WithNamespace("effective").(*HelmRelease)
+	hr.Chart = HelmChart{RepoKind: KindGitRepository, RepoName: "resolved"}
+	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true}})
 	assert.Equal(t, r.InputsFrom[0].Kind, "Unsupported")
+}
+
+func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
+	for _, tc := range []struct{ namespace, want string }{{"", "effective"}, {"foreign", "foreign"}} {
+		t.Run(tc.want, func(t *testing.T) {
+			obj, _, _, err := ParseDoc(map[string]any{
+				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": KindHelmRelease,
+				"metadata": map[string]any{"name": "app", "namespace": "authored"},
+				"spec":     map[string]any{"chartRef": map[string]any{"kind": KindHelmChart, "name": "chart", "namespace": tc.namespace}},
+			}, ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hr := obj.(*HelmRelease)
+			projected := hr.WithNamespace("effective").(*HelmRelease)
+			if err := projected.ResolveChartRef(func(ns, name string) *HelmChartSource {
+				assert.Equal(t, NamedResource{Kind: KindHelmChart, Namespace: ns, Name: name}, NamedResource{Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
+				return &HelmChartSource{Namespace: ns, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindHelmRepository, Name: name}}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, hr.ChartRef.Namespace, tc.namespace)
+			assert.Equal(t, hr.Namespace, "authored")
+		})
+	}
 }
 
 func TestReferences_ActiveCredentials(t *testing.T) {

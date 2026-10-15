@@ -171,15 +171,16 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	if got, _ := r.read(missing); got != nil {
 		t.Fatal("negative result was re-read")
 	}
-	st := store.New()
-	repo := &manifest.GitRepository{Name: "released", Namespace: "n"}
-	st.AddObject(repo)
-	st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: committed, Key: "pin"})
-	r.mountSources(st)
-	if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{}); !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("released pin read host content through its coordinate: %v", err)
-	}
-
+	t.Run("unavailable source", func(t *testing.T) {
+		st := store.New()
+		repo := &manifest.GitRepository{Name: "released", Namespace: "n"}
+		st.AddObject(repo)
+		st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: committed, Key: "pin"})
+		r.mountSources(st)
+		if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{}); !errors.Is(err, manifest.ErrInput) {
+			t.Fatalf("released pin read host content through its coordinate: %v", err)
+		}
+	})
 }
 
 func TestLoader_ClaimsDocumentLifetime(t *testing.T) {

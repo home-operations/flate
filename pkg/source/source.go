@@ -109,8 +109,8 @@ func ErrUnsupportedProvider(kind, namespace, name, got, want, hint string) error
 // per-kind fetchers prefix their error messages with — one helper so the
 // "Kind ns/name" shape can't drift across fetchers (git, oci, bucket, and
 // helmchart each wrap it as gitID/ociID/…). This is the slash form for
-// human-readable errors, distinct from RepoName()'s "ns-name" Flux resource
-// identifier used for cache slots and auth scopes.
+// human-readable errors, distinct from the "ns-name" identifiers used for
+// cache slots and auth scopes.
 func QualifiedName(kind, namespace, name string) string {
 	return kind + " " + namespace + "/" + name
 }

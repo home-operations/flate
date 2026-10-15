@@ -29,6 +29,13 @@ func (b *Bucket) Named() NamedResource {
 	return NamedResource{Kind: KindBucket, Namespace: b.Namespace, Name: b.Name}
 }
 
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (b *Bucket) WithNamespace(namespace string) BaseManifest {
+	out := *b
+	out.Namespace = namespace
+	return &out
+}
+
 // Suspended reports whether reconciliation is paused on this resource.
 func (b *Bucket) Suspended() bool { return b.Suspend }
 

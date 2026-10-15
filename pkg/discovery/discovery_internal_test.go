@@ -42,6 +42,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 				cfg: Config{Store: st}, loader: discoveryLoaderForTest(st),
 				resolvedSources: map[manifest.NamedResource]*manifest.GitRepository{other.Named(): other},
 			}
+			d.loader.SourceRoot = root
 			if tc.resolved {
 				d.resolvedSources[repository.Named()] = repository
 			}
@@ -86,11 +87,39 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 			if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named()) != artifact {
 				t.Fatal("committed subtree replaced the resolved source")
 			}
+
 		})
 	}
 }
 
 func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
+	t.Run("mounted symlink", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "host/kustomization.yaml", "resources: []\n")
+		if err := os.Symlink(filepath.Join(root, "host"), filepath.Join(root, "apps")); err != nil {
+			t.Fatal(err)
+		}
+		input := fstest.MapFS{
+			"kustomization.yaml":      {Data: []byte("resources: [ks.yaml]\n")},
+			"ks.yaml":                 {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner}\nspec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")},
+			"apps/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
+			"apps/child.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child}\nspec: {path: ./output, sourceRef: {kind: GitRepository, name: source}}\n")},
+		}
+		st := store.New()
+		source := &manifest.GitRepository{Name: "source"}
+		st.AddObject(source)
+		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
+		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named()))
+		d := discoverer{cfg: Config{Path: root, Store: st}, loader: discoveryLoaderForTest(st)}
+		if err := d.loadManifests(t.Context(), root); err != nil {
+			t.Fatal(err)
+		}
+		id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "child"}
+		if r, ok := d.loader.Index.Lookup(id); !ok || r.File != "apps/child.yaml" || st.GetObject(id) == nil {
+			t.Fatalf("mounted child redirected by host symlink: %+v present=%t", r, ok)
+		}
+	})
+
 	for _, backing := range []string{"disk", "memory"} {
 		for _, scenario := range []string{"missing-directory", "file", "missing-ignore"} {
 			t.Run(backing+"/"+scenario, func(t *testing.T) {
@@ -119,7 +148,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 					st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "source"}, &store.SourceArtifact{LocalPath: root, FS: input})
 				}
 				total := 0
-				err := d.loadAt(t.Context(), target, map[string]struct{}{}, &total)
+				err := d.loadAt(t.Context(), target, &total)
 				if scenario == "missing-ignore" {
 					if !errors.Is(err, fs.ErrNotExist) {
 						t.Fatalf("missing explicit ignore error = %v", err)

@@ -2,7 +2,11 @@ package loader
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -74,11 +78,11 @@ spec: {path: ./leaf}
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: "./apps/apps"}
 	child := leafKS("child", "./leaf")
 	s.AddObject(parent)
-	s.AddObject(child)
-	l := loaderFixture(s, map[manifest.NamedResource]string{child.Named(): definition})
-	admitForTest(s, root)
-	l.documents = readerForTest(root)
-
+	l := loaderFixture(s, nil)
+	l.SourceRoot = root
+	if _, err := l.Load(t.Context(), filepath.Join(root, "apps/apps")); err != nil {
+		t.Fatal(err)
+	}
 	l.ApplyNamespaces(root)
 
 	for _, tc := range []struct {
@@ -106,30 +110,120 @@ spec: {path: ./leaf}
 }
 
 func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
-	root := t.TempDir()
-	writeFlatopsOverlay(t, root, "gpu-operator")
-
-	s := store.New()
-	ks := leafKS("gpu-operator", "./apps/gpu-operator/gpu-operator/app")
-	s.AddObject(ks)
-	sourceFiles := map[manifest.NamedResource]string{
-		ks.Named(): "apps/gpu-operator/gpu-operator/ks.yaml",
-	}
-
-	stampForTest(s, sourceFiles, root)
-
-	got, ok := s.Get[*manifest.Kustomization](ks.Named())
-	if !ok {
-		t.Fatal("KS missing after stamp")
-	}
-	if got.TargetNamespace != "gpu-operator" {
-		t.Errorf("TargetNamespace=%q want gpu-operator", got.TargetNamespace)
-	}
-	// RenderFlux feeds Contents to kustomize, so the raw doc must carry
-	// targetNamespace too — not just the typed field.
-	spec, _ := got.Contents["spec"].(map[string]any)
-	if spec["targetNamespace"] != "gpu-operator" {
-		t.Errorf("Contents spec.targetNamespace=%v want gpu-operator", spec["targetNamespace"])
+	for _, tc := range []struct {
+		name, authored string
+		namespaces     []string
+		mounted        bool
+	}{
+		{name: "flatops lifecycle", authored: "flux-system", namespaces: []string{"gpu-operator"}},
+		{name: "same identity", authored: "gpu-operator", namespaces: []string{"gpu-operator"}},
+		{name: "mounted replacement", namespaces: []string{"red", "blue", ""}, mounted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, local := t.TempDir(), t.TempDir()
+			st := store.New()
+			source := &manifest.GitRepository{Name: "view"}
+			st.AddObject(source)
+			l := loaderFixture(st, nil)
+			l.SourceRoot = root
+			doc := fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: gpu-operator, namespace: %q}
+spec: {path: ./output, sourceRef: {kind: GitRepository, name: view}}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: explicit, namespace: %q}
+spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}
+`, tc.authored, tc.authored)
+			check := func(ns string) {
+				for _, name := range []string{"gpu-operator", "explicit"} {
+					id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: name}
+					want := ns
+					if name == "explicit" {
+						want = "authored"
+					}
+					ks, ok := st.Get[*manifest.Kustomization](id)
+					if !ok || ks.TargetNamespace != want {
+						t.Fatalf("%s declaration = %+v, want targetNamespace %q", id, ks, want)
+					}
+					spec := ks.Contents["spec"].(map[string]any)
+					if target, _ := spec["targetNamespace"].(string); target != want {
+						t.Fatalf("%s Contents targetNamespace = %q, want %q", id, target, want)
+					}
+					if _, ok := l.Index.Lookup(id); !ok {
+						t.Fatalf("%s missing from index", id)
+					}
+					for _, staleNS := range []string{tc.authored, "red", "blue"} {
+						if staleNS == ns {
+							continue
+						}
+						stale := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: staleNS, Name: name}
+						_, indexed := l.Index.Lookup(stale)
+						if st.GetObject(stale) != nil || indexed {
+							t.Fatalf("retained stale %s", stale)
+						}
+					}
+				}
+			}
+			for version, ns := range tc.namespaces {
+				if tc.mounted {
+					input := fstest.MapFS{
+						"apps/gpu-operator/kustomization.yaml":   {Data: []byte("resources: [gpu-operator/ks.yaml]\n")},
+						"apps/gpu-operator/gpu-operator/ks.yaml": {Data: []byte(doc)},
+					}
+					if version == 0 {
+						input["apps/gpu-operator/kustomization.yaml"].Data = []byte("resources: [gpu-operator/ks.yaml, removed.yaml, bad.yaml]\n")
+						input["apps/gpu-operator/removed.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: removed}\nspec: {path: ./output}\n")}
+						input["apps/gpu-operator/bad.yaml"] = &fstest.MapFile{Data: []byte("metadata: [\n")}
+					}
+					if ns != "" {
+						input["apps/gpu-operator/kustomization.yaml"].Data = append(input["apps/gpu-operator/kustomization.yaml"].Data, []byte("transformers: [transformers]\n")...)
+						input["apps/gpu-operator/transformers/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: " + ns + "\nresources: [../../../transformers]\n")}
+						input["transformers/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [transformer.yaml]\n")}
+						input["transformers/transformer.yaml"] = &fstest.MapFile{Data: []byte(namespaceTransformer)}
+					}
+					st.SetArtifact(source.Named(), &store.SourceArtifact{Key: fmt.Sprintf("view-%d", version), LocalRoot: root, LocalPath: local, FS: input})
+				} else {
+					local = root
+					writeFlatopsOverlay(t, root, ns)
+					writeFile(t, root, "apps/gpu-operator/gpu-operator/ks.yaml", doc)
+					st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: local, FS: os.DirFS(local)})
+				}
+				if _, err := l.Load(t.Context(), filepath.Join(local, "apps/gpu-operator")); err != nil {
+					t.Fatal(err)
+				}
+				if tc.mounted {
+					removedNS := "red"
+					if version == 0 {
+						removedNS = ""
+					}
+					removed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: removedNS, Name: "removed"}
+					_, indexed := l.Index.Lookup(removed)
+					if (st.GetObject(removed) != nil) != (version == 0) || indexed != (version == 0) {
+						t.Fatalf("removed declaration: store=%t index=%t version=%d", st.GetObject(removed) != nil, indexed, version)
+					}
+					if (len(l.Index.Errors) != 0) != (version == 0) {
+						t.Fatalf("decode errors after mount version %d: %v", version, l.Index.Errors)
+					}
+				}
+				l.ApplyNamespaces(root)
+				check(ns)
+			}
+			l.FinalizeIndex(root, nil)
+			check(tc.namespaces[len(tc.namespaces)-1])
+			if tc.mounted {
+				st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "removed", LocalRoot: root, LocalPath: local})
+				l.ApplyNamespaces(root)
+				for _, name := range []string{"gpu-operator", "explicit"} {
+					id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: name}
+					_, indexed := l.Index.Lookup(id)
+					if st.GetObject(id) != nil || indexed {
+						t.Fatalf("%s survived mount removal", id)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -158,64 +252,28 @@ resources:
 	}
 }
 
-func TestStampTransformerTargetNamespaces_TransformersWithoutNamespaceTransformerIgnored(t *testing.T) {
-	root := t.TempDir()
-	// Overlay references a transformers subtree carrying a `namespace:`
-	// directive, but the transformer is some OTHER builtin (here a
-	// LabelTransformer) — not a NamespaceTransformer targeting
-	// Kustomization spec/targetNamespace. Must not stamp.
-	writeFile(t, root, "apps/other/kustomization.yaml", `resources:
-  - ./other/ks.yaml
-transformers:
-  - ./transformers
-`)
-	writeFile(t, root, "apps/other/transformers/kustomization.yaml", `namespace: other
-resources:
-  - ./labels.yaml
-`)
-	writeFile(t, root, "apps/other/transformers/labels.yaml", `apiVersion: builtin
-kind: LabelTransformer
-metadata:
-  name: add-labels
-labels:
-  team: platform
-fieldSpecs:
-  - path: metadata/labels
-    create: true
-`)
-
-	s := store.New()
-	ks := leafKS("other", "./apps/other/other/app")
-	s.AddObject(ks)
-	sourceFiles := map[manifest.NamedResource]string{
-		ks.Named(): "apps/other/other/ks.yaml",
-	}
-
-	stampForTest(s, sourceFiles, root)
-
-	got, _ := s.Get[*manifest.Kustomization](ks.Named())
-	if got.TargetNamespace != "" {
-		t.Errorf("TargetNamespace=%q want empty (no NamespaceTransformer)", got.TargetNamespace)
-	}
-}
-
-func TestStampTransformerTargetNamespaces_ExplicitTargetNamespacePreserved(t *testing.T) {
-	root := t.TempDir()
-	writeFlatopsOverlay(t, root, "gpu-operator")
-
-	s := store.New()
-	ks := leafKS("gpu-operator", "./apps/gpu-operator/gpu-operator/app")
-	ks.TargetNamespace = "explicit" // already set in the source YAML
-	s.AddObject(ks)
-	sourceFiles := map[manifest.NamedResource]string{
-		ks.Named(): "apps/gpu-operator/gpu-operator/ks.yaml",
-	}
-
-	stampForTest(s, sourceFiles, root)
-
-	got, _ := s.Get[*manifest.Kustomization](ks.Named())
-	if got.TargetNamespace != "explicit" {
-		t.Errorf("TargetNamespace=%q want explicit (must not override)", got.TargetNamespace)
+func TestStampTransformerTargetNamespaces_TransformerDeclines(t *testing.T) {
+	for _, tc := range []struct{ name, from, to string }{
+		{"other kind", "kind: NamespaceTransformer", "kind: LabelTransformer"},
+		{"unset only", "fieldSpecs:", "unsetOnly: true\nfieldSpecs:"},
+		{"no creation", "kind: Kustomization\n    create: true", "kind: Kustomization\n    create: false"},
+		{"foreign group", "group: kustomize.toolkit.fluxcd.io", "group: example.com"},
+		{"foreign version", "kind: Kustomization", "kind: Kustomization\n    version: v2"},
+		{"invalid subject mode", "fieldSpecs:", "setRoleBindingSubjects: invalid\nfieldSpecs:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFlatopsOverlay(t, root, "other")
+			writeFile(t, root, "transformers/transformer.yaml", strings.Replace(namespaceTransformer, tc.from, tc.to, 1))
+			s := store.New()
+			ks := leafKS("other", "./apps/other/other/app")
+			s.AddObject(ks)
+			stampForTest(s, map[manifest.NamedResource]string{ks.Named(): "apps/other/other/ks.yaml"}, root)
+			got, _ := s.Get[*manifest.Kustomization](ks.Named())
+			if got.TargetNamespace != "" {
+				t.Errorf("TargetNamespace=%q want empty (conditional or invalid transformer)", got.TargetNamespace)
+			}
+		})
 	}
 }
 
@@ -293,155 +351,56 @@ func stampReplacementsKS(t *testing.T, root, overlayDir, overlayKustomization st
 	return got
 }
 
-// home-operations injects targetNamespace via `namespace:` + a
-// `replacements:` file ref (not a NamespaceTransformer). The leaf KS must
-// pick up the overlay's namespace as its targetNamespace.
-func TestStampTransformerTargetNamespaces_ReplacementsFileRef(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
-	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
-replacements:
-  - path: ../../components/replacements/ks.yaml
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "storage" {
-		t.Errorf("TargetNamespace=%q want storage", got.TargetNamespace)
-	}
-	// RenderFlux feeds Contents to kustomize, so the raw doc must carry it.
-	spec, _ := got.Contents["spec"].(map[string]any)
-	if spec["targetNamespace"] != "storage" {
-		t.Errorf("Contents spec.targetNamespace=%v want storage", spec["targetNamespace"])
-	}
-}
-
-// The replacement rule inlined directly under `replacements:` (no path ref).
-func TestStampTransformerTargetNamespaces_ReplacementsInline(t *testing.T) {
-	root := t.TempDir()
-	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
-replacements:
-  - source:
-      kind: Namespace
-      fieldPath: metadata.name
-    targets:
-      - select:
-          kind: Kustomization
-          group: kustomize.toolkit.fluxcd.io
-        fieldPaths:
-          - spec.targetNamespace
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "storage" {
-		t.Errorf("TargetNamespace=%q want storage", got.TargetNamespace)
-	}
-}
-
-// A replacement that writes a DIFFERENT field (spec.path) must not be
-// mistaken for a targetNamespace injection — no stamp.
-func TestStampTransformerTargetNamespaces_ReplacementsNotTargetingTargetNamespace(t *testing.T) {
-	root := t.TempDir()
-	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
-replacements:
-  - source:
-      kind: Namespace
-      fieldPath: metadata.name
-    targets:
-      - select:
-          kind: Kustomization
-          group: kustomize.toolkit.fluxcd.io
-        fieldPaths:
-          - spec.path
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "" {
-		t.Errorf("TargetNamespace=%q want empty (replacement not targeting targetNamespace)", got.TargetNamespace)
-	}
-}
-
-// The targetNamespace value is derived from the overlay's `namespace:`
-// directive (the Namespace the replacement reads is renamed to it). With no
-// directive present, the value is unknown — skip rather than guess.
-func TestStampTransformerTargetNamespaces_ReplacementsNoNamespaceDirective(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
-	got := stampReplacementsKS(t, root, "apps/storage", `replacements:
-  - path: ../../components/replacements/ks.yaml
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "" {
-		t.Errorf("TargetNamespace=%q want empty (no namespace directive)", got.TargetNamespace)
-	}
-}
-
-// Wrong source kind (ConfigMap, not Namespace) must not match.
-func TestStampTransformerTargetNamespaces_ReplacementsWrongSourceKind(t *testing.T) {
-	root := t.TempDir()
-	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
-replacements:
-  - source:
-      kind: ConfigMap
-      name: settings
-      fieldPath: data.namespace
-    targets:
-      - select:
-          kind: Kustomization
-          group: kustomize.toolkit.fluxcd.io
-        fieldPaths:
-          - spec.targetNamespace
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "" {
-		t.Errorf("TargetNamespace=%q want empty (source not a Namespace)", got.TargetNamespace)
-	}
-}
-
-// The replacement source may spell the path as `fieldPaths: [metadata.name]`
-// (plural) rather than `fieldPath:` — accept both.
-func TestStampTransformerTargetNamespaces_ReplacementsSourceFieldPathsPlural(t *testing.T) {
-	root := t.TempDir()
-	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
-replacements:
-  - source:
-      kind: Namespace
-      fieldPaths:
-        - metadata.name
-    targets:
-      - select:
-          kind: Kustomization
-          group: kustomize.toolkit.fluxcd.io
-        fieldPaths:
-          - spec.targetNamespace
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "storage" {
-		t.Errorf("TargetNamespace=%q want storage (plural source fieldPaths)", got.TargetNamespace)
-	}
-}
-
-// A target spelling the path singular (`fieldPath: spec.targetNamespace`)
-// rather than plural (`fieldPaths:`) must still match.
-func TestStampTransformerTargetNamespaces_ReplacementsTargetFieldPathSingular(t *testing.T) {
-	root := t.TempDir()
-	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
-replacements:
-  - source:
-      kind: Namespace
-      fieldPath: metadata.name
-    targets:
-      - select:
-          kind: Kustomization
-          group: kustomize.toolkit.fluxcd.io
-        fieldPath: spec.targetNamespace
-resources:
-  - ./app/ks.yaml
-`)
-	if got.TargetNamespace != "storage" {
-		t.Errorf("TargetNamespace=%q want storage (singular target fieldPath)", got.TargetNamespace)
+func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
+	for _, tc := range []struct {
+		name, from, to, want string
+		file                 bool
+	}{
+		{name: "inline", want: "storage"},
+		{name: "file", file: true, want: "storage"},
+		{name: "no namespace", from: "namespace: storage\n"},
+		{name: "wrong field", from: "spec.targetNamespace", to: "spec.path"},
+		{name: "wrong source kind", from: "kind: Namespace", to: "kind: ConfigMap"},
+		{name: "source group", from: "kind: Namespace", to: "kind: Namespace\n      group: example.com"},
+		{name: "source version", from: "kind: Namespace", to: "kind: Namespace\n      version: v2"},
+		{name: "source name", from: "kind: Namespace", to: "kind: Namespace\n      name: foreign"},
+		{name: "source namespace", from: "kind: Namespace", to: "kind: Namespace\n      namespace: foreign"},
+		{name: "source options", from: "kind: Namespace", to: "kind: Namespace\n      options: {delimiter: '-', index: 1}"},
+		{name: "source field", from: "fieldPath: metadata.name", to: "fieldPath: metadata.labels.namespace"},
+		{name: "source value", from: "- source:", to: "- sourceValue: foreign\n    source:"},
+		{name: "target reject", from: "        fieldPaths:", to: "        reject: [{name: app}]\n        fieldPaths:"},
+		{name: "target version", from: "kind: Kustomization", to: "kind: Kustomization\n          version: v2"},
+		{name: "target name", from: "kind: Kustomization", to: "kind: Kustomization\n          name: foreign"},
+		{name: "target namespace", from: "kind: Kustomization", to: "kind: Kustomization\n          namespace: foreign"},
+		{name: "target labels", from: "kind: Kustomization", to: "kind: Kustomization\n          labelSelector: app=foreign"},
+		{name: "target annotations", from: "kind: Kustomization", to: "kind: Kustomization\n          annotationSelector: app=foreign"},
+		{name: "target no creation", from: "create: true", to: "create: false"},
+		{name: "target no options", from: "        options:\n          create: true\n", to: ""},
+		{name: "target options", from: "create: true", to: "create: true\n          delimiter: '-'"},
+		{name: "no targets", from: "    targets:", to: "    unused:"},
+		{name: "file and source", file: true, from: "- path: ../../components/replacements/ks.yaml", to: "- path: ../../components/replacements/ks.yaml\n    source: {kind: Namespace}"},
+		{name: "file and targets", file: true, from: "- path: ../../components/replacements/ks.yaml", to: "- path: ../../components/replacements/ks.yaml\n    targets: [{select: {kind: Kustomization}}]"},
+		{name: "file and source value", file: true, from: "- path: ../../components/replacements/ks.yaml", to: "- path: ../../components/replacements/ks.yaml\n    sourceValue: foreign"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			rule := strings.TrimSuffix(nsReplacementRule, "\n")
+			if tc.file {
+				writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
+				rule = "- path: ../../components/replacements/ks.yaml"
+			}
+			overlay := "namespace: storage\nreplacements:\n  " + strings.ReplaceAll(rule, "\n", "\n  ") + "\nresources: [./app/ks.yaml]\n"
+			if tc.from != "" {
+				overlay = strings.Replace(overlay, tc.from, tc.to, 1)
+			}
+			got := stampReplacementsKS(t, root, "apps/storage", overlay)
+			if got.TargetNamespace != tc.want {
+				t.Fatalf("TargetNamespace=%q want %q", got.TargetNamespace, tc.want)
+			}
+			if target, _ := got.Contents["spec"].(map[string]any)["targetNamespace"].(string); target != tc.want {
+				t.Errorf("Contents targetNamespace=%q want %q", target, tc.want)
+			}
+		})
 	}
 }
 

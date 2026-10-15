@@ -364,7 +364,7 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 			t.Errorf("Producer(%v) missing; want %q", target, prodName)
 			continue
 		}
-		if got.Name != prodName {
+		if got.Name != prodName || got.Namespace != target.Namespace {
 			t.Errorf("Producer(%v).Name = %q, want %q", target, got.Name, prodName)
 		}
 	}
@@ -541,6 +541,10 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 				if !slices.Equal(fresh, want) {
 					t.Fatal("caller mutated index")
 				}
+			}
+			effective := manifest.NamedResource{Kind: "ExternalSecret", Namespace: "effective", Name: "producer"}
+			if r := idx.Records[effective]; r.Authored.Namespace != namespace || r.Authored.Name != "producer" || r.File != "shared/producer.yaml" {
+				t.Fatalf("producer lost authored file proof: %+v", r)
 			}
 			if len(declarationOwnersForTest(idx, manifest.NamedResource{Kind: "ExternalSecret", Namespace: "foreign", Name: "producer"})) != 0 {
 				t.Fatal("foreign namespace inherited declaration owners")

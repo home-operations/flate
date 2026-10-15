@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // TestRenderFlux_RespectsCanceledContext asserts the renderer bails
@@ -233,12 +234,21 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	cache := NewTreeCache(newTestCache(t, ""))
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	obj, _, _, err := manifest.ParseDoc(map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
-		"metadata":   map[string]any{"name": "infra", "namespace": "flux-system"},
+		"metadata":   map[string]any{"name": "infra", "namespace": "authored"},
 		"spec":       map[string]any{"path": "./"},
-	}})
+	}, manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected := obj.WithNamespace("flux-system").(*manifest.Kustomization)
+	prepared, err := Prepare(projected, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, src), Label: src, SubPath: ".", Spec: prepared.Contents})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}

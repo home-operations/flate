@@ -133,7 +133,7 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 	if !ok || hr.Chart.Version != "" {
 		return ""
 	}
-	src := manifest.NamedResource{Kind: hr.Chart.RepoKind, Namespace: hr.Chart.RepoNamespace, Name: hr.Chart.RepoName}
+	src := hr.ChartSource()
 	switch source := s.run.store.GetObject(src).(type) {
 	case *manifest.OCIRepository:
 		if source.Reference != nil {

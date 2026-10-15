@@ -17,18 +17,15 @@ type KindInfo struct {
 
 const (
 	inDiscovery uint8 = 1 << iota
-	inCache
 	inTest
 )
 
-// Includes reports membership in "discovery", "cache", or the default "test" roster.
+// Includes reports membership in "discovery" or "test" roster.
 // Untracked documents remain available in the document cache.
 func (k KindInfo) Includes(use string) bool {
 	switch use {
 	case "discovery":
 		return k.includes&inDiscovery != 0
-	case "cache":
-		return !k.Tracked || k.includes&inCache != 0
 	case "test":
 		return k.includes&inTest != 0
 	}
@@ -57,7 +54,7 @@ const (
 )
 
 var kindTable = [...]kindEntry{
-	kindKustomization:    {KindInfo: KindInfo{FluxKustomizeDomain, KindKustomization, true, true, true, inDiscovery | inCache | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
+	kindKustomization:    {KindInfo: KindInfo{FluxKustomizeDomain, KindKustomization, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
 	kindHelmRelease:      {KindInfo: KindInfo{HelmReleaseDomain, KindHelmRelease, true, true, true, inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) }},
 	kindGitRepository:    {KindInfo: KindInfo{SourceDomain, KindGitRepository, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
 	kindOCIRepository:    {KindInfo: KindInfo{SourceDomain, KindOCIRepository, true, true, true, inDiscovery | inTest}, decode: func(d map[string]any) (BaseManifest, error) { return ParseOCIRepository(d) }},
@@ -69,10 +66,10 @@ var kindTable = [...]kindEntry{
 	kindResourceSetInputProvider: {KindInfo: KindInfo{FluxOperatorDomain, KindResourceSetInputProvider, true, false, false, inDiscovery}, decode: func(d map[string]any) (BaseManifest, error) {
 		return parseResourceSetInputProvider(d)
 	}},
-	kindConfigMap: {KindInfo: KindInfo{"", KindConfigMap, true, false, false, inCache}, decode: func(d map[string]any) (BaseManifest, error) {
+	kindConfigMap: {KindInfo: KindInfo{"", KindConfigMap, true, false, false, 0}, decode: func(d map[string]any) (BaseManifest, error) {
 		return parseConfigMap(d)
 	}},
-	kindSecret: {KindInfo: KindInfo{"", KindSecret, true, false, false, inCache}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
+	kindSecret: {KindInfo: KindInfo{"", KindSecret, true, false, false, 0}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
 	{Kind: "Namespace", skipNamespaceStamp: true},
 	{Kind: "Node", skipNamespaceStamp: true},
 	{Kind: "PersistentVolume", skipNamespaceStamp: true},

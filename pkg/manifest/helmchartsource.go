@@ -22,6 +22,13 @@ func (h *HelmChartSource) Named() NamedResource {
 	return NamedResource{Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
 }
 
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
+	out := *h
+	out.Namespace = namespace
+	return &out
+}
+
 // parseHelmChartSource decodes a standalone HelmChart CRD via the
 // source-controller typed schema.
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
@@ -45,8 +52,8 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 
 func (h *HelmChartSource) references(yield func(Reference) bool) {
 	yield(Reference{
-		Kind: cmp.Or(h.SourceRef.Kind, KindHelmRepository), Namespace: h.Namespace, Name: h.SourceRef.Name,
-		Use: "source", Content: h.SourceRef.Name != "",
+		NamedResource: Resolve(NamedResource{Kind: cmp.Or(h.SourceRef.Kind, KindHelmRepository), Name: h.SourceRef.Name}, "", h.Namespace),
+		Use:           "source", Content: h.SourceRef.Name != "",
 	})
 }
 

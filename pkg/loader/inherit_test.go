@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,11 +22,21 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 		name   string
 		hrDir  string
 		pinned bool
-		alias  bool
 		files  map[string]string
 		scans  []string
 		want   []string
+		wantKS []string
+		alias  bool
 	}{
+		{name: "named_ready", files: map[string]string{
+			"flux/kustomization.yaml": "resources: [ks.yaml, ../apps]\n",
+			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"apps/kustomization.yaml": "resources: [hr.yaml]\n",
+		}, scans: []string{"flux", "apps"}, want: []string{"media"}},
+		{name: "self_claim", files: map[string]string{
+			"apps/kustomization.yaml": "resources: [ks.yaml, hr.yaml]\n",
+			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner}\nspec: {path: ./apps, targetNamespace: media}\n",
+		}, scans: []string{"apps"}, want: []string{"media"}},
 		{name: "pinned_namespace", pinned: true, files: map[string]string{
 			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: pinned, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
 			"apps/kustomization.yaml": "namespace: dirty\nresources: [hr.yaml]\n",
@@ -68,6 +79,29 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"flux/blue.yaml":          "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: blue, namespace: blue}\nspec: {path: ./base}\n",
 			"base/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"flux", "base"}, want: []string{"red", "blue"}},
+		{name: "shared_transformer_contexts", files: map[string]string{
+			"apps/kustomization.yaml":              "resources: [hr.yaml, ks.yaml]\ntransformers: [./transformers]\n",
+			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
+			"transformers/kustomization.yaml":      "resources: [transformer.yaml]\n",
+			"transformers/transformer.yaml":        namespaceTransformer,
+			"apps/ks.yaml":                         "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: myapp, namespace: flux-system}\nspec: {path: ./output, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"other/kustomization.yaml":             "namespace: other\nresources: [../apps/ks.yaml]\n",
+		}, scans: []string{"apps", "other"}, want: []string{"myns"}, wantKS: []string{"myns", "other"}},
+		{name: "mixed_transformer_contexts", files: map[string]string{
+			"apps/kustomization.yaml":              "resources: [hr.yaml, ks.yaml]\ntransformers: [./transformers]\n",
+			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
+			"transformers/kustomization.yaml":      "resources: [transformer.yaml]\n",
+			"transformers/transformer.yaml":        namespaceTransformer,
+			"apps/ks.yaml":                         "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: myapp, namespace: flux-system}\nspec: {path: ./output, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"other/kustomization.yaml":             "resources: [../apps/ks.yaml]\n",
+		}, scans: []string{"apps", "other"}, want: []string{"myns"}, wantKS: []string{"flux-system", "myns"}},
+		{name: "self_claim_transformer_fallback", files: map[string]string{
+			"apps/kustomization.yaml":              "resources: [hr.yaml, ks.yaml]\ntransformers: [./transformers]\n",
+			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
+			"transformers/kustomization.yaml":      "resources: [transformer.yaml]\n",
+			"transformers/transformer.yaml":        namespaceTransformer,
+			"apps/ks.yaml":                         "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: myapp, namespace: flux-system}\nspec: {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+		}, scans: []string{"apps"}, want: []string{"myns"}, wantKS: []string{"myns"}},
 		{name: "cross_tree", files: map[string]string{
 			"apps/kustomization.yaml": "namespace: games\nresources: [ks.yaml]\n",
 			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: games}\nspec: {path: ./base, dependsOn: [{name: prerequisite}]}\n",
@@ -87,13 +121,14 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 				if tc.hrDir != "" {
 					hrDir = tc.hrDir
 				}
-				testutil.WriteFile(t, root, hrDir+"/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+				hrDoc := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: app}
 spec:
   chartRef: {kind: OCIRepository, name: chart}
   valuesFrom: [{kind: ConfigMap, name: values}, {kind: Secret, name: optional, optional: true}]
-`)
+`
+				testutil.WriteFile(t, root, hrDir+"/hr.yaml", hrDoc)
 				l := loaderFixture(store.New(), nil)
 				l.SourceRoot, l.Options.DiscoveryOnly = root, deferred
 				if tc.alias {
@@ -108,8 +143,9 @@ spec:
 				}
 				if tc.pinned {
 					artifact := t.TempDir()
-					testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: []\n")
-					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, LocalPath: artifact, Key: "pinned", FS: os.DirFS(artifact)})
+					testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
+					testutil.WriteFile(t, artifact, "apps/hr.yaml", hrDoc)
+					l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, Key: "pinned", FS: os.DirFS(artifact), LocalPath: artifact})
 					l.documents = readerForTest(root)
 					l.documents.views[artifact] = os.DirFS(artifact)
 					l.documents.read(filepath.Join(artifact, "apps"))
@@ -118,8 +154,63 @@ spec:
 					if _, err := l.Load(t.Context(), filepath.Join(root, scan)); err != nil {
 						t.Fatal(err)
 					}
+					if tc.name == "named_ready" && scan == "flux" {
+						l.ApplyNamespaces(root)
+						if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); !ok {
+							t.Fatalf("unresolved source records before loading its path: %+v", l.Index.Records)
+						}
+					}
+				}
+				if tc.pinned || tc.alias {
+					ks := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)[0]
+					artifact := l.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+					if _, err := l.Load(t.Context(), filepath.Join(artifact.LocalPath, "apps")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var original, snapshot *manifest.Kustomization
+				var raw manifest.DiscoveryRecord
+				if len(tc.wantKS) != 0 {
+					id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
+					original, _ = l.Store.Get[*manifest.Kustomization](id)
+					if original == nil {
+						t.Fatal("authored Kustomization missing")
+					}
+					snapshot = original.Clone()
+					raw, _ = l.Index.Lookup(id)
 				}
 				l.ApplyNamespaces(root)
+				if original != nil {
+					assert.Diff(t, original, snapshot)
+					assert.Diff(t, l.authoredObject(raw.Path, raw.Authored), snapshot)
+					assert.Diff(t, l.recordNamespaces(raw, "myns"), tc.wantKS)
+					got, want := map[manifest.NamedResource][]manifest.NamedResource{}, map[manifest.NamedResource][]manifest.NamedResource{}
+					for id, r := range l.Index.Files() {
+						if r.Path == raw.Path {
+							assert.Equal(t, r.Authored, raw.Authored)
+							got[id] = r.Refs
+						}
+					}
+					for _, ns := range tc.wantKS {
+						id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
+						want[id] = []manifest.NamedResource{{Kind: manifest.KindGitRepository, Namespace: ns, Name: "cluster"}}
+					}
+					assert.Diff(t, got, want)
+				}
+				if tc.name == "self_claim" {
+					id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "owner"}
+					if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) == nil {
+						t.Fatal("Kustomization inherited its own targetNamespace as its identity")
+					}
+				}
+				if tc.pinned {
+					l.FinalizeIndex(root, nil)
+					r, _ := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"})
+					readers := l.Index.Readers[r.File]
+					if len(readers) != 1 || readers[0] != (manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "pinned"}) {
+						t.Fatalf("committed source file %q readers = %v", r.File, readers)
+					}
+				}
 				if tc.name == "cross_tree" {
 					ks, ok := l.Store.Get[*manifest.Kustomization](manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "games", Name: "games"})
 					if !ok {
@@ -148,7 +239,7 @@ spec:
 					}
 					if !deferred {
 						hr, ok := l.Store.Get[*manifest.HelmRelease](id)
-						if !ok || hr.Chart.RepoNamespace != ns {
+						if !ok || hr.Chart.RepoNamespace != "" {
 							t.Fatalf("projected %s chart source namespace: %+v", id, hr)
 						}
 					}
@@ -165,6 +256,36 @@ spec:
 			}
 		})
 	}
+
+	t.Run("stale_declaration", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, root, "apps/kustomization.yaml", "namespace: immich\nresources: [ks.yaml]\n")
+		writeFile(t, root, "apps/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: immich-db, namespace: pg}
+spec: {path: ./output, targetNamespace: pg}
+`)
+		l := loaderFixture(store.New(), nil)
+		l.SourceRoot = root
+		if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+			t.Fatal(err)
+		}
+		l.ApplyNamespaces(root)
+		l.FinalizeIndex(root, nil)
+		canonical := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "immich", Name: "immich-db"}
+		ks, ok := l.Store.Get[*manifest.Kustomization](canonical)
+		if !ok || ks.TargetNamespace != "pg" {
+			t.Fatalf("canonical declaration = %+v, want targetNamespace pg", ks)
+		}
+		if _, ok := l.Index.Lookup(canonical); !ok {
+			t.Fatal("canonical declaration missing from finalized index")
+		}
+		stale := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "pg", Name: "immich-db"}
+		_, indexed := l.Index.Lookup(stale)
+		if l.Store.GetObject(stale) != nil || indexed {
+			t.Fatal("stale pg/immich-db declaration survived projection")
+		}
+	})
 }
 
 func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
@@ -209,32 +330,46 @@ func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultNamespaces_LateFallback(t *testing.T) {
-	s := store.New()
-	rs := &manifest.ResourceSet{Name: "apps"}
-	rsip := &manifest.ResourceSetInputProvider{Name: "apps-inputs"}
-	hc := &manifest.HelmChartSource{Name: "chart"}
-	s.AddObject(rs)
-	s.AddObject(rsip)
-	s.AddObject(hc)
-	sourceFiles := map[manifest.NamedResource]string{
-		rs.Named():   "resourceset.yaml",
-		rsip.Named(): "rsip.yaml",
-		hc.Named():   "chart.yaml",
-	}
-
-	defaultNamespacesForTest(s, sourceFiles)
-
-	for _, id := range []manifest.NamedResource{
-		{Kind: manifest.KindResourceSet, Namespace: manifest.DefaultNamespace, Name: "apps"},
-		{Kind: manifest.KindResourceSetInputProvider, Namespace: manifest.DefaultNamespace, Name: "apps-inputs"},
-		{Kind: manifest.KindHelmChart, Namespace: manifest.DefaultNamespace, Name: "chart"},
-	} {
-		if got := s.GetObject(id); got == nil {
-			t.Fatalf("expected %s after defaulting; sourceFiles=%v", id, sourceFiles)
-		}
-		if _, ok := sourceFiles[id]; !ok {
-			t.Fatalf("sourceFiles missing defaulted id %s; sourceFiles=%v", id, sourceFiles)
-		}
+func TestApplyNamespaceInheritance_LateFallback(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("owned_%t", owned), func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/objects.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: apps}
+spec: {}
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata: {name: inputs}
+spec: {type: Static}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata: {name: chart}
+spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
+`)
+			l := loaderFixture(store.New(), nil)
+			l.SourceRoot = root
+			if owned {
+				l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "owner", Path: "./apps"})
+			}
+			if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+				t.Fatal(err)
+			}
+			l.ApplyNamespaces(root)
+			for _, obj := range l.Store.ListObjects("") {
+				if obj.Named().Kind == manifest.KindKustomization {
+					continue
+				}
+				want := ""
+				if owned {
+					want = "owner"
+				}
+				if obj.Named().Namespace != want {
+					t.Errorf("%s namespace = %q, want %q", obj.Named().Kind, obj.Named().Namespace, want)
+				}
+			}
+		})
 	}
 }

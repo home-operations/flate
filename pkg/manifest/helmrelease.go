@@ -36,8 +36,8 @@ func (h HelmChart) ChartName() string {
 
 // chartFromHelmRelease projects the chart reference out of a typed
 // HelmRelease spec, unifying spec.chartRef and spec.chart into one
-// resolved shape. defaultNamespace fills in an omitted ref namespace.
-func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string) (HelmChart, error) {
+// shape while preserving authored reference namespaces.
+func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
 	if ref := spec.ChartRef; ref != nil {
 		if ref.Kind == "" {
 			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.kind")
@@ -50,7 +50,7 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 		// other source kinds determine it from their artifact's layout.
 		return HelmChart{
 			RepoName:      ref.Name,
-			RepoNamespace: cmp.Or(ref.Namespace, defaultNamespace),
+			RepoNamespace: ref.Namespace,
 			RepoKind:      ref.Kind,
 		}, nil
 	}
@@ -70,7 +70,7 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec, defaultNamespace string)
 		Name:          chartName,
 		Version:       tmpl.Spec.Version,
 		RepoName:      srcName,
-		RepoNamespace: cmp.Or(tmpl.Spec.SourceRef.Namespace, defaultNamespace),
+		RepoNamespace: tmpl.Spec.SourceRef.Namespace,
 		RepoKind:      cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository),
 	}, nil
 }
@@ -149,6 +149,13 @@ func (h *HelmRelease) Named() NamedResource {
 	return NamedResource{Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
 }
 
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
+	out := *h
+	out.Namespace = namespace
+	return &out
+}
+
 // UsesDirectOCIRepository reports whether chartRef directly names an OCIRepository.
 func (h *HelmRelease) UsesDirectOCIRepository() bool {
 	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository
@@ -203,6 +210,17 @@ func (h *HelmRelease) ReleaseNamespace() string {
 	return cmp.Or(h.TargetNamespace, h.Namespace)
 }
 
+// ChartSource returns the effective source reference used by the chart.
+func (h *HelmRelease) ChartSource() NamedResource {
+	var source NamedResource
+	for ref := range References(h) {
+		if ref.Use == "chart" || ref.Use == "source" {
+			source = ref.NamedResource
+		}
+	}
+	return source
+}
+
 // HelmChartLookup returns the HelmChartSource at (namespace, name) or
 // nil when not present. The shape ResolveChartRef accepts so callers
 // can pass either a SourceResolver method (orchestrator path) or a
@@ -225,7 +243,7 @@ func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
 	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {
 		return nil
 	}
-	id := NamedResource{Kind: h.Chart.RepoKind, Namespace: cmp.Or(h.Chart.RepoNamespace, h.Namespace), Name: h.Chart.RepoName}
+	id := h.ChartSource()
 	src := lookup(id.Namespace, id.Name)
 	if src == nil {
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
@@ -261,7 +279,7 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	// metadata.namespace is optional — Flux Kustomizations commonly
 	// inject it via spec.targetNamespace. Treat the empty string as
 	// "inherit later".
-	chart, err := chartFromHelmRelease(&cr.Spec, cr.Namespace)
+	chart, err := chartFromHelmRelease(&cr.Spec)
 	if err != nil {
 		return nil, err
 	}
@@ -310,23 +328,22 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 func (h *HelmRelease) references(yield func(Reference) bool) {
 	var authored NamedResource
 	if ref := h.ChartRef; ref != nil {
-		authored = NamedResource{Kind: ref.Kind, Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
+		authored = Resolve(NamedResource{Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
 		if !yield(Reference{NamedResource: authored, Use: "chart", Content: true}) {
 			return
 		}
 	} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
 		ref := tmpl.Spec.SourceRef
-		authored = NamedResource{Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: cmp.Or(ref.Namespace, h.Namespace), Name: ref.Name}
+		authored = Resolve(NamedResource{Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
 		if !yield(Reference{NamedResource: authored, Use: "source", Content: true}) {
 			return
 		}
 	}
-	// A matching projection still carries parse-time namespace defaults.
-	// Only a different resolved source supplies its own namespace.
+	// A resolved HelmChart or synthetic chart supplies its own source identity.
 	if h.Chart.RepoKind != "" && (authored.Kind != h.Chart.RepoKind || authored.Name != h.Chart.RepoName) {
 		if !yield(Reference{
-			Kind: h.Chart.RepoKind, Namespace: cmp.Or(h.Chart.RepoNamespace, h.Namespace), Name: h.Chart.RepoName,
-			Use: "source", Content: true,
+			NamedResource: Resolve(NamedResource{Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName}, "", h.Namespace),
+			Use:           "source", Content: true,
 		}) {
 			return
 		}
@@ -334,16 +351,16 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 	for i := range h.DependsOn {
 		dep := &h.DependsOn[i]
 		if !yield(Reference{
-			Kind: KindHelmRelease, Namespace: cmp.Or(dep.Namespace, h.Namespace), Name: dep.Name,
-			Use: "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
+			NamedResource: Resolve(NamedResource{Kind: KindHelmRelease, Namespace: dep.Namespace, Name: dep.Name}, "", h.Namespace),
+			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return
 		}
 	}
 	for i, ref := range h.ValuesFrom {
 		if !yield(Reference{
-			Kind: ref.Kind, Namespace: h.Namespace, Name: ref.Name,
-			Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true,
+			NamedResource: Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", h.Namespace),
+			Use:           "valuesFrom", Position: i, Optional: ref.Optional, Content: true,
 		}) {
 			return
 		}

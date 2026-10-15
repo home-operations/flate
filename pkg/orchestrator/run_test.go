@@ -47,7 +47,7 @@ spec: {}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	idx := loader.New(store.New())
 	idx.Index = indexForTest(nil)
-	idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
+	idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
 	st := store.New()
 	idx.Store = st
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
@@ -73,7 +73,7 @@ func TestOrchestratorExistence_PromotionPreservesSelectedContent(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
 kind: ConfigMap
-metadata: {name: selected, namespace: apps}
+metadata: {name: selected, namespace: authored}
 data: {values.yaml: "greeting: selected"}
 ---
 apiVersion: v1
@@ -107,7 +107,11 @@ spec: {url: https://example.test/excluded.git}
 	idx := loader.New(store.New())
 	idx.Index = indexForTest(nil)
 	for id := range files {
-		idx.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
+		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
+		if id == selected {
+			record.Authored.Namespace = "authored"
+		}
+		idx.Index.Records[id] = record
 	}
 	idx.Store = st
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
@@ -117,6 +121,9 @@ spec: {url: https://example.test/excluded.git}
 	size := len(filter.KeepNames())
 	if !e.Promote(selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
+	}
+	if got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]; got != "greeting: selected" {
+		t.Errorf("selected values = %v", got)
 	}
 	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
 		if e.Promote(id) || st.GetObject(id) != nil || filter.ShouldReconcile(id) {
@@ -149,7 +156,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			idx.Index = indexForTest(nil)
 			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
 			if tc.raw {
-				idx.Index.Records[id] = manifest.DiscoveryRecord{Path: "target.yaml"}
+				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: "target.yaml"}
 			} else {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{File: "target.yaml"}
 			}

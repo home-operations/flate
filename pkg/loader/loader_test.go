@@ -10,10 +10,12 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -46,64 +48,91 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	}
 }
 
-// TestLoader_DiscoveryOnlyBootstrapScanSkipsCoveredDir pins the coverage guard
-// on the bootstrap-sibling scan: a Flux Kustomization authored as a sibling of
-// a kustomization.yaml but excluded from its `resources:` is a bootstrap entry
-// ONLY when its directory isn't already rendered by another KS. Inside a covered
-// tree (here cluster-apps' spec.path apps/test) such a sibling is a
-// disabled/commented-out app — kustomize never includes it, so neither should
-// the scan. Counterpart to TestLoader_DiscoveryOnlyPicksUpBootstrapSiblingKS
-// (uncovered dir → still surfaced).
 func TestLoader_DiscoveryOnlyBootstrapScanSkipsCoveredDir(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "apps/test/network/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: network
-resources:
-  - ./echo.yaml
-  # - ./tunnel.yaml
-`)
-	testutil.WriteFile(t, dir, "apps/test/network/echo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+	for _, tc := range []struct {
+		name                    string
+		alias, listed, external bool
+	}{
+		{name: "same root"},
+		{name: "external omitted", external: true},
+		{name: "alias omitted", alias: true},
+		{name: "alias listed", alias: true, listed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/test/kustomization.yaml", "resources: [network]\n")
+			resources := "resources: [ns.yaml, echo.yaml]\n# - ks.yaml\n"
+			if tc.listed {
+				resources = "resources: [ns.yaml, echo.yaml, ks.yaml]\n"
+			}
+			testutil.WriteFile(t, root, "apps/test/network/kustomization.yaml", resources)
+			testutil.WriteFile(t, root, "apps/test/network/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: network}\n")
+			testutil.WriteFile(t, root, "apps/test/network/echo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: echo, namespace: network}
 spec:
   path: ./apps/base/echo
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
 `)
-	// Commented out of the kustomization above — a disabled app, not a
-	// bootstrap entry. Real kustomize never renders it.
-	testutil.WriteFile(t, dir, "apps/test/network/tunnel.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+			testutil.WriteFile(t, root, "apps/test/network/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: tunnel, namespace: network}
 spec:
   path: ./apps/base/tunnel
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
 `)
-
-	s := store.New()
-	// The covering parent — cluster-apps renders apps/test (its spec.path
-	// covers apps/test/network/). Pre-seeded so the guard sees it regardless
-	// of walk order.
-	s.AddObject(&manifest.Kustomization{
-		Name:      "cluster-apps",
-		Namespace: "flux-system",
-		Path:      "apps/test",
-	})
-
-	l := loaderFixture(s, nil)
-	l.Options.DiscoveryOnly = true
-	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), filepath.Join(dir, "apps/test")); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	echoID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "echo"}
-	if s.GetObject(echoID) == nil {
-		t.Errorf("listed KS echo must be loaded via resources")
-	}
-	tunnelID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "tunnel"}
-	if s.GetObject(tunnelID) != nil {
-		t.Errorf("commented-out sibling KS tunnel must NOT be surfaced inside a covered tree")
+			st := store.New()
+			l := loaderFixture(st, nil)
+			l.Options.DiscoveryOnly, l.SourceRoot = true, root
+			parent := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system", Path: "apps/test"}
+			if tc.alias {
+				testutil.WriteFile(t, root, "flux/parent.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./apps/test
+  sourceRef: {kind: GitRepository, name: cluster}
+`)
+				input, err := gittree.AdmitDirectory(t.Context(), root)
+				assert.NoError(t, err)
+				st.SetArtifact(manifest.BootstrapSourceID, input)
+				view, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+				assert.NoError(t, err)
+				source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: "file://" + root}
+				st.AddObject(source)
+				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(t.TempDir(), "alias"), InputAlias: true, FS: view})
+				_, err = l.Load(t.Context(), filepath.Join(root, "flux"))
+				assert.NoError(t, err)
+				parent, _ = st.Get[*manifest.Kustomization](parent.Named())
+				if parent == nil {
+					t.Fatal("bootstrap parent was not loaded")
+				}
+			} else {
+				if tc.external {
+					source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: "https://github.com/example/other"}
+					st.AddObject(source)
+					parent.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name, Namespace: source.Namespace}
+				}
+				st.AddObject(parent)
+			}
+			sourceRoot, _, _ := SourceView(st, parent, root)
+			_, err := l.Load(t.Context(), filepath.Join(sourceRoot, parent.Path))
+			assert.NoError(t, err)
+			l.ApplyNamespaces(root)
+			l.FinalizeIndex(root, nil)
+			for _, child := range []struct {
+				name string
+				want bool
+			}{{"echo", true}, {"tunnel", tc.listed}} {
+				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: child.name}
+				if got := st.GetObject(id) != nil; got != child.want {
+					t.Errorf("Store admission for %s = %v, want %v", child.name, got, child.want)
+				}
+				if _, got := l.Index.Lookup(id); got != child.want {
+					t.Errorf("Index admission for %s = %v, want %v", child.name, got, child.want)
+				}
+			}
+		})
 	}
 }
 
@@ -786,7 +815,7 @@ func TestLoader_DiscoveryOnlyRecordsSourceRefs(t *testing.T) {
 	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
 	assert.Equal(t, s.GetObject(hrID), manifest.BaseManifest(nil))
 	assert.Diff(t, l.Index.Records[hrID].Refs, []manifest.NamedResource{{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}})
-	assert.Equal(t, len(l.documents.cache[path].objects), 0)
+	assert.Equal(t, len(l.documents.cache[path].objects), 1)
 	ksPath := filepath.Join(dir, "ks.yaml")
 	testutil.WriteFile(t, dir, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app, namespace: apps}\nspec: {path: ./apps}\n")
 	if _, err := l.loadFile(ksPath); err != nil {

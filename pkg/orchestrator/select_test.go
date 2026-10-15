@@ -508,14 +508,27 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 }
 
 func TestSelect_ExplicitChartVersion(t *testing.T) {
-	run := selectedRun(&Result{})
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Version: "9.9.9", RepoKind: manifest.KindOCIRepository, RepoNamespace: "apps", RepoName: "chart"}}
-	source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
-	source.Reference = &manifest.OCIRepositoryRef{Tag: "1.2.3"}
-	run.store.AddObject(hr)
-	run.store.AddObject(source)
-	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
-	if err != nil || selected[0].ChartVersions != nil || hr.Chart.Version != "9.9.9" {
-		t.Fatalf("explicit version replaced: %+v %v", selected[0].ChartVersions, err)
+	for _, tc := range []struct{ namespace, source string }{{"", "apps"}, {"foreign", "foreign"}} {
+		namespace := tc.namespace
+		t.Run("source_"+namespace, func(t *testing.T) {
+			run := selectedRun(&Result{})
+			hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", Chart: manifest.HelmChart{Version: "9.9.9", RepoKind: manifest.KindOCIRepository, RepoNamespace: namespace, RepoName: "chart"}}
+			hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
+			source := &manifest.OCIRepository{Name: "chart", Namespace: tc.source}
+			source.Reference = &manifest.OCIRepositoryRef{Tag: "1.2.3"}
+			run.store.AddObject(hr)
+			run.store.AddObject(source)
+			selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
+			if err != nil || selected[0].ChartVersions != nil || hr.Chart.Version != "9.9.9" {
+				t.Fatalf("explicit version replaced: %+v %v", selected[0].ChartVersions, err)
+			}
+			updated := hr.Clone()
+			updated.Chart.Version = ""
+			run.store.AddObject(updated)
+			selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, nil)
+			if err != nil || selected[0].ChartVersions[hr.Named()] != "1.2.3" {
+				t.Fatalf("effective source version: %+v %v", selected[0].ChartVersions, err)
+			}
+		})
 	}
 }

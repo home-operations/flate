@@ -1143,6 +1143,7 @@ spec:
   path: ./leaf
   sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
 `)
+	mutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- child.yaml\n")
 	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {value: pinned-child}\n")
 	gitCommitAll(t, repo)

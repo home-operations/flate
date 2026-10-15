@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"cmp"
 	"maps"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -50,6 +49,13 @@ func (k *Kustomization) Suspended() bool { return k.Suspend }
 // Named identifies the Kustomization.
 func (k *Kustomization) Named() NamedResource {
 	return NamedResource{Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
+}
+
+// WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
+func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
+	out := *k
+	out.Namespace = namespace
+	return &out
 }
 
 // Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
@@ -165,7 +171,7 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 
 // SourceID resolves the authored source against the effective namespace.
 func (k *Kustomization) SourceID() NamedResource {
-	return NamedResource{Kind: k.SourceRef.Kind, Namespace: cmp.Or(k.SourceRef.Namespace, k.Namespace), Name: k.SourceRef.Name}
+	return Resolve(NamedResource{Kind: k.SourceRef.Kind, Namespace: k.SourceRef.Namespace, Name: k.SourceRef.Name}, "", k.Namespace)
 }
 
 // IsFragment identifies patch fragments without a render path or source name.
@@ -184,8 +190,8 @@ func (k *Kustomization) references(yield func(Reference) bool) {
 	for i := range k.DependsOn {
 		dep := &k.DependsOn[i]
 		if !yield(Reference{
-			Kind: KindKustomization, Namespace: cmp.Or(dep.Namespace, k.Namespace), Name: dep.Name,
-			Use: "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
+			NamedResource: Resolve(NamedResource{Kind: KindKustomization, Namespace: dep.Namespace, Name: dep.Name}, "", k.Namespace),
+			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return
 		}
@@ -199,8 +205,8 @@ func (k *Kustomization) references(yield func(Reference) bool) {
 		}
 		content := !ref.Optional && ref.Name != ""
 		if !yield(Reference{
-			Kind: ref.Kind, Namespace: k.Namespace, Name: ref.Name,
-			Use: "substituteFrom", Position: i, Optional: ref.Optional, Content: content,
+			NamedResource: Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", k.Namespace),
+			Use:           "substituteFrom", Position: i, Optional: ref.Optional, Content: content,
 		}) {
 			return
 		}

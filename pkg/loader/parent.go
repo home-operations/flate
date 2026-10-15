@@ -25,7 +25,7 @@ func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
 	if l.documents.cache == nil {
 		l.documents.cache = map[string]document{}
 	}
-	l.documents.mountSources(l.Store)
+	l.mountSources()
 	return buildClaims(l.Store, repoRoot, l.documents, localKustomizations(l.Store, repoRoot))
 }
 

@@ -114,7 +114,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 		}
 		art := &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: key, FS: input}
 		st.SetArtifact(manifest.NamedResource{Kind: manifest.KindHelmChart, Name: name, Namespace: "test"}, art)
-		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoName: name, RepoNamespace: "test"}}
+		hr := &manifest.HelmRelease{Namespace: "test", Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoName: name}}
 		loaded, err := cli.LoadChart(t.Context(), hr)
 		if name == "invalid-metadata" || name == "invalid-archive" {
 			if !errors.Is(err, manifest.ErrInput) || strings.Count(err.Error(), "input error") != 1 {

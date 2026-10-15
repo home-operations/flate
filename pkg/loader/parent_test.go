@@ -28,6 +28,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 		{name: "source root", path: "./apps/../.."},
 		{name: "source view", path: "./alias/../base", base: "deep/base", link: true, mounted: true},
 		{name: "committed source view", path: "./alias/../base", base: "deep/base", link: true, mounted: true, pinned: true},
+		{name: "committed parent segments", path: "./apps/../base", base: "base", mounted: true, pinned: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -44,7 +45,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			testutil.WriteFile(t, root, prefix+"hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: apps}\n")
 			testutil.WriteFile(t, root, prefix+"cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n")
 			st := store.New()
-			if !tc.mounted {
+			if !tc.mounted || tc.pinned {
 				admitForTest(st, root)
 			}
 			ks := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: tc.path}
@@ -68,7 +69,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				if tc.pinned {
 					src := &manifest.GitRepository{Name: ks.SourceRef.Name, Namespace: ks.SourceRef.Namespace}
 					st.AddObject(src)
-					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), FS: input})
+					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), Key: "pinned", FS: input})
 				} else {
 					l.documents.views = map[string]fs.FS{root: input}
 				}
@@ -85,7 +86,11 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			assert.Diff(t, l.Index.Records[data].Owners, []manifest.NamedResource{ks.Named()})
 			assert.Diff(t, l.Index.DataProducers(data), []manifest.NamedResource{ks.Named()})
 			assert.Diff(t, l.Index.Records[generated].Renderers, []manifest.NamedResource{ks.Named()})
-			assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(root, tc.base)), tc.base != "")
+			sourceRoot, _, _ := SourceView(st, ks, root)
+			assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(sourceRoot, tc.base)), tc.base != "")
+			if tc.pinned {
+				assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(root, tc.base)), false)
+			}
 			assert.Equal(t, ks.Path, tc.path)
 		})
 	}

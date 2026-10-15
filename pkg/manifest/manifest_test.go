@@ -1862,3 +1862,19 @@ func TestCheckAPIVersion_ExactGroup(t *testing.T) {
 		})
 	}
 }
+
+func TestResolve_NamespacePrecedence(t *testing.T) {
+	for _, tc := range []struct{ name, forced, authored, fallback, want string }{
+		{"forced", "forced", "authored", "fallback", "forced"},
+		{"authored", "", "authored", "fallback", "authored"},
+		{"fallback", "", "", "fallback", "fallback"},
+		{"empty", "", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := NamedResource{Kind: KindKustomization, Namespace: tc.authored, Name: "app"}
+			want := NamedResource{Kind: KindKustomization, Namespace: tc.want, Name: "app"}
+			assert.Equal(t, Resolve(id, tc.forced, tc.fallback), want)
+			assert.Equal(t, id, NamedResource{Kind: KindKustomization, Namespace: tc.authored, Name: "app"})
+		})
+	}
+}

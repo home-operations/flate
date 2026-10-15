@@ -7,6 +7,8 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/apis/kustomize"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 // TestFillEmptyValueLeaves: empty-string and null leaves (nested, in slices)
@@ -267,5 +269,23 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 	}
 	if src.KustomizationSpec.DependsOn[0].Name != "src-dep" {
 		t.Errorf("source spec DependsOn aliased: %v", src.KustomizationSpec.DependsOn[0].Name)
+	}
+}
+
+func TestWithNamespace_Copy(t *testing.T) {
+	ks := &Kustomization{Name: "app", Namespace: "authored", Contents: map[string]any{"metadata": map[string]any{"namespace": "authored"}}}
+	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}
+	for _, tc := range []struct{ name, namespace string }{
+		{"projected", "effective"}, {"cleared", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projected := ks.WithNamespace(tc.namespace).(*Kustomization)
+			assert.Equal(t, projected.Named(), NamedResource{Kind: KindKustomization, Namespace: tc.namespace, Name: "app"})
+			assert.Equal(t, ks.Named(), NamedResource{Kind: KindKustomization, Namespace: "authored", Name: "app"})
+			assert.Diff(t, ks.Contents, map[string]any{"metadata": map[string]any{"namespace": "authored"}})
+			assert.Diff(t, ks.PostBuild, &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}})
+			assert.Diff(t, projected.Contents, ks.Contents)
+			assert.Diff(t, projected.PostBuild, ks.PostBuild)
+		})
 	}
 }

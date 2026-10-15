@@ -4,67 +4,111 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-// kustomizationDocument reuses upstream fields while retaining permissive
-// replacement injection detection for singular and plural field path variants.
-type kustomizationDocument struct {
-	types.Kustomization
-	Replacements []replacementDirective `json:"replacements,omitempty"`
-}
 
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects.
 type document struct {
-	body    *kustomizationDocument
+	body    *types.Kustomization
 	file    string
 	objects []manifest.BaseManifest
+	loaded  bool
 }
 
 // documentReader caches positive and negative results by absolute source-view directory.
 type documentReader struct {
-	cache   map[string]document
-	views   map[string]fs.FS
-	regular bool
+	cache     map[string]document
+	views     map[string]fs.FS
+	artifacts map[string]*store.SourceArtifact
+	regular   bool
 }
 
-func (r *documentReader) mountSources(s *store.Store) {
-	bootstrap, _ := s.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+func (r *documentReader) mountSources(s *store.Store) []string {
+	mounted := map[string]*store.SourceArtifact{}
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket, manifest.KindExternalArtifact} {
 		for _, obj := range s.ListObjects(kind) {
 			art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
-			if !ok || art.LocalPath == "" || bootstrap != nil && art.LocalPath == bootstrap.LocalPath {
-				continue
+			if ok && art.LocalPath != "" {
+				mounted[art.LocalPath] = art
 			}
-			r.mount(art.LocalPath, art.FS)
 		}
 	}
-	if bootstrap != nil && bootstrap.LocalPath != "" {
-		r.mount(bootstrap.LocalPath, bootstrap.FS)
+	if bootstrap, ok := s.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact); ok && bootstrap.LocalPath != "" {
+		mounted[bootstrap.LocalPath] = bootstrap
 	}
-}
-
-func (r *documentReader) mount(root string, input fs.FS) {
-	if r.views[root] == nil && input != nil {
-		// Acquisition must not retain negative inspection of unavailable content.
-		for file, cached := range r.cache {
-			if cached.body == nil && len(cached.objects) == 0 && safepath.Contains(root, file) {
+	var changed []string
+	for root, art := range mounted {
+		if r.artifacts[root] != art {
+			changed = append(changed, root)
+		}
+	}
+	for root := range r.artifacts {
+		if mounted[root] == nil {
+			changed = append(changed, root)
+			delete(r.views, root)
+		}
+	}
+	for _, root := range changed {
+		for file := range r.cache {
+			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
 				delete(r.cache, file)
 			}
 		}
 	}
-	if r.views == nil {
+	if len(mounted) != 0 && r.views == nil {
 		r.views = map[string]fs.FS{}
 	}
-	r.views[root] = input
+	for root, art := range mounted {
+		r.views[root] = art.FS
+		if art.FS == nil {
+			r.views[root] = unavailableSource{}
+		}
+	}
+	r.artifacts = mounted
+	slices.Sort(changed)
+	return changed
+}
+
+func (l *Loader) mountSources() {
+	changed := l.documents.mountSources(l.Store)
+	if len(changed) == 0 {
+		return
+	}
+	if l.scopes != nil {
+		ready := l.scopes.ready
+		l.scopes = nil
+		l.ensureScopes()
+		for state := range ready {
+			if state == l.sourceState(state.id) {
+				l.scopes.ready[state] = struct{}{}
+			}
+		}
+	}
+	if l.Index == nil {
+		return
+	}
+	for _, root := range changed {
+		for id, r := range l.Index.Files() {
+			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
+				delete(l.Index.Records, id)
+				l.Store.DeleteObject(id)
+			}
+		}
+		for file := range l.Index.Errors {
+			abs := filepath.Join(l.SourceRoot, filepath.FromSlash(file))
+			if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
+				delete(l.Index.Errors, file)
+			}
+		}
+	}
 }
 
 type unavailableSource struct{}
@@ -98,7 +142,7 @@ func (r documentReader) mountedRoot(file string) string {
 	}
 }
 
-func (r *documentReader) read(dir string) (*kustomizationDocument, string) {
+func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 	if cached, ok := r.cache[dir]; ok {
 		return cached.body, cached.file
 	}
@@ -109,7 +153,7 @@ func (r *documentReader) read(dir string) (*kustomizationDocument, string) {
 		if err != nil {
 			continue
 		}
-		var k kustomizationDocument
+		var k types.Kustomization
 		if yaml.Unmarshal(data, &k) != nil {
 			continue
 		}
@@ -124,7 +168,7 @@ func (r *documentReader) read(dir string) (*kustomizationDocument, string) {
 	return nil, ""
 }
 
-func isKustomizeComponent(k *kustomizationDocument) bool {
+func isKustomizeComponent(k *types.Kustomization) bool {
 	return k != nil && k.Kind == types.ComponentKind && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
 }
 
@@ -140,7 +184,7 @@ func isKustomizeComponent(k *kustomizationDocument) bool {
 // declaration is the more authoritative "this IS a Flux manifest"
 // signal. The overlap-resolve runs per-kustomization, scoped to one
 // directory — there's no cross-tree state to manage anymore.
-func dataFilesFor(dir string, k *kustomizationDocument) map[string]struct{} {
+func dataFilesFor(dir string, k *types.Kustomization) map[string]struct{} {
 	if k == nil || (len(k.ConfigMapGenerator) == 0 && len(k.SecretGenerator) == 0) {
 		return nil
 	}

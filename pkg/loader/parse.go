@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -14,11 +15,21 @@ import (
 // kinds (manifest.RawObject) are dropped. See decodeFileObjects for the shared
 // decode + filter contract.
 func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManifest, error) {
+	if cached, ok := r.cache[path]; ok && cached.objects != nil {
+		return slices.DeleteFunc(slices.Clone(cached.objects), func(obj manifest.BaseManifest) bool {
+			return !manifest.KindOf(obj).Tracked
+		}), nil
+	}
 	var out []manifest.BaseManifest
-	err := r.decodeFileObjects(path, opts, false, func(obj manifest.BaseManifest) {
+	err := r.decodeFileObjects(path, opts, r.cache != nil, func(obj manifest.BaseManifest) {
 		out = append(out, obj)
 	})
-	return out, err
+	if err == nil && r.cache != nil {
+		r.cache[path] = document{objects: out}
+	}
+	return slices.DeleteFunc(slices.Clone(out), func(obj manifest.BaseManifest) bool {
+		return !manifest.KindOf(obj).Tracked
+	}), err
 }
 
 // decodeFileObjects opens path, decodes every YAML/JSON doc, and yields each

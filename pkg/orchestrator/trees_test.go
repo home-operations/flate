@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -107,6 +108,7 @@ spec:
 					orchestrator.Tree{RepoRoot: headDir},
 					orchestrator.Config{
 						WipeSecrets: true,
+						Network:     new(source.Network),
 						Concurrency: workers,
 					})
 				if (err != nil) != (tc.namespace == "") {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -192,7 +194,7 @@ func TestRenderFlux_NoConsumerDiskReads(t *testing.T) {
 	label := writeTree(t, map[string]string{"cm.yaml": cmYAML("host")})
 	lower := memoryTree(t, map[string]string{"cm.yaml": cmYAML("tree")})
 	source := &store.SourceArtifact{LocalPath: label, FS: lower, Key: "pinned"}
-	cache := NewTreeCache(newTestCache(t, ""))
+	cache := NewTreeCache(newTestCache(t, ""), nil)
 	if err := os.RemoveAll(label); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +224,7 @@ func TestRenderFlux_AutoGenerateEscape(t *testing.T) {
 			if !errors.Is(err, tree.ErrEscape) || called {
 				t.Fatalf("secure Walk = %v, escape callback = %v", err, called)
 			}
-			_, err = RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			_, err = RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if !errors.Is(err, tree.ErrEscape) {
 				t.Fatalf("auto-generation = %v", err)
 			}
@@ -235,7 +237,7 @@ func TestRenderFlux_ExoticNames(t *testing.T) {
 	for _, name := range []string{"plain.yaml", "a b+c.yaml", "@x.yaml", "é.yaml"} {
 		files := map[string]string{"base/" + name: cmYAML("same"), "base/kustomization.yaml": existingKustomization("./" + name), "app/kustomization.yaml": existingKustomization("../base")}
 		lower := memoryTree(t, files)
-		out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: treeRef(lower, "pin"), Label: "/absent", SubPath: "app", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+		out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: treeRef(lower, "pin"), Label: "/absent", SubPath: "app", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 		assert.NoError(t, err)
 		if want == nil {
 			want = out
@@ -263,7 +265,7 @@ func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
 		{"alias/../base", nil}, {"loop", tree.ErrLoop}, {"../outside", tree.ErrEscape},
 	} {
 		t.Run(tc.subPath, func(t *testing.T) {
-			out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: tc.subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: tc.subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("subpath = %v, want %v", err, tc.want)
 			}
@@ -275,14 +277,23 @@ func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
 }
 
 func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
-	files := map[string]string{"cm.yaml": cmYAML("shared")}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "remote")
+	}))
+	t.Cleanup(srv.Close)
+	files := map[string]string{
+		"cm.yaml": cmYAML("shared"),
+		"kustomization.yaml": existingKustomization("cm.yaml") + "generators: [generator.yaml]\npatchesStrategicMerge:\n- |\n" +
+			"  apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: shared}\n  data: {marker: patched}\n",
+		"generator.yaml": "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [payload=" + srv.URL + "/file.txt]\n",
+	}
 	for name, artifact := range map[string]*store.SourceArtifact{
 		"immutable": treeRef(memoryTree(t, files), "pin"),
 		"local":     localSource(t, writeTree(t, files)),
 	} {
 		for _, workers := range []int{2, 4} {
 			t.Run(fmt.Sprintf("%s/workers%d", name, workers), func(t *testing.T) {
-				cache := NewTreeCache(newTestCache(t, t.TempDir()))
+				cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
 				start, done := make(chan struct{}), make(chan struct{})
 				var renders, lookups, lookupReady sync.WaitGroup
 				lookupReady.Add(workers)
@@ -296,7 +307,8 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 						activeRenders.Add(1)
 						defer activeRenders.Add(-1)
 						out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: artifact, Label: "/absent", SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
-						if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: render%d-shared", n)) {
+						if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: render%d-shared", n)) ||
+							!strings.Contains(string(out), "marker: patched") || !strings.Contains(string(out), "payload: remote") {
 							t.Errorf("private output = %s, %v", out, err)
 						}
 					})
@@ -355,8 +367,11 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 						t.Errorf("lookup worker %d did no scope work during render workers", n)
 					}
 				}
-				if _, err := fs.Stat(artifact.FS, "kustomization.yaml"); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatal("generated file mutated shared source")
+				for path, want := range files {
+					got, err := fs.ReadFile(artifact.FS, path)
+					if err != nil || string(got) != want {
+						t.Fatalf("shared source %s mutated: %s, %v", path, got, err)
+					}
 				}
 			})
 		}
@@ -374,11 +389,11 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 			root := writeTree(t, files)
 			lower := memoryTree(t, files)
 			spec := ksDoc(map[string]any{"namePrefix": "merged-"})
-			want, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: sub, Spec: spec}, sourcecache.RetryConfig{})
+			want, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: sub, Spec: spec}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			cache := NewTreeCache(newTestCache(t, t.TempDir()))
+			cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
 			source := &store.SourceArtifact{FS: lower, Key: "pin+rules+options+auth", LocalPath: root}
 			for _, state := range []string{"cold", "warm", "host-absent"} {
 				if state == "host-absent" {
@@ -402,7 +417,7 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 }
 
 func TestRenderFlux_ArtifactIdentity(t *testing.T) {
-	cache := NewTreeCache(newTestCache(t, t.TempDir()))
+	cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
 	for _, pin := range []string{"first", "second"} {
 		source := &store.SourceArtifact{Key: pin, LocalPath: "/missing-label", FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML(pin)})}
 		out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
@@ -415,18 +430,18 @@ func TestRenderFlux_ArtifactIdentity(t *testing.T) {
 func TestRenderFlux_SubPathLeadingSlash(t *testing.T) {
 	files := map[string]string{"app/cm.yaml": cmYAML("x"), "app/kustomization.yaml": existingKustomization("./cm.yaml")}
 	root := writeTree(t, files)
-	want, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+	want, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, subPath := range []string{"/app", "//app", "/./app"} {
 		t.Run(subPath, func(t *testing.T) {
-			got, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, SubPath: subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			got, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: localSource(t, root), Label: root, SubPath: subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if err != nil || string(got) != string(want) {
 				t.Fatalf("disk render = %q, %v", got, err)
 			}
 			source := treeRef(memoryTree(t, files), "pin")
-			got, err = RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: source, Label: "/virtual", SubPath: subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			got, err = RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: source, Label: "/virtual", SubPath: subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if err != nil || string(got) != string(want) {
 				t.Fatalf("memory render = %q, %v", got, err)
 			}
@@ -442,7 +457,7 @@ func TestRenderFlux_SubPathMustBeDirectory(t *testing.T) {
 		"memory": {Source: treeRef(memoryTree(t, files), "pin"), Label: "/virtual", SubPath: "app/cm.yaml", Spec: demoRawSpec},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), req, sourcecache.RetryConfig{}); !errors.Is(err, manifest.ErrInput) {
+			if _, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), req, sourcecache.RetryConfig{}); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("file spec.path = %v", err)
 			}
 		})
@@ -452,7 +467,7 @@ func TestRenderFlux_SubPathMustBeDirectory(t *testing.T) {
 func TestRenderFlux_ReleasedPinRejectsHostContent(t *testing.T) {
 	label := writeTree(t, map[string]string{"cm.yaml": cmYAML("host")})
 	artifact := &store.SourceArtifact{LocalPath: label, Key: "pin"}
-	out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: artifact, Label: label, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+	out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: artifact, Label: label, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrInput) || strings.Contains(string(out), "name: host") {
 		t.Fatalf("released content used host resource: %q, %v", out, err)
 	}
@@ -460,7 +475,7 @@ func TestRenderFlux_ReleasedPinRejectsHostContent(t *testing.T) {
 
 func TestRenderFlux_CacheMissesOnDirectoryMembership(t *testing.T) {
 	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
-	cache := NewTreeCache(newTestCache(t, t.TempDir()))
+	cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoRawSpec}
 	first, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 	if err != nil || !strings.Contains(string(first), "name: a") {
@@ -525,7 +540,7 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 func TestRenderFlux_CacheInvalidatesTypeTransitions(t *testing.T) {
 	root := writeTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	artifact := localSource(t, root)
-	cache := NewTreeCache(newTestCache(t, t.TempDir()))
+	cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
 	req := RenderRequest{Source: artifact, SubPath: "app", Spec: demoRawSpec}
 	if _, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{}); err != nil {
 		t.Fatal(err)
@@ -553,7 +568,7 @@ func TestRenderFlux_CacheMissingComponentAppearance(t *testing.T) {
 		"kustomization.yaml": "resources: [cm.yaml]\n",
 		"cm.yaml":            cmYAML("base"),
 	})
-	cache := NewTreeCache(newTestCache(t, t.TempDir()))
+	cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
 	req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: ksDoc(map[string]any{
 		"components": []any{"./missing"}, "ignoreMissingComponents": true,
 	})}
@@ -573,7 +588,7 @@ func TestRenderFlux_ArtifactWithoutPayloadRejected(t *testing.T) {
 	for _, key := range []string{"", "pin"} {
 		t.Run("key="+key, func(t *testing.T) {
 			source := &store.SourceArtifact{LocalPath: label, Key: key}
-			out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if !errors.Is(err, manifest.ErrInput) || strings.Contains(string(out), "host") {
 				t.Fatalf("render = %q, %v", out, err)
 			}

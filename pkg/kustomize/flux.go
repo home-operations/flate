@@ -116,15 +116,6 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	subDir = canonicalDir.String()
 	rawSpec, subPath := req.Spec, req.SubPath
 
-	// Pre-fetch any HTTP/HTTPS entries and remote git bases in kustomization
-	// resources: into the memory layer so the build only ever sees local files
-	// and never reaches the network (kustomize's git/HTTP fallback would
-	// otherwise run outside the fs sandbox). Scoped to subDir. See preflight.go.
-	injected, err := preflightRemoteResources(ctx, cache, memFS, subDir)
-	if err != nil {
-		return nil, err
-	}
-
 	// Merge spec.patches/images/components/targetNamespace/namePrefix/nameSuffix
 	// into the kustomization.yaml exactly as flux's Generator does, then write it
 	// into the memory layer for the build to consume. See generate.go.
@@ -134,6 +125,15 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	}
 	if err := memFS.WriteFile(kfile, data); err != nil {
 		return nil, fmt.Errorf("write kustomization.yaml: %w", err)
+	}
+
+	injected, err := preflightRemoteResources(ctx, cache, memFS, subDir)
+	if err != nil {
+		return nil, err
+	}
+	data, err = memFS.ReadFile(kfile)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -189,7 +189,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 }
 
 // renderKeyVersion MUST change whenever rendered bytes or cache framing change.
-const renderKeyVersion = "render-fs-v4"
+const renderKeyVersion = "render-fs-v5"
 
 // Mutable source content is validated by the read set rather than a
 // whole-checkout hash; immutable pins are folded into this domain key at lookup.

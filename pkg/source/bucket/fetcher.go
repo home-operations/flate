@@ -4,12 +4,14 @@ package bucket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -26,6 +28,8 @@ import (
 type Fetcher struct {
 	Cache   *cache.Cache
 	Secrets source.SecretGetter
+	// Network shares connection-timeout facts across this invocation.
+	Network *source.Network
 
 	// ForceGeneric skips the provider gate; the generic path then needs
 	// static credentials (a SecretRef) or it fails.
@@ -53,7 +57,11 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 	h := manifest.Fingerprint([8]any{endpoint, secure, b.BucketName, b.Prefix, b.Region, authIdentity(b), ignore, sourceignore.RulesVersion})
 	key := cache.ArchiveKey{ID: "source-bucket-" + h, Ignore: ignore}
 	input, desc, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		return walkBucket(ctx, client, b, w)
+		desc, err := walkBucket(ctx, client, b, w)
+		if status, ok := errors.AsType[minio.ErrorResponse](err); ok {
+			err = &statusError{err: err, status: &errcode.ErrorResponse{StatusCode: status.StatusCode}}
+		}
+		return desc, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", bucketID(b), err)
@@ -70,6 +78,14 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 		},
 	}, nil
 }
+
+type statusError struct {
+	err    error
+	status *errcode.ErrorResponse
+}
+
+func (e *statusError) Error() string   { return e.err.Error() }
+func (e *statusError) Unwrap() []error { return []error{e.err, e.status} }
 
 // newMinioClient resolves credentials, endpoint, and TLS/proxy transport for b
 // and constructs the minio client. Returns the resolved endpoint + secure flag
@@ -88,10 +104,11 @@ func (f *Fetcher) newMinioClient(b *manifest.Bucket) (client *minio.Client, endp
 		return nil, "", false, err
 	}
 	client, err = minio.New(endpoint, &minio.Options{
-		Creds:     creds,
-		Secure:    secure,
-		Region:    b.Region,
-		Transport: transport,
+		MaxRetries: 1,
+		Creds:      creds,
+		Secure:     secure,
+		Region:     b.Region,
+		Transport:  f.Network.HTTPTransport(transport),
 	})
 	if err != nil {
 		return nil, "", false, fmt.Errorf("%s: minio client: %w", bucketID(b), err)

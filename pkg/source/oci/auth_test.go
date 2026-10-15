@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -400,7 +402,9 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	upstream := startFakeRegistry(t, art.manifest, art.config, art.layer)
 	var failNext atomic.Bool
 	var failures atomic.Int32
+	var requests atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		if u, p, ok := r.BasicAuth(); !ok || u != user || p != pass {
 			w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
 			w.WriteHeader(http.StatusUnauthorized)
@@ -422,8 +426,9 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cache.Close() })
+	var network source.Network
 	ociFetcher := &Fetcher{
-		Cache: cache,
+		Cache: cache, Network: &network,
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": configJSON}}
 		},
@@ -433,7 +438,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		URL: "oci://" + host + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: true,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache})
+	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache, Network: &network})
 	got, err := charts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -446,8 +451,8 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, configPath, configJSON)
-	fallbackFetcher := &Fetcher{Cache: cache, RegistryConfig: configPath, Secrets: func(_, _ string) *manifest.Secret { return nil }}
-	fallbackCharts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache})
+	fallbackFetcher := &Fetcher{Cache: cache, Network: &network, RegistryConfig: configPath, Secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fallbackCharts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	_, err = fallbackCharts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), retry)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
@@ -467,5 +472,18 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if got.Kind != manifest.KindHelmChart || mustReadFile(t, got.FS, "Chart.yaml") != chart {
 		t.Fatalf("fallback artifact=%+v", got)
 	}
-
+	tr, _ := source.NewHTTPTransport(nil, nil)
+	tr.Proxy = nil
+	cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+	tr.DialContext = func(context.Context, string, string) (net.Conn, error) { return nil, cause }
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	_, err = (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || !terminal.Attempted || !errors.Is(err, cause) {
+		t.Fatalf("seed: %v", err)
+	}
+	before := requests.Load()
+	_, err = missing.RetryWithRegistryConfig(t.Context(), configPath)
+	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, cause) || requests.Load() != before {
+		t.Fatalf("suppressed fallback: %v, additional requests=%d", err, requests.Load()-before)
+	}
 }

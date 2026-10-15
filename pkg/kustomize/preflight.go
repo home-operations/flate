@@ -3,12 +3,9 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,12 +13,15 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote/errcode"
+	"sigs.k8s.io/kustomize/api/provider"
+	"sigs.k8s.io/kustomize/api/resource"
+	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
-	yaml "go.yaml.in/yaml/v4"
+	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/ssrfguard"
+	"github.com/home-operations/flate/pkg/tree"
 )
 
 // remoteFetchTimeout caps each pre-flight HTTP GET. Kustomize's
@@ -36,208 +36,418 @@ const remoteFetchTimeout = 5 * time.Second
 // URL endpoint.
 const remoteFetchMaxBytes = 64 << 20 // 64 MiB
 
-// remoteFetchClient is the package-level client used by the pre-flight pass.
-// Distinct from the helm/oci clients so resource-fetch latency stays
-// observable. Its transport carries the SSRF egress guard (inert unless
-// ssrfguard.Restrict is enabled) so an untrusted kustomization can't drive a
-// fetch to a private/metadata address; redirects re-dial through the same guard.
-var remoteFetchClient = func() *http.Client {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	ssrfguard.WrapTransport(tr)
-	return &http.Client{Timeout: remoteFetchTimeout, Transport: tr}
-}()
-
-// remoteResourcePrefix names the in-memory entries preflight writes beside a
-// kustomization for a pre-fetched remote resource: a `<prefix><hash>.yaml`
-// file for an HTTP single-file resource, or a `<prefix><hash>/` directory for
-// a cloned git base. These live only in the render's private in-memory fs (see
-// tree.go) — never on disk — so they are an implementation detail, not an
-// on-disk marker. The walk skips the directory form so a cloned base's own
-// nested kustomizations aren't re-rewritten.
+// Remote inputs live only in the private render overlay.
 const remoteResourcePrefix = ".flate-remote-"
 
-// preflightRemoteResources walks every kustomization file under subPath in the
-// render's private in-memory fs and pre-resolves remote resources so
-// kustomize.Build sees only local (in-fs) files — never invoking its built-in
-// `exec.Command("git", "fetch", ...)` / HTTP fallback (which would reach the
-// real network/disk, outside the fs sandbox, on a 10s+ timeout for a broken
-// URL). HTTP/HTTPS single-file entries are fetched via flate's own HTTP client;
-// git bases (URLs carrying kustomize's git markers / ?ref=) are cloned via the
-// injected GitBaseFetcher and materialized into the fs. See gitbase.go.
-//
-// Scoped to subPath (not the whole fs) so a broken URL in one Kustomization's
-// tree fails only that Kustomization's reconcile. Components reaching `../`
-// paths outside subPath are an acknowledged blind spot.
-//
-// On a fetch failure (timeout, 4xx, 5xx, DNS, connection refused) preflight
-// returns the error immediately, so the KS controller surfaces it as a real
-// reconcile failure rather than a silent missing resource.
-// The injected return reports whether any remote resource or git base was
-// pre-fetched into the in-memory layer. When true the build reads inputs the
-// source read set can't capture, so RenderFlux must not cache that render.
-func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) (injected bool, err error) {
-	walkErr := memFS.Walk(subPath, func(path string, info os.FileInfo, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		if info.IsDir() {
-			// Mounted bases receive preflight when fetched; an outer walk MUST skip them.
-			if path != subPath && strings.HasPrefix(filepath.Base(path), remoteResourcePrefix) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !slices.Contains(manifest.KustomizeBuilderFilenames, filepath.Base(path)) {
-			return nil
-		}
-		changed, rerr := rewriteURLResources(ctx, cache, memFS, path)
-		if changed {
-			injected = true
-		}
-		return rerr
-	})
-	return injected, walkErr
+type inputKind uint8
+
+const (
+	fileInput inputKind = iota
+	resourceInput
+	pluginInput
+	generatorInput
+	strategicInput
+)
+
+type inputField struct {
+	path string
+	kind inputKind
 }
 
-// rewriteURLResources rewrites URL entries in one kustomization file via
-// yaml.Node node-level editing. Node-level editing modifies only reference
-// sequence entries that match HTTP/HTTPS URLs (or git bases); every other byte
-// in the file (comments, key ordering, anchors, block-vs-flow style) survives
-// the round-trip intact, which a decode-to-map-and-remarshal pass would destroy.
-//
-// Returns the first fetch failure encountered so the caller can fail the
-// Kustomization's reconcile rather than silently dropping the missing resource.
-func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, ksFile string) (bool, error) {
-	body, err := memFS.ReadFile(ksFile)
+var generatorFields = []inputField{{"files/*", generatorInput}, {"envs/*", fileInput}}
+
+var controlFields = []inputField{
+	{"resources/*", resourceInput}, {"bases/*", resourceInput}, {"components/*", resourceInput},
+	{"patches/*/path", fileInput}, {"patchesJson6902/*/path", fileInput}, {"patchesStrategicMerge/*", strategicInput},
+	{"replacements/*/path", fileInput}, {"configurations/*", fileInput}, {"crds/*", fileInput}, {"openapi/path", fileInput},
+	{"configMapGenerator/*/files/*", generatorInput}, {"configMapGenerator/*/envs/*", fileInput}, {"configMapGenerator/*/env", fileInput},
+	{"secretGenerator/*/files/*", generatorInput}, {"secretGenerator/*/envs/*", fileInput}, {"secretGenerator/*/env", fileInput},
+	{"generators/*", pluginInput}, {"transformers/*", pluginInput}, {"validators/*", pluginInput},
+}
+
+// Plugin inputs resolve against the owning loader, even when the config is a
+// resource of a separately accumulated directory. Resource leaves stay data
+// unless they are reached through a declared plugin edge.
+type controlLocation struct {
+	file, root, pluginRoot string
+	field                  string
+	remote                 bool
+}
+
+type inputWalk struct {
+	cache    *TreeCache
+	fs       *treeFS
+	visited  map[controlLocation][]byte
+	mounts   []string
+	injected bool
+}
+
+func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) (bool, error) {
+	w := inputWalk{cache: cache, fs: memFS.(*treeFS), visited: make(map[controlLocation][]byte)}
+	err := w.directory(ctx, subPath, "")
 	if err != nil {
-		return false, err
+		err = fmt.Errorf("%w: preflight: %w", manifest.ErrFlux, err)
 	}
-	// Fast path: a resource is rewritten only when its scalar carries an
-	// http://|https:// scheme; both rewrite triggers use cutHTTPScheme.
-	// So if the raw bytes contain no case-insensitive "http" substring at all,
-	// no entry can match and the full YAML parse + node walk + re-marshal below
-	// is provably a no-op. Skipping it for the common (local-only) kustomization
-	// avoids a yaml.Unmarshal of every kustomization file on every render.
-	if !containsHTTPFold(body) {
-		return false, nil
+	return w.injected, err
+}
+
+func (w *inputWalk) directory(ctx context.Context, dir, pluginRoot string) error {
+	canonical, _, err := w.fs.CleanedAbs(dir)
+	if err != nil {
+		return err
+	}
+	file, ok := kustomizationFileIn(w.fs, canonical.String())
+	if !ok {
+		return nil // Build owns missing and conflicting control-file diagnostics.
+	}
+	loc := controlLocation{file: file, root: canonical.String(), pluginRoot: pluginRoot}
+	key := w.location(loc)
+	if _, ok := w.visited[key]; ok {
+		return nil // Preserve the graph so Build still rejects cycles.
+	}
+	body, err := w.fs.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	// Build owns local parse diagnostics for byte-for-byte parity.
+	var k types.Kustomization
+	if err := k.Unmarshal(body); err != nil {
+		return nil
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		// Some kustomization files use unusual shapes (YAML anchors,
-		// strict-mode fields) that decode can't handle. Skip silently —
-		// kustomize will load them via its own parser, and if any carry URL
-		// resources we fall back to kustomize's own fetch path. Better to
-		// render imperfectly than fail loud on a doc kustomize itself handles.
-		return false, nil
+		return nil
 	}
-	resourcesNode := findMappingValue(&doc, "resources")
-	if resourcesNode == nil || resourcesNode.Kind != yaml.SequenceNode || len(resourcesNode.Content) == 0 {
-		return false, nil
+	if err := yaml.NewRNode(&doc).DeAnchor(); err != nil {
+		return nil
 	}
-	changed := false
-	dir := filepath.Dir(ksFile)
-	for _, entry := range resourcesNode.Content {
-		if entry.Kind != yaml.ScalarNode {
-			continue
-		}
-		// Classify git bases BEFORE the HTTP-file check: a git base is also an
-		// https:// URL, but kustomize resolves it by cloning, not by GETting a
-		// single file. GETting a git URL returns the host's HTML page, which
-		// then fails to parse as YAML (#616) — so it must take the git path.
-		if spec, ok := isGitRemoteBase(entry.Value); ok {
-			spec.dir = dir
-			localDir, fetchErr := fetchGitBase(ctx, cache, memFS, spec)
-			if fetchErr != nil {
-				return false, fmt.Errorf("remote git base %s: %w", entry.Value, fetchErr)
-			}
-			setPlainScalar(entry, localDir)
-			changed = true
-			continue
-		}
-		if _, _, ok := cutHTTPScheme(entry.Value); !ok {
-			continue
-		}
-		body, fetchErr := cache.FetchRemote(ctx, entry.Value, memFS.(*treeFS).retry)
-		if fetchErr != nil {
-			return false, fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
-		}
-		localFile := remoteResourcePrefix + urlHash(entry.Value) + ".yaml"
-		if err := memFS.WriteFile(filepath.Join(dir, localFile), body); err != nil {
-			return false, err
-		}
-		setPlainScalar(entry, "./"+localFile)
-		changed = true
+	w.visited[key] = []byte(canonical.String())
+	changed, err := w.fields(ctx, loc, &doc, controlFields)
+	if loc.pluginRoot != "" && !w.injected {
+		w.visited[key] = []byte(key.root)
 	}
-	if !changed {
-		return false, nil
+	if err != nil || !changed {
+		return err
 	}
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
-		return false, err
+		return err
 	}
-	return true, memFS.WriteFile(ksFile, out)
+	return w.fs.WriteFile(file, out)
 }
 
-// setPlainScalar rewrites node to a plain (unquoted, untagged) string scalar
-// holding value, leaving sibling sequence entries' styles untouched.
+// A plugin directory needs its own control view: the same directory may also
+// emit ordinary resource data. Snapshot the whole tree to preserve parent paths;
+// only a view containing rewritten remote inputs replaces the declared edge.
+func (w *inputWalk) pluginDirectory(ctx context.Context, dir, owner string) (string, bool, error) {
+	canonical, _, err := w.fs.CleanedAbs(dir)
+	if err != nil {
+		return "", false, err
+	}
+	selected := canonical.String()
+	if file, ok := kustomizationFileIn(w.fs, selected); ok {
+		key := w.location(controlLocation{file: file, root: selected, pluginRoot: owner})
+		if prior, ok := w.visited[key]; ok {
+			if string(prior) != key.root {
+				selected = string(prior)
+				w.injected = true
+			}
+		} else {
+			snapshot, err := w.fs.upper.Build()
+			if err != nil {
+				return "", false, err
+			}
+			w.fs.upper = tree.NewBuilder(snapshot)
+			name := remoteResourcePrefix + manifest.Fingerprint([]string{key.file, key.root, key.pluginRoot})
+			if err := w.fs.upper.Mount(name, snapshot); err != nil {
+				return "", false, err
+			}
+			w.fs.mark(name)
+			mount := filepath.Join(w.fs.root, name)
+			w.mounts = append(w.mounts, mount)
+			rel, err := filepath.Rel(w.fs.root, key.root)
+			if err != nil {
+				return "", false, err
+			}
+			selected = filepath.Join(mount, rel)
+			previous := w.injected
+			w.injected = false
+			err = w.directory(ctx, selected, owner)
+			changed := w.injected
+			w.injected = previous || changed
+			if err != nil {
+				return "", false, err
+			}
+			if !changed {
+				selected = canonical.String()
+			}
+			w.visited[key] = []byte(selected)
+		}
+	}
+	rel, err := filepath.Rel(owner, selected)
+	return "./" + filepath.ToSlash(rel), selected != canonical.String(), err
+}
+
+func (w *inputWalk) location(loc controlLocation) controlLocation {
+	for _, mount := range slices.Backward(w.mounts) {
+		for _, coordinate := range []*string{&loc.file, &loc.root, &loc.pluginRoot} {
+			if *coordinate == mount || strings.HasPrefix(*coordinate, mount+string(filepath.Separator)) {
+				*coordinate = w.fs.root + strings.TrimPrefix(*coordinate, mount)
+			}
+		}
+	}
+	return loc
+}
+
+func (w *inputWalk) fields(ctx context.Context, loc controlLocation, doc *yaml.Node, fields []inputField) (bool, error) {
+	changed := false
+	for _, field := range fields {
+		c, err := w.selectField(ctx, loc, doc, field)
+		if err != nil {
+			return false, err
+		}
+		changed = changed || c
+	}
+	return changed, nil
+}
+
+func (w *inputWalk) selectField(ctx context.Context, loc controlLocation, node *yaml.Node, field inputField) (bool, error) {
+	if node == nil {
+		return false, nil
+	}
+	if field.path == "" {
+		if node.Kind != yaml.ScalarNode || node.Value == "" {
+			return false, nil
+		}
+		changed, err := w.operand(ctx, loc, node, field.kind)
+		if err != nil {
+			return false, fmt.Errorf("%s %s %q (line %d): %w", loc.file, loc.field, node.Value, node.Line, err)
+		}
+		return changed, nil
+	}
+	part, rest, _ := strings.Cut(field.path, "/")
+	field.path = rest
+	if part != "*" {
+		loc.field += "." + part
+		return w.selectField(ctx, loc, findMappingValue(node, part), field)
+	}
+	changed := false
+	if node.Kind == yaml.SequenceNode {
+		for i, child := range node.Content {
+			next := loc
+			next.field += fmt.Sprintf("[%d]", i)
+			c, err := w.selectField(ctx, next, child, field)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || c
+		}
+	}
+	return changed, nil
+}
+
+func (w *inputWalk) operand(ctx context.Context, loc controlLocation, node *yaml.Node, kind inputKind) (bool, error) {
+	raw := node.Value
+	if kind == strategicInput || kind == pluginInput {
+		if rm, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes([]byte(raw)); err == nil {
+			if kind == strategicInput {
+				return false, nil
+			}
+			out, changed, err := w.plugins(ctx, loc, []byte(raw), rm)
+			if changed {
+				node.Value = string(out)
+			}
+			return changed, err
+		}
+	}
+	key := ""
+	if kind == generatorInput {
+		if strings.Count(raw, "=") > 1 {
+			return false, nil // Upstream MUST retain its invalid file-source grammar.
+		}
+		var explicit bool
+		key, raw, explicit = strings.Cut(raw, "=")
+		if !explicit {
+			raw, key = key, filepath.Base(key)
+		} else if key == "" || raw == "" {
+			return false, nil
+		}
+	}
+	root := loc.root
+	if kind == resourceInput || kind == pluginInput {
+		if spec, ok := isGitRemoteBase(raw); ok {
+			spec.dir = root
+			dest, err := fetchGitBase(ctx, w.cache, w.fs, spec)
+			if err != nil {
+				return false, err
+			}
+			w.injected = true
+			if kind == pluginInput {
+				file, _, err := w.pluginDirectory(ctx, filepath.Join(root, dest), root)
+				if err != nil {
+					return false, err
+				}
+				setPlainScalar(node, file)
+				return true, nil
+			}
+			setPlainScalar(node, dest)
+			return true, w.directory(ctx, filepath.Join(root, dest), loc.pluginRoot)
+		}
+	}
+	file := raw
+	if !filepath.IsAbs(file) {
+		file = filepath.Join(root, file)
+	}
+	remote := false
+	if _, _, ok := cutHTTPScheme(raw); ok {
+		body, err := w.cache.FetchRemote(ctx, raw, w.fs.retry)
+		if err != nil {
+			return false, err
+		}
+		file, err = w.mount(body)
+		if err != nil {
+			return false, err
+		}
+		remote = true
+		w.injected = true
+	} else if (kind == resourceInput || kind == pluginInput) && w.fs.IsDir(file) {
+		if kind == pluginInput {
+			dir, changed, err := w.pluginDirectory(ctx, file, root)
+			if changed {
+				setPlainScalar(node, dir)
+			}
+			return changed, err
+		}
+		return false, w.directory(ctx, file, loc.pluginRoot)
+	}
+	if kind == pluginInput || kind == resourceInput && loc.pluginRoot != "" {
+		body, err := w.fs.ReadFile(file)
+		if err != nil {
+			return false, err
+		}
+		pluginLoc := controlLocation{file: file, root: root, remote: remote}
+		if loc.pluginRoot != "" && kind == resourceInput {
+			pluginLoc.root = loc.pluginRoot
+		}
+		out, changed, err := w.plugins(ctx, pluginLoc, body, nil)
+		if err != nil {
+			return false, err
+		}
+		if changed {
+			file, err = w.mount(out)
+			if err != nil {
+				return false, err
+			}
+			remote = true
+			w.injected = true
+		}
+	}
+	if !remote {
+		return false, nil
+	}
+	if kind == generatorInput {
+		file = key + "=" + file
+	}
+	setPlainScalar(node, file)
+	return true, nil
+}
+
+func (w *inputWalk) plugins(ctx context.Context, loc controlLocation, body []byte, resources []*resource.Resource) ([]byte, bool, error) {
+	key := w.location(loc)
+	key.field = manifest.Fingerprint(body)
+	if out, ok := w.visited[key]; ok {
+		return out, out != nil, nil
+	}
+	if resources == nil {
+		var err error
+		resources, err = provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes(body)
+		if err != nil {
+			if !loc.remote {
+				return body, false, nil
+			}
+			return nil, false, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
+		}
+	}
+	var out bytes.Buffer
+	encoder := yaml.NewEncoder(&out)
+	changed := false
+	for _, resource := range resources {
+		doc := resource.YNode()
+		if err := yaml.NewRNode(doc).DeAnchor(); err != nil {
+			if !loc.remote {
+				return body, false, nil
+			}
+			return nil, false, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
+		}
+		var fields []inputField
+		api, kind := findMappingValue(doc, "apiVersion"), findMappingValue(doc, "kind")
+		if api != nil && api.Value == "builtin" && kind != nil {
+			switch kind.Value {
+			case "ConfigMapGenerator", "SecretGenerator":
+				fields = generatorFields
+			case "PatchTransformer", "PatchJson6902Transformer":
+				fields = []inputField{{"path", fileInput}}
+			case "PatchStrategicMergeTransformer":
+				fields = []inputField{{"paths/*", strategicInput}}
+			case "ReplacementTransformer":
+				fields = []inputField{{"replacements/*/path", fileInput}}
+			case "ValueAddTransformer":
+				fields = []inputField{{"targetFilePath", fileInput}}
+			}
+		}
+		c, err := w.fields(ctx, loc, doc, fields)
+		if err != nil {
+			return nil, false, err
+		}
+		changed = changed || c
+		if err := encoder.Encode(doc); err != nil {
+			return nil, false, err
+		}
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, false, err
+	}
+	if !changed {
+		w.visited[key] = nil
+		return body, false, nil
+	}
+	w.visited[key] = out.Bytes()
+	return out.Bytes(), true, nil
+}
+
+func (w *inputWalk) mount(body []byte) (string, error) {
+	file := filepath.Join(w.fs.root, remoteResourcePrefix+manifest.Fingerprint(body)+".yaml")
+	return file, w.fs.WriteFile(file, body)
+}
+
 func setPlainScalar(node *yaml.Node, value string) {
 	node.Value = value
 	node.Tag = "!!str"
 	node.Style = 0
 }
 
-// findMappingValue returns the value node for the first mapping entry with the
-// given key inside the document, or nil when the document is not a single-
-// mapping document or the key is absent.
-func findMappingValue(doc *yaml.Node, key string) *yaml.Node {
-	if doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+func findMappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil {
 		return nil
 	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return nil
+	if node.Kind == yaml.DocumentNode && len(node.Content) != 0 {
+		node = node.Content[0]
 	}
-	// MappingNode.Content is [key, value, key, value, ...]; iterate as pairs.
-	for pair := range slices.Chunk(root.Content, 2) {
-		if len(pair) == 2 && pair[0].Value == key {
-			return pair[1]
+	var found *yaml.Node
+	matched := ""
+	if node.Kind == yaml.MappingNode {
+		// Upstream decodes YAML through JSON's sorted keys and case-insensitive
+		// struct fields; the last matching spelling owns the operand.
+		for pair := range slices.Chunk(node.Content, 2) {
+			if len(pair) == 2 && strings.EqualFold(pair[0].Value, key) && pair[0].Value >= matched {
+				matched, found = pair[0].Value, pair[1]
+			}
 		}
 	}
-	return nil
+	return found
 }
 
-// containsHTTPFold reports whether b contains the ASCII substring "http"
-// case-insensitively. It is the cheap necessary precondition for any URL/git
-// rewrite: both rewrite triggers require an http(s):// scheme, so a file
-// lacking "http" entirely can be skipped without parsing. Allocation-free
-// (bytes.Contains over a 4-byte literal, two case variants of each letter).
-func containsHTTPFold(b []byte) bool {
-	// "http" has 2^4 = 16 case permutations; in practice scalars are lower- or
-	// upper-case. Check the two common spellings cheaply, then fall back to a
-	// single case-folding scan only when neither plain form is present.
-	if bytes.Contains(b, []byte("http")) || bytes.Contains(b, []byte("HTTP")) {
-		return true
-	}
-	for i := 0; i+4 <= len(b); i++ {
-		if lowerASCII(b[i]) == 'h' && lowerASCII(b[i+1]) == 't' &&
-			lowerASCII(b[i+2]) == 't' && lowerASCII(b[i+3]) == 'p' {
-			return true
-		}
-	}
-	return false
-}
-
-// lowerASCII folds a single ASCII byte to lower case.
-func lowerASCII(c byte) byte {
-	if c >= 'A' && c <= 'Z' {
-		return c + ('a' - 'A')
-	}
-	return c
-}
-
-// httpStatusError is a typed sentinel returned by httpGetURL when the server
-// responds with a non-2xx status code. The named type lets isHTTPClientError
-// classify errors via errors.As so the check is robust against wrapping.
+// httpStatusError exposes the response status to the acquisition retry policy.
 type httpStatusError struct {
 	Code int
 }
@@ -248,16 +458,15 @@ func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("HTTP %d", e.Code)
 }
 
-// httpGetURL is the actual network call cache.FetchRemote dispatches through a
-// per-URL sync.Once + done channel.
-func httpGetURL(ctx context.Context, urlStr string, w io.Writer) (ocispec.Descriptor, error) {
+// httpGetURL preserves per-attempt bounds beneath FetchRemote's shared acquisition.
+func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) (ocispec.Descriptor, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	resp, err := remoteFetchClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
@@ -276,9 +485,4 @@ func httpGetURL(ctx context.Context, urlStr string, w io.Writer) (ocispec.Descri
 		return ocispec.Descriptor{}, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
 	}
 	return ocispec.Descriptor{Size: size}, nil
-}
-
-func urlHash(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:8])
 }

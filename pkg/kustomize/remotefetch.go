@@ -3,6 +3,7 @@ package kustomize
 import (
 	"context"
 	"errors"
+	"github.com/home-operations/flate/pkg/manifest"
 	"io"
 	"io/fs"
 	"math"
@@ -41,8 +42,8 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 	rf.start.Do(func() {
 		go func() {
 			// A canceled waiter MUST not cancel another render's acquisition.
-			reader, _, err := c.owner.Blob(context.Background(), cache.BlobKey{ID: "remote-http-" + urlHash(urlStr)}, cache.Policy{Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-				return httpGetURL(ctx, urlStr, w)
+			reader, _, err := c.owner.Blob(context.Background(), cache.BlobKey{ID: "remote-http-" + manifest.Fingerprint(urlStr)}, cache.Policy{Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+				return c.httpGetURL(ctx, urlStr, w)
 			})
 			if err == nil {
 				rf.input = cache.FileFS("content", reader)

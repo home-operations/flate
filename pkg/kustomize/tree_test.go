@@ -11,7 +11,7 @@ import (
 // TestTreeCache_SetGitBaseFetcher confirms the one remaining injected seam wires
 // through (pkg/kustomize cannot import pkg/source/git — import cycle).
 func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
-	c := NewTreeCache(newTestCache(t, ""))
+	c := NewTreeCache(newTestCache(t, ""), nil)
 	called := false
 	c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, cache.RetryConfig) (*store.SourceArtifact, error) {
 		called = true

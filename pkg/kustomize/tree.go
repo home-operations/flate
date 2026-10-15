@@ -2,9 +2,11 @@ package kustomize
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -36,12 +38,18 @@ type TreeCache struct {
 	gitBase GitBaseFetcher
 
 	// owner is borrowed; the caller closes it after all renders finish.
-	owner *cache.Cache
+	owner      *cache.Cache
+	network    *source.Network
+	httpClient *http.Client
 }
 
 // NewTreeCache borrows the nonnil owner for source and completed-render storage.
 // The caller MUST close owner after every render and acquired reader finishes.
-func NewTreeCache(owner *cache.Cache) *TreeCache { return &TreeCache{owner: owner} }
+func NewTreeCache(owner *cache.Cache, network *source.Network) *TreeCache {
+	tr, _ := source.NewHTTPTransport(nil, nil)
+	return &TreeCache{owner: owner, network: network,
+		httpClient: &http.Client{Timeout: remoteFetchTimeout, Transport: network.HTTPTransport(tr)}}
+}
 
 // SetGitBaseFetcher wires the git-clone capability used to resolve remote git
 // bases referenced from a kustomization's resources:. The orchestrator calls

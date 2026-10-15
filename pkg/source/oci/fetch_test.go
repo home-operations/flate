@@ -2,15 +2,21 @@ package oci
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -717,6 +723,86 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			}
 			if got := mustReadFile(t, got.FS, "file.yaml"); got != "x" {
 				t.Fatalf("content=%q", got)
+			}
+		})
+	}
+}
+
+func TestFetcher_NetworkRoutes(t *testing.T) {
+	for _, route := range []string{"registry", "token", "redirect", "layer", "fallback"} {
+		t.Run(route, func(t *testing.T) {
+			var network source.Network
+			var bypass, requests atomic.Int32
+			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				bypass.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			t.Cleanup(target.Close)
+			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+			tr, _ := source.NewHTTPTransport(nil, nil)
+			tr.Proxy = nil
+			seedDials := 0
+			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { seedDials++; return nil, cause }
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target.URL, nil)
+			_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+			first, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !first.Attempted || seedDials != 1 {
+				t.Fatalf("seed: %v dials=%d", err, seedDials)
+			}
+			art := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
+			registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				switch {
+				case route == "token":
+					w.Header().Set("Www-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry"`, target.URL))
+					w.WriteHeader(http.StatusUnauthorized)
+				case route == "redirect" || strings.Contains(r.URL.Path, "/blobs/"):
+					http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+				default:
+					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+					w.Header().Set("Docker-Content-Digest", art.manifestDigest)
+					w.Header().Set("Content-Length", fmt.Sprint(len(art.manifest)))
+					if r.Method != http.MethodHead {
+						_, _ = w.Write(art.manifest)
+					}
+				}
+			}))
+			t.Cleanup(registry.Close)
+			registryURL := registry.URL
+			if route == "registry" || route == "fallback" {
+				registryURL = target.URL
+			}
+			repo := &manifest.OCIRepository{Name: "network", Namespace: "test", URL: "oci://" + mustURL(t, registryURL).Host + "/test/chart", Insecure: true,
+				Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"}}
+			f := &Fetcher{Cache: newSourceCache(t), Network: &network}
+			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
+			if route == "fallback" {
+				repo.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
+				f.Secrets = func(_, _ string) *manifest.Secret { return nil }
+				f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
+				testutil.WriteFileAt(t, f.RegistryConfig, fmt.Sprintf(`{"auths":{%q:{"auth":"dXNlcjpwYXNz"}}}`, mustURL(t, registryURL).Host))
+				_, err = f.Fetch(t.Context(), repo, retry)
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok || missing.RetryWithRegistryConfig == nil {
+					t.Fatalf("fallback: %v", err)
+				}
+				_, err = missing.RetryWithRegistryConfig(t.Context(), f.RegistryConfig)
+			} else {
+				_, err = f.Fetch(t.Context(), repo, retry)
+			}
+			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || terminal.Attempted || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || bypass.Load() != 0 {
+				t.Fatalf("route=%s error=%v terminal=%+v bypass=%d", route, err, terminal, bypass.Load())
+			}
+			want := int32(1)
+			if route == "layer" {
+				want = 3
+			}
+			if route == "registry" || route == "fallback" {
+				want = 0
+			}
+			if got := requests.Load(); got != want {
+				t.Fatalf("registry requests=%d want=%d", got, want)
 			}
 		})
 	}

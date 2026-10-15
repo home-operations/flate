@@ -7,12 +7,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -414,7 +417,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = c.Close() })
 				r := httpRepo(srv.URL)
-				f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c})
+				f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c, Network: new(source.Network)})
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				result := make(chan error, 1)
@@ -546,5 +549,87 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	memo, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
 	if err != nil || memo != updated || hits.Load() != 2 {
 		t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
+	}
+}
+
+func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
+	for _, route := range []string{"index", "chart"} {
+		for _, authenticated := range []bool{false, true} {
+			for _, customTLS := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/auth-%t/tls-%t", route, authenticated, customTLS), func(t *testing.T) {
+					var network source.Network
+					var indexHits, chartHits, dials atomic.Int32
+					cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+					var target string
+					latch := func() error {
+						tr, _ := source.NewHTTPTransport(nil, nil)
+						tr.Proxy = nil
+						tr.DialContext = func(context.Context, string, string) (net.Conn, error) { dials.Add(1); return nil, cause }
+						req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+						_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+						terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+						if !ok || !terminal.Attempted {
+							return fmt.Errorf("seed: %w", err)
+						}
+						return nil
+					}
+					handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if authenticated {
+							user, password, ok := r.BasicAuth()
+							if !ok || user != "user" || password != "pass" {
+								t.Error("missing repository auth")
+							}
+						}
+						if r.URL.Path != "/index.yaml" {
+							chartHits.Add(1)
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						indexHits.Add(1)
+						if err := latch(); err != nil {
+							t.Error(err)
+						}
+						_, _ = io.WriteString(w, "apiVersion: v1\nentries:\n  chart:\n  - name: chart\n    version: 1.0.0\n    apiVersion: v2\n    urls: [chart.tgz]\n")
+					})
+					var srv *httptest.Server
+					if customTLS {
+						srv = httptest.NewTLSServer(handler)
+					} else {
+						srv = httptest.NewServer(handler)
+					}
+					t.Cleanup(srv.Close)
+					target = srv.URL
+					r := httpRepo(target)
+					secret := &manifest.Secret{StringData: map[string]any{"username": "user", "password": "pass"}}
+					if authenticated {
+						r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+					}
+					if customTLS {
+						r.CertSecretRef = &manifest.LocalObjectReference{Name: "auth"}
+						secret.StringData["ca.crt"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+					}
+					c, err := sourcecache.New(t.Context(), "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = c.Close() })
+					f := New(func(_, _ string) *manifest.Secret { return secret }, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c, Network: &network})
+					if route == "index" {
+						if err := latch(); err != nil {
+							t.Fatal(err)
+						}
+					}
+					_, err = f.Fetch(t.Context(), helmChart("repo", "chart", "1.0.0"), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+					terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+					wantIndex := int32(0)
+					if route == "chart" {
+						wantIndex = 1
+					}
+					if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() != 1 || indexHits.Load() != wantIndex || chartHits.Load() != 0 {
+						t.Fatalf("error=%v terminal=%+v dials=%d index=%d chart=%d", err, terminal, dials.Load(), indexHits.Load(), chartHits.Load())
+					}
+				})
+			}
+		}
 	}
 }

@@ -31,17 +31,8 @@ func (f *Fetcher) helmRepoCredentials(r *manifest.HelmRepository) (string, strin
 	return source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
 }
 
-// helmRepoTransport builds a per-repo guarded HTTP transport when a
-// HelmRepository sets spec.certSecretRef, returning nil for the common
-// no-custom-TLS case (httpGet's package-default guarded transport then applies).
-// The transport carries client-cert / CA TLS resolved via source.ResolveCertSecret
-// (the canonical cross-kind cert helper — same error sentinels as git/OCI/bucket,
-// incl. the --allow-missing-secrets case) AND the SSRF egress guard
-// (source.NewHTTPTransport wraps it). It is passed to helm's getter via
-// getter.WithTransport, the only way to apply BOTH flate's dial guard and the
-// repo's TLS — helm's getter treats WithTransport and WithTLSClientConfig as
-// mutually exclusive. DisableCompression mirrors helm's own getter transport
-// (chart tarballs are already compressed).
+// helmRepoTransport resolves custom TLS before the private transport is wrapped.
+// Without certSecretRef, httpGet reuses this fetcher's anonymous transport.
 func (f *Fetcher) helmRepoTransport(r *manifest.HelmRepository) (*http.Transport, error) {
 	if r.CertSecretRef == nil {
 		return nil, nil

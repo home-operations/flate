@@ -6,9 +6,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,9 +20,11 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/minio/minio-go/v7"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/cache"
 )
@@ -299,5 +304,112 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFetcher_TransientStatusRecovery(t *testing.T) {
+	for _, wired := range []bool{false, true} {
+		for _, tc := range []struct {
+			status        int
+			code, message string
+		}{
+			{http.StatusServiceUnavailable, "SlowDown", "temporary failure"},
+			{http.StatusForbidden, "AccessDenied", "access denied"},
+		} {
+			t.Run(fmt.Sprintf("network-%t/status-%d", wired, tc.status), func(t *testing.T) {
+				var calls atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/xml")
+					if calls.Add(1) == 1 {
+						w.WriteHeader(tc.status)
+						_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>%s</Message></Error>", tc.code, tc.message)
+						return
+					}
+					_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+				}))
+				t.Cleanup(srv.Close)
+				c, err := cache.New(t.Context(), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = c.Close() })
+				f := &bucket.Fetcher{Cache: c}
+				if wired {
+					f.Network = new(source.Network)
+				}
+				_, err = f.Fetch(t.Context(), &manifest.Bucket{
+					Name: "retry", Namespace: "test", BucketName: "data",
+					Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
+				}, cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond})
+				if tc.status == http.StatusForbidden {
+					cause, ok := errors.AsType[minio.ErrorResponse](err)
+					if !ok || cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
+						err.Error() != "Bucket test/retry: "+cause.Error() || calls.Load() != 1 {
+						t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
+					}
+					return
+				}
+				if err != nil || calls.Load() != 2 {
+					t.Fatalf("recovery: %v, requests=%d; want success after 2 requests", err, calls.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestFetcher_NetworkRoutes(t *testing.T) {
+	for _, route := range []string{"list", "object"} {
+		t.Run(route, func(t *testing.T) {
+			var network source.Network
+			var lists, objects, dials atomic.Int32
+			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+			var target string
+			latch := func() error {
+				tr, _ := source.NewHTTPTransport(nil, nil)
+				tr.Proxy = nil
+				tr.DialContext = func(context.Context, string, string) (net.Conn, error) { dials.Add(1); return nil, cause }
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+				_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+				terminal, ok := errors.AsType[*cache.TerminalError](err)
+				if !ok || !terminal.Attempted {
+					return fmt.Errorf("seed: %w", err)
+				}
+				return nil
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("list-type") == "" {
+					objects.Add(1)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				lists.Add(1)
+				if err := latch(); err != nil {
+					t.Error(err)
+				}
+				_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>app.yaml</Key><Size>1</Size><ETag>"a"</ETag></Contents></ListBucketResult>`)
+			}))
+			t.Cleanup(srv.Close)
+			target = srv.URL
+			c, err := cache.New(t.Context(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			f := &bucket.Fetcher{Cache: c, Network: &network}
+			if route == "list" {
+				if err := latch(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = f.Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+			terminal, ok := errors.AsType[*cache.TerminalError](err)
+			wantLists := int32(0)
+			if route == "object" {
+				wantLists = 1
+			}
+			if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() != 1 || lists.Load() != wantLists || objects.Load() != 0 {
+				t.Fatalf("error=%v terminal=%+v dials=%d lists=%d objects=%d", err, terminal, dials.Load(), lists.Load(), objects.Load())
+			}
+		})
 	}
 }

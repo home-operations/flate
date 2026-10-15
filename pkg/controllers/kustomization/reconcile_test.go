@@ -53,7 +53,7 @@ data: {greeting: hi}
 	owner, err := sourcecache.New(t.Context(), "")
 	assert.NoError(t, err)
 	t.Cleanup(func() { _ = owner.Close() })
-	cache := kustomize.NewTreeCache(owner)
+	cache := kustomize.NewTreeCache(owner, nil)
 
 	tasks := task.NewBounded(2)
 	c := New(s, tasks, cache, true)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/pkg/manifest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,7 +156,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDir := remoteResourcePrefix + urlHash("https://github.com/o/r"+"@"+"v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint("https://github.com/o/r"+"@"+"v1")
 	wantEntry := "./" + wantDir + "/overlays/prod"
 	if !strings.Contains(string(body), wantEntry) {
 		t.Errorf("entry not rewritten to base subdir %q:\n%s", wantEntry, body)
@@ -203,7 +204,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 	if n := hits.Load(); n != 0 {
 		t.Errorf("git URL was HTTP-GETted %d time(s); it must be cloned instead (#616)", n)
 	}
-	wantDir := remoteResourcePrefix + urlHash(srv.URL+"/o/r"+"@"+"v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(srv.URL+"/o/r"+"@"+"v1")
 	if !fsys.IsDir(wantDir) {
 		t.Fatalf("git URL not materialized as a base directory (#616)")
 	}
@@ -225,7 +226,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 		"kustomization.yaml": "resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n",
 	})
 
-	cache := NewTreeCache(newTestCache(t, ""))
+	cache := NewTreeCache(newTestCache(t, ""), nil)
 	withFakeGitBase(t, cache, worktree, nil)
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
@@ -254,7 +255,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	original := "resources:\n  - https://example.com/o/r?ref=v1\n"
 	src := writeTree(t, map[string]string{"kustomization.yaml": original})
 
-	cache := NewTreeCache(newTestCache(t, ""))
+	cache := NewTreeCache(newTestCache(t, ""), nil)
 	withFakeGitBase(t, cache, worktree, nil)
 
 	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
@@ -291,8 +292,6 @@ func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	}
 }
 
-// TestPreflightGitBase_ReusesMountWithinRender: multiple kustomizations referencing
-// the same base each get their own self-contained .flate-remote-<hash>/ dir.
 func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -308,6 +307,7 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	})
 
 	fsys := memFSWith(t, map[string]string{
+		"kustomization.yaml":   "resources: [a, b, c]\n",
 		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
 		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r//two?ref=v1\n",
 		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
@@ -320,7 +320,7 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint("https://example.com/o/r@v1")
 	if calls.Load() != 1 {
 		t.Fatalf("fetches = %d, want 1", calls.Load())
 	}
@@ -378,7 +378,7 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	wantDir := remoteResourcePrefix + urlHash("https://example.com/o/r@v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint("https://example.com/o/r@v1")
 	if data, err := fsys.ReadFile(filepath.Join(wantDir, "alias.yaml")); err != nil || !strings.Contains(string(data), "name: base") {
 		t.Fatalf("regular alias: %s, %v", data, err)
 	}
@@ -452,7 +452,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = sources.Close() })
 			fetcher := &sourcegit.Fetcher{Cache: sources}
-			c := NewTreeCache(newTestCache(t, ""))
+			c := NewTreeCache(newTestCache(t, ""), nil)
 			var requests []GitBaseRequest
 			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 				requests = append(requests, request)
@@ -534,7 +534,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 					_, _ = io.WriteString(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retried}\n")
 				}))
 				defer srv.Close()
-				c := NewTreeCache(newTestCache(t, ""))
+				c := NewTreeCache(newTestCache(t, ""), nil)
 				entered := make(chan int, concurrency)
 				release := make(chan struct{})
 				released := false

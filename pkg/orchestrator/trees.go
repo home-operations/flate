@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -65,6 +66,9 @@ type Rendered struct {
 // right). Each side reconciles changed-only against the OTHER tree's
 // RepoRoot.
 func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base, head Rendered, err error) {
+	if cfg.Network == nil {
+		cfg.Network = new(source.Network)
+	}
 	if cfg.Cache == nil {
 		cfg.Cache, err = sourcecache.New(ctx, cfg.CacheDir)
 		if err != nil {

@@ -23,6 +23,8 @@ type Fetcher struct {
 	Cache          *cache.Cache
 	RegistryConfig string
 	Secrets        source.SecretGetter
+	// Network shares connection-timeout facts across this invocation.
+	Network *source.Network
 
 	// ForceGeneric skips the provider gate; the generic path then needs
 	// static credentials (SecretRef or --registry-config) or it fails.
@@ -54,7 +56,7 @@ func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRe
 	if err != nil {
 		return nil, err
 	}
-	client, err := newRepoClient(repo, credStore, tlsCfg, proxy)
+	client, err := f.newRepoClient(repo, credStore, tlsCfg, proxy)
 	if err != nil {
 		return nil, err
 	}

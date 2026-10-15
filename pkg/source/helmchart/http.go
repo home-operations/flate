@@ -185,7 +185,6 @@ func normalizeChartDigest(d string) string {
 }
 
 var helmHTTPTimeout = 120 * time.Second
-var helmGuardedTransport = func() *http.Transport { tr, _ := helmTransport(nil); return tr }()
 
 func (f *Fetcher) httpGet(ctx context.Context, r *manifest.HelmRepository, target string, w io.Writer) (ocispec.Descriptor, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
@@ -207,10 +206,11 @@ func (f *Fetcher) httpGet(ctx context.Context, r *manifest.HelmRepository, targe
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	if tr == nil {
-		tr = helmGuardedTransport
+	transport := f.transport
+	if tr != nil {
+		transport = f.network.HTTPTransport(tr)
 	}
-	client := &http.Client{Transport: tr, Timeout: helmHTTPTimeout}
+	client := &http.Client{Transport: transport, Timeout: helmHTTPTimeout}
 	response, err := client.Do(req)
 	if err != nil {
 		return ocispec.Descriptor{}, err

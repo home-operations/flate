@@ -2,15 +2,13 @@ package helmchart
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// TestHelmRepoTransport_NoCertRef: a repo without certSecretRef returns no
-// per-repo transport (nil) — httpGet's package-default guarded transport
-// applies. That default must carry the egress guard's dial hook.
 func TestHelmRepoTransport_NoCertRef(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	f := newHTTPFetcherWithSecrets(t, r, nil)
@@ -22,7 +20,7 @@ func TestHelmRepoTransport_NoCertRef(t *testing.T) {
 	if tr != nil {
 		t.Fatalf("no certSecretRef should yield a nil per-repo transport, got %v", tr)
 	}
-	if helmGuardedTransport.DialContext == nil {
+	if f.transport.(*http.Transport).DialContext == nil {
 		t.Fatal("the default helm transport must be egress-guarded (DialContext set)")
 	}
 }

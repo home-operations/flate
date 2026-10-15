@@ -194,7 +194,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 	for _, attempted := range []bool{false, true} {
 		t.Run(fmt.Sprint(attempted), func(t *testing.T) {
 			c := newCache(t, "")
-			cause := connReset()
+			cause := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 			terminal := &TerminalError{Err: cause, Attempted: attempted}
 			calls := 0
 			_, _, err := c.Blob(t.Context(), BlobKey{ID: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
@@ -203,7 +203,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 				return ocispec.Descriptor{}, err
 			})
 			got, ok := errors.AsType[*TerminalError](err)
-			if !ok || got != terminal || calls != 1 || err.Error() != cause.Error() || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
+			if !ok || got != terminal || calls != 1 || err.Error() != cause.Error() || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, cause) {
 				t.Fatalf("terminal=%+v, error=%v, calls=%d", got, err, calls)
 			}
 		})

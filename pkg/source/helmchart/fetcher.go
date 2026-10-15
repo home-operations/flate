@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -32,10 +33,12 @@ type ociFetcher = source.TypedFetcher[*manifest.OCIRepository]
 
 // Fetcher resolves a HelmChart into an immutable source artifact.
 type Fetcher struct {
-	secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
-	repos   RepoLookup          // resolves the chart's backing HelmRepository
-	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
-	cache   *cache.Cache        // content-addressed store for HTTP chart tarballs
+	secrets   source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
+	repos     RepoLookup          // resolves the chart's backing HelmRepository
+	oci       ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
+	cache     *cache.Cache        // content-addressed store for HTTP chart tarballs
+	network   *source.Network
+	transport http.RoundTripper
 
 	indexCache                 sync.Map                // map[string]indexMemo
 	indexLocks                 *keylock.KeyMap[string] // serialize parsed memo publication
@@ -46,13 +49,17 @@ type Fetcher struct {
 type Config struct {
 	// Cache remains caller-owned and MUST outlive acquired artifacts.
 	Cache *cache.Cache
+	// Network shares connection-timeout facts across this invocation.
+	Network *source.Network
 	// DisableChartDigestTracking makes exact chart versions immutable cache pins.
 	DisableChartDigestTracking bool
 }
 
 // New constructs a fetcher using the caller-owned acquisition cache.
 func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Config) *Fetcher {
+	tr, _ := helmTransport(nil)
 	return &Fetcher{secrets: secrets, repos: repos, oci: oci, cache: cfg.Cache,
+		network: cfg.Network, transport: cfg.Network.HTTPTransport(tr),
 		disableChartDigestTracking: cfg.DisableChartDigestTracking, indexLocks: keylock.New[string]()}
 }
 

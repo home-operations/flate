@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/pkg/source"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,8 +26,8 @@ func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				entered, release := make(chan struct{}), make(chan struct{})
 				hits := 0
-				saved := remoteFetchClient
-				remoteFetchClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+				c := NewTreeCache(newTestCache(t, ""), nil)
+				c.httpClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
 					hits++
 					if hits == 1 {
 						close(entered)
@@ -37,8 +40,6 @@ func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 					}
 					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("body: ok\n")), Header: make(http.Header)}, nil
 				})}
-				defer func() { remoteFetchClient = saved }()
-				c := NewTreeCache(newTestCache(t, ""))
 				retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 				ctx, cancel := context.WithCancel(t.Context())
 				cancelled := make(chan error, 1)
@@ -113,7 +114,7 @@ func TestFetchRemote_RetryTransientCacheClientError(t *testing.T) {
 				_, _ = w.Write([]byte("retried"))
 			}))
 			t.Cleanup(srv.Close)
-			cache := NewTreeCache(newTestCache(t, ""))
+			cache := NewTreeCache(newTestCache(t, ""), nil)
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 			body, err := cache.FetchRemote(t.Context(), srv.URL, retry)
 			if status == http.StatusNotFound {
@@ -142,8 +143,8 @@ func TestFetchRemote_PolicyIsolation(t *testing.T) {
 					synctest.Test(t, func(t *testing.T) {
 						entered, release := make(chan struct{}), make(chan struct{})
 						hits := 0
-						saved := remoteFetchClient
-						remoteFetchClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+						c := NewTreeCache(newTestCache(t, ""), nil)
+						c.httpClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
 							hits++
 							if hits == 1 {
 								close(entered)
@@ -155,8 +156,6 @@ func TestFetchRemote_PolicyIsolation(t *testing.T) {
 							}
 							return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 						})}
-						defer func() { remoteFetchClient = saved }()
-						c := NewTreeCache(newTestCache(t, ""))
 						done := make(chan error, concurrency)
 						launch := func(i int) {
 							go func() {
@@ -230,7 +229,7 @@ func TestFetchRemote_PartialBodyRetry(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c := NewTreeCache(newTestCache(t, root))
+			c := NewTreeCache(newTestCache(t, root), nil)
 			retry := sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 			body, err := c.FetchRemote(t.Context(), srv.URL, retry)
 			if err != nil || string(body) != "complete" || hits.Load() != 2 {
@@ -243,6 +242,62 @@ func TestFetchRemote_PartialBodyRetry(t *testing.T) {
 			body, err = c.FetchRemote(t.Context(), srv.URL, retry)
 			if err != nil || string(body) != "complete" || hits.Load() != 3 {
 				t.Fatalf("completed generation body=%q, error=%v, hits=%d", body, err, hits.Load())
+			}
+		})
+	}
+}
+
+func TestFetchRemote_NetworkSuppression(t *testing.T) {
+	for _, concurrency := range []int{2, 4} {
+		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			var network source.Network
+			c := NewTreeCache(newTestCache(t, ""), &network)
+			tr, _ := source.NewHTTPTransport(nil, nil)
+			tr.Proxy = nil
+			var calls atomic.Int32
+			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { calls.Add(1); return nil, cause }
+			c.httpClient = &http.Client{Transport: network.HTTPTransport(tr)}
+			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
+			_, err := c.FetchRemote(t.Context(), "http://network.test/first", retry)
+			first, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !first.Attempted || !errors.Is(err, cause) {
+				t.Fatalf("first attempt: %v", err)
+			}
+			done := make(chan error, concurrency)
+			for i := range concurrency {
+				go func() {
+					_, err := c.FetchRemote(t.Context(), fmt.Sprintf("http://network.test/%d", i), retry)
+					done <- err
+				}()
+			}
+			for range concurrency {
+				err := <-done
+				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+				if !ok || terminal.Attempted || !errors.Is(err, cause) {
+					t.Fatalf("suppression: %v", err)
+				}
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("physical dials=%d want=1", calls.Load())
+			}
+			entries := 0
+			c.remoteFetches.Range(func(_, _ any) bool { entries++; return true })
+			if entries != 0 {
+				t.Fatalf("retained terminal failures=%d", entries)
+			}
+			fresh := NewTreeCache(c.owner, new(source.Network))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "new run") }))
+			t.Cleanup(srv.Close)
+			tr, _ = source.NewHTTPTransport(nil, nil)
+			tr.Proxy = nil
+			tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+			}
+			fresh.httpClient = &http.Client{Transport: fresh.network.HTTPTransport(tr)}
+			body, err := fresh.FetchRemote(t.Context(), "http://network.test/first", retry)
+			if err != nil || string(body) != "new run" {
+				t.Fatalf("cache shared negative state: %q %v", body, err)
 			}
 		})
 	}

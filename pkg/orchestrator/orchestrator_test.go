@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1928,5 +1930,63 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+			c, err := sourcecache.New(t.Context(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
+			tree := Tree{RepoRoot: root}
+			cfg := Config{Cache: c, Concurrency: workers}
+			base, head, err := RenderTrees(t.Context(), tree, tree, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			network := base.cfg.Network
+			if network == nil || head.cfg.Network != network {
+				t.Fatal("diff sides did not share one Network")
+			}
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1); _, _ = io.WriteString(w, "new run") }))
+			t.Cleanup(srv.Close)
+			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+			tr, _ := source.NewHTTPTransport(nil, nil)
+			tr.Proxy = nil
+			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { return nil, cause }
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+			_, err = (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !terminal.Attempted {
+				t.Fatalf("seed: %v", err)
+			}
+			for i, side := range []Rendered{base, head} {
+				_, err := side.ksc.Trees.FetchRemote(t.Context(), fmt.Sprintf("%s/%d", srv.URL, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+				if !ok || terminal.Attempted || !errors.Is(err, cause) {
+					t.Fatalf("side %d: %v", i, err)
+				}
+			}
+			if hits.Load() != 0 {
+				t.Fatalf("suppressed requests=%d", hits.Load())
+			}
+			next, other, err := RenderTrees(t.Context(), tree, tree, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if next.cfg.Network == network || other.cfg.Network != next.cfg.Network {
+				t.Fatal("Network leaked across invocations sharing Cache")
+			}
+			body, err := next.ksc.Trees.FetchRemote(t.Context(), srv.URL+"/0", sourcecache.RetryConfig{})
+			if err != nil || string(body) != "new run" || hits.Load() != 1 {
+				t.Fatalf("fresh run: %q %v hits=%d", body, err, hits.Load())
+			}
+		})
 	}
 }

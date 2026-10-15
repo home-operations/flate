@@ -132,6 +132,8 @@ type Config struct {
 	CacheDir string
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
+	// Network shares connection-timeout facts across this invocation.
+	Network *source.Network
 	// ExternalChanges, when non-nil, supplies the file-level diff so
 	// the orchestrator skips its built-in change.Detect step. The
 	// filter is still built from this set and the discovery index
@@ -326,6 +328,9 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 		return nil, errors.New("orchestrator: path is required")
 	}
 
+	if cfg.Network == nil {
+		cfg.Network = new(source.Network)
+	}
 	owner := cfg.Cache
 	if owner == nil {
 		owner, err = sourcecache.New(ctx, cfg.CacheDir)
@@ -352,7 +357,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 		return nil, err
 	}
 	client.SetSourceResolver(helm.NewStoreSourceResolver(st))
-	trees := kustomize.NewTreeCache(owner)
+	trees := kustomize.NewTreeCache(owner, cfg.Network)
 	ts := task.NewBounded(cfg.Concurrency)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
@@ -571,15 +576,15 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request), retry)
 	})
-	ociFetcher := &oci.Fetcher{Cache: o.cache, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
+	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
-			&bucket.Fetcher{Cache: o.cache, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}),
+			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
 		manifest.KindHelmChart: source.Wrap(manifest.KindHelmChart,
 			helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{
-				Cache: o.cache, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})),
+				Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})),
 	} {
 		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
 			o.src.Fetchers[kind] = f

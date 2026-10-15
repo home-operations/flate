@@ -11,10 +11,8 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// resolveTransport builds the http.Transport minio-go should use when
-// the Bucket carries a CertSecretRef (custom CA / client cert / TLS
-// disabled) and/or a ProxySecretRef. Returns nil when both are absent
-// so the minio-go default transport is used.
+// resolveTransport preserves the bounded, guarded kernel for every Bucket,
+// including anonymous requests without TLS or proxy customization.
 //
 // CertSecretRef key conventions (matching Flux):
 //   - ca.crt    — PEM-encoded CA bundle, root-trust the server cert

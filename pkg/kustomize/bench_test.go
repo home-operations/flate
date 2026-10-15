@@ -25,7 +25,7 @@ data:
   k: v
 `)
 
-	cache := NewTreeCache(newTestCache(b, ""))
+	cache := NewTreeCache(newTestCache(b, ""), nil)
 
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -59,7 +59,7 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 		testutil.WriteFile(b, src, "app/"+name+".yaml", cmYAML(name))
 	}
 	testutil.WriteFile(b, src, "app/kustomization.yaml", existingKustomization(resources...))
-	cache := NewTreeCache(newTestCache(b, b.TempDir()))
+	cache := NewTreeCache(newTestCache(b, b.TempDir()), nil)
 	if !renderPersistenceEligible(b) {
 		b.Skip("warm render benchmark requires eligible build metadata")
 	}
@@ -128,7 +128,7 @@ data:
 `, i))
 	}
 
-	cache := NewTreeCache(newTestCache(b, ""))
+	cache := NewTreeCache(newTestCache(b, ""), nil)
 
 	rawSpec := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -165,7 +165,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-%d\n  namespace: ns\ndata:\n  k: v\n", i))
 	}
 
-	cache := NewTreeCache(newTestCache(b, ""))
+	cache := NewTreeCache(newTestCache(b, ""), nil)
 	input := localSource(b, src)
 	ctx := context.Background()
 	rawSpec := map[string]any{

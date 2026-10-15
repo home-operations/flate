@@ -72,7 +72,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	owner, err := sourcecache.New(t.Context(), "")
 	assert.NoError(t, err)
 	t.Cleanup(func() { _ = owner.Close() })
-	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(owner), false)
+	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(owner, nil), false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))
 	if err != nil {

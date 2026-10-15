@@ -1,13 +1,22 @@
 package bucket
 
 import (
+	"context"
 	"errors"
+	"net"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/minio/minio-go/v7"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestFetcher_ResolveTransport_NoCertSecretStaysBounded(t *testing.T) {
@@ -118,4 +127,35 @@ func TestFetcher_ResolveTransport_CertSecretRefWithoutGetter(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
 		t.Errorf("expected source.SecretGetter error; got %v", err)
 	}
+}
+
+func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var network source.Network
+		tr, _ := source.NewHTTPTransport(nil, nil)
+		tr.Proxy = nil
+		cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+		calls := 0
+		tr.DialContext = func(context.Context, string, string) (net.Conn, error) {
+			calls++
+			return nil, cause
+		}
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://bucket.test", nil)
+		_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+		terminal, ok := errors.AsType[*cache.TerminalError](err)
+		if !ok || !terminal.Attempted {
+			t.Fatalf("seed: %v", err)
+		}
+		c, err := cache.New(t.Context(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = c.Close() }()
+		start := time.Now()
+		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+		terminal, ok = errors.AsType[*cache.TerminalError](err)
+		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls != 1 || time.Since(start) > minio.DefaultRetryUnit {
+			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls, time.Since(start))
+		}
+	})
 }

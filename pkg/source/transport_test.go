@@ -1,10 +1,13 @@
 package source
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/pkg/source/cache"
 )
 
 // TestNewHTTPTransport_ResponseHeaderTimeout is the liveness-backstop
@@ -39,13 +42,21 @@ func TestNewHTTPTransport_ResponseHeaderTimeout(t *testing.T) {
 	}
 
 	start := time.Now()
-	resp, err := (&http.Client{Transport: tr}).Get(srv.URL)
+	var network Network
+	client := &http.Client{Transport: network.HTTPTransport(tr)}
+	resp, err := client.Get(srv.URL)
 	if err == nil {
 		_ = resp.Body.Close()
 		t.Fatal("expected a response-header timeout error; got a response")
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("request took %v; expected to time out at ~50ms (before the fix it hangs)", elapsed)
+	}
+	for range 2 {
+		_, err := client.Get(srv.URL)
+		if _, terminal := errors.AsType[*cache.TerminalError](err); err == nil || terminal {
+			t.Fatalf("response-header timeout latched: %v", err)
+		}
 	}
 }
 
@@ -67,7 +78,8 @@ func TestNewHTTPTransport_AppliesTLSAndStaysBounded(t *testing.T) {
 	if tr.TLSClientConfig == nil {
 		t.Fatal("TLSClientConfig not applied onto the bounded clone")
 	}
-	resp, err := (&http.Client{Transport: tr}).Get(srv.URL)
+	var network Network
+	resp, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET over custom TLS: %v", err)
 	}

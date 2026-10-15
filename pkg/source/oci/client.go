@@ -34,7 +34,7 @@ const dockerConfigJSONKey = ".dockerconfigjson"
 // ResponseHeaderTimeout as a liveness backstop, plus any TLS/proxy), so oras
 // never falls back to its retry-enabled auth.DefaultClient and a black-holed
 // registry can't hang the fetch waiting on response headers.
-func newRepoClient(repo *manifest.OCIRepository, credStore credentials.Store, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*remote.Repository, error) {
+func (f *Fetcher) newRepoClient(repo *manifest.OCIRepository, credStore credentials.Store, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*remote.Repository, error) {
 	// parseOCIRef strips any oci:// prefix itself, so pass repo.URL as-is.
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
@@ -48,7 +48,7 @@ func newRepoClient(repo *manifest.OCIRepository, credStore credentials.Store, tl
 	if err != nil {
 		return nil, err
 	}
-	authClient := &auth.Client{Client: &http.Client{Transport: transport}}
+	authClient := &auth.Client{Client: &http.Client{Transport: f.Network.HTTPTransport(transport)}}
 	if credStore != nil {
 		authClient.Credential = credentials.Credential(credStore)
 	}

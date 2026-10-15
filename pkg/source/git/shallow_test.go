@@ -16,7 +16,6 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -50,8 +49,8 @@ func TestMirror_ShallowCloneTruncatesHistory(t *testing.T) {
 	parent := mustHead(t, src)
 	tip := mustCommitFile(t, src, "second.txt", "two")
 
-	layout := cacheroot.New(t.TempDir())
-	cache := newGitCache(t, layout.Root)
+	root := t.TempDir()
+	cache := newGitCache(t, root)
 	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
@@ -95,8 +94,8 @@ func TestMirror_ShallowTagFetch(t *testing.T) {
 	mustCommitFile(t, src, "chart.yaml", "tagged")
 	tagged := mustTagHEAD(t, src, "v1.0.0")
 
-	layout := cacheroot.New(t.TempDir())
-	cache := newGitCache(t, layout.Root)
+	root := t.TempDir()
+	cache := newGitCache(t, root)
 	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
@@ -128,8 +127,8 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	layout := cacheroot.New(t.TempDir())
-	cache := newGitCache(t, layout.Root)
+	root := t.TempDir()
+	cache := newGitCache(t, root)
 	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
@@ -170,8 +169,8 @@ func TestMirror_ShallowSemverFetchesTagTips(t *testing.T) {
 	want := mustCommitFile(t, src, "version.txt", "v2")
 	mustTagHEAD(t, src, "v2.0.0")
 
-	layout := cacheroot.New(t.TempDir())
-	cache := newGitCache(t, layout.Root)
+	root := t.TempDir()
+	cache := newGitCache(t, root)
 	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
@@ -203,8 +202,8 @@ func TestMirror_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	mustTagHEAD(t, src, "v2.0.0")
 	mustSetRefToHEAD(t, src, "refs/heads/feature")
 
-	layout := cacheroot.New(t.TempDir())
-	cache := newGitCache(t, layout.Root)
+	root := t.TempDir()
+	cache := newGitCache(t, root)
 	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
@@ -266,24 +265,24 @@ func TestEffectiveDepth(t *testing.T) {
 	}
 }
 
-// TestFetch_ShallowLegacyClone covers the non-mirror clone path (nil
+// TestFetch_ShallowClone covers the non-mirror clone path (nil
 // Mirrors): plain and sparse fetches must both succeed under depth=1 and
 // resolve the right tip.
-func TestFetch_ShallowLegacyClone(t *testing.T) {
+func TestFetch_ShallowClone(t *testing.T) {
 	t.Run("plain", func(t *testing.T) {
 		src := t.TempDir()
 		mustInitRepo(t, src)
 		tip := mustCommitFile(t, src, "second.txt", "two")
 
 		cache := newGitCache(t, t.TempDir())
-		f := &Fetcher{Cache: cache, Depth: 1} // nil Mirrors → legacy path
+		f := &Fetcher{Cache: cache, Depth: 1}
 		repo := &manifest.GitRepository{
 			Name: "t", Namespace: "flux-system",
 			URL: "file://" + src,
 		}
 		art, err := f.Fetch(context.Background(), repo)
 		if err != nil {
-			t.Fatalf("Fetch legacy shallow: %v", err)
+			t.Fatalf("Fetch shallow: %v", err)
 		}
 		if art.Revision != tip {
 			t.Errorf("revision = %q, want %q", art.Revision, tip)
@@ -309,7 +308,7 @@ func TestFetch_ShallowLegacyClone(t *testing.T) {
 		}
 		art, err := f.Fetch(context.Background(), repo)
 		if err != nil {
-			t.Fatalf("Fetch legacy shallow sparse: %v", err)
+			t.Fatalf("Fetch shallow sparse: %v", err)
 		}
 		if _, err := fs.Stat(art.FS, path.Join("apps", "a", "manifest.yaml")); err != nil {
 			t.Errorf("sparse-included file missing under shallow: %v", err)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				}
 				if backing == "disk" {
 					e, _ := c.entries.Load(key.ID)
-					raw, err := os.ReadFile(c.layout.OCIBlob(e.(*entry).stored.Digest))
+					raw, err := os.ReadFile(filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest)))
 					if err != nil || string(raw) != payload {
 						t.Fatalf("plain completed payload=%q: %v", raw, err)
 					}
@@ -101,35 +102,48 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 					if r, _, err := c.Blob(t.Context(), key, Forever, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 						t.Fatalf("cold lookup: %v", err)
 					}
-					r, _, err := c.Blob(t.Context(), key, 0, producer([]byte("completed"), ocispec.Descriptor{}))
+					persisted := backing == "disk" && identity != ""
+					calls := 0
+					r, _, err := c.Blob(t.Context(), key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+						calls++
+						_, err := io.WriteString(w, "completed")
+						return ocispec.Descriptor{}, err
+					})
 					if err != nil {
 						t.Fatal(err)
 					}
-					input := FileFS("frame", r)
-					handle := r.(*blobHandle)
+					want, wantCalls := "", 0
+					if persisted {
+						want, wantCalls = "completed", 1
+					}
 					data, err := io.ReadAll(r)
-					if err != nil || string(data) != "completed" {
-						t.Fatalf("transient output=%q, %v", data, err)
+					if err != nil || string(data) != want || calls != wantCalls {
+						t.Fatalf("publication=%q, calls=%d, error=%v", data, calls, err)
 					}
 					if err := r.Close(); err != nil {
 						t.Fatal(err)
 					}
-					if handle.ReadCloser != nil || handle.input.open != nil {
-						t.Fatal("closed reader retains payload references")
+					if err := c.Close(); err != nil {
+						t.Fatal(err)
 					}
-					if data, err := fs.ReadFile(input, "frame"); err != nil || string(data) != "completed" {
-						t.Fatalf("independently captured FileFS=%q, %v", data, err)
-					}
-					persisted := backing == "disk" && processIdentity != ""
+					c = newCache(t, root)
 					r, _, err = c.Blob(t.Context(), key, Forever, nil)
 					if persisted {
 						if err != nil {
 							t.Fatal(err)
 						}
-						if err := r.Close(); err != nil {
-							t.Fatal(err)
+						data, readErr := io.ReadAll(r)
+						if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "completed" {
+							t.Fatalf("reopened frame=%q, error=%v", data, err)
 						}
 						return
+					}
+					ctx, cancel := context.WithCancel(t.Context())
+					cancel()
+					for _, produce := range []func(io.Writer) (ocispec.Descriptor, error){nil, producer(nil, ocispec.Descriptor{})} {
+						if r, _, err := c.Blob(ctx, key, Forever, produce); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
+							t.Fatalf("disabled cancellation: %v", err)
+						}
 					}
 					if r != nil || !errors.Is(err, errdef.ErrNotFound) {
 						t.Fatalf("retained transient output: %v", err)
@@ -176,9 +190,15 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 }
 
 func TestBlob_FailuresRemainErrors(t *testing.T) {
+	original := processIdentity
+	processIdentity = "identified"
+	t.Cleanup(func() { processIdentity = original })
 	for _, root := range []string{"", t.TempDir()} {
 		c := newCache(t, root)
 		for _, persistOnly := range []bool{false, true} {
+			if persistOnly && root == "" {
+				continue
+			}
 			key := BlobKey{ID: "blob-error", PersistOnly: persistOnly}
 			failure := errors.New("failed completed producer")
 			r, _, err := c.Blob(t.Context(), key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
@@ -212,7 +232,7 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 		t.Fatal("failed Close retained the backing reader")
 	}
 	e, _ := c.entries.Load(key.ID)
-	if err := os.Remove(c.layout.OCIBlob(e.(*entry).stored.Digest)); err != nil {
+	if err := os.Remove(filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest))); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

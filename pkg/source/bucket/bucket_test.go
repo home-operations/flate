@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
@@ -181,7 +180,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c, err := cache.New(t.Context(), cacheroot.New(root))
+			c, err := cache.New(t.Context(), root)
 			if err != nil {
 				t.Fatal(err)
 			}

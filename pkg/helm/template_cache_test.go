@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +12,6 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -23,7 +21,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -458,7 +455,7 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 	if !renderPersistenceEligible(t) {
 		t.Skip("storage faults require an eligible build")
 	}
-	for _, fault := range []string{"read", "missing-backing", "publication"} {
+	for _, fault := range []string{"lookup", "publication"} {
 		t.Run(fault, func(t *testing.T) {
 			chartDir := t.TempDir()
 			testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
@@ -471,41 +468,13 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 			}
 			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
 			hr := newHR()
-			loaded, err := cli.LoadChart(t.Context(), hr)
-			if err != nil {
-				t.Fatal(err)
-			}
-			key := cache.BlobKey{ID: computeTemplateKey(loaded, map[string]any{}, Options{}, hr), PersistOnly: true}
-			layout := cacheroot.New(root)
-			if fault == "publication" {
-				index := filepath.Join(layout.OCI(), ocispec.ImageIndexFile)
-				if err := os.Remove(index); err != nil && !errors.Is(err, fs.ErrNotExist) {
-					t.Fatal(err)
-				}
-				if err := os.Mkdir(index, 0o700); err != nil {
-					t.Fatal(err)
-				}
-			} else {
+			if fault == "lookup" {
 				if _, err := cli.Template(t.Context(), hr, nil, Options{}); err != nil {
 					t.Fatal(err)
 				}
-				r, _, err := owner.Blob(t.Context(), key, cache.Forever, nil)
-				if err != nil {
-					t.Fatalf("real Template output must persist: %v", err)
-				}
-				raw, readErr := io.ReadAll(r)
-				if err := errors.Join(readErr, r.Close()); err != nil {
-					t.Fatal(err)
-				}
-				blob := layout.OCIBlob(digest.FromBytes(raw))
-				if err := os.Remove(blob); err != nil {
-					t.Fatal(err)
-				}
-				if fault == "read" {
-					if err := os.Mkdir(blob, 0o700); err != nil {
-						t.Fatal(err)
-					}
-				}
+			}
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatal(err)
 			}
 			for range 2 {
 				out, err := cli.Template(t.Context(), hr, nil, Options{})

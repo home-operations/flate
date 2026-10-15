@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"slices"
@@ -16,7 +17,9 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func substitutionKS(name, path, postBuild string) string {
@@ -36,7 +39,7 @@ func newSubstitutionOrchestrator(t *testing.T, cfg Config) *Orchestrator {
 	cfg.CacheDir = t.TempDir()
 	cfg.Concurrency = 4
 	cfg.WipeSecrets = true
-	o, err := New(cfg)
+	o, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,15 +106,46 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 		{"missing namespace", &manifest.Secret{Name: "external"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := New(Config{Path: t.TempDir(), SubstituteFrom: []SubstitutionSource{{Object: tc.object}}})
+			_, err := New(t.Context(), Config{Path: t.TempDir(), SubstituteFrom: []SubstitutionSource{{Object: tc.object}}})
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected input error, got %v", err)
 			}
 		})
 	}
-	_, err := New(Config{Path: t.TempDir(), Substitute: map[string]string{"bad-name": "private-fixture-value"}})
-	if !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "private-fixture-value") {
-		t.Fatalf("invalid or unredacted SDK overlay error: %v", err)
+	for _, injected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache/injected=%t", injected), func(t *testing.T) {
+			root := t.TempDir()
+			cfg := Config{Path: t.TempDir(), CacheDir: root, Substitute: map[string]string{"bad-name": "private-fixture-value"}}
+			if injected {
+				owner, err := sourcecache.New(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = owner.Close() })
+				cfg.Cache = owner
+			}
+			_, err := New(t.Context(), cfg)
+			if !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "private-fixture-value") {
+				t.Fatalf("invalid or unredacted SDK overlay error: %v", err)
+			}
+			if cfg.Cache != nil {
+				r, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{ID: "after-constructor-failure"}, sourcecache.Forever,
+					func(w io.Writer) (ocispec.Descriptor, error) {
+						_, err := io.WriteString(w, "caller-owned")
+						return ocispec.Descriptor{}, err
+					})
+				if err != nil {
+					t.Fatalf("constructor released borrowed owner: %v", err)
+				}
+				if err := errors.Join(r.Close(), cfg.Cache.Close()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+			if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("constructor retained owner share: result=%+v err=%v", res, err)
+			}
+		})
 	}
 }
 
@@ -237,7 +271,7 @@ spec:
 				testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
 					"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
 
-				o, err := New(Config{
+				o, err := New(t.Context(), Config{
 					Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers,
 					SubstituteFrom: tt.sources,
 				})
@@ -421,7 +455,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 				testutil.WriteFile(t, root, "independent/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent, namespace: apps}\ndata: {value: independent}\n")
 				source := suppliedSubstitution("late-settings")
 				cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers, SubstituteFrom: []SubstitutionSource{source}, StrictSubstitutions: true}
-				o, err := New(cfg)
+				o, err := New(t.Context(), cfg)
 				if err != nil {
 					t.Fatal(err)
 				}

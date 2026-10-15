@@ -17,7 +17,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -67,9 +66,9 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 				configJSON = `{"auths":`
 			}
 			testutil.WriteFileAt(t, config, configJSON)
-			layout := cacheroot.New(t.TempDir())
+			root := t.TempDir()
 			st := store.New()
-			cache, err := sourcecache.New(t.Context(), layout)
+			cache, err := sourcecache.New(t.Context(), root)
 			if err != nil {
 				t.Fatal(err)
 			}

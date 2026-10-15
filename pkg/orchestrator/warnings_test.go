@@ -27,7 +27,7 @@ func TestRender_ScanAndPathWarnings(t *testing.T) {
 			if tt.sameRoot {
 				cfg.PathOrig = root
 			}
-			o, err := New(cfg)
+			o, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +115,7 @@ spec:
 	testutil.WriteFile(t, dir, "charts/opaque/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -173,7 +173,7 @@ spec:
 	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -246,7 +246,7 @@ spec:
 	testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -326,7 +326,7 @@ spec:
 	testutil.WriteFile(t, dir, "apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

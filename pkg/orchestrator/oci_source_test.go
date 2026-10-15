@@ -69,7 +69,7 @@ spec:
 				}
 				testutil.WriteFile(t, artifact, "kustomization.yaml", "resources: [cm.yaml]\n")
 				testutil.WriteFile(t, artifact, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n")
-				o, err := New(Config{Path: root + "/flux", RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers})
+				o, err := New(t.Context(), Config{Path: root + "/flux", RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers})
 				if err != nil {
 					t.Fatal(err)
 				}

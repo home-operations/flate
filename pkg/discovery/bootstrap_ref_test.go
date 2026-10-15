@@ -24,7 +24,6 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -197,7 +196,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				}
 				ignore := "apps/excluded.txt\n"
 				repository.Ignore = &ignore
-				owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+				owner, err := sourcecache.New(t.Context(), "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -443,9 +442,10 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("isolated default cache uses XDG_CACHE_HOME on Linux")
 	}
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	fallback := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", fallback)
 	root := discoveryRefFixture(t)
-	defaultRoot := cacheroot.Default()
+	defaultRoot := filepath.Join(fallback, "flate")
 	for _, tag := range []string{"", "v2.0.0", "missing", "v1.0.0"} {
 		repository := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 		repository.URL = "git://fixture.invalid/cluster"

@@ -18,15 +18,15 @@ func TestGitCacheKey_RulesVersion(t *testing.T) {
 	assert.Equal(t, v1, gitCacheKey(repo, ref, sourceignore.RulesVersion))
 	assert.Equal(t, strings.HasPrefix(v1, prefix), true)
 	assert.Equal(t, len(v1), len(prefix)+64)
-	const legacy = prefix + "cc5cc365bec71d99"
+	const expected = prefix + "cc5cc365bec71d99"
 	for _, tc := range []struct {
 		name string
 		got  string
 		want string
 	}{
 		{name: "different version", got: gitCacheKey(repo, ref, "sourceignore-v2"), want: v1},
-		{name: "legacy payload", got: v1, want: legacy},
-		{name: "empty version still present", got: gitCacheKey(repo, ref, ""), want: legacy},
+		{name: "expected payload", got: v1, want: expected},
+		{name: "empty version still present", got: gitCacheKey(repo, ref, ""), want: expected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.got == tc.want, false)

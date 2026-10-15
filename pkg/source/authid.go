@@ -16,9 +16,7 @@ import (
 // empties and joins the rest with NULs so adding a new auth dimension
 // later (cert secret, proxy secret, …) is a one-arg append.
 //
-// Returns "" when every input is empty — the caller passes "" to
-// Cache.Slot in that case, and slots match the legacy unauthenticated
-// layout so existing caches survive.
+// Returns "" when every input is empty, selecting the unauthenticated key.
 //
 // Fetchers should prefer AuthIdentityFromRefs when their inputs are
 // already *manifest.LocalObjectReference values; reach for this

@@ -36,7 +36,7 @@ type gitBaseSpec struct {
 // git URL markers, mirroring sigs.k8s.io/kustomize/api/internal/git/repospec.go
 // (tryExplicitMarkerSplit + ignoreForcedGitProtocol).
 const (
-	gitForcedProtocol = "git::" // legacy go-getter prefix; stripped, marks a git base
+	gitForcedProtocol = "git::" // go-getter prefix; stripped, marks a git base
 	gitRootDelimiter  = "_git/" // Azure DevOps: repo root is the segment after _git/
 	gitSubPathSep     = "//"    // double-slash separates repo root from kust subpath
 	gitSuffix         = ".git"  // .git is part of the repo dir name

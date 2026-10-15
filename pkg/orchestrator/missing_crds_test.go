@@ -172,7 +172,7 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 			for _, mode := range []string{"absent", "supplied", "indexed", "produced", "helm produced", "unreferenced", "unordered", "sibling ks", "sibling hr"} {
 				t.Run(fmt.Sprintf("workers_%d/enabled_%t/%s", workers, enabled, mode), func(t *testing.T) {
 					dir := crdFixture(t, mode)
-					o, err := New(Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: workers, AllowMissingCRDs: enabled})
+					o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: workers, AllowMissingCRDs: enabled})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -389,7 +389,7 @@ spec:
 `, name, name, name)
 			}
 			testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
-			o, err := New(Config{Path: dir, RepoRoot: dir, CacheDir: cache, Concurrency: workers, AllowMissingCRDs: true})
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: cache, Concurrency: workers, AllowMissingCRDs: true})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -19,7 +19,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // An explicit base bypasses the auto-detection ladder.
@@ -631,7 +630,7 @@ func linkedWorktree(t *testing.T, mainDir, name string, branch plumbing.Referenc
 
 func testOwner(t *testing.T, root string) *sourcecache.Cache {
 	t.Helper()
-	owner, err := sourcecache.New(t.Context(), cacheroot.New(root))
+	owner, err := sourcecache.New(t.Context(), root)
 	assert.NoError(t, err)
 	t.Cleanup(func() {
 		if err := owner.Close(); err != nil {

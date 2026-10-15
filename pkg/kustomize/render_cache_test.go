@@ -19,14 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -409,10 +407,10 @@ func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
 	cache := NewTreeCache(newTestCache(t, t.TempDir()))
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 	key := renderKey(demoRawSpec, root, ".", "")
-	publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key}, testRenderFrame(t, readSetSnapshot{}, []byte("LEGACY\n")))
+	publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
 	out, err := RenderFlux(t.Context(), cache, req)
 	if err != nil || !strings.Contains(string(out), "name: fresh") {
-		t.Fatalf("legacy raw identity reused cached output: %s, %v", out, err)
+		t.Fatalf("ordinary raw identity reused cached output: %s, %v", out, err)
 	}
 	_, stored, hit := readTestRenderFrame(t, cache, key)
 	if eligible := renderPersistenceEligible(t); hit != eligible || hit && !bytes.Equal(stored, out) {
@@ -593,43 +591,19 @@ func TestRenderFlux_CacheStorageFailures(t *testing.T) {
 	if !renderPersistenceEligible(t) {
 		t.Skip("storage faults require an eligible build")
 	}
-	for _, fault := range []string{"read", "missing-backing", "publication"} {
+	for _, fault := range []string{"lookup", "publication"} {
 		t.Run(fault, func(t *testing.T) {
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
 			cacheDir := t.TempDir()
 			cache := NewTreeCache(newTestCache(t, cacheDir))
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
-			key := sourcecache.BlobKey{ID: renderKey(demoRawSpec, root, ".", ""), PersistOnly: true}
-			layout := cacheroot.New(cacheDir)
-			if fault == "publication" {
-				index := filepath.Join(layout.OCI(), ocispec.ImageIndexFile)
-				if err := os.Remove(index); err != nil && !errors.Is(err, fs.ErrNotExist) {
-					t.Fatal(err)
-				}
-				if err := os.Mkdir(index, 0o700); err != nil {
-					t.Fatal(err)
-				}
-			} else {
+			if fault == "lookup" {
 				if _, err := RenderFlux(t.Context(), cache, req); err != nil {
 					t.Fatal(err)
 				}
-				r, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Forever, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				raw, readErr := io.ReadAll(r)
-				if err := errors.Join(readErr, r.Close()); err != nil {
-					t.Fatal(err)
-				}
-				blob := layout.OCIBlob(digest.FromBytes(raw))
-				if err := os.Remove(blob); err != nil {
-					t.Fatal(err)
-				}
-				if fault == "read" {
-					if err := os.Mkdir(blob, 0o700); err != nil {
-						t.Fatal(err)
-					}
-				}
+			}
+			if err := os.RemoveAll(cacheDir); err != nil {
+				t.Fatal(err)
 			}
 			for range 2 {
 				out, err := RenderFlux(t.Context(), cache, req)

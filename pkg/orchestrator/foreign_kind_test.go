@@ -44,7 +44,7 @@ spec:
     namespace: seaweedfs
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -105,7 +105,7 @@ spec:
   insecure: true
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

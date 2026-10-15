@@ -79,7 +79,7 @@ spec:
     name: myapp
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -128,7 +128,7 @@ metadata: {name: cluster-b, namespace: flux-system}
 spec: {path: ./apps/shared}
 `)
 	path := dir + "/cluster"
-	o, err = New(Config{Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4})
+	o, err = New(t.Context(), Config{Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ spec:
 `)
 		}
 		const dirty = "cluster/source-other.yaml"
-		o, err := New(Config{
+		o, err := New(t.Context(), Config{
 			Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4,
 			SelfURLs:        []string{"https://fixture.invalid/cluster"},
 			ExternalChanges: change.NewSet([]string{dirty}),

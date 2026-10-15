@@ -20,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 )
 
@@ -206,7 +205,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			t.Cleanup(srv.Close)
-			cache, err := sourcecache.New(t.Context(), cacheroot.Layout{})
+			cache, err := sourcecache.New(t.Context(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -410,7 +409,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	host := mustURL(t, srv.URL).Host
 	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 	configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, auth)
-	cache, err := sourcecache.New(t.Context(), cacheroot.Layout{})
+	cache, err := sourcecache.New(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

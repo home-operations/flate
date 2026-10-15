@@ -74,7 +74,7 @@ spec:
 			var renders int64
 			b.ReportAllocs()
 			for b.Loop() {
-				o, err := New(cfg)
+				o, err := New(b.Context(), cfg)
 				if err != nil {
 					b.Fatal(err)
 				}

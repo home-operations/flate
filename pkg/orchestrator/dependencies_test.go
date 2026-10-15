@@ -16,7 +16,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			dir := t.TempDir()
 			testutil.WriteGeneratedValuesCluster(t, dir)
-			o, err := New(Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers})
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers})
 			if err != nil {
 				t.Fatal(err)
 			}

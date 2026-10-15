@@ -17,7 +17,6 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -444,7 +443,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			sources, err := cache.New(t.Context(), cacheroot.New(""))
+			sources, err := cache.New(t.Context(), "")
 			if err != nil {
 				t.Fatal(err)
 			}

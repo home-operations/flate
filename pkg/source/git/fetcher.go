@@ -316,7 +316,7 @@ func gitID(repo *manifest.GitRepository) string {
 // authIdentity returns the cache-key auth tag for a GitRepository.
 // Combines the SecretRef (HTTPS / SSH creds) and ProxySecretRef the
 // fetcher binds. Returns "" for anonymous clones so they share slots
-// with the legacy un-auth-keyed layout.
+// for unauthenticated sources.
 func authIdentity(repo *manifest.GitRepository) string {
 	return source.AuthIdentityFromRefs(repo.Namespace,
 		repo.SecretRef, repo.ProxySecretRef)

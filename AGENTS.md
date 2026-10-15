@@ -41,7 +41,7 @@ and `slog.SetDefault`. Everything else is `pkg/`. Dependencies flow one way:
 `manifest` <- `store` <- {`loader`, `values`, `depwait`, `change`, `source`} <- {`kustomize`,
 `helm`, `discovery`} <- `controllers/base` <- `controllers/*` <- `orchestrator` <- `internal/cli`.
 Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (store and controllers only behind its
-`Dispatcher` seam), `source/{atomic,cacheroot,safepath,sourceignore,ssrfguard}`,
+`Dispatcher` seam), `source/{safepath,sourceignore,ssrfguard}`,
 `internal/assert`. Never add an upward import.
 
 ## Invariants
@@ -64,8 +64,10 @@ Leaf packages stay leaf: `tree` (stdlib only), `manifest`, `task`, `schedule` (s
 - Only SOPS ciphertext is wiped (`..PLACEHOLDER_<key>..`); missing secrets fail loud unless a
   producer exists or `--allow-missing-secrets` is set; absent or wiped auth, cert and proxy material follows that same whole-source skip policy;
   malformed real material fails loud.
-- Fetched content goes through `safepath` and `atomic` writes; cache paths come only from
-  `cacheroot.Layout`; the SSRF guard is process-global and opt-in via `RestrictEgress`.
+- The cache owner alone chooses storage paths. Flate-owned fetched-content writes go through
+  `safepath` and the cache owner's `os.Root` boundary with atomic publication; library-internal
+  ORAS and go-billy writers remain library-owned. The SSRF guard is process-global and opt-in
+  via `RestrictEgress`.
 - Output order never depends on goroutine scheduling: sort anything derived from a map.
 
 ## Performance and concurrency

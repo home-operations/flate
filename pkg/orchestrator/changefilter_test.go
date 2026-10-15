@@ -112,7 +112,7 @@ data:
 	// roots directly. change.Detect runs root-to-root, so an edit in
 	// kubernetes/apps/foo — outside the scanned flux/ subdir — still
 	// enters the keep set, without any .git-ancestor "widen" heuristic.
-	o, err := New(Config{
+	o, err := New(t.Context(), Config{
 		Path:        currCluster,
 		RepoRoot:    currRoot,
 		PathOrig:    origRoot,

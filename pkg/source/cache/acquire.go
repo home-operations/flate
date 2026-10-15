@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
@@ -40,16 +40,19 @@ type ArchiveKey struct {
 // BlobKey identifies single-file content.
 type BlobKey struct {
 	ID string
-	// PersistOnly bypasses retained generations when disk backing or build identity is unavailable.
+	// PersistOnly records only with identified disk backing. Otherwise lookup misses and
+	// publication returns a closeable empty reader without invoking the producer.
 	PersistOnly bool
 }
 
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
 type Cache struct {
-	layout  cacheroot.Layout
-	store   *oci.Store
-	locks   *keylock.KeyMap[string]
-	entries sync.Map
+	layout      layout
+	root        *os.Root
+	store       *oci.Store
+	locks       *keylock.KeyMap[string]
+	entries     sync.Map
+	persistBlob func(context.Context, string, time.Duration, func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error)
 }
 
 type entry struct {
@@ -60,7 +63,7 @@ type entry struct {
 	git        *GitGeneration
 }
 
-// CacheError identifies an acquisition failure, including failed persistence.
+// CacheError identifies a cache operation failure, including failed persistence.
 type CacheError struct{ Err error } //nolint:revive // The public acquisition contract names CacheError.
 
 func (e *CacheError) Error() string   { return "cache: " + e.Err.Error() }
@@ -71,7 +74,6 @@ type acquireKey struct {
 	archive    bool
 	git        *gitRequest
 	lookupOnly bool
-	transient  bool
 }
 
 type producerError struct{ error }
@@ -92,15 +94,27 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, maxAge time.Duratio
 }
 
 // Blob returns an independent reader over a complete generation. A nil producer only looks up
-// a fresh generation; zero maxAge with a producer replaces the generation.
+// a fresh generation; zero maxAge with a producer replaces the generation. Disabled
+// PersistOnly publication returns a closeable empty reader without running produce.
 func (c *Cache) Blob(ctx context.Context, key BlobKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
-	request := acquireKey{ID: key.ID, lookupOnly: produce == nil}
 	if key.PersistOnly {
-		request.transient = c.store == nil || processIdentity == ""
-		if !request.transient {
-			request.ID = blobID(processIdentity, key.ID)
-		}
+		return c.persistBlob(ctx, key.ID, maxAge, produce)
 	}
+	return c.blob(ctx, key.ID, maxAge, produce)
+}
+
+func discardBlob(ctx context.Context, _ string, _ time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, ocispec.Descriptor{}, &CacheError{err}
+	}
+	if produce == nil {
+		return nil, ocispec.Descriptor{}, &CacheError{errdef.ErrNotFound}
+	}
+	return io.NopCloser(strings.NewReader("")), ocispec.Descriptor{}, nil
+}
+
+func (c *Cache) blob(ctx context.Context, id string, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
+	request := acquireKey{ID: id, lookupOnly: produce == nil}
 	e, err := c.acquire(ctx, request, maxAge, produce)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, err
@@ -114,22 +128,6 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, maxAge time.Duration, pro
 }
 
 func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
-	if key.transient {
-		if err := ctx.Err(); err != nil {
-			return nil, &CacheError{err}
-		}
-		if key.lookupOnly {
-			return nil, &CacheError{errdef.ErrNotFound}
-		}
-		e, err := c.fill(ctx, key, produce)
-		if err != nil {
-			if failure, ok := errors.AsType[*producerError](err); ok {
-				return nil, failure
-			}
-			return nil, &CacheError{err}
-		}
-		return e, nil
-	}
 	id := key.ID
 	release, err := c.locks.Acquire(ctx, id)
 	if err != nil {
@@ -158,8 +156,8 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 						e = nil
 					}
 				} else if key.archive {
-					index := &tarFS{layout: c.layout, digest: desc.Digest}
-					file, err := os.Open(c.layout.OCIBlob(desc.Digest))
+					index := &tarFS{root: c.root, digest: desc.Digest}
+					file, err := c.root.Open(blobPath(desc.Digest))
 					if err != nil {
 						return nil, &CacheError{err}
 					}
@@ -170,7 +168,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 					}
 				} else {
 					e.fs = fileFS{name: "content", size: desc.Size, open: func() (io.ReadCloser, error) {
-						return os.Open(c.layout.OCIBlob(desc.Digest))
+						return c.root.Open(blobPath(desc.Digest))
 					}}
 				}
 			}
@@ -179,7 +177,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, maxAge time.Duratio
 	if e != nil && fresh(e.resolved, maxAge) {
 		if c.store != nil {
 			now := time.Now()
-			if err := os.Chtimes(c.layout.OCIBlob(e.stored.Digest), now, now); err != nil {
+			if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
 				if !key.lookupOnly {
 					c.entries.Store(id, &entry{})
 				}
@@ -217,24 +215,25 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 	var tmp *os.File
 	var index *tarFS
 	var h digest.Digester
-	if c.store != nil && !key.transient {
+	if c.store != nil {
 		var err error
-		tmp, err = os.CreateTemp(c.layout.OCI(), "acquire-*")
+		name := filepath.Join("oci", "acquire-"+uuid.NewString())
+		tmp, err = c.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = tmp.Close(); _ = os.Remove(tmp.Name()) }()
+		defer func() { _ = tmp.Close(); _ = c.root.Remove(name) }()
 		h = digest.SHA256.Digester()
 		sink = io.MultiWriter(tmp, h.Hash())
 		if key.archive {
-			index = &tarFS{layout: c.layout}
+			index = &tarFS{root: c.root}
 		}
 	}
 	e := &entry{}
 	if c.store != nil && key.git != nil {
 		defer func() {
 			if e.git != nil && e.stored.Digest == "" {
-				_ = os.RemoveAll(filepath.Dir(c.layout.GitObjects(e.git.id)))
+				_ = c.root.RemoveAll(generationPath(e.git.id))
 			}
 		}()
 	}
@@ -261,7 +260,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 		return nil, err
 	}
 	e.resolved = time.Now().UTC()
-	if c.store == nil || key.transient {
+	if c.store == nil {
 		if !key.archive {
 			data := buf.Bytes()
 			e.fs = fileFS{name: "content", size: int64(len(data)), open: func() (io.ReadCloser, error) {
@@ -282,7 +281,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(io.Writer
 		index.list()
 	} else {
 		e.fs = fileFS{name: "content", size: stored.Size, open: func() (io.ReadCloser, error) {
-			return os.Open(c.layout.OCIBlob(stored.Digest))
+			return c.root.Open(blobPath(stored.Digest))
 		}}
 	}
 	if err := c.store.Tag(ctx, stored, key.ID); err != nil {

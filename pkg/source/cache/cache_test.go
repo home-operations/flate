@@ -28,7 +28,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -36,7 +35,7 @@ import (
 
 func newCache(t *testing.T, root string) *Cache {
 	t.Helper()
-	c, err := New(t.Context(), cacheroot.New(root))
+	c, err := New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			c := newCache(t, root)
 			key := ArchiveKey{ID: "source-test-generations"}
 			want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"flate.revision": "v1", "other": "preserved"}}
-			old, got, err := c.Acquire(t.Context(), key, time.Hour, producer(archive(t, "file", "v1"), want))
+			_, got, err := c.Acquire(t.Context(), key, time.Hour, producer(archive(t, "file", "v1"), want))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +109,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			e, _ := c.entries.Load(key.ID)
 			at := e.(*entry).resolved
 			if disk {
-				p := c.layout.OCIBlob(e.(*entry).stored.Digest)
+				p := filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest))
 				stale := time.Now().Add(-24 * time.Hour)
 				if err := os.Chtimes(p, stale, stale); err != nil {
 					t.Fatal(err)
@@ -129,7 +128,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			if _, _, err := c.Acquire(t.Context(), key, 0, producer(archive(t, "file", "v2"), want)); err != nil {
 				t.Fatal(err)
 			}
-			if data, err := fs.ReadFile(old, "file"); err != nil || string(data) != "v1" {
+			if data, err := fs.ReadFile(warm, "file"); err != nil || string(data) != "v1" {
 				t.Fatalf("held generation: %q, %v", data, err)
 			}
 			failure := errors.New("verification failed")
@@ -282,7 +281,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	lock := flock.New(cacheroot.New(root).OCILock())
+	lock := flock.New(layout{Root: root}.OCILock())
 	t.Cleanup(func() { _ = lock.Close() })
 	if acquired, err := lock.TryLock(); err != nil || acquired {
 		t.Fatalf("first Close released shared lock: acquired=%v, err=%v", acquired, err)
@@ -300,7 +299,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := New(ctx, cacheroot.New(root)); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := New(ctx, root); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("lock wait: %v", err)
 	}
 }
@@ -606,7 +605,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	index := filepath.Join(cacheroot.New(root).OCI(), "index.json")
+	index := filepath.Join(layout{Root: root}.OCI(), "index.json")
 	if err := os.WriteFile(index, []byte(`{"schemaVersion":`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -630,15 +629,15 @@ func TestNew_InvalidLayoutPreservesIndex(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	index := filepath.Join(cacheroot.New(root).OCI(), "index.json")
+	index := filepath.Join(layout{Root: root}.OCI(), "index.json")
 	want, err := os.ReadFile(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cacheroot.New(root).OCI(), "oci-layout"), []byte(`{"imageLayoutVersion":`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(layout{Root: root}.OCI(), "oci-layout"), []byte(`{"imageLayoutVersion":`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(t.Context(), cacheroot.New(root)); err == nil {
+	if _, err := New(t.Context(), root); err == nil {
 		t.Fatal("invalid layout accepted")
 	}
 	if got, err := os.ReadFile(index); err != nil || !bytes.Equal(got, want) {
@@ -738,7 +737,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			}
 			v, _ := c.entries.Load(key.ID)
 			e := v.(*entry)
-			blob := c.layout.OCIBlob(e.stored.Digest)
+			blob := filepath.Join(c.layout.Root, blobPath(e.stored.Digest))
 			stale := time.Now().Add(-time.Hour)
 			if err := os.Chtimes(blob, stale, stale); err != nil {
 				t.Fatal(err)
@@ -845,5 +844,141 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 				t.Fatalf("failed generation directories = %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+func TestCache_RootedWritesRejectEscape(t *testing.T) {
+	for _, sink := range []string{"staging", "last-use", "git-generation"} {
+		t.Run(sink, func(t *testing.T) {
+			c := newCache(t, t.TempDir())
+			outside := t.TempDir()
+			key := BlobKey{ID: "rooted-write"}
+			link := c.layout.OCI()
+			target := outside
+			if sink == "last-use" {
+				r, _, err := c.Blob(t.Context(), key, Forever, producer([]byte("content"), ocispec.Descriptor{}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := r.Close(); err != nil {
+					t.Fatal(err)
+				}
+				e, _ := c.entries.Load(key.ID)
+				link = filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest))
+				testutil.WriteFile(t, outside, "untouched", "sentinel")
+				target = filepath.Join(outside, "untouched")
+				old := time.Now().Add(-48 * time.Hour)
+				if err := os.Chtimes(target, old, old); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(link); err != nil {
+					t.Fatal(err)
+				}
+			} else if sink == "git-generation" {
+				link = filepath.Join(c.layout.OCI(), "git")
+			} else if err := os.Rename(link, link+"-saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			if sink == "git-generation" {
+				_, err = c.Git(t.Context(), GitKey{ID: "source-git-rooted"}, 0, func(storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+					called = true
+					return plumbing.ZeroHash, nil
+				})
+			} else {
+				var r io.ReadCloser
+				r, _, err = c.Blob(t.Context(), key, Forever, func(io.Writer) (ocispec.Descriptor, error) {
+					called = true
+					return ocispec.Descriptor{}, nil
+				})
+				if r != nil {
+					_ = r.Close()
+				}
+			}
+			if _, ok := errors.AsType[*CacheError](err); !ok || called {
+				t.Fatalf("escape: producer=%v, error=%v", called, err)
+			}
+			after, err := os.Stat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !after.ModTime().Equal(before.ModTime()) {
+				t.Fatal("outside target timestamp changed")
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if sink == "last-use" {
+				want = 1
+			}
+			if len(entries) != want {
+				t.Fatalf("outside entries = %v", entries)
+			}
+		})
+	}
+}
+
+func TestNew_IndexRecoveryRejectsEscapingParent(t *testing.T) {
+	c := newCache(t, t.TempDir())
+	outside := newCache(t, t.TempDir())
+	if err := errors.Join(c.Close(), outside.Close()); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(outside.layout.OCI(), ocispec.ImageIndexFile)
+	want := []byte(`{"schemaVersion":`)
+	if err := os.WriteFile(index, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(c.layout.OCI(), c.layout.OCI()+"-saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside.layout.OCI(), c.layout.OCI()); err != nil {
+		t.Fatal(err)
+	}
+	if escaped, err := New(t.Context(), c.layout.Root); err == nil {
+		_ = escaped.Close()
+		t.Fatal("index recovery escaped root")
+	}
+	if got, err := os.ReadFile(index); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("outside index = %q, %v", got, err)
+	}
+}
+
+func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
+	c := newCache(t, t.TempDir())
+	outside := t.TempDir()
+	var marker string
+	failure := errors.New("producer failed after parent replacement")
+	_, err := c.Git(t.Context(), GitKey{ID: "source-git-escaping-cleanup", RecurseSubmodules: true}, 0,
+		func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			id := filepath.Base(filepath.Dir(worktree.Root()))
+			marker = filepath.Join(id, "marker")
+			testutil.WriteFile(t, outside, marker, "untouched")
+			parent := filepath.Dir(c.layout.GitObjects(""))
+			if err := os.Rename(parent, parent+"-saved"); err != nil {
+				return plumbing.ZeroHash, err
+			}
+			if err := os.Symlink(outside, parent); err != nil {
+				return plumbing.ZeroHash, err
+			}
+			return plumbing.ZeroHash, failure
+		})
+	if !errors.Is(err, failure) {
+		t.Fatalf("Git error = %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(outside, marker)); err != nil || string(got) != "untouched" {
+		t.Fatalf("outside marker = %q, %v", got, err)
+	}
+	if _, err := c.store.Resolve(t.Context(), "source-git-escaping-cleanup"); err == nil {
+		t.Fatal("failed generation published")
 	}
 }

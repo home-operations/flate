@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -18,7 +17,7 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 			if backing == "disk" {
 				root = b.TempDir()
 			}
-			c, err := New(b.Context(), cacheroot.New(root))
+			c, err := New(b.Context(), root)
 			if err != nil {
 				b.Fatal(err)
 			}

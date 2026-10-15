@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,7 +95,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	t.Helper()
 	st := store.New()
 	ts := task.NewBounded(2)
-	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	owner, err := sourcecache.New(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,7 +749,7 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
-	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	owner, err := sourcecache.New(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,7 +842,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	st := store.New()
 	ts := task.NewBounded(0)
-	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	owner, err := sourcecache.New(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

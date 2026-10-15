@@ -69,7 +69,7 @@ spec:
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [input.yaml, declaration.yaml]\n")
 			testutil.WriteFile(t, root, "shared/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: '"+namespace+"'}\ndata: {values.yaml: 'greeting: hello'}\n")
 			testutil.WriteFile(t, root, "shared/declaration.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: declaration, namespace: apps}\nspec:\n  target: {name: generated}\n  data: [{secretKey: values.yaml, remoteRef: {key: input}}]\n")
-			o, err := New(Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2})
+			o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +114,7 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteGeneratedValuesCluster(t, root)
-			o, err := New(Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers, WipeSecrets: true})
+			o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers, WipeSecrets: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -193,7 +193,7 @@ spec:
 				if mode == "unchanged" {
 					cfg.PathOrig = orig
 				}
-				o, err := New(cfg)
+				o, err := New(t.Context(), cfg)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -219,7 +219,7 @@ spec:
 }
 
 func TestOrchestrator_ChildrenByParent(t *testing.T) {
-	o, err := New(Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 }
 
 func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
-	o, err := New(Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 
 func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T) {
 	root := t.TempDir()
-	o, err := New(Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

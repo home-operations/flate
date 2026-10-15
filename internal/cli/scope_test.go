@@ -368,7 +368,7 @@ spec:
 }
 
 func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ spec:
 }
 
 func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,7 +922,7 @@ spec:
 func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 	for _, named := range []bool{false, true} {
 		t.Run(fmt.Sprint(named), func(t *testing.T) {
-			o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+			o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1071,7 +1071,7 @@ func TestFailureModel(t *testing.T) {
 				blocked[id] = slices.Clone(deps)
 			}
 			if tc.prepare {
-				o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+				o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/keylock"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
 )
@@ -31,11 +31,11 @@ var owners = struct {
 }{stores: make(map[string]*owner)}
 
 // New selects backing once. An empty root allocates no files or directories.
-func New(ctx context.Context, layout cacheroot.Layout) (*Cache, error) {
-	if layout.Root == "" {
-		return &Cache{locks: keylock.New[string]()}, nil
+func New(ctx context.Context, root string) (*Cache, error) {
+	if root == "" {
+		return &Cache{locks: keylock.New[string](), persistBlob: discardBlob}, nil
 	}
-	root, err := filepath.Abs(layout.Root)
+	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, &CacheError{err}
 	}
@@ -46,7 +46,7 @@ func New(ctx context.Context, layout cacheroot.Layout) (*Cache, error) {
 	if err != nil {
 		return nil, &CacheError{err}
 	}
-	layout = cacheroot.New(root)
+	l := layout{Root: root}
 	owners.Lock()
 	if o := owners.stores[root]; o != nil {
 		o.refs++
@@ -61,7 +61,7 @@ func New(ctx context.Context, layout cacheroot.Layout) (*Cache, error) {
 			return o.cache, o.err
 		}
 	}
-	o := &owner{ready: make(chan struct{}), refs: 1, lock: flock.New(layout.OCILock(), flock.SetPermissions(0o600))}
+	o := &owner{ready: make(chan struct{}), refs: 1, lock: flock.New(l.OCILock(), flock.SetPermissions(0o600))}
 	owners.stores[root] = o
 	owners.Unlock()
 	locked, err := o.lock.TryLock()
@@ -76,28 +76,40 @@ func New(ctx context.Context, layout cacheroot.Layout) (*Cache, error) {
 		}
 	}
 	var store *oci.Store
+	var disk *os.Root
 	if err == nil {
-		store, err = oci.NewWithContext(ctx, layout.OCI())
+		disk, err = os.OpenRoot(root)
+	}
+	if err == nil {
+		store, err = oci.NewWithContext(ctx, l.OCI())
 		if err != nil && ctx.Err() == nil {
-			index := filepath.Join(layout.OCI(), ocispec.ImageIndexFile)
-			data, readErr := os.ReadFile(index) //nolint:gosec // The fixed index name is rooted by cacheroot.Layout.
+			index := filepath.Join(l.OCI(), ocispec.ImageIndexFile)
+			data, readErr := disk.ReadFile(filepath.Join("oci", ocispec.ImageIndexFile))
 			if !errors.Is(readErr, os.ErrNotExist) && (readErr != nil || json.Unmarshal(data, new(ocispec.Index)) != nil) {
-				if removeErr := os.Remove(index); removeErr != nil {
+				if removeErr := disk.Remove(filepath.Join("oci", ocispec.ImageIndexFile)); removeErr != nil {
 					err = errors.Join(err, removeErr)
 				} else {
 					slog.Warn("cache: rebuilding unreadable store index", "path", index, "error", err)
-					store, err = oci.NewWithContext(ctx, layout.OCI())
+					store, err = oci.NewWithContext(ctx, l.OCI())
 				}
 			}
 		}
 	}
 	owners.Lock()
 	if err != nil {
+		if disk != nil {
+			err = errors.Join(err, disk.Close())
+		}
 		o.err = &CacheError{err}
 		delete(owners.stores, root)
 		_ = o.lock.Close()
 	} else {
-		o.cache = &Cache{layout: layout, store: store, locks: keylock.New[string]()}
+		o.cache = &Cache{layout: l, root: disk, store: store, locks: keylock.New[string](), persistBlob: discardBlob}
+		if identity := processIdentity; identity != "" {
+			o.cache.persistBlob = func(ctx context.Context, id string, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
+				return o.cache.blob(ctx, blobID(identity, id), maxAge, produce)
+			}
+		}
 	}
 	close(o.ready)
 	owners.Unlock()
@@ -122,7 +134,7 @@ func (c *Cache) Close() error {
 	}
 	delete(owners.stores, c.layout.Root)
 	c.entries.Clear()
-	if err := o.lock.Close(); err != nil {
+	if err := errors.Join(o.lock.Close(), c.root.Close()); err != nil {
 		return &CacheError{err}
 	}
 	return nil

@@ -74,7 +74,7 @@ func TestAuthIdentityFromRefs_BackwardCompat(t *testing.T) {
 	// Git: (Secret, Proxy)
 	gitWant := AuthIdentity(secretRefID(ns, "g-secret"), secretRefID(ns, "g-proxy"))
 	if got := AuthIdentityFromRefs(ns, mk("g-secret"), mk("g-proxy")); got != gitWant {
-		t.Errorf("git shape: %q vs legacy %q", got, gitWant)
+		t.Errorf("git shape: %q vs expected %q", got, gitWant)
 	}
 
 	// Bucket: (Secret, Cert, Proxy)
@@ -83,7 +83,7 @@ func TestAuthIdentityFromRefs_BackwardCompat(t *testing.T) {
 		secretRefID(ns, "b-cert"),
 		secretRefID(ns, "b-proxy"))
 	if got := AuthIdentityFromRefs(ns, mk("b-secret"), mk("b-cert"), mk("b-proxy")); got != bucketWant {
-		t.Errorf("bucket shape: %q vs legacy %q", got, bucketWant)
+		t.Errorf("bucket shape: %q vs expected %q", got, bucketWant)
 	}
 
 	// OCI: (Secret, Cert, Proxy, Verify)
@@ -93,6 +93,6 @@ func TestAuthIdentityFromRefs_BackwardCompat(t *testing.T) {
 		secretRefID(ns, "o-proxy"),
 		secretRefID(ns, "o-verify"))
 	if got := AuthIdentityFromRefs(ns, mk("o-secret"), mk("o-cert"), mk("o-proxy"), mk("o-verify")); got != ociWant {
-		t.Errorf("oci shape: %q vs legacy %q", got, ociWant)
+		t.Errorf("oci shape: %q vs expected %q", got, ociWant)
 	}
 }

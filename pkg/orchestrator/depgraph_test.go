@@ -207,7 +207,7 @@ spec:
 	testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\ndata: {k: v}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

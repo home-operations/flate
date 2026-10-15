@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
@@ -24,7 +23,7 @@ import (
 var maxExtractedBytes int64 = 1 << 30
 
 type tarFS struct {
-	layout cacheroot.Layout
+	root   *os.Root
 	digest digest.Digest
 	nodes  map[string]*tarNode
 }
@@ -79,7 +78,7 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 	f := &tarFile{tarNode: node, Reader: bytes.NewReader(nil)}
 	if !node.IsDir() {
 		var err error
-		f.file, err = os.Open(t.layout.OCIBlob(t.digest))
+		f.file, err = t.root.Open(blobPath(t.digest))
 		if err != nil {
 			return nil, err
 		}

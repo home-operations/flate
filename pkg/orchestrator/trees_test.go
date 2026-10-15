@@ -3,19 +3,24 @@ package orchestrator_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // writeCluster lays out a two-app Flux cluster under dir: app-a renders
@@ -229,10 +234,17 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 				orchestrator.Config{CacheDir: root, Concurrency: workers}); err != nil {
 				t.Fatal(err)
 			}
-			lock := flock.New(cacheroot.New(root).OCILock())
-			defer func() { _ = lock.Close() }()
-			if acquired, err := lock.TryLock(); err != nil || !acquired {
-				t.Fatalf("own cache retained lock: acquired=%v err=%v", acquired, err)
+			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+			if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("own cache retained lock: result=%+v err=%v", res, err)
+			}
+			if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{}, orchestrator.Tree{},
+				orchestrator.Config{CacheDir: root, Concurrency: workers}); !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("missing input error = %v", err)
+			}
+			res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+			if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("input failure retained owner: result=%+v err=%v", res, err)
 			}
 		})
 	}
@@ -254,5 +266,79 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 		if len(rendered.Result.Warnings) != 1 || rendered.Result.Warnings[0].Category != manifest.WarnPathConfig {
 			t.Fatalf("same-directory warning changed: %v", rendered.Result.Warnings)
 		}
+	}
+}
+
+type joinedTreeFS struct {
+	fs.FS
+	entered chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (f *joinedTreeFS) Open(name string) (fs.File, error) {
+	f.once.Do(func() {
+		close(f.entered)
+		<-f.release
+	})
+	return f.FS.Open(name)
+}
+
+func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	inputs := [2]*store.SourceArtifact{}
+	gates := [2]*joinedTreeFS{}
+	for i := range inputs {
+		gates[i] = &joinedTreeFS{FS: fstest.MapFS{"cm.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")}}, entered: make(chan struct{}), release: release}
+		inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: gates[i]}
+	}
+	root := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := orchestrator.RenderTrees(ctx,
+			orchestrator.Tree{RepoRoot: inputs[0].LocalPath}, orchestrator.Tree{RepoRoot: inputs[1].LocalPath},
+			orchestrator.Config{CacheDir: root, Concurrency: 2, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)})
+		done <- err
+	}()
+	for _, gate := range gates {
+		select {
+		case <-gate.entered:
+		case err := <-done:
+			t.Fatalf("render ended before both readers started: %v", err)
+		case <-ctx.Done():
+			t.Fatal("both readers did not start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("render returned before its readers joined: %v", err)
+	default:
+	}
+	res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+	if err == nil && len(res.Errors) == 0 {
+		t.Fatal("cache owner released while readers were still running")
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("render cancellation: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("render did not join released readers")
+	}
+	res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+	if err != nil || len(res.Errors) != 0 {
+		t.Fatalf("joined render retained owner: result=%+v err=%v", res, err)
 	}
 }

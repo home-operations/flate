@@ -98,7 +98,7 @@ Repository precedence is frozen after discovery and before parallel reconciliati
 
 **CLI upgrade notes.** `--skip-crds`, `--skip-secrets`, and `--only-crds` and their environment variables are replaced by the kind lists above (`FLATE_SKIP_KINDS` and build-only `FLATE_ONLY_KINDS`). Previous `--skip-secrets=false` becomes `--skip-kinds CustomResourceDefinition`; `--skip-crds=false` becomes `--skip-kinds Secret`; both false becomes `--skip-kinds ''`; `--only-crds` becomes `build --only-kinds CustomResourceDefinition`. `--krmignore`, all four `--source-retry-*` flags, and `--skip-schema-validation` are removed along with their environment variables. Source retries use 3 total attempts with 200 ms minimum wait, 3 s maximum wait, and 0.1 jitter. Helm schema validation follows `spec.install.disableSchemaValidation` by default and `spec.upgrade.disableSchemaValidation` with `--is-upgrade`; unresolved value placeholders remain exempt. Profiling uses only `FLATE_PROFILE` (`cpu`, `mem`, `block`, `mutex`, or `trace`) and `FLATE_PROFILE_OUT` (default `.`); `--profile` and `--profile-out` are removed; use `set -gx FLATE_PROFILE cpu` and `set -gx FLATE_PROFILE_OUT ./profiles` in fish before invoking flate. `--stream` and `FLATE_STREAM` are removed by the inherited U0 change; output stays buffered.
 
-**Cache.** flate persists source fetches and completed Helm and Kustomize renders through the shared on-disk cache (honoring Flux intervals for sources). `flate cache gc` prunes legacy cache entries and unused Git generations; `flate cache clear-render` removes the legacy Helm render directory. These maintenance commands do not remove shared OCI blob content or completed render frames.
+**Cache.** An empty cache root keeps source fetches in memory. Set `--cache-dir` or `FLATE_CACHE_DIR` to persist sources and eligible completed Helm and Kustomize renders through one cache owner. Source freshness follows Flux intervals. `flate cache gc` requires an explicit root: it retires named tags by payload last-use, prunes unreachable Git generations, and delegates blob reclamation to ORAS graph GC.
 
 In a container, flate sets its soft memory limit to 80% of the cgroup limit unless `GOMEMLIMIT` is set (`AUTOMEMLIMIT` adjusts the ratio; `AUTOMEMLIMIT=off` disables it).
 
@@ -195,8 +195,9 @@ import (
     "github.com/home-operations/flate/pkg/orchestrator"
 )
 
-o, _ := orchestrator.New(orchestrator.Config{Path: "/path/to/cluster"})
-res, err := o.Render(context.Background())
+ctx := context.Background()
+o, _ := orchestrator.New(ctx, orchestrator.Config{Path: "/path/to/cluster"})
+res, err := o.Render(ctx)
 // res is non-nil even when err != nil — partial output stays usable.
 for id, docs := range res.Manifests {
     // rendered YAML docs for the KS / HR with this id

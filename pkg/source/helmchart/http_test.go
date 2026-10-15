@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func httpRepo(url string) *manifest.HelmRepository {
@@ -40,8 +39,8 @@ func newHTTPFetcher(t *testing.T, r *manifest.HelmRepository) *Fetcher {
 
 func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets source.SecretGetter) *Fetcher {
 	t.Helper()
-	layout := cacheroot.New(t.TempDir())
-	c, err := sourcecache.New(t.Context(), layout)
+	root := t.TempDir()
+	c, err := sourcecache.New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +407,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+				c, err := sourcecache.New(t.Context(), root)
 				if err != nil {
 					t.Fatal(err)
 				}

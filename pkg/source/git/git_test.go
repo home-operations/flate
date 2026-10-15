@@ -22,7 +22,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func TestFetcher_PackedContent(t *testing.T) {
@@ -773,7 +772,7 @@ func mustInitRepo(t *testing.T, dir string) {
 
 func newGitCache(t testing.TB, root string) *sourcecache.Cache {
 	t.Helper()
-	c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+	c, err := sourcecache.New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}

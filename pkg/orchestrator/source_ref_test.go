@@ -14,7 +14,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -48,13 +47,13 @@ func TestRun_DefaultGitCache(t *testing.T) {
 				cfg.CacheDir = t.TempDir()
 			}
 			if mode == "injected" {
-				cfg.Cache, err = sourcecache.New(t.Context(), cacheroot.New(t.TempDir()))
+				cfg.Cache, err = sourcecache.New(t.Context(), t.TempDir())
 				if err != nil {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { _ = cfg.Cache.Close() })
 			}
-			o, err := New(cfg)
+			o, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,21 +109,21 @@ spec:
 					}
 				}
 			}
-			cacheRoot := t.TempDir()
+			selectedRoot := t.TempDir()
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root,
-				SelfURLs: []string{"git://fixture.invalid/cluster"}, CacheDir: cacheRoot, Concurrency: 2}
+				SelfURLs: []string{"git://fixture.invalid/cluster"}, CacheDir: selectedRoot, Concurrency: 2}
 			if kind != "configured-directory" {
 				ownerRoot := ""
 				if kind == "injected-disk" {
 					ownerRoot = t.TempDir()
 				}
-				cfg.Cache, err = sourcecache.New(t.Context(), cacheroot.New(ownerRoot))
+				cfg.Cache, err = sourcecache.New(t.Context(), ownerRoot)
 				if err != nil {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { _ = cfg.Cache.Close() })
 			}
-			o, err := New(cfg)
+			o, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +135,7 @@ spec:
 				t.Fatal("renderers did not receive the selected cache before discovery")
 			}
 			if cfg.Cache != nil {
-				entries, err := os.ReadDir(cacheRoot)
+				entries, err := os.ReadDir(selectedRoot)
 				if err != nil || len(entries) != 0 {
 					t.Fatalf("injected owner created independent cache backing: entries=%v err=%v", entries, err)
 				}
@@ -144,7 +143,7 @@ spec:
 			id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			artifact := o.Store().GetArtifact(id).(*store.SourceArtifact)
 			if artifact.FS == nil || artifact.Key == "" {
-				t.Fatalf("selected cache %s did not reach discovery: %+v", cacheRoot, artifact)
+				t.Fatalf("selected cache %s did not reach discovery: %+v", selectedRoot, artifact)
 			}
 			if content, err := fs.ReadFile(artifact.FS, "value.txt"); err != nil || string(content) != "A" {
 				t.Fatalf("committed artifact = %q, %v", content, err)

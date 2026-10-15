@@ -71,9 +71,10 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	identityB := buildIdentity(info)
 	assert.Equal(t, identityA == "" || identityB == "" || identityA == identityB, false)
 	root := t.TempDir()
+	processIdentity = identityA
 	c := newCache(t, root)
 	key := BlobKey{ID: "render-input", PersistOnly: true}
-	r, _, err := c.Blob(t.Context(), BlobKey{ID: key.ID}, 0, producer([]byte("LEGACY"), ocispec.Descriptor{}))
+	r, _, err := c.Blob(t.Context(), BlobKey{ID: key.ID}, 0, producer([]byte("ordinary"), ocispec.Descriptor{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,9 +82,13 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, identity := range []string{identityA, identityB} {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
 		processIdentity = identity
+		c = newCache(t, root)
 		if r, _, err := c.Blob(t.Context(), key, Forever, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
-			t.Fatalf("foreign or legacy identity hit: %v", err)
+			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
 		r, _, err := c.Blob(t.Context(), key, 0, producer([]byte(identity), ocispec.Descriptor{}))
 		if err != nil {
@@ -92,13 +97,13 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		if err := r.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	for _, identity := range []string{identityA, identityB} {
 		if err := c.Close(); err != nil {
 			t.Fatal(err)
 		}
-		c = newCache(t, root)
-	}
-	for _, identity := range []string{identityA, identityB} {
 		processIdentity = identity
+		c = newCache(t, root)
 		r, _, err := c.Blob(t.Context(), key, Forever, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -108,12 +113,12 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 			t.Fatalf("read: %v, close: %v", err, closeErr)
 		}
 		assert.Equal(t, string(data), identity)
-		if err := c.Close(); err != nil {
-			t.Fatal(err)
-		}
-		c = newCache(t, root)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
 	}
 	processIdentity = ""
+	c = newCache(t, root)
 	index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
 	before, err := os.ReadFile(index)
 	if err != nil {
@@ -134,7 +139,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		if closeErr := r.Close(); err != nil || closeErr != nil {
 			t.Fatalf("read: %v, close: %v", err, closeErr)
 		}
-		assert.Equal(t, string(data), "DIRTY")
+		assert.Equal(t, string(data), "")
 	}
 	c.entries.Range(func(_, _ any) bool { t.Error("dirty output installed an entry"); return true })
 	after, err := os.ReadFile(index)

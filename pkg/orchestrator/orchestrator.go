@@ -21,7 +21,6 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/external"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/helmchart"
@@ -129,7 +128,7 @@ type Config struct {
 	RegistryConfig string
 
 	// CacheDir selects the source and render cache root. Empty selects memory
-	// backing. The CLI resolves its platform default before calling New.
+	// backing.
 	CacheDir string
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
@@ -155,7 +154,7 @@ type Config struct {
 	SourceRetry source.RetryConfig
 
 	// GitDepth caps the shallow-clone history depth for GitRepository
-	// sources (both the bare mirror and the legacy clone). 0 clones full
+	// sources. 0 clones full
 	// history; the CLI defaults it to 1 (opt-out via --git-depth=0).
 	// Commit-pinned refs always full-clone regardless. See
 	// git.Fetcher.Depth.
@@ -319,14 +318,26 @@ type Result struct {
 	External []manifest.Warning
 }
 
-// New constructs an Orchestrator. It allocates the Store and TaskService
-// but does not yet start any reconciliation — call Bootstrap then Run.
+// New constructs an Orchestrator with one cache owner and both renderers.
+// Reconciliation starts with Bootstrap then Run.
 // Substitution inputs are copied; callers MUST NOT mutate them during New.
-func New(cfg Config) (*Orchestrator, error) {
+func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	if cfg.Path == "" {
 		return nil, errors.New("orchestrator: path is required")
 	}
 
+	owner := cfg.Cache
+	if owner == nil {
+		owner, err = sourcecache.New(ctx, cfg.CacheDir)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, owner.Close())
+			}
+		}()
+	}
 	if err := snapshotSubstitutions(&cfg); err != nil {
 		return nil, err
 	}
@@ -336,6 +347,12 @@ func New(cfg Config) (*Orchestrator, error) {
 	ssrfguard.Restrict(cfg.RestrictEgress)
 
 	st := store.New()
+	client, err := helm.NewClient(owner)
+	if err != nil {
+		return nil, err
+	}
+	client.SetSourceResolver(helm.NewStoreSourceResolver(st))
+	trees := kustomize.NewTreeCache(owner)
 	ts := task.NewBounded(cfg.Concurrency)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
@@ -371,12 +388,12 @@ func New(cfg Config) (*Orchestrator, error) {
 	}
 	o := &Orchestrator{
 		cfg:      cfg,
-		cache:    cfg.Cache,
+		cache:    owner,
 		store:    st,
 		tasks:    ts,
 		src:      srcCtrl,
-		ksc:      kustomization.New(st, ts, nil, cfg.WipeSecrets),
-		hrc:      helmrelease.New(st, ts, nil, cfg.HelmOptions, cfg.WipeSecrets),
+		ksc:      kustomization.New(st, ts, trees, cfg.WipeSecrets),
+		hrc:      helmrelease.New(st, ts, client, cfg.HelmOptions, cfg.WipeSecrets),
 		rsc:      resourcesetctrl.New(st, ts, cfg.WipeSecrets),
 		depGraph: newDependencyGraph(),
 	}
@@ -511,24 +528,6 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	if o.bootstrapped {
 		return nil
-	}
-	if o.cache == nil {
-		var err error
-		o.cache, err = sourcecache.New(ctx, cacheroot.New(o.cfg.CacheDir))
-		if err != nil {
-			return err
-		}
-	}
-	if o.hrc.Helm == nil {
-		client, err := helm.NewClient(o.cache)
-		if err != nil {
-			return err
-		}
-		client.SetSourceResolver(helm.NewStoreSourceResolver(o.store))
-		o.hrc.Helm = client
-	}
-	if o.ksc.Trees == nil {
-		o.ksc.Trees = kustomize.NewTreeCache(o.cache)
 	}
 	if o.cfg.Input == nil {
 		input, path, err := baseline.AdmitDirectory(ctx, o.cfg.Path, o.cfg.RepoRoot)

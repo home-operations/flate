@@ -1215,7 +1215,7 @@ apiVersion: s3.services.k8s.aws/v1alpha1
 kind: Bucket
 metadata: {name: assets, namespace: default}
 spec: {name: assets}`},
-		{"legacy flux helmrelease", `
+		{"helm.fluxcd.io helmrelease", `
 apiVersion: helm.fluxcd.io/v1
 kind: HelmRelease
 metadata: {name: app, namespace: default}

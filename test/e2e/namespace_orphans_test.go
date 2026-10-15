@@ -20,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -232,7 +231,7 @@ spec:
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	c, err := sourcecache.New(t.Context(), cacheroot.New(cache))
+	c, err := sourcecache.New(t.Context(), cache)
 	if err != nil {
 		t.Fatal(err)
 	}

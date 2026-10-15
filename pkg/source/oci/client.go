@@ -103,7 +103,7 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s parse .dockerconfigjson: %w", manifest.ErrInput, ociID(repo), err)
 	}
-	// ORAS normalizes Docker Hub's legacy key while its callback expects the
+	// ORAS normalizes Docker Hub's credential key while its callback expects the
 	// canonical Docker server address. Reconcile these in the same memory store.
 	if cred, _ := credStore.Get(ctx, "index.docker.io"); cred != auth.EmptyCredential {
 		_ = credStore.Put(ctx, credentials.ServerAddressFromRegistry("docker.io"), cred)

@@ -156,7 +156,7 @@ data:
   unchanged: "true"
 `)
 
-	o, err := orchestrator.New(orchestrator.Config{
+	o, err := orchestrator.New(t.Context(), orchestrator.Config{
 		Path:        dir,
 		WipeSecrets: true,
 		ExternalChanges: change.NewSet([]string{

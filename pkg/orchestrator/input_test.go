@@ -20,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -72,7 +71,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 						assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(fmt.Sprintf("v%d", i+1)), hash)))
 					}
 				}
-				cfg.Cache, err = sourcecache.New(t.Context(), cacheroot.New(""))
+				cfg.Cache, err = sourcecache.New(t.Context(), "")
 				assert.NoError(t, err)
 				t.Cleanup(func() { _ = cfg.Cache.Close() })
 				selected, err := baseline.AutoResolve(t.Context(), headRoot, baseHash.String(), cfg.Cache)
@@ -92,7 +91,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				}
 				cfg.Path, cfg.Input = headRoot, &store.SourceArtifact{LocalPath: headRoot, LocalRoot: headRoot, FS: files}
 				cfg.ExternalChanges = change.NewSet([]string{"ks-a.yaml"})
-				o, err := orchestrator.New(cfg)
+				o, err := orchestrator.New(t.Context(), cfg)
 				assert.NoError(t, err)
 				t.Cleanup(o.Stop)
 				o.WithFetcher(manifest.KindGitRepository, nil)

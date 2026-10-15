@@ -12,7 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -67,7 +66,7 @@ type Rendered struct {
 // RepoRoot.
 func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base, head Rendered, err error) {
 	if cfg.Cache == nil {
-		cfg.Cache, err = sourcecache.New(ctx, cacheroot.New(cfg.CacheDir))
+		cfg.Cache, err = sourcecache.New(ctx, cfg.CacheDir)
 		if err != nil {
 			return base, head, err
 		}
@@ -147,7 +146,7 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 // Bootstrap error) drops the orchestrator so callers gate on it cleanly,
 // mirroring the CLI's single-tree runner.
 func renderOne(ctx context.Context, cfg Config) (*Orchestrator, *Result, error) {
-	o, err := New(cfg)
+	o, err := New(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

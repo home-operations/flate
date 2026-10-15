@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -62,16 +61,16 @@ func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGenera
 	} else {
 		defer func() {
 			if !complete {
-				_ = os.RemoveAll(filepath.Dir(c.layout.GitObjects(g.id)))
+				_ = c.root.RemoveAll(generationPath(g.id))
 			}
 		}()
 		g.Backing = osfs.New(c.layout.GitObjects(g.id))
-		if err := g.Backing.MkdirAll(".", 0o750); err != nil {
+		if err := c.root.MkdirAll(gitObjectsPath(g.id), 0o750); err != nil {
 			return nil, ocispec.Descriptor{}, err
 		}
 		if request.key.RecurseSubmodules {
 			g.Worktree = osfs.New(c.layout.GitWorktree(g.id))
-			if err := g.Worktree.MkdirAll(".", 0o750); err != nil {
+			if err := c.root.MkdirAll(gitWorktreePath(g.id), 0o750); err != nil {
 				return nil, ocispec.Descriptor{}, err
 			}
 		}
@@ -104,7 +103,7 @@ func (c *Cache) restoreGit(desc ocispec.Descriptor, key GitKey) (*GitGeneration,
 	if err != nil {
 		return nil, nil
 	}
-	if _, err := g.Backing.Stat("objects"); err != nil {
+	if _, err := c.root.Stat(filepath.Join(gitObjectsPath(id), "objects")); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
@@ -112,7 +111,7 @@ func (c *Cache) restoreGit(desc ocispec.Descriptor, key GitKey) (*GitGeneration,
 	}
 	if key.RecurseSubmodules {
 		g.Worktree = osfs.New(c.layout.GitWorktree(id))
-		if _, err := g.Worktree.Stat("."); err != nil {
+		if _, err := c.root.Stat(gitWorktreePath(id)); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, nil
 			}

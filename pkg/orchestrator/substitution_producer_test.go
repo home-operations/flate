@@ -23,7 +23,7 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					if changedOnly {
 						cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
 					}
-					o, err := New(cfg)
+					o, err := New(t.Context(), cfg)
 					if err != nil {
 						t.Fatal(err)
 					}

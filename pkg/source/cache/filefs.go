@@ -7,8 +7,9 @@ import (
 	"io/fs"
 )
 
-// FileFS names a Blob generation. The reader MUST have come from Blob;
-// close it after construction. Each filesystem Open pins an independent reader.
+// FileFS names an acquired Blob generation; discarded PersistOnly publications
+// have no generation. Close the reader after construction. Each filesystem Open
+// pins an independent reader.
 func FileFS(name string, r io.ReadCloser) fs.FS {
 	input := r.(*blobHandle).input
 	input.name = name

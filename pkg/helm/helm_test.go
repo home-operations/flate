@@ -128,9 +128,7 @@ func helmChartFixture(t *testing.T) *Client {
 
 // localChartResolver wires a *store.Store containing a single
 // GitRepository with its on-disk artifact, then returns a
-// StoreSourceResolver backed by it. The helper keeps the existing
-// test fixtures using the canonical resolver path instead of the
-// legacy Add*-driven push API.
+// StoreSourceResolver backed by it.
 func localChartResolver(t *testing.T, name, namespace, dir string) SourceResolver {
 	t.Helper()
 	st := store.New()

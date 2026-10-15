@@ -5,7 +5,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"testing"
 )
@@ -42,7 +41,7 @@ data:
 
 func newTestCache(t testing.TB, root string) *cache.Cache {
 	t.Helper()
-	owner, err := cache.New(t.Context(), cacheroot.New(root))
+	owner, err := cache.New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -182,12 +182,12 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	}
 	// Remote inputs have no identity in the source read set.
 	if !injected {
-		frame, err := encodeFrame(rec.snapshot(), out)
-		if err != nil {
-			return nil, fmt.Errorf("%w: encode kustomize render frame: %w", manifest.ErrFlux, err)
-		}
 		reader, _, err := cache.owner.Blob(ctx, blobKey, 0, func(w io.Writer) (ocispec.Descriptor, error) {
-			_, err := io.Copy(w, bytes.NewReader(frame))
+			frame, err := encodeFrame(rec.snapshot(), out)
+			if err != nil {
+				return ocispec.Descriptor{}, fmt.Errorf("encode kustomize render frame: %w", err)
+			}
+			_, err = io.Copy(w, bytes.NewReader(frame))
 			return ocispec.Descriptor{}, err
 		})
 		if err != nil {

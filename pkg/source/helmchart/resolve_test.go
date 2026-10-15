@@ -10,7 +10,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 // startHelmRepoCounted is startHelmRepo with a SEPARATE index-fetch counter, so
@@ -49,8 +48,8 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 	r := httpRepo(srv.URL)
 	r.Interval = metav1.Duration{Duration: time.Hour} // fresh window
 
-	layout := cacheroot.New(t.TempDir())
-	cache, err := sourcecache.New(t.Context(), layout)
+	root := t.TempDir()
+	cache, err := sourcecache.New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +81,8 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 	r := httpRepo(srv.URL)
 	r.Interval = metav1.Duration{}
 
-	layout := cacheroot.New(t.TempDir())
-	cache, err := sourcecache.New(t.Context(), layout)
+	root := t.TempDir()
+	cache, err := sourcecache.New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +104,8 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 	r := httpRepo(srv.URL)
 	r.Interval = metav1.Duration{Duration: time.Hour}
 
-	layout := cacheroot.New(t.TempDir())
-	cache, err := sourcecache.New(t.Context(), layout)
+	root := t.TempDir()
+	cache, err := sourcecache.New(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +131,7 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 	srv, indexes, charts := startHelmRepoCounted(t, data, chartDigest(data))
 	repo := httpRepo(srv.URL)
 	repo.Interval = metav1.Duration{}
-	c, err := sourcecache.New(t.Context(), cacheroot.New(t.TempDir()))
+	c, err := sourcecache.New(t.Context(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

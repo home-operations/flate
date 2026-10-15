@@ -20,7 +20,7 @@ import (
 // RawSink receives every non-Flux (RawObject) child a ResourceSet emits:
 // the emitting RS (owner), the RS's structural-parent Kustomization
 // (the grouping key), and the rendered doc. The orchestrator installs it
-// to reproduce the legacy post-run output grouping — RS RawObject
+// to preserve the post-run output grouping — RS RawObject
 // children surface under their parent KS in `flate build` output — using
 // owner for deterministic cross-RS dedup. Nil is fine — no-op.
 type RawSink func(owner, parentKS manifest.NamedResource, doc map[string]any)

@@ -71,7 +71,7 @@ func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) 
 	mustWrite(t, filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"), "resources: []\n")
 	mustWrite(t, filepath.Join(dir, "kubernetes/apps/networking/echo.yaml"), echoCM)
 
-	o, err := orchestrator.New(orchestrator.Config{
+	o, err := orchestrator.New(t.Context(), orchestrator.Config{
 		Path:        dir,
 		WipeSecrets: true,
 		ExternalChanges: change.NewSet([]string{

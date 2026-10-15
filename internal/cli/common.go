@@ -27,7 +27,6 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -71,8 +70,6 @@ type commonFlags struct {
 	// to an explicit commit always full-clone. Plumbed into
 	// orchestrator.Config.GitDepth → git.Fetcher.Depth.
 	gitDepth int
-	// cacheDir is resolved lazily via resolveCacheRoot and memoized so
-	// multiple lookups within one invocation return the same value.
 	cacheDir string
 }
 
@@ -128,10 +125,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...output.Format) {
 	}
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
-		"on-disk cache root for source artifacts, helm charts, "+
-			"and persistent render output. Defaults to $XDG_CACHE_HOME/flate "+
-			"(Linux), ~/Library/Caches/flate (macOS), %LocalAppData%/flate "+
-			"(Windows), falling back to $TMPDIR/flate-cache if those error.")
+		"opt-in on-disk cache root for source artifacts, helm charts, and render output (default: memory)")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
 	// Shallow clone is the dominant speedup for GitRepository sources that
@@ -269,7 +263,7 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	}
 	ssrfguard.Restrict(c.restrictEgress)
 	c.path = current
-	owner, err := sourcecache.New(ctx, cacheroot.New(c.resolveCacheRoot()))
+	owner, err := sourcecache.New(ctx, c.cacheDir)
 	if err != nil {
 		return noop, err
 	}
@@ -279,11 +273,6 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 		return noop, err
 	}
 	rel, err := filepath.Rel(res.Source.LocalPath, c.path)
-	if err != nil {
-		_ = owner.Close()
-		return noop, err
-	}
-	res.BaseInput.LocalPath, err = filepath.Abs(cacheroot.New(c.resolveCacheRoot()).Baseline(res.BaseInput.Revision))
 	if err != nil {
 		_ = owner.Close()
 		return noop, err
@@ -323,22 +312,8 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		AllowMissingCRDs:     c.allowMissingCRDs,
 		ForceGenericProvider: c.forceGenericProvider,
 		RestrictEgress:       c.restrictEgress,
-		CacheDir:             c.resolveCacheRoot(),
+		CacheDir:             c.cacheDir,
 	}
-}
-
-// resolveCacheRoot returns dir if non-empty, or the platform default.
-// The result is memoized back into dir so repeated calls within one
-// invocation are cheap and return the same path.
-func resolveCacheRoot(dir *string) string {
-	if *dir == "" {
-		*dir = cacheroot.Default()
-	}
-	return *dir
-}
-
-func (c *commonFlags) resolveCacheRoot() string {
-	return resolveCacheRoot(&c.cacheDir)
 }
 
 func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
@@ -429,7 +404,7 @@ func (o *outputValue) Set(v string) error {
 // orchestrator indicates a fatal init/bootstrap error and callers
 // should bail.
 func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
-	o, err := orchestrator.New(cfg)
+	o, err := orchestrator.New(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

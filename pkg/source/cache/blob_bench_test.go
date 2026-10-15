@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -58,7 +57,7 @@ data:
 }
 
 func BenchmarkBlob_Put(b *testing.B) {
-	c, err := New(b.Context(), cacheroot.New(b.TempDir()))
+	c, err := New(b.Context(), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -79,7 +78,7 @@ func BenchmarkBlob_Put(b *testing.B) {
 }
 
 func BenchmarkBlob_Get(b *testing.B) {
-	c, err := New(b.Context(), cacheroot.New(b.TempDir()))
+	c, err := New(b.Context(), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -111,7 +110,7 @@ func BenchmarkBlob_Get(b *testing.B) {
 // Each operation is an eight-write batch; keys are reused to bound disk occupancy.
 func BenchmarkBlob_PutParallel(b *testing.B) {
 	const callers = 8
-	c, err := New(b.Context(), cacheroot.New(b.TempDir()))
+	c, err := New(b.Context(), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}

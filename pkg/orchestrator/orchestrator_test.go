@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
-	"github.com/gofrs/flock"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -29,7 +28,6 @@ import (
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -180,7 +178,7 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 				root := filepath.Join(t.TempDir(), "cache")
 				cfg := Config{Path: t.TempDir(), CacheDir: root, Concurrency: 2}
 				if injected {
-					owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+					owner, err := sourcecache.New(t.Context(), "")
 					assert.NoError(t, err)
 					t.Cleanup(func() { _ = owner.Close() })
 					cfg.Cache = owner
@@ -196,25 +194,24 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 					assert.NoError(t, reader.Close())
 				}
 				cfg.Input = &store.SourceArtifact{}
-				o, err := New(cfg)
+				o, err := New(t.Context(), cfg)
 				assert.NoError(t, err)
-				if o.hrc.Helm != nil || o.ksc.Trees != nil {
-					t.Fatal("New constructed renderers before selecting their cache owner")
+				if o.cache == nil || o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache) {
+					t.Fatal("New did not wire both renderers through the selected owner")
 				}
 				if stage == "input-failure" && !errors.Is(o.Bootstrap(t.Context()), manifest.ErrInput) {
 					t.Fatal("expected Bootstrap input failure")
 				}
 				o.Stop()
 				o.Stop()
-				if injected || stage == "before-bootstrap" {
+				if injected {
 					if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 						t.Fatalf("Stop allocated independent cache backing: %v", err)
 					}
 				} else {
-					lock := flock.New(cacheroot.New(root).OCILock())
-					t.Cleanup(func() { _ = lock.Close() })
-					if acquired, err := lock.TryLock(); err != nil || !acquired {
-						t.Fatalf("Stop after Bootstrap failure retained owner lock: acquired=%v err=%v", acquired, err)
+					res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+					if err != nil || len(res.Errors) != 0 {
+						t.Fatalf("Stop retained owner lock: result=%+v err=%v", res, err)
 					}
 				}
 				if cfg.Cache != nil {
@@ -247,14 +244,11 @@ spec:
 `)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: []\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 2})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(o.Stop)
-	if o.hrc.Helm != nil || o.ksc.Trees != nil {
-		t.Fatal("New constructed renderers before selecting their cache owner")
-	}
 	o.WithFetcher(manifest.KindOCIRepository, source.ExistenceFetcher{})
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
@@ -298,14 +292,19 @@ metadata:
 data: {k: v}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	fallback := t.TempDir()
+	for _, key := range []string{"HOME", "XDG_CACHE_HOME", "TMPDIR", "TMP", "TEMP", "LOCALAPPDATA", "FLATE_CACHE_DIR"} {
+		t.Setenv(key, fallback)
+	}
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(context.Background()); err != nil {
+	t.Cleanup(o.Stop)
+	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	if err := o.Run(context.Background()); err != nil {
+	if err := o.Run(t.Context()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -314,6 +313,9 @@ data: {k: v}
 	}
 	if got := len(o.Store().ListObjects(manifest.KindConfigMap)); got < 1 {
 		t.Errorf("expected at least 1 ConfigMap after reconcile, got %d", got)
+	}
+	if entries, err := os.ReadDir(fallback); err != nil || len(entries) != 0 {
+		t.Fatalf("empty SDK CacheDir wrote cache artifacts: %v, %v", entries, err)
 	}
 }
 
@@ -366,7 +368,7 @@ metadata: {name: produced}
 data: {k: v}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -443,7 +445,7 @@ metadata: {name: hello}
 data: {k: v}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -512,7 +514,7 @@ spec:
 	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: tunnel-cm}\ndata: {k: v}\n")
 
-	o, err := New(Config{Path: dir + "/kubernetes/flux", WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir + "/kubernetes/flux", WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -563,7 +565,7 @@ spec:
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	rendersDemo := func(t *testing.T, cfg Config) bool {
 		t.Helper()
-		o, err := New(cfg)
+		o, err := New(t.Context(), cfg)
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -636,7 +638,7 @@ spec:
 	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -682,7 +684,7 @@ spec:
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -723,7 +725,7 @@ metadata: {name: hello}
 data: {k: v}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 1})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 1})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -808,7 +810,7 @@ metadata:
 data: {k: v}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -892,7 +894,7 @@ spec:
   defaultValues: {user: alice}
 `)
 
-			o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: workers})
+			o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: workers})
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
@@ -967,7 +969,7 @@ metadata: {name: dropped-secret, namespace: default}
 stringData: {password: hunter2}
 `)
 
-	o, err := New(Config{
+	o, err := New(t.Context(), Config{
 		Path:        dir,
 		WipeSecrets: true,
 		HelmOptions: helm.Options{SkipKinds: []string{manifest.KindSecret}},
@@ -1035,7 +1037,7 @@ spec:
     namespace: default
 `)
 
-	o, err := New(Config{
+	o, err := New(t.Context(), Config{
 		Path:                dir,
 		AllowMissingSecrets: true,
 	})
@@ -1102,7 +1104,7 @@ spec:
     namespace: flux-system
 `)
 
-	o, err := New(Config{
+	o, err := New(t.Context(), Config{
 		Path:                dir,
 		AllowMissingSecrets: true,
 	})
@@ -1242,7 +1244,7 @@ spec:
     namespace: flux-system
 `)
 
-	o, err := New(Config{
+	o, err := New(t.Context(), Config{
 		Path:        dir,
 		WipeSecrets: true,
 		ExternalChanges: change.NewSet([]string{
@@ -1329,7 +1331,7 @@ data:
 	writeTree(origDir, "1")
 	writeTree(dir, "2")
 
-	o, err := New(Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1402,7 +1404,7 @@ spec:
     namespace: flux-system
 `)
 
-	o, err := New(Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1476,7 +1478,7 @@ metadata:
 data: {k: v}
 `)
 
-	o, err := New(Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1537,7 +1539,7 @@ data: {k: v}
 func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
 	// Non-existent path forces Bootstrap -> discovery.Run -> fs.Stat
 	// to fail, which is the canonical (nil, err) embed path.
-	o, err := New(Config{Path: "/nonexistent/orchestrator-render-cleanup", WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: "/nonexistent/orchestrator-render-cleanup", WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1615,7 +1617,7 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 						testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
 					}
 					writeDigestTrackingRelease(t, root, rel, strconv.FormatBool(gate))
-					o, err := New(Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
+					o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
 						DisableChartDigestTracking: override.value})
 					if err != nil {
 						t.Fatal(err)
@@ -1673,7 +1675,7 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			o, err := New(cfg)
+			o, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1743,7 +1745,7 @@ spec:
 			var previous []byte
 			for _, resources := range []string{"[hr.yaml, cm.yaml]", "[cm.yaml, hr.yaml]"} {
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: "+resources+"\n")
-				o, err := New(Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+				o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1827,12 +1829,12 @@ func TestOrchestrator_ChartDigestTrackingCallerOwnership(t *testing.T) {
 			requested := disabled
 			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
 				DisableChartDigestTracking: &requested}
-			first, err := New(cfg)
+			first, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(first.Stop)
-			second, err := New(cfg)
+			second, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1858,7 +1860,7 @@ func TestOrchestrator_BootstrapChartDigestTrackingInputOrder(t *testing.T) {
 			writeDigestTrackingRelease(t, root, "flux/a.yaml", gates[0])
 			writeDigestTrackingRelease(t, root, "flux/z.yaml", gates[1])
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
-			o, err := New(Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1879,7 +1881,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c, err := sourcecache.New(t.Context(), cacheroot.New(root))
+				c, err := sourcecache.New(t.Context(), root)
 				if err != nil {
 					t.Fatal(err)
 				}

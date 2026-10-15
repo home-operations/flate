@@ -195,7 +195,7 @@ spec:
     kind: OCIRepository
     name: charts
 `)
-				o, err := New(Config{
+				o, err := New(t.Context(), Config{
 					Path: dir, CacheDir: t.TempDir(), WipeSecrets: true,
 					AllowMissingSecrets: allowMissing, Concurrency: 4,
 				})
@@ -257,7 +257,7 @@ spec:
   certSecretRef:
     name: ca
 `, strings.TrimPrefix(server.URL, "https://")))
-	o, err := New(Config{
+	o, err := New(t.Context(), Config{
 		Path: dir, CacheDir: t.TempDir(), WipeSecrets: true,
 		AllowMissingSecrets: true, Concurrency: 4,
 	})

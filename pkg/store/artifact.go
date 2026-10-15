@@ -144,9 +144,7 @@ func (a *ResourceSetArtifact) RenderedFingerprint() string { return a.Fingerprin
 //  1. Pointer identity (prev == artifact): trivially equal, no-op.
 //     Source-controller refresh loops cache their own SourceArtifact
 //     and re-publish the same pointer on every tick; the short-
-//     circuit avoids reflection entirely for that case (~3× faster
-//     than the legacy reflect.DeepEqual-on-aliased-pointers fast
-//     path, which still walks struct headers).
+//     circuit avoids reflection entirely for that case.
 //  2. Pinned source payloads are compared by Key and remaining metadata by value.
 //     Distinct mutable views replace each other. Filesystems MUST NOT be compared
 //     or traversed under the shard lock.

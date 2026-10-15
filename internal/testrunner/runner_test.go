@@ -347,7 +347,7 @@ func TestRun_BlockedByCycle(t *testing.T) {
 
 func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 	t.Helper()
-	o, err := orchestrator.New(orchestrator.Config{Path: t.TempDir(), Concurrency: 2})
+	o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

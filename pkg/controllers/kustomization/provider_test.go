@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -70,7 +69,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	input, err := gittree.AdmitDirectory(t.Context(), root)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	owner, err := sourcecache.New(t.Context(), cacheroot.New(""))
+	owner, err := sourcecache.New(t.Context(), "")
 	assert.NoError(t, err)
 	t.Cleanup(func() { _ = owner.Close() })
 	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(owner), false)

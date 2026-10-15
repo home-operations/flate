@@ -60,12 +60,6 @@ func TestBindCommon_ForceGenericProviderFlag(t *testing.T) {
 	}
 }
 
-// TestCacheDir_FlagAndEnvPopulateRoot runs build all twice — once via
-// --cache-dir and once via FLATE_CACHE_DIR — against fresh tempdirs
-// and asserts each one ends up non-empty. The kustomize stage cache
-// writes into <cacheDir>/stage even for the inline-ConfigMap fixture,
-// so a successful build populates the dir if the flag flowed through
-// to orchestrator.Config.CacheDir.
 func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -85,18 +79,56 @@ func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeFixture(t)
-			cacheRoot := filepath.Join(t.TempDir(), "cache")
-			args := append([]string{"build", "all", "--path", path}, tc.via(t, cacheRoot)...)
+			selectedRoot := filepath.Join(t.TempDir(), "cache")
+			args := append([]string{"build", "all", "--path", path}, tc.via(t, selectedRoot)...)
 			_, stderr, code := runCLI(t, args...)
 			if code != 0 {
 				t.Fatalf("build all (%s) exited %d: %s", tc.name, code, stderr)
 			}
-			entries, err := os.ReadDir(cacheRoot)
+			entries, err := os.ReadDir(selectedRoot)
 			if err != nil {
-				t.Fatalf("read cache root %q: %v", cacheRoot, err)
+				t.Fatalf("read cache root %q: %v", selectedRoot, err)
 			}
 			if len(entries) == 0 {
-				t.Errorf("cache root %q is empty after build — --cache-dir / FLATE_CACHE_DIR did not flow through", cacheRoot)
+				t.Errorf("cache root %q is empty after build — --cache-dir / FLATE_CACHE_DIR did not flow through", selectedRoot)
+			}
+		})
+	}
+}
+
+func TestCacheDir_EmptyUsesMemory(t *testing.T) {
+	for _, setting := range []string{"unset", "empty-env", "empty-flag", "empty-flag-over-env"} {
+		t.Run(setting, func(t *testing.T) {
+			fixture := writeFixture(t)
+			fallback := t.TempDir()
+			for _, key := range []string{"HOME", "XDG_CACHE_HOME", "TMPDIR", "TMP", "TEMP", "LOCALAPPDATA"} {
+				t.Setenv(key, fallback)
+			}
+			t.Setenv("FLATE_CACHE_DIR", "")
+			if setting == "unset" {
+				if err := os.Unsetenv("FLATE_CACHE_DIR"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := []string{"build", "all", "--path", fixture, "--concurrency", "2"}
+			if strings.HasPrefix(setting, "empty-flag") {
+				args = append(args, "--cache-dir=")
+			}
+			if setting == "empty-flag-over-env" {
+				t.Setenv("FLATE_CACHE_DIR", filepath.Join(fallback, "explicit"))
+			}
+			stdout, stderr, code := runCLI(t, args...)
+			if code != 0 || !strings.Contains(stdout, "name: hello") {
+				t.Fatalf("memory render: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			for _, name := range []string{"flate", "flate-cache", "explicit", ".cache/flate", "Library/Caches/flate"} {
+				if _, err := os.Stat(filepath.Join(fallback, name)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("empty root created cache %s: %v", name, err)
+				}
+			}
+			cfg := buildOrchCfg(commonFlags{}, helmFlags{})
+			if cfg.CacheDir != "" {
+				t.Fatalf("empty cache setting resolved to %q", cfg.CacheDir)
 			}
 		})
 	}
@@ -223,7 +255,7 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.WriteFile(t, root, ".git/config", "[invalid\n")
-	c := commonFlags{path: root, cacheDir: t.TempDir(), pathRoot: "stale",
+	c := commonFlags{path: root, pathRoot: "stale",
 		pathOrigRoot: "stale", pathOrigSelfURLs: []string{"stale"}}
 	cleanup, err := resolveBaseline(t.Context(), &c, false)
 	defer cleanup()
@@ -240,6 +272,15 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	defer cleanup()
 	assert.Equal(t, err, nil)
 	assert.Equal(t, c.pathRoot, root)
+	assert.Equal(t, c.baseInput.LocalPath, filepath.Join(root, ".flate-base", c.baseInput.Revision))
+	assert.Equal(t, c.pathOrig, c.baseInput.LocalPath)
+	assert.Equal(t, c.pathOrigRoot, c.baseInput.LocalPath)
+	if c.baseInput.FS == nil {
+		t.Fatal("baseline content unavailable through its virtual label")
+	}
+	if _, err := os.Stat(c.baseInput.LocalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("baseline label materialized: %v", err)
+	}
 }
 
 func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {

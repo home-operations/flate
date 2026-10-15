@@ -37,8 +37,8 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (git.CloneOptions, er
 	crt, _, _ := sec.Value("tls.crt")
 	key, _, _ := sec.Value("tls.key")
 	ca, _, _ := sec.Value("ca.crt")
-	legacyCA, _, _ := sec.Value("caFile")
-	ca = cmp.Or(ca, legacyCA)
+	caFile, _, _ := sec.Value("caFile")
+	ca = cmp.Or(ca, caFile)
 	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
 		return opts, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "TLS material unavailable")
 	}

@@ -26,7 +26,7 @@ func completedScopeFixture(b *testing.B, count int, failures, cycle bool) orches
 		fmt.Fprintf(&source, "---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: %s, namespace: %s}\nspec:\n  path: ./objects/%s\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n", ids[i].Name, ids[i].Namespace, ids[i].Name)
 	}
 	testutil.WriteFile(b, root, "flux.yaml", source.String())
-	o, err := orchestrator.New(orchestrator.Config{Path: root, RepoRoot: root, CacheDir: b.TempDir(), Concurrency: 2, ExternalChanges: change.NewSet([]string{"flux.yaml"})})
+	o, err := orchestrator.New(b.Context(), orchestrator.Config{Path: root, RepoRoot: root, CacheDir: b.TempDir(), Concurrency: 2, ExternalChanges: change.NewSet([]string{"flux.yaml"})})
 	if err != nil {
 		b.Fatal(err)
 	}

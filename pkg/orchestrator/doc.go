@@ -8,7 +8,7 @@
 //
 // The lifecycle is:
 //
-//	o := orchestrator.New(orchestrator.Config{...})
+//	o, err := orchestrator.New(ctx, orchestrator.Config{...})
 //	if err := o.Bootstrap(ctx); err != nil { ... }
 //	if err := o.Run(ctx); err != nil { ... }       // blocks until done
 //	o.Stop()

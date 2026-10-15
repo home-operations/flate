@@ -106,7 +106,7 @@ func logNewCycleMessages(prev, next map[manifest.NamedResource]string) {
 // dependsOn list through ReplaceEdges. Idempotent: ReplaceEdges
 // fast-paths the no-change case (equal old vs new edge sets), so
 // re-running this on a stable graph is cheap. Used by the bootstrap
-// full sweep and the legacy failDependsOnCycles entry-point so test
+// full sweep and failDependsOnCycles so test
 // code that calls failDependsOnCycles after a direct store mutation
 // still observes the latest cycle state.
 func (o *Orchestrator) rebuildDependencyGraphFromStore() {

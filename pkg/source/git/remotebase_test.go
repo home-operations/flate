@@ -10,13 +10,12 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 )
 
 func newRemoteBaseFetcher(t *testing.T) *Fetcher {
 	t.Helper()
-	layout := cacheroot.New(t.TempDir())
-	return &Fetcher{Cache: newGitCache(t, layout.Root)}
+	root := t.TempDir()
+	return &Fetcher{Cache: newGitCache(t, root)}
 }
 
 func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {

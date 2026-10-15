@@ -45,7 +45,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if changedOnly {
 						cfg.ExternalChanges = change.NewSet([]string{"flux/gate.yaml", "flux/child.yaml", "dependent/cm.yaml", "independent/cm.yaml"})
 					}
-					o, err := New(cfg)
+					o, err := New(t.Context(), cfg)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -183,7 +183,7 @@ data:
 			// must not request another reconcile while that HR is running.
 			testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
 			testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
-			o, err := New(Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -247,7 +247,7 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	testutil.WriteFile(t, dir, "produced/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "produced/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	testutil.WriteFile(t, dir, "mid/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "mid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mid}\ndata: {k: v}\n")
 
-	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -345,7 +345,7 @@ spec:
 			defer cancel()
 			var previous []byte
 			for range 3 {
-				o, err := New(Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
+				o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
 				if err != nil {
 					t.Fatal(err)
 				}

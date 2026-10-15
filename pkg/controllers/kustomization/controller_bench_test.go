@@ -3,6 +3,8 @@ package kustomization
 import (
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -38,7 +40,7 @@ func BenchmarkSubstitutionProvider_Lookup(b *testing.B) {
 			} else {
 				st.AddObject(cm)
 			}
-			c.Configure(opts)
+			c.Configure(opts, sourcecache.RetryConfig{})
 			b.ReportAllocs()
 			for b.Loop() {
 				if c.substitutionProvider.ConfigMap("apps", "external") != cm {

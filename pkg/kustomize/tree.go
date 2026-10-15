@@ -17,14 +17,14 @@ type GitBaseRequest struct {
 }
 
 // GitBaseFetcher acquires an immutable repository view for private render mounts.
-type GitBaseFetcher func(context.Context, GitBaseRequest) (*store.SourceArtifact, error)
+type GitBaseFetcher func(context.Context, GitBaseRequest, cache.RetryConfig) (*store.SourceArtifact, error)
 
 // TreeCache carries the state shared across one run's renders.
 type TreeCache struct {
 	// remoteFetches dedupes HTTP(S) resource fetches across every preflight
 	// pass in one run: a kustomization URL reached via multiple Flux
 	// Kustomizations is fetched once. See remotefetch.go.
-	remoteFetches sync.Map // url string -> *remoteFetch
+	remoteFetches sync.Map // remoteKey -> *remoteFetch
 
 	// sourceRoots owns standalone source admission and shaping for this run.
 	sourceRoots sync.Map

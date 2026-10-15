@@ -57,7 +57,7 @@ data: {greeting: hi}
 
 	tasks := task.NewBounded(2)
 	c := New(s, tasks, cache, true)
-	c.Configure(Options{})
+	c.Configure(Options{}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()

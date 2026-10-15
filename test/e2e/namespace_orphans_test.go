@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,15 +13,14 @@ import (
 	"testing"
 	"time"
 
-	digest "github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	digest "github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func TestE2E_NamespaceOrphans(t *testing.T) {
@@ -236,7 +236,7 @@ spec:
 		t.Fatal(err)
 	}
 	h := manifest.Fingerprint([5]any{"https://charts.example.invalid", "demo", "0.1.0", source.AuthIdentityFromRefs("demo", nil, nil), false})
-	r, _, err := c.Blob(t.Context(), sourcecache.BlobKey{ID: "blob-chart-" + h}, time.Hour, func(w io.Writer) (ocispec.Descriptor, error) {
+	r, _, err := c.Blob(t.Context(), sourcecache.BlobKey{ID: "blob-chart-" + h}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(archive.Bytes())
 		return ocispec.Descriptor{Digest: digest.FromBytes(archive.Bytes()), Size: int64(archive.Len()), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
 	})

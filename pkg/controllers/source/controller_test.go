@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,12 +24,14 @@ import (
 
 type fakeFetcher struct {
 	calls    int
+	retry    sourcecache.RetryConfig
 	artifact *store.SourceArtifact
 	err      error
 }
 
-func (f *fakeFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *fakeFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	f.calls++
+	f.retry = retry
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -46,7 +49,7 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 	ts := task.NewBounded(0)
 	c := New(st, ts)
 	maps.Copy(c.Fetchers, fetchers)
-	c.Configure(opts)
+	c.Configure(opts, sourcecache.RetryConfig{Attempts: 3})
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()
@@ -112,6 +115,9 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 			}
 			if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
+			}
+			if f.retry.Attempts != 3 {
+				t.Fatalf("configured policy=%+v", f.retry)
 			}
 			art, ok := st.GetArtifact(repo.Named()).(*store.SourceArtifact)
 			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" {
@@ -429,10 +435,13 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 type fallbackFetcher struct {
 	rendered      bool
 	fallbackCalls int
+	retry         sourcecache.RetryConfig
+	fallbackRetry sourcecache.RetryConfig
 	fallbackErr   error
 }
 
-func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+	f.retry = retry
 	if f.rendered {
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
@@ -440,6 +449,7 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*st
 	missing.RegistryConfig = "/registry/config.json"
 	missing.RetryWithRegistryConfig = func(_ context.Context, configPath string) (*store.SourceArtifact, error) {
 		f.fallbackCalls++
+		f.fallbackRetry = retry
 		if configPath != missing.RegistryConfig {
 			return nil, fmt.Errorf("unexpected registry config %q", configPath)
 		}
@@ -488,6 +498,9 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			}
 			if st.GetArtifact(repo.Named()) == nil {
 				t.Error("fetch must store its artifact")
+			}
+			if f.retry.Attempts != 3 || tt.wantFallback > 0 && f.fallbackRetry.Attempts != 3 {
+				t.Fatalf("normal/fallback policies=%+v/%+v", f.retry, f.fallbackRetry)
 			}
 			if f.fallbackCalls != tt.wantFallback {
 				t.Errorf("fallback calls = %d, want %d", f.fallbackCalls, tt.wantFallback)

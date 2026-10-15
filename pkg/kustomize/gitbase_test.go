@@ -2,6 +2,9 @@ package kustomize
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source/cache"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -124,7 +127,7 @@ func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetGitBaseFetcher(func(_ context.Context, _ GitBaseRequest) (*store.SourceArtifact, error) {
+	c.SetGitBaseFetcher(func(_ context.Context, _ GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 		if calls != nil {
 			calls.Add(1)
 		}
@@ -230,7 +233,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	}})
+	}}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -259,7 +262,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	}}); err != nil {
+	}}, sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
 
@@ -443,7 +446,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			sources, err := cache.New(t.Context(), "")
+			sources, err := sourcecache.New(t.Context(), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -451,17 +454,17 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 			fetcher := &sourcegit.Fetcher{Cache: sources}
 			c := NewTreeCache(newTestCache(t, ""))
 			var requests []GitBaseRequest
-			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest) (*store.SourceArtifact, error) {
+			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 				requests = append(requests, request)
 				dir := parent
 				if request.URL == childURL {
 					dir = child
 				}
-				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, MaxAge: request.MaxAge})
+				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, MaxAge: request.MaxAge}, retry)
 			})
 			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
 			render := func(interval string) ([]byte, error) {
-				return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": interval}}})
+				return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": interval}}}, sourcecache.RetryConfig{})
 			}
 			update := func(name, body string) {
 				t.Helper()
@@ -510,5 +513,106 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				t.Fatalf("upstream cycle error: %v", err)
 			}
 		})
+	}
+}
+
+func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
+	for _, concurrency := range []int{2, 4} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/reverse-%t", concurrency, reverse), func(t *testing.T) {
+				var httpCalls [4]atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					attempts := 1
+					if strings.HasSuffix(r.URL.Path, "/3") {
+						attempts = 3
+					}
+					n := httpCalls[attempts].Add(1)
+					if attempts == 1 || n == 1 {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					_, _ = io.WriteString(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retried}\n")
+				}))
+				defer srv.Close()
+				c := NewTreeCache(newTestCache(t, ""))
+				entered := make(chan int, concurrency)
+				release := make(chan struct{})
+				released := false
+				defer func() {
+					if !released {
+						close(release)
+					}
+				}()
+				c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					if request.MaxAge != time.Hour {
+						t.Errorf("remote interval=%v", request.MaxAge)
+					}
+					entered <- retry.Attempts
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+					body := fmt.Sprintf("resources:\n  - %s/%d\n", srv.URL, retry.Attempts)
+					return &store.SourceArtifact{Key: fmt.Sprint(retry.Attempts), FS: fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}}}, nil
+				})
+				type result struct {
+					attempts int
+					body     []byte
+					err      error
+				}
+				done := make(chan result, concurrency)
+				launch := func(i int) {
+					go func() {
+						attempts := 1
+						if i%2 != 0 {
+							attempts = 3
+						}
+						retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
+						input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": {Data: []byte("resources:\n  - https://example.invalid/owner/repo?ref=main\n")}}}
+						body, err := RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": "1h"}}}, retry)
+						done <- result{attempts, body, err}
+					}()
+				}
+				first := 0
+				if reverse {
+					first = concurrency - 1
+				}
+				launch(first)
+				select {
+				case <-entered:
+				case early := <-done:
+					t.Fatalf("render before Git callback: %v", early.err)
+				}
+				for i := range concurrency {
+					if i != first {
+						launch(i)
+					}
+				}
+				for range concurrency - 1 {
+					select {
+					case <-entered:
+					case early := <-done:
+						t.Fatalf("render before Git callback: %v", early.err)
+					}
+				}
+				close(release)
+				released = true
+				for range concurrency {
+					got := <-done
+					if got.attempts == 1 {
+						terminal, ok := errors.AsType[*sourcecache.TerminalError](got.err)
+						if !ok || !terminal.Attempted {
+							t.Fatalf("one-attempt result=%v", got.err)
+						}
+					} else if got.err != nil || !strings.Contains(string(got.body), "name: retried") {
+						t.Fatalf("three-attempt result=%s, %v", got.body, got.err)
+					}
+				}
+				if httpCalls[3].Load() != 2 || httpCalls[1].Load() < 1 || httpCalls[1].Load() > int32(concurrency/2) {
+					t.Fatalf("HTTP attempts=%d/%d", httpCalls[1].Load(), httpCalls[3].Load())
+				}
+			})
+		}
 	}
 }

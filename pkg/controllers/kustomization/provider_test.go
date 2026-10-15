@@ -31,7 +31,7 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 			c := New(st, task.NewBounded(2), nil, true)
 			source := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
 			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
-			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}})
+			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}}
 			deps := c.collectDeps(ks)
 			if (len(deps) == 0) != tc.accepted {
@@ -47,7 +47,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 	other := &manifest.Secret{Name: "other", Namespace: "apps", StringData: map[string]any{"VALUE": "repository"}}
 	st.AddObject(other)
 	c := New(st, task.NewBounded(2), nil, true)
-	c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}})
+	c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}}, sourcecache.RetryConfig{})
 	st.AddObject(&manifest.Secret{Name: external.Name, Namespace: external.Namespace, StringData: map[string]any{"VALUE": "late"}})
 	if c.substitutionProvider.Secret("apps", "external") != external || c.substitutionProvider.Secret("apps", "other") != other || c.substitutionProvider.Secret("other", "external") != nil {
 		t.Fatal("provider lost exact frozen precedence or fallback")
@@ -73,7 +73,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	assert.NoError(t, err)
 	t.Cleanup(func() { _ = owner.Close() })
 	c := New(st, task.NewBounded(2), kustomize.NewTreeCache(owner), false)
-	c.Configure(Options{StrictSubstitutions: true})
+	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))
 	if err != nil {
 		t.Fatal(err)

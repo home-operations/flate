@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 // BenchmarkRenderFlux_SmallKS measures the end-to-end RenderFlux call
@@ -38,7 +39,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
+		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -74,12 +75,12 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 		},
 	}
 	ctx := b.Context()
-	if _, err := RenderFlux(ctx, cache, req); err != nil {
+	if _, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{}); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, req)
+		out, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -141,7 +142,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec})
+		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
 		if err != nil {
 			b.Fatalf("RenderFlux: %v", err)
 		}
@@ -180,7 +181,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
-			out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec})
+			out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
 			if err != nil {
 				b.Fatalf("RenderFlux: %v", err)
 			}

@@ -94,7 +94,7 @@ func (o *Orchestrator) configureControllers() {
 		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 		Producers:           o.producers,
-	})
+	}, o.cfg.SourceRetry)
 	// existence bundles the file-existence lookups depwait needs:
 	// Promote lazy-loads a file-indexed dep into the Store the
 	// moment a depwait edge asks for it (covering the bjw-s parent-
@@ -124,7 +124,7 @@ func (o *Orchestrator) configureControllers() {
 		Options: common, Index: o.index,
 		SubstituteFrom: o.substitutionSources, Substitute: o.cfg.Substitute,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
-	})
+	}, o.cfg.SourceRetry)
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Options:             common,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,

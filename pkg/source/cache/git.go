@@ -38,19 +38,19 @@ type GitGeneration struct {
 
 type gitRequest struct {
 	key     GitKey
-	produce func(storage.Storer, billy.Filesystem) (plumbing.Hash, error)
+	produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)
 }
 
 // Git acquires a private generation through the common freshness and publication path.
-func (c *Cache) Git(ctx context.Context, key GitKey, maxAge time.Duration, produce func(storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, error) {
-	e, err := c.acquire(ctx, acquireKey{ID: key.ID, git: &gitRequest{key, produce}}, maxAge, nil)
+func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, error) {
+	e, err := c.acquire(ctx, acquireKey{ID: key.ID, git: &gitRequest{key, produce}}, policy, nil)
 	if err != nil {
 		return nil, err
 	}
 	return e.git, nil
 }
 
-func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGeneration, ocispec.Descriptor, error) {
+func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (generation *GitGeneration, descriptor ocispec.Descriptor, resultErr error) {
 	g := &GitGeneration{id: uuid.NewString()}
 	complete := false
 	if c.store == nil {
@@ -61,7 +61,10 @@ func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGenera
 	} else {
 		defer func() {
 			if !complete {
-				_ = c.root.RemoveAll(generationPath(g.id))
+				if cleanup := c.root.RemoveAll(generationPath(g.id)); cleanup != nil {
+					generation = nil
+					resultErr = errors.Join(resultErr, cleanup)
+				}
 			}
 		}()
 		g.Backing = osfs.New(c.layout.GitObjects(g.id))
@@ -76,10 +79,16 @@ func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (*GitGenera
 		}
 	}
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
-	hash, err := request.produce(storer, g.Worktree)
+	if err := ctx.Err(); err != nil {
+		return nil, ocispec.Descriptor{}, errors.Join(err, storer.Close())
+	}
+	hash, err := request.produce(ctx, storer, g.Worktree)
 	closeErr := storer.Close()
 	if err != nil {
-		return nil, ocispec.Descriptor{}, &producerError{errors.Join(err, closeErr)}
+		if closeErr != nil {
+			return nil, ocispec.Descriptor{}, errors.Join(err, closeErr)
+		}
+		return nil, ocispec.Descriptor{}, &producerError{err}
 	}
 	if err := errors.Join(closeErr, ctx.Err()); err != nil {
 		return nil, ocispec.Descriptor{}, err

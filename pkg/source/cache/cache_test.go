@@ -66,8 +66,11 @@ func archive(t *testing.T, files ...string) []byte {
 	return data.Bytes()
 }
 
-func producer(data []byte, descriptor ocispec.Descriptor) func(io.Writer) (ocispec.Descriptor, error) {
-	return func(w io.Writer) (ocispec.Descriptor, error) { _, err := w.Write(data); return descriptor, err }
+func producer(data []byte, descriptor ocispec.Descriptor) func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+	return func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		_, err := w.Write(data)
+		return descriptor, err
+	}
 }
 
 func TestAcquire_GenerationsAndFreshness(t *testing.T) {
@@ -83,14 +86,14 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			}
 			key := ArchiveKey{ID: "source-test-generations"}
 			want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"flate.revision": "v1", "other": "preserved"}}
-			_, got, err := c.Acquire(t.Context(), key, time.Hour, producer(archive(t, "file", "v1"), want))
+			_, got, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "file", "v1"), want))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Fatal(diff)
 			}
-			unexpected := func(io.Writer) (ocispec.Descriptor, error) {
+			unexpected := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 				t.Error("fresh hit called producer")
 				return want, errors.New("unexpected producer")
 			}
@@ -100,7 +103,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				}
 				c = newCache(t, root)
 			}
-			warm, got, err := c.Acquire(t.Context(), key, time.Hour, unexpected)
+			warm, got, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,7 +121,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				if err := os.Chtimes(p, stale, stale); err != nil {
 					t.Fatal(err)
 				}
-				if _, _, err := c.Acquire(t.Context(), key, time.Hour, unexpected); err != nil {
+				if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected); err != nil {
 					t.Fatal(err)
 				}
 				info, err := os.Stat(p)
@@ -129,23 +132,23 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 					t.Fatal("access extended resolution TTL")
 				}
 			}
-			if _, _, err := c.Acquire(t.Context(), key, 0, producer(archive(t, "file", "v2"), want)); err != nil {
+			if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(archive(t, "file", "v2"), want)); err != nil {
 				t.Fatal(err)
 			}
 			if data, err := fs.ReadFile(warm, "file"); err != nil || string(data) != "v1" {
 				t.Fatalf("held generation: %q, %v", data, err)
 			}
 			failure := errors.New("verification failed")
-			if _, _, err := c.Acquire(t.Context(), key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				_, _ = w.Write(archive(t, "file", "partial"))
 				return want, failure
 			}); !errors.Is(err, failure) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failure: %v", err)
 			}
 			calls := 0
-			if _, _, err := c.Acquire(t.Context(), key, time.Hour, func(w io.Writer) (ocispec.Descriptor, error) {
+			if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				calls++
-				return producer(archive(t, "file", "v3"), want)(w)
+				return producer(archive(t, "file", "v3"), want)(ctx, w)
 			}); err != nil || calls != 1 {
 				t.Fatalf("failed fill reused previous alias: calls=%d, %v", calls, err)
 			}
@@ -163,7 +166,7 @@ func TestAcquire_ArchivePolicy(t *testing.T) {
 				}
 				c := newCache(t, root)
 				data := archive(t, "dir/drop", "discard", "dir/keep", "first", "dir/.sourceignore", "!keep\n", ".sourceignore", "dir/*\nempty/*\n", "dir/keep", "last", "empty/file", "discard", "image.png", "image", ".git/config", "git")
-				input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-policy", WithDefaults: defaults}, time.Hour, producer(data, ocispec.Descriptor{}))
+				input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-policy", WithDefaults: defaults}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -195,7 +198,7 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 			}
 			c := newCache(t, root)
 			for _, data := range [][]byte{archive(t, "../escape", "x"), archive(t, "file", "x", "file/child", "y"), archive(t, "dir/file", "x", "dir", "y"), []byte("truncated")} {
-				if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-invalid"}, 0, producer(data, ocispec.Descriptor{})); err == nil {
+				if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-invalid"}, Policy{MaxAge: 0}, producer(data, ocispec.Descriptor{})); err == nil {
 					t.Fatal("accepted invalid archive")
 				}
 			}
@@ -207,7 +210,7 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 			if err := w.Close(); err != nil {
 				t.Fatal(err)
 			}
-			input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-link"}, 0, producer(data.Bytes(), ocispec.Descriptor{}))
+			input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-link"}, Policy{MaxAge: 0}, producer(data.Bytes(), ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +227,7 @@ func TestAcquire_ExpandedCapCountsIgnoredDuplicates(t *testing.T) {
 	t.Cleanup(func() { maxExtractedBytes = old })
 	for _, root := range []string{"", t.TempDir()} {
 		c := newCache(t, root)
-		if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-cap", Ignore: "file"}, 0, producer(archive(t, "file", "abc", "file", "def"), ocispec.Descriptor{})); err == nil {
+		if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-cap", Ignore: "file"}, Policy{MaxAge: 0}, producer(archive(t, "file", "abc", "file", "def"), ocispec.Descriptor{})); err == nil {
 			t.Fatal("ignored duplicate bypassed expanded cap")
 		}
 	}
@@ -236,17 +239,17 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 			c := newCache(t, root)
 			started, release := make(chan struct{}), make(chan struct{})
 			var calls atomic.Int32
-			fill := func(w io.Writer) (ocispec.Descriptor, error) {
+			fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				if calls.Add(1) == 1 {
 					close(started)
 				}
 				<-release
-				return producer(archive(t, "file", "data"), ocispec.Descriptor{})(w)
+				return producer(archive(t, "file", "data"), ocispec.Descriptor{})(ctx, w)
 			}
 			var wg sync.WaitGroup
 			for range concurrency {
 				wg.Go(func() {
-					if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-concurrent"}, time.Hour, fill); err != nil {
+					if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-concurrent"}, Policy{MaxAge: time.Hour}, fill); err != nil {
 						t.Error(err)
 					}
 				})
@@ -254,10 +257,10 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 			<-started
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if _, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-test-concurrent"}, time.Hour, fill); !errors.Is(err, context.Canceled) {
+			if _, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-test-concurrent"}, Policy{MaxAge: time.Hour}, fill); !errors.Is(err, context.Canceled) {
 				t.Errorf("wait: %v", err)
 			}
-			if r, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-unrelated"}, time.Hour, producer([]byte("blob"), ocispec.Descriptor{})); err != nil {
+			if r, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-unrelated"}, Policy{MaxAge: time.Hour}, producer([]byte("blob"), ocispec.Descriptor{})); err != nil {
 				t.Error(err)
 			} else {
 				_ = r.Close()
@@ -282,7 +285,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if shared != c {
 		t.Fatal("canonical directory has multiple owners")
 	}
-	reader, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-held"}, Forever, producer([]byte("held"), ocispec.Descriptor{}))
+	reader, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-held"}, Policy{MaxAge: Forever}, producer([]byte("held"), ocispec.Descriptor{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +308,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if acquired, err := lock.TryLock(); err != nil || acquired {
 		t.Fatalf("first Close released shared lock: acquired=%v, err=%v", acquired, err)
 	}
-	if r, _, err := shared.Blob(t.Context(), BlobKey{ID: "blob-shared"}, time.Hour, producer([]byte("data"), ocispec.Descriptor{})); err != nil {
+	if r, _, err := shared.Blob(t.Context(), BlobKey{ID: "blob-shared"}, Policy{MaxAge: time.Hour}, producer([]byte("data"), ocispec.Descriptor{})); err != nil {
 		t.Fatal(err)
 	} else {
 		_ = r.Close()
@@ -336,12 +339,12 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	fill := func(w io.Writer) (ocispec.Descriptor, error) {
+	fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		calls++
-		return producer(archive(t, "file", "data"), ocispec.Descriptor{})(w)
+		return producer(archive(t, "file", "data"), ocispec.Descriptor{})(ctx, w)
 	}
 	for range 2 {
-		if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-persist"}, time.Hour, fill); err == nil {
+		if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-persist"}, Policy{MaxAge: time.Hour}, fill); err == nil {
 			t.Fatal("tag save failure accepted")
 		}
 	}
@@ -362,7 +365,7 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 	var inputs []fs.FS
 	for _, root := range []string{"", t.TempDir()} {
 		c := newCache(t, root)
-		input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-sparse"}, time.Hour, producer(data, ocispec.Descriptor{}))
+		input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-sparse"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -447,7 +450,7 @@ func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
 			}
 			c := newCache(t, root)
 			key := BlobKey{ID: "source-blob"}
-			reader, _, err := c.Blob(t.Context(), key, Forever, producer([]byte("blob bytes"), ocispec.Descriptor{}))
+			reader, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("blob bytes"), ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -475,7 +478,7 @@ func TestAcquire_TrailingDataIsBounded(t *testing.T) {
 			}
 			c := newCache(t, root)
 			var written int
-			_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-trailing"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-trailing"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				if _, err := w.Write(archive(t, "file", "x")); err != nil {
 					return ocispec.Descriptor{}, err
 				}
@@ -505,7 +508,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 			defer cancel()
 			started := make(chan struct{})
 			go func() { <-started; cancel() }()
-			_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-cancel"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-cancel"}, Policy{MaxAge: 0}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				if _, err := w.Write(archive(t, "file", "x")[:512]); err != nil {
 					return ocispec.Descriptor{}, err
 				}
@@ -524,8 +527,8 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 		key := BlobKey{ID: "source-completed-before-cancel"}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		r, _, err := c.Blob(ctx, key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
-			desc, err := producer([]byte("completed"), ocispec.Descriptor{})(w)
+		r, _, err := c.Blob(ctx, key, Policy{MaxAge: 0}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			desc, err := producer([]byte("completed"), ocispec.Descriptor{})(ctx, w)
 			cancel()
 			return desc, err
 		})
@@ -535,7 +538,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 		if err := r.Close(); err != nil {
 			t.Fatal(err)
 		}
-		r, _, err = c.Blob(t.Context(), key, Forever, nil)
+		r, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -551,7 +554,7 @@ func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
 	key := ArchiveKey{ID: "source-unchanged"}
 	var first time.Time
 	for range 2 {
-		if _, _, err := c.Acquire(t.Context(), key, 0, producer(archive(t, "file", "same"), ocispec.Descriptor{})); err != nil {
+		if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(archive(t, "file", "same"), ocispec.Descriptor{})); err != nil {
 			t.Fatal(err)
 		}
 		desc, err := c.store.Resolve(t.Context(), key.ID)
@@ -580,7 +583,7 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 			go func() { <-started; cancel() }()
 			done := make(chan error, 1)
 			go func() {
-				_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-ignore-context"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+				_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-ignore-context"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 					tw := tar.NewWriter(w)
 					if err := tw.WriteHeader(&tar.Header{Name: "file", Size: 1 << 30, Mode: 0o600}); err != nil {
 						return ocispec.Descriptor{}, err
@@ -621,7 +624,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	c := newCache(t, root)
 	key := ArchiveKey{ID: "source-index-recovery"}
 	data := archive(t, "file", "same")
-	if _, _, err := c.Acquire(t.Context(), key, time.Hour, producer(data, ocispec.Descriptor{})); err != nil {
+	if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Close(); err != nil {
@@ -633,9 +636,9 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	}
 	c = newCache(t, root)
 	calls := 0
-	input, _, err := c.Acquire(t.Context(), key, time.Hour, func(w io.Writer) (ocispec.Descriptor, error) {
+	input, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		calls++
-		return producer(data, ocispec.Descriptor{})(w)
+		return producer(data, ocispec.Descriptor{})(ctx, w)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -678,7 +681,7 @@ func TestAcquire_TrailingBoundary(t *testing.T) {
 					root = t.TempDir()
 				}
 				c := newCache(t, root)
-				_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-trailing-boundary"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+				_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-trailing-boundary"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 					if _, err := w.Write(archive(t, "file", "x")); err != nil {
 						return ocispec.Descriptor{}, err
 					}
@@ -704,7 +707,7 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 			}
 			c := newCache(t, root)
 			for i := range 2000 {
-				_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: fmt.Sprintf("source-trailing-failure-%d", i)}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+				_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: fmt.Sprintf("source-trailing-failure-%d", i)}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 					if _, err := w.Write(archive(t, "file", "x")); err != nil {
 						return ocispec.Descriptor{}, err
 					}
@@ -739,7 +742,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			produce := func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			produce := func(_ context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				calls++
 				r, err := git.CloneContext(t.Context(), storer, worktree, &git.CloneOptions{URL: "file://" + src, NoCheckout: true})
 				if err != nil {
@@ -753,7 +756,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			}
 			c := newCache(t, root)
 			key := GitKey{ID: "source-git-restart", Ref: "HEAD"}
-			first, err := c.Git(t.Context(), key, Forever, produce)
+			first, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -779,7 +782,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			c = newCache(t, root)
-			second, err := c.Git(t.Context(), key, Forever, produce)
+			second, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce)
 			if scenario == "ref-mismatch" || scenario == "missing-objects" {
 				if err == nil || calls != 2 {
 					t.Fatalf("invalid restore: calls=%d, %v", calls, err)
@@ -808,13 +811,13 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				if err := os.Remove(blob); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := c.Git(t.Context(), key, Forever, produce); !errors.Is(err, fs.ErrNotExist) {
+				if _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce); !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("touch failure: %v", err)
 				}
 				if err := os.WriteFile(blob, []byte(first.id), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := c.Git(t.Context(), key, Forever, produce); err == nil || calls != 2 {
+				if _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce); err == nil || calls != 2 {
 					t.Fatalf("poisoned hit reused: calls=%d, %v", calls, err)
 				}
 			}
@@ -829,7 +832,7 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			failure := errors.New("incomplete clone")
-			g, err := c.Git(ctx, GitKey{ID: "source-git-failed", RecurseSubmodules: true}, 0, func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			g, err := c.Git(ctx, GitKey{ID: "source-git-failed", RecurseSubmodules: true}, Policy{MaxAge: 0}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				file, err := worktree.Create("partial")
 				if err != nil {
 					return plumbing.ZeroHash, err
@@ -905,7 +908,7 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 			hit := strings.HasPrefix(sink, "last-use")
 			cleanup := strings.HasPrefix(sink, "staging-cleanup")
 			if hit {
-				r, _, err := c.Blob(t.Context(), key, Forever, producer([]byte("content"), ocispec.Descriptor{}))
+				r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("content"), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -941,7 +944,9 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 			var err error
 			if sink == "git-generation" {
 				var g *GitGeneration
-				g, err = c.Git(t.Context(), GitKey{ID: key.ID}, 0, func(storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+				g, err = c.Git(t.Context(), GitKey{ID: key.ID}, Policy{MaxAge: 0}, func(context.Context,
+
+					storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 					called = true
 					return plumbing.ZeroHash, nil
 				})
@@ -950,7 +955,7 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 				}
 			} else {
 				var r io.ReadCloser
-				r, _, err = c.Blob(t.Context(), key, Forever, func(io.Writer) (ocispec.Descriptor, error) {
+				r, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 					called = true
 					if !cleanup {
 						return ocispec.Descriptor{}, nil
@@ -1092,8 +1097,8 @@ func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
 			index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
 			failure := errors.New("producer failed after parent replacement")
 			var before map[string]string
-			g, err := c.Git(t.Context(), key, 0,
-				func(_ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			g, err := c.Git(t.Context(), key, Policy{MaxAge: 0},
+				func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 					id := filepath.Base(filepath.Dir(worktree.Root()))
 					testutil.WriteFile(t, outside, filepath.Join(id, "marker"), "untouched")
 					before = sweepSnapshot(t, outside)

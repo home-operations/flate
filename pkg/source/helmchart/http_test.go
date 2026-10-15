@@ -11,13 +11,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -53,7 +54,7 @@ func TestFetchHTTPChart(t *testing.T) {
 	srv, hits := startHelmRepo(t, chartBytes, chartDigest(chartBytes))
 	f := newHTTPFetcher(t, httpRepo(srv.URL))
 
-	art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+	art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestFetchHTTPChart(t *testing.T) {
 		t.Errorf("chart.tgz missing from artifact %s: %v", art.Key, err)
 	}
 
-	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
+	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("second Fetch: %v", err)
 	}
 	if *hits != 1 {
@@ -93,10 +94,10 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 			t.Cleanup(srv.Close)
 			r := httpRepo(srv.URL)
 			f := newHTTPFetcher(t, r)
-			if _, err := f.fetchIndex(t.Context(), r); err == nil {
+			if _, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{}); err == nil {
 				t.Fatal("accepted invalid index")
 			}
-			idx, err := f.fetchIndex(t.Context(), r)
+			idx, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatalf("retry within repository interval: %v", err)
 			}
@@ -104,7 +105,7 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 				t.Fatal(err)
 			}
 			warm := New(nil, nil, nil, Config{Cache: f.cache})
-			if _, err := warm.fetchIndex(t.Context(), r); err != nil {
+			if _, err := warm.fetchIndex(t.Context(), r, sourcecache.RetryConfig{}); err != nil {
 				t.Fatalf("cached index: %v", err)
 			}
 			if got := attempts.Load(); got != 2 {
@@ -119,7 +120,7 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 	srv, _ := startHelmRepo(t, chartBytes, "deadbeefdeadbeef") // index advertises a wrong digest
 	f := newHTTPFetcher(t, httpRepo(srv.URL))
 
-	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err == nil {
+	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err == nil {
 		t.Fatal("expected digest-mismatch error, got nil")
 	}
 }
@@ -130,7 +131,7 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 	repo := httpRepo(srv.URL)
 	f := newHTTPFetcher(t, repo)
 
-	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "9.9.9"))
+	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "9.9.9"), sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound for a missing version", err)
 	}
@@ -143,7 +144,7 @@ func TestFetchHTTPChart_MissingSecret(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 	f := newHTTPFetcher(t, r) // Secrets is nil
-	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Fatalf("err = %v, want ErrMissingSecret", err)
 	}
@@ -159,7 +160,7 @@ func TestFetchHTTPChart_CertSecretFailsLoud(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	f := newHTTPFetcher(t, r) // Secrets is nil → wiring bug
-	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected a loud certSecretRef error, got nil")
 	}
@@ -176,7 +177,7 @@ func TestFetchHTTPChart_CertSecretNotFoundSoftSkips(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return nil }) // getter wired, secret absent
-	if _, ferr := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); !errors.Is(ferr, manifest.ErrMissingSecret) {
+	if _, ferr := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); !errors.Is(ferr, manifest.ErrMissingSecret) {
 		t.Errorf("certSecretRef not-found should soft-skip (ErrMissingSecret); got: %v", ferr)
 	}
 }
@@ -250,7 +251,7 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 	t.Run("no trailing slash", func(t *testing.T) {
 		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 		f := newHTTPFetcher(t, httpRepo(srv.URL+"/charts"))
-		art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"))
+		art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("Fetch: %v", err)
 		}
@@ -265,7 +266,7 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 	t.Run("trailing slash", func(t *testing.T) {
 		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 		f := newHTTPFetcher(t, httpRepo(srv.URL+"/charts/"))
-		if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
+		if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
 			t.Fatalf("Fetch: %v", err)
 		}
 		if *hits != 1 {
@@ -328,7 +329,7 @@ func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
 	})
 
-	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
+	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 }
@@ -370,7 +371,7 @@ entries:
 				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
 			})
 
-			if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0")); err != nil {
+			if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
 				t.Fatalf("Fetch: %v", err)
 			}
 			if gotAuth != tc.wantAuth {
@@ -418,7 +419,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				defer cancel()
 				result := make(chan error, 1)
 				go func() {
-					_, err := f.Fetch(ctx, helmChart("repo", "app-template", "1.0.0"))
+					_, err := f.Fetch(ctx, helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
 					result <- err
 				}()
 				select {
@@ -440,7 +441,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("HTTP request outlived fetch")
 				}
-				art, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"))
+				art, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -450,5 +451,100 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
+	var hits atomic.Int32
+	var version atomic.Int32
+	version.Store(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, strings.ReplaceAll(helmRepoIndex(""), "1.0.0", fmt.Sprintf("%d.0.0", version.Load())))
+	}))
+	defer srv.Close()
+	r := httpRepo(srv.URL)
+	f := newHTTPFetcher(t, r)
+	first, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+	if err != nil || second != first || hits.Load() != 1 {
+		t.Fatalf("fresh memo=%p/%p, hits=%d, error=%v", first, second, hits.Load(), err)
+	}
+	strict := *r
+	strict.Interval.Duration = 0
+	same, err := f.fetchIndex(t.Context(), &strict, sourcecache.RetryConfig{})
+	if err != nil || same != first || hits.Load() != 2 {
+		t.Fatalf("same digest=%p/%p, hits=%d, error=%v", first, same, hits.Load(), err)
+	}
+	version.Store(2)
+	updated, err := f.fetchIndex(t.Context(), &strict, sourcecache.RetryConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updated.Get("app-template", "2.0.0"); err != nil || updated == first || hits.Load() != 3 {
+		t.Fatalf("expired index not refreshed: hits=%d, error=%v", hits.Load(), err)
+	}
+}
+
+func TestFetchHTTPChart_NestedIndexExhaustion(t *testing.T) {
+	for _, attempts := range []int{1, 3} {
+		t.Run(fmt.Sprint(attempts), func(t *testing.T) {
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits.Add(1)
+				w.Header().Set("Content-Length", "20")
+				_, _ = io.WriteString(w, "partial")
+			}))
+			defer srv.Close()
+			f := newHTTPFetcher(t, httpRepo(srv.URL))
+			_, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
+			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !terminal.Attempted || hits.Load() != int32(attempts) || !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("hits=%d, terminal=%+v, error=%v", hits.Load(), terminal, err)
+			}
+		})
+	}
+}
+
+func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
+	failed := make(chan struct{})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			w.Header().Set("Content-Length", "20")
+			_, _ = io.WriteString(w, "partial")
+			close(failed)
+			return
+		}
+		_, _ = io.WriteString(w, strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0"))
+	}))
+	defer srv.Close()
+	r := httpRepo(srv.URL)
+	f := newHTTPFetcher(t, r)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.fetchIndex(ctx, r, sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour})
+		done <- err
+	}()
+	<-failed
+	updated, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) || !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("interrupted refresh: %v", err)
+	}
+	if _, err := updated.Get("app-template", "2.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	memo, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+	if err != nil || memo != updated || hits.Load() != 2 {
+		t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
 	}
 }

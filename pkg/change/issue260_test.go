@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -18,7 +19,7 @@ import (
 // hitting the network. FS exposes the fixed working-tree fixture content.
 type fakeOCIFetcher struct{ localPath string }
 
-func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	return &store.SourceArtifact{
 		Kind:      manifest.KindOCIRepository,
 		URL:       "oci://example.test/homepage-config",

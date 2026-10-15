@@ -28,7 +28,7 @@ type RemoteBaseRequest struct {
 }
 
 // FetchRemoteBase returns an immutable lazy view of the whole public repository.
-func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest) (*store.SourceArtifact, error) {
+func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	if f.Cache == nil {
 		return nil, fmt.Errorf("%w: remote git base requires cache", manifest.ErrInput)
 	}
@@ -47,7 +47,8 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 	h := manifest.Fingerprint([3]string{request.URL, request.Ref, "remote-base-v1"})
 	key := sourcecache.GitKey{ID: "git-base-" + h, Ref: cmp.Or(request.Ref, "HEAD")}
 	var input *gittree.FS
-	generation, err := f.Cache.Git(ctx, key, request.MaxAge, func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+	generation, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+		input = nil
 		// Opaque base refs require upstream rev-parse over all advertised heads and tags.
 		acquisition := *repo
 		if !plumbing.IsHash(request.Ref) {

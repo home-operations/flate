@@ -190,7 +190,7 @@ func (s selection) acquireBodies(ctx context.Context, entries map[string]object.
 	for _, hash := range hashes {
 		ids = append(ids, hash.String())
 	}
-	generation, err := s.owner.Git(ctx, sourcecache.GitKey{ID: "baseline-wants-" + manifest.Fingerprint(ids), Ref: s.base.Hash.String()}, sourcecache.Forever, func(upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+	generation, err := s.owner.Git(ctx, sourcecache.GitKey{ID: "baseline-wants-" + manifest.Fingerprint(ids), Ref: s.base.Hash.String()}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
 		if err := copyMetadata(ctx, s.base.Repo.Storer, upper, s.base.Hash); err != nil {
 			return plumbing.ZeroHash, err
 		}

@@ -60,7 +60,7 @@ type RenderRequest struct {
 // RenderFlux consumes admitted sources through one filesystem and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
-func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byte, error) {
+func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]byte, error) {
 	if cache == nil || req.Spec == nil {
 		return nil, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
 	}
@@ -92,7 +92,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		key = manifest.Fingerprint([]string{key, req.Source.Key})
 	}
 	blobKey := sourcecache.BlobKey{ID: key, PersistOnly: true}
-	reader, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Forever, nil)
+	reader, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
 		return nil, fmt.Errorf("kustomize render cache lookup: %w", err)
 	}
@@ -114,6 +114,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 		mutableRec = rec
 	}
 	memFS := newTreeFS(lower, root, mutableRec)
+	memFS.retry = retry
 	spec, _ := req.Spec["spec"].(map[string]any)
 	interval, _ := spec["interval"].(string)
 	memFS.maxAge, _ = time.ParseDuration(interval)
@@ -182,7 +183,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest) ([]byt
 	}
 	// Remote inputs have no identity in the source read set.
 	if !injected {
-		reader, _, err := cache.owner.Blob(ctx, blobKey, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+		reader, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 			frame, err := encodeFrame(rec.snapshot(), out)
 			if err != nil {
 				return ocispec.Descriptor{}, fmt.Errorf("encode kustomize render frame: %w", err)

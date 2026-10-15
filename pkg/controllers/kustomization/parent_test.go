@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -25,7 +27,7 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{
 		child.Named(): parent,
-	})})
+	})}, sourcecache.RetryConfig{})
 	deps := c.collectDeps(child)
 	for _, d := range deps {
 		if d.NamedResource == parent {
@@ -70,7 +72,7 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 			id := manifest.NamedResource{Kind: tc.ref.Kind, Namespace: consumer.Namespace, Name: tc.ref.Name}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Renderers: tc.producers, Owners: tc.owners}}}
 			c := New(store.New(), nil, nil, false)
-			c.Configure(Options{Index: index})
+			c.Configure(Options{Index: index}, sourcecache.RetryConfig{})
 			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}}}
 			var got []manifest.NamedResource
 			for _, dep := range c.collectDeps(ks) {
@@ -111,7 +113,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), index, testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Filter: f, Index: index})
+	c.Configure(Options{Filter: f, Index: index}, sourcecache.RetryConfig{})
 	deps := c.collectDeps(consumerObj)
 
 	wantCM := manifest.NamedResource{
@@ -156,7 +158,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), index, testutil.MapLister{self: selfObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
-	c.Configure(Options{Filter: f, Index: index})
+	c.Configure(Options{Filter: f, Index: index}, sourcecache.RetryConfig{})
 	deps := c.collectDeps(selfObj)
 
 	for _, d := range deps {

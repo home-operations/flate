@@ -3,6 +3,8 @@ package kustomization
 import (
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -61,7 +63,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 			producers := []manifest.NamedResource{{Kind: manifest.KindKustomization, Namespace: "apps", Name: "second"}, {Kind: manifest.KindKustomization, Namespace: "apps", Name: "first"}}
 			c := New(st, nil, nil, false)
-			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Renderers: producers}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Renderers: []manifest.NamedResource{consumer.Named()}}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent}), SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "ignored"}: &manifest.ConfigMap{}}})
+			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Renderers: producers}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Renderers: []manifest.NamedResource{consumer.Named()}}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent}), SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "ignored"}: &manifest.ConfigMap{}}}, sourcecache.RetryConfig{})
 			size := len(filter.KeepNames())
 			deps := c.collectDeps(consumer)
 			var want []manifest.DependencyRef

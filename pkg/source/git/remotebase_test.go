@@ -2,9 +2,13 @@ package git
 
 import (
 	"errors"
+	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,7 +43,7 @@ func TestFetchRemoteBase_Tag(t *testing.T) {
 	tagged := mustTagHEAD(t, src, "v0.2.2")
 
 	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v0.2.2", MaxAge: time.Hour})
+	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v0.2.2", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("FetchRemoteBase tag: %v", err)
 	}
@@ -57,7 +61,7 @@ func TestFetchRemoteBase_Branch(t *testing.T) {
 	mustSetRefToHash(t, src, "refs/heads/feature", initial)
 
 	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "feature", MaxAge: time.Hour})
+	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "feature", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("FetchRemoteBase branch: %v", err)
 	}
@@ -74,7 +78,7 @@ func TestFetchRemoteBase_Commit(t *testing.T) {
 	mustCommitFile(t, src, "kustomization.yaml", "c2")
 
 	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: first, MaxAge: time.Hour})
+	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: first, MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("FetchRemoteBase commit: %v", err)
 	}
@@ -90,14 +94,14 @@ func TestFetchRemoteBase_HashNeverExpires(t *testing.T) {
 	ref := mustSetRefToHEAD(t, src, "refs/tags/pin")
 	f := newRemoteBaseFetcher(t)
 	request := RemoteBaseRequest{URL: "file://" + src, Ref: ref, MaxAge: time.Nanosecond}
-	first, err := f.FetchRemoteBase(t.Context(), request)
+	first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(src); err != nil {
 		t.Fatal(err)
 	}
-	second, err := f.FetchRemoteBase(t.Context(), request)
+	second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
 	if err != nil || second.Key != first.Key {
 		t.Fatalf("expired hash hit: %+v, %v", second, err)
 	}
@@ -111,7 +115,7 @@ func TestFetchRemoteBase_HEAD(t *testing.T) {
 	for _, url := range []string{"file://" + src, src} {
 		t.Run(url, func(t *testing.T) {
 			f := newRemoteBaseFetcher(t)
-			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, MaxAge: time.Hour})
+			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, MaxAge: time.Hour}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatalf("FetchRemoteBase HEAD: %v", err)
 			}
@@ -129,14 +133,14 @@ func TestFetchRemoteBase_CacheHit(t *testing.T) {
 	mustTagHEAD(t, src, "v1.0.0")
 
 	f := newRemoteBaseFetcher(t)
-	art1, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v1.0.0", MaxAge: time.Hour})
+	art1, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v1.0.0", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first FetchRemoteBase: %v", err)
 	}
 	if err := os.RemoveAll(src); err != nil {
 		t.Fatal(err)
 	}
-	art2, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v1.0.0", MaxAge: time.Hour})
+	art2, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v1.0.0", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second FetchRemoteBase: %v", err)
 	}
@@ -150,7 +154,7 @@ func TestFetchRemoteBase_CacheHit(t *testing.T) {
 
 func TestFetchRemoteBase_RequiresMirrorAndCache(t *testing.T) {
 	f := &Fetcher{} // no Mirrors, no Cache
-	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1", MaxAge: time.Hour})
+	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("want ErrInput without mirror+cache, got %v", err)
 	}
@@ -161,10 +165,36 @@ func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
 		t.Run(url, func(t *testing.T) {
 			// The uninitialized cache panics if acquisition precedes validation.
 			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
-			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1", MaxAge: time.Hour})
+			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("want ErrInput before acquisition, got %v", err)
 			}
 		})
+	}
+}
+
+func TestFetchRemoteBase_TransientRecovery(t *testing.T) {
+	root := t.TempDir()
+	mustInitRepoWithFiles(t, root, map[string]string{"kustomization.yaml": "content"})
+	handler := gitHTTPHandler(t, root)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			w.Header().Set("Content-Length", "100")
+			_, _ = io.WriteString(w, "001e# service=git-upload-pack\n00000040abc")
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	f := newRemoteBaseFetcher(t)
+	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: srv.URL, MaxAge: time.Hour}, sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
+	if err != nil {
+		t.Fatalf("original caller: %v; requests=%d", err, hits.Load())
+	}
+	assertWorktree(t, art.FS, "kustomization.yaml", "content")
+	if hits.Load() < 3 {
+		t.Fatalf("requests=%d, want failed advertisement plus clone requests", hits.Load())
 	}
 }

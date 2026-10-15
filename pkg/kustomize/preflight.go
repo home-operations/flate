@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	yaml "go.yaml.in/yaml/v4"
@@ -155,9 +157,13 @@ func rewriteURLResources(ctx context.Context, cache *TreeCache, memFS filesys.Fi
 		if _, _, ok := cutHTTPScheme(entry.Value); !ok {
 			continue
 		}
-		localFile, fetchErr := fetchRemoteResource(ctx, cache, memFS, dir, entry.Value)
+		body, fetchErr := cache.FetchRemote(ctx, entry.Value, memFS.(*treeFS).retry)
 		if fetchErr != nil {
 			return false, fmt.Errorf("remote resource %s: %w", entry.Value, fetchErr)
+		}
+		localFile := remoteResourcePrefix + urlHash(entry.Value) + ".yaml"
+		if err := memFS.WriteFile(filepath.Join(dir, localFile), body); err != nil {
+			return false, err
 		}
 		setPlainScalar(entry, "./"+localFile)
 		changed = true
@@ -229,22 +235,6 @@ func lowerASCII(c byte) byte {
 	return c
 }
 
-// fetchRemoteResource fetches urlStr into a <prefix><hash>.yaml file beside the
-// kustomization that referenced it (in the render's private in-memory fs),
-// returning the local filename. The HTTP fetch is deduped via cache.FetchRemote
-// so multiple kustomizations referencing the same URL share one network call.
-func fetchRemoteResource(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, dir, urlStr string) (string, error) {
-	body, err := cache.FetchRemote(ctx, urlStr)
-	if err != nil {
-		return "", err
-	}
-	name := remoteResourcePrefix + urlHash(urlStr) + ".yaml"
-	if err := memFS.WriteFile(filepath.Join(dir, name), body); err != nil {
-		return "", err
-	}
-	return name, nil
-}
-
 // httpStatusError is a typed sentinel returned by httpGetURL when the server
 // responds with a non-2xx status code. The named type lets isHTTPClientError
 // classify errors via errors.As so the check is robust against wrapping.
@@ -252,38 +242,40 @@ type httpStatusError struct {
 	Code int
 }
 
+func (e *httpStatusError) Unwrap() error { return &errcode.ErrorResponse{StatusCode: e.Code} }
+
 func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("HTTP %d", e.Code)
 }
 
 // httpGetURL is the actual network call cache.FetchRemote dispatches through a
 // per-URL sync.Once + done channel.
-func httpGetURL(ctx context.Context, urlStr string) ([]byte, error) {
+func httpGetURL(ctx context.Context, urlStr string, w io.Writer) (ocispec.Descriptor, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
 	if err != nil {
-		return nil, err
+		return ocispec.Descriptor{}, err
 	}
 	resp, err := remoteFetchClient.Do(req)
 	if err != nil {
-		return nil, err
+		return ocispec.Descriptor{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &httpStatusError{Code: resp.StatusCode}
+		return ocispec.Descriptor{}, &httpStatusError{Code: resp.StatusCode}
 	}
 	// Cap with LimitReader +1 so we can detect overflow precisely: read up to
 	// remoteFetchMaxBytes+1, and if we actually got MaxBytes+1 bytes the body
 	// is larger than the cap and we fail fast instead of OOMing.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
+	size, err := io.Copy(w, io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
 	if err != nil {
-		return nil, err
+		return ocispec.Descriptor{}, err
 	}
-	if len(body) > remoteFetchMaxBytes {
-		return nil, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
+	if size > remoteFetchMaxBytes {
+		return ocispec.Descriptor{}, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
 	}
-	return body, nil
+	return ocispec.Descriptor{Size: size}, nil
 }
 
 func urlHash(s string) string {

@@ -18,12 +18,11 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 // TestFetcher_ExtractsLayerWithoutTitleAnnotation regresses the silent
@@ -58,7 +57,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "v2.8.8"},
 	}
 
-	art, err := f.Fetch(t.Context(), repo)
+	art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
-	art, err := f.Fetch(t.Context(), repo)
+	art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -152,7 +151,7 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 
-	art1, err := f.Fetch(t.Context(), repo)
+	art1, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
@@ -161,7 +160,7 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	}
 
 	setArtifact(1)
-	art2, err := f.Fetch(t.Context(), repo)
+	art2, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second Fetch: %v", err)
 	}
@@ -188,13 +187,13 @@ func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 
-	art1, err := f.Fetch(t.Context(), repo)
+	art1, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
 	setArtifact(1)
 	srv.Close()
-	art2, err := f.Fetch(t.Context(), repo)
+	art2, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second Fetch should use fresh resolve cache without registry: %v", err)
 	}
@@ -220,12 +219,12 @@ func TestFetcher_TagCacheHitSkipsSecondPull(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
-	art1, err := f.Fetch(t.Context(), repo)
+	art1, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
 	failBlobs()
-	art2, err := f.Fetch(t.Context(), repo)
+	art2, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second Fetch should use cached tag digest without pulling blobs: %v", err)
 	}
@@ -250,12 +249,12 @@ func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 
-	art, err := f.Fetch(t.Context(), repo)
+	art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
 	srv.Close()
-	if _, err := f.Fetch(t.Context(), repo); err == nil {
+	if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err == nil {
 		t.Fatal("expected refresh to fail after registry shutdown")
 	}
 	if got := mustReadFile(t, art.FS, "app.yaml"); !strings.Contains(got, "v1") {
@@ -275,11 +274,11 @@ func TestFetcher_DigestRefUsesCachedSlot(t *testing.T) {
 		Insecure:  true,
 		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
 	}
-	if _, err := f.Fetch(t.Context(), repo); err != nil {
+	if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("first Fetch: %v", err)
 	}
 	srv.Close()
-	if _, err := f.Fetch(t.Context(), repo); err != nil {
+	if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("digest-pinned cache hit should not need registry: %v", err)
 	}
 }
@@ -299,7 +298,7 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 			Operation: sourcev1.OCILayerCopy,
 		},
 	}
-	copyArt, err := f.Fetch(t.Context(), copyRepo)
+	copyArt, err := f.Fetch(t.Context(), copyRepo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("copy Fetch: %v", err)
 	}
@@ -314,7 +313,7 @@ func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
 		Insecure:  true,
 		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
 	}
-	extractArt, err := f.Fetch(t.Context(), extractRepo)
+	extractArt, err := f.Fetch(t.Context(), extractRepo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("extract Fetch: %v", err)
 	}
@@ -558,7 +557,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		v := newFakeOCIArtifact(t, map[string]string{"app.yaml": body})
 		srv := startFakeRegistry(t, v.manifest, v.config, v.layer)
 		repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Digest: v.manifestDigest}}
-		art, err := f.Fetch(t.Context(), repo)
+		art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -611,7 +610,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 			repo := &manifest.OCIRepository{Name: "tampered", Namespace: "test",
 				URL: "oci://" + mustURL(t, srv.URL).Host + "/chart", Insecure: true,
 				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: metav1.Duration{Duration: time.Hour}}
-			if _, err := f.Fetch(t.Context(), repo); err == nil {
+			if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err == nil {
 				t.Fatal("tampered layer accepted")
 			}
 			repaired.Store(true)
@@ -625,7 +624,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 				}
 				f.Cache = c
 			}
-			art, err := f.Fetch(t.Context(), repo)
+			art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -662,7 +661,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 			t.Cleanup(func() { _ = c.Close() })
 			repo := &manifest.OCIRepository{Name: "failure", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/chart",
 				Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
-			_, err = (&Fetcher{Cache: c}).Fetch(t.Context(), repo)
+			_, err = (&Fetcher{Cache: c}).Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if err == nil || !strings.HasPrefix(err.Error(), ociID(repo)+" "+operation) || strings.Contains(err.Error(), "cache:") {
 				t.Fatalf("failure identity: %v", err)
 			}
@@ -694,7 +693,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			if name == "unmatched" {
 				repo.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "unmatched/type"}
 			}
-			got, err := (&Fetcher{Cache: newSourceCache(t)}).Fetch(t.Context(), repo)
+			got, err := (&Fetcher{Cache: newSourceCache(t)}).Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if name == "unmatched" {
 				if err == nil {
 					t.Fatal("unmatched mediaType accepted")

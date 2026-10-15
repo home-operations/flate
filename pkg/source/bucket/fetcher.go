@@ -34,7 +34,7 @@ type Fetcher struct {
 
 // Fetch implements source.TypedFetcher[*manifest.Bucket]. The typed
 // signature is wrapped via source.Wrap at orchestrator registration.
-func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, source.ErrUnsupportedProvider("Bucket",
 			b.Namespace, b.Name, b.Provider, sourcev1.BucketProviderGeneric,
@@ -52,7 +52,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket) (*store.SourceA
 	}
 	h := manifest.Fingerprint([8]any{endpoint, secure, b.BucketName, b.Prefix, b.Region, authIdentity(b), ignore, sourceignore.RulesVersion})
 	key := cache.ArchiveKey{ID: "source-bucket-" + h, Ignore: ignore}
-	input, desc, err := f.Cache.Acquire(ctx, key, b.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) {
+	input, desc, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		return walkBucket(ctx, client, b, w)
 	})
 	if err != nil {

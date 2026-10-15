@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,16 +13,15 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	chartcommon "helm.sh/helm/v4/pkg/chart/common"
-	chart "helm.sh/helm/v4/pkg/chart/v2"
-	"oras.land/oras-go/v2/errdef"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"oras.land/oras-go/v2/errdef"
 )
 
 func renderPersistenceEligible(t testing.TB) bool {
@@ -361,7 +361,7 @@ data:
 			}
 			values := map[string]any{"greeting": "hi", "fail": true}
 			key := cache.BlobKey{ID: computeTemplateKey(loaded, values, Options{}, newHR()), PersistOnly: true}
-			r, _, err := owner.Blob(t.Context(), key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+			r, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				_, err := io.WriteString(w, first)
 				return ocispec.Descriptor{}, err
 			})

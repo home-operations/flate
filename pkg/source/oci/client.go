@@ -16,6 +16,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -27,9 +28,8 @@ const dockerConfigJSONKey = ".dockerconfigjson"
 // uses the supplied credentials, and wires a bounded HTTP transport
 // (TLS + proxy) plus docker-style auth.
 //
-// Retries are owned by the Fetch-level retry decorator (source.WithRetry) so
-// they happen once, uniformly, across every source kind — this client uses a
-// plain, NON-retrying transport. source.NewHTTPTransport always returns a
+// Retries belong to cache acquisition; this client uses a plain transport.
+// source.NewHTTPTransport always returns a
 // bounded transport (a http.DefaultTransport clone carrying
 // ResponseHeaderTimeout as a liveness backstop, plus any TLS/proxy), so oras
 // never falls back to its retry-enabled auth.DefaultClient and a black-holed
@@ -81,7 +81,7 @@ func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) 
 // config and Docker defaults retain their upstream stores. Global credentials
 // MUST wait for the source controller to exhaust rendered Secrets; eligible
 // retries are carried by MissingSecretError.
-func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository) (credentials.Store, error) {
+func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, retry cache.RetryConfig) (credentials.Store, error) {
 	if repo.SecretRef == nil {
 		return loadCredentials(f.RegistryConfig)
 	}
@@ -90,14 +90,14 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found"))
+		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found"), retry)
 	}
 	configJSON, _, err := sec.Value(dockerConfigJSONKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, ociID(repo), err)
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"))
+		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), retry)
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {
@@ -114,7 +114,7 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 // registryFallback preserves the missing Secret until renders are exhausted.
 // A pull retry requires a credential for this registry; unrelated credentials
 // MUST leave producer-backed sources skippable.
-func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error) (credentials.Store, error) {
+func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, retry cache.RetryConfig) (credentials.Store, error) {
 	parsed, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
@@ -149,7 +149,7 @@ func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIReposi
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
-		return f.fetchWithCredentials(ctx, repo, credStore)
+		return f.fetchWithCredentials(ctx, repo, credStore, retry)
 	}
 	return nil, mse
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/external"
 )
 
@@ -21,7 +22,7 @@ func TestFetcher_FileURL(t *testing.T) {
 		Revision:    "v1@sha256:abc",
 		Digest:      "sha256:abc",
 	}
-	art, err := f.Fetch(context.Background(), ea)
+	art, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestFetcher_FileURL(t *testing.T) {
 func TestFetcher_NoArtifact(t *testing.T) {
 	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{Name: "ea", Namespace: "apps"}
-	_, err := f.Fetch(context.Background(), ea)
+	_, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error when ArtifactURL is empty")
 	}
@@ -61,7 +62,7 @@ func TestFetcher_NonFileURL(t *testing.T) {
 		Name: "ea", Namespace: "apps",
 		ArtifactURL: "http://source-controller.flux-system.svc/x.tar.gz",
 	}
-	_, err := f.Fetch(context.Background(), ea)
+	_, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error for non-file:// URL")
 	}

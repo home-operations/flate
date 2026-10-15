@@ -22,7 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, client *remote.Repository) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, client *remote.Repository, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, ociID(repo))
 	}
@@ -42,7 +42,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	}
 	var input fs.FS
 	var descriptor ocispec.Descriptor
-	produce := func(w io.Writer) (ocispec.Descriptor, error) {
+	produce := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		selected, err := resolveRef(ctx, client, repo, ref)
 		if err != nil {
 			return ocispec.Descriptor{}, err
@@ -54,7 +54,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	switch effectiveLayerOperation(repo.LayerSelector) {
 	case sourcev1.OCILayerCopy:
 		id = "blob-oci-" + h
-		r, desc, err := f.Cache.Blob(ctx, cache.BlobKey{ID: id}, maxAge, produce)
+		r, desc, err := f.Cache.Blob(ctx, cache.BlobKey{ID: id}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
@@ -64,7 +64,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		}
 	case sourcev1.OCILayerExtract:
 		var err error
-		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, maxAge, produce)
+		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}

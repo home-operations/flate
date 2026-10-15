@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 type pinTransport struct {
@@ -123,7 +124,7 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 			f := &Fetcher{Cache: newGitCache(t, "")}
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
 				Name: "pin", URL: "pin://" + parent, Reference: &manifest.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
-			})
+			}, sourcecache.RetryConfig{})
 			if len(counter.requests) != tc.calls {
 				t.Fatalf("parent requests=%d, want %d; %v", len(counter.requests), tc.calls, err)
 			}

@@ -67,7 +67,7 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 	}
 	remote := &baseRemote{client: client, endpoint: ep, capabilities: refs.Capabilities, pin: pin, url: url}
 	key := sourcecache.GitKey{ID: "baseline-meta-" + manifest.Fingerprint([]string{url, pin.String()}), Ref: pin.String()}
-	generation, err := owner.Git(ctx, key, sourcecache.Forever, func(upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+	generation, err := owner.Git(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
 		if err := remote.fetch(ctx, upper, nil); err != nil {
 			return plumbing.ZeroHash, err
 		}

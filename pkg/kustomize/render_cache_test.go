@@ -68,7 +68,7 @@ func renderPersistenceEligible(t testing.TB) bool {
 
 func readTestRenderFrame(t testing.TB, cache *TreeCache, key string) (readSetSnapshot, []byte, bool) {
 	t.Helper()
-	r, _, err := cache.owner.Blob(t.Context(), sourcecache.BlobKey{ID: key, PersistOnly: true}, sourcecache.Forever, nil)
+	r, _, err := cache.owner.Blob(t.Context(), sourcecache.BlobKey{ID: key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if errors.Is(err, errdef.ErrNotFound) {
 		return readSetSnapshot{}, nil, false
 	}
@@ -88,7 +88,7 @@ func readTestRenderFrame(t testing.TB, cache *TreeCache, key string) (readSetSna
 
 func publishTestFrame(t testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	t.Helper()
-	r, _, err := owner.Blob(t.Context(), key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+	r, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(raw)
 		return ocispec.Descriptor{}, err
 	})
@@ -123,7 +123,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	cache := NewTreeCache(newTestCache(t, cacheDir))
 	ctx := t.Context()
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache = NewTreeCache(newTestCache(t, cacheDir))
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		[]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out3, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	out3, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("post-edit render: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		t.Errorf("re-render should reflect the edit; got %s", out3)
 	}
 	testutil.WriteFile(t, root, "patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {patched: v2}\n")
-	out4, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
+	out4, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil || !strings.Contains(string(out4), "patched: v2") {
 		t.Fatalf("consumed patch edit replayed stale output: %s, %v", out4, err)
 	}
@@ -204,7 +204,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	cache := NewTreeCache(newTestCache(t, cacheDir))
 	ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
+	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	}
 
 	cache = NewTreeCache(newTestCache(t, cacheDir))
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec})
+	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -241,14 +241,14 @@ func TestRenderFlux_MemoryOwnerUnchanged(t *testing.T) {
 
 	rootA := writeTree(t, files)
 	plain := NewTreeCache(newTestCache(t, ""))
-	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Source: localSource(t, rootA), Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Source: localSource(t, rootA), Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("plain render: %v", err)
 	}
 
 	rootB := writeTree(t, files)
 	cached := NewTreeCache(newTestCache(t, t.TempDir()))
-	outCached, err := RenderFlux(ctx, cached, RenderRequest{Source: localSource(t, rootB), Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec})
+	outCached, err := RenderFlux(ctx, cached, RenderRequest{Source: localSource(t, rootB), Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("cached render: %v", err)
 	}
@@ -342,13 +342,13 @@ func TestRenderFlux_RemoteNotCached(t *testing.T) {
 				remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
 				cache := NewTreeCache(newTestCache(t, cacheDir))
 				remote := memoryTree(t, remoteFiles)
-				cache.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest) (*store.SourceArtifact, error) {
+				cache.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 					if req.URL != gitURL {
 						t.Errorf("unexpected git URL %q", req.URL)
 					}
 					return &store.SourceArtifact{FS: remote, Key: fmt.Sprintf("pin-%d", v)}, nil
 				})
-				out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
+				out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 				if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: remote-v%d", v)) {
 					t.Fatalf("remote version %d: %s, %v", v, out, err)
 				}
@@ -391,7 +391,7 @@ func TestRenderKey_VersionedSalt(t *testing.T) {
 			}
 			publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, testRenderFrame(t, readSetSnapshot{}, []byte("STALE")))
 			cache = NewTreeCache(newTestCache(t, cacheDir))
-			out, err := RenderFlux(t.Context(), cache, req)
+			out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 			if err != nil || !strings.Contains(string(out), "name: fresh") {
 				t.Fatalf("persisted old key reused: %s, %v", out, err)
 			}
@@ -408,7 +408,7 @@ func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 	key := renderKey(demoRawSpec, root, ".", "")
 	publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
-	out, err := RenderFlux(t.Context(), cache, req)
+	out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 	if err != nil || !strings.Contains(string(out), "name: fresh") {
 		t.Fatalf("ordinary raw identity reused cached output: %s, %v", out, err)
 	}
@@ -452,7 +452,7 @@ func TestRenderFlux_CacheFrames(t *testing.T) {
 				frame = testRenderFrame(t, tc.snapshot, nil)
 			}
 			publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, frame)
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoRawSpec})
+			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -517,7 +517,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 			}()
 			rendered := make(chan error, 1)
 			wg.Go(func() {
-				out, err := RenderFlux(ctx, cache, RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoRawSpec})
+				out, err := RenderFlux(ctx, cache, RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 				if err == nil && validate && eligible && string(out) != "VALIDATED\n" {
 					err = fmt.Errorf("validation did not return its acquired frame: %q", out)
 				}
@@ -534,7 +534,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 			progress := make(chan error, 1)
 			wg.Go(func() {
 				progress <- func() error {
-					r, _, err := cache.owner.Blob(ctx, key, sourcecache.Forever, nil)
+					r, _, err := cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 					if r != nil {
 						err = errors.Join(err, r.Close())
 					}
@@ -544,7 +544,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 					if (!validate || !eligible) && !errors.Is(err, errdef.ErrNotFound) {
 						return fmt.Errorf("lookup before completed publication: %w", err)
 					}
-					r, _, err = cache.owner.Blob(ctx, key, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+					r, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						_, err := w.Write(frame)
 						return ocispec.Descriptor{}, err
 					})
@@ -554,7 +554,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 					if err := r.Close(); err != nil {
 						return err
 					}
-					r, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{ID: "ordinary-source"}, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+					r, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{ID: "ordinary-source"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						_, err := io.WriteString(w, "source")
 						return ocispec.Descriptor{}, err
 					})
@@ -598,7 +598,7 @@ func TestRenderFlux_CacheStorageFailures(t *testing.T) {
 			cache := NewTreeCache(newTestCache(t, cacheDir))
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 			if fault == "lookup" {
-				if _, err := RenderFlux(t.Context(), cache, req); err != nil {
+				if _, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -606,7 +606,7 @@ func TestRenderFlux_CacheStorageFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				out, err := RenderFlux(t.Context(), cache, req)
+				out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 				if len(out) != 0 || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, errdef.ErrNotFound) {
 					t.Fatalf("%s fault returned output %q, error %v", fault, out, err)
 				}

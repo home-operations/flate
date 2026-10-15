@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,10 +12,9 @@ import (
 	"runtime/debug"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
-
-	"github.com/home-operations/flate/internal/assert"
 )
 
 func TestBuildIdentity_Stable(t *testing.T) {
@@ -74,7 +74,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	processIdentity = identityA
 	c := newCache(t, root)
 	key := BlobKey{ID: "render-input", PersistOnly: true}
-	r, _, err := c.Blob(t.Context(), BlobKey{ID: key.ID}, 0, producer([]byte("ordinary"), ocispec.Descriptor{}))
+	r, _, err := c.Blob(t.Context(), BlobKey{ID: key.ID}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +87,10 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		}
 		processIdentity = identity
 		c = newCache(t, root)
-		if r, _, err := c.Blob(t.Context(), key, Forever, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+		if r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
-		r, _, err := c.Blob(t.Context(), key, 0, producer([]byte(identity), ocispec.Descriptor{}))
+		r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(identity), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		}
 		processIdentity = identity
 		c = newCache(t, root)
-		r, _, err := c.Blob(t.Context(), key, Forever, nil)
+		r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,8 +124,8 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, produce := range []func(io.Writer) (ocispec.Descriptor, error){nil, producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
-		r, _, err := c.Blob(t.Context(), key, Forever, produce)
+	for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
+		r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
 		if produce == nil {
 			if r != nil || !errors.Is(err, errdef.ErrNotFound) {
 				t.Fatalf("dirty lookup hit: %v", err)

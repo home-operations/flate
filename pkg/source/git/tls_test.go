@@ -33,9 +33,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
@@ -204,7 +204,7 @@ func TestFetcher_TLSOperations(t *testing.T) {
 			repo := gitRepoWithSecret("tls", srv.URL, "tls")
 			repo.Reference, repo.RecurseSubmodules = tc.ref, tc.recurse
 			repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
-			art, err := f.Fetch(t.Context(), repo)
+			art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if err != nil {
 				_, fallback := f.fallback.Load(srv.URL)
 				t.Fatalf("fetch: %v (requests=%d, fallback=%t)", err, requests.Load(), fallback)
@@ -233,7 +233,7 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		}}
 		ssrfguard.Restrict(true)
 		defer ssrfguard.Restrict(false)
-		_, err := f.Fetch(t.Context(), gitRepoWithSecret("restricted", srv.URL, "tls"))
+		_, err := f.Fetch(t.Context(), gitRepoWithSecret("restricted", srv.URL, "tls"), sourcecache.RetryConfig{})
 		if op, ok := errors.AsType[*net.OpError](err); !ok || op.Op != "dial" {
 			t.Fatalf("fetch error = %v, want dial error", err)
 		}
@@ -310,7 +310,7 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 				if exact {
 					repo.Reference = &manifest.GitRepositoryRef{Commit: hash.String()}
 				}
-				art, err := f.Fetch(t.Context(), repo)
+				art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 				if child == "private-ca" {
 					if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 						t.Fatalf("child inherited private CA: %v", err)
@@ -383,7 +383,7 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 			done := make(chan error, len(repos))
 			for _, repo := range repos {
 				workers.Go(func() {
-					art, err := f.Fetch(ctx, repo)
+					art, err := f.Fetch(ctx, repo, sourcecache.RetryConfig{})
 					if err == nil {
 						var content []byte
 						content, err = fs.ReadFile(art.FS, "hello.txt")
@@ -401,19 +401,19 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 					t.Fatal("custom TLS acquisitions did not overlap")
 				}
 			}
-			_, err := f.Fetch(ctx, gitRepoWithSecret("anonymous", repos[0].URL, ""))
+			_, err := f.Fetch(ctx, gitRepoWithSecret("anonymous", repos[0].URL, ""), sourcecache.RetryConfig{})
 			if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 				t.Fatalf("anonymous fetch inherited private trust: %v", err)
 			}
 			for _, name := range []string{"wrong-ca", "wrong-client"} {
 				bad := gitRepoWithSecret(name, repos[0].URL, name)
 				bad.ProxySecretRef = repos[0].ProxySecretRef
-				if _, err := f.Fetch(ctx, bad); err == nil {
+				if _, err := f.Fetch(ctx, bad, sourcecache.RetryConfig{}); err == nil {
 					t.Fatalf("%s fetch inherited another operation's credentials", name)
 				}
 			}
 			for _, ref := range []string{"", mustHead(t, root)} {
-				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref})
+				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref}, sourcecache.RetryConfig{})
 				if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 					t.Fatalf("anonymous remote base inherited private trust: %v", err)
 				}
@@ -497,7 +497,7 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	}}
 	repo := gitRepoWithSecret("tls", "https://example.com/x.git", "tls")
 	repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
-	_, err := f.Fetch(t.Context(), repo)
+	_, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("proxy validation before cache admission: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -33,7 +34,7 @@ const (
 // dispatches via this untyped interface. Concrete implementations
 // satisfy it through Wrap[T] — see TypedFetcher.
 type Fetcher interface {
-	Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error)
 }
 
 // TypedFetcher is the kind-specific Fetcher each concrete source kind
@@ -44,7 +45,7 @@ type Fetcher interface {
 // Wrap[T] turns a TypedFetcher into the untyped Fetcher the
 // source controller's map needs.
 type TypedFetcher[T manifest.BaseManifest] interface {
-	Fetch(ctx context.Context, obj T) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj T, retry sourcecache.RetryConfig) (*store.SourceArtifact, error)
 }
 
 // Wrap converts a TypedFetcher into the untyped Fetcher interface
@@ -61,12 +62,12 @@ type typedAdapter[T manifest.BaseManifest] struct {
 	inner TypedFetcher[T]
 }
 
-func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	typed, ok := obj.(T)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s fetcher: unexpected payload %T", manifest.ErrInput, a.label, obj)
 	}
-	return a.inner.Fetch(ctx, typed)
+	return a.inner.Fetch(ctx, typed, retry)
 }
 
 // Suspendable is satisfied by source CR types that carry a
@@ -88,7 +89,7 @@ type Suspendable interface {
 type ExistenceFetcher struct{}
 
 // Fetch implements source.Fetcher as a no-op — see ExistenceFetcher.
-func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	return nil, nil
 }
 

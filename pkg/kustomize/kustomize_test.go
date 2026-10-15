@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"sigs.k8s.io/yaml"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"sigs.k8s.io/yaml"
 )
 
 // TestRenderFlux_RespectsCanceledContext asserts the renderer bails
@@ -27,7 +27,7 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
-	}})
+	}}, sourcecache.RetryConfig{})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -141,7 +141,7 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 				"annotations": map[string]any{"managed-by": "flate"},
 			},
 		},
-	}})
+	}}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 				},
 			},
 		},
-	}})
+	}}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, src), Label: src, SubPath: ".", Spec: prepared.Contents})
+	out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, src), Label: src, SubPath: ".", Spec: prepared.Contents}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestRenderFlux_OwnerLabels_ClusterScoped(t *testing.T) {
 	})
 	spec := ksDoc(nil)
 	spec["metadata"] = map[string]any{"name": "infra"}
-	out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec})
+	out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, "")), RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

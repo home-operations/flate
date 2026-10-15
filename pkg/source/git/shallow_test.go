@@ -22,7 +22,7 @@ import (
 func openGeneration(t *testing.T, f *Fetcher, artifact *store.SourceArtifact) *git.Repository {
 	t.Helper()
 	id, _, _ := strings.Cut(artifact.Key, "@")
-	generation, err := f.Cache.Git(t.Context(), sourcecache.GitKey{ID: id}, sourcecache.Forever, nil)
+	generation, err := f.Cache.Git(t.Context(), sourcecache.GitKey{ID: id}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestMirror_ShallowCloneTruncatesHistory(t *testing.T) {
 		URL: "file://" + src,
 	}
 
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestMirror_ShallowTagFetch(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
 
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch tag: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 		URL: "file://" + src,
 	}
 
-	art1, err := f.Fetch(context.Background(), repo)
+	art1, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch 1: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 		t.Fatal("tip did not move")
 	}
 
-	art2, err := f.Fetch(context.Background(), repo)
+	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch 2 (incremental shallow): %v", err)
 	}
@@ -178,7 +178,7 @@ func TestMirror_ShallowSemverFetchesTagTips(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{SemVer: ">=1.0.0"},
 	}
 
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch semver: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestMirror_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
-	art, err := f.Fetch(t.Context(), repo)
+	art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch tag: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestFetch_ShallowClone(t *testing.T) {
 			Name: "t", Namespace: "flux-system",
 			URL: "file://" + src,
 		}
-		art, err := f.Fetch(context.Background(), repo)
+		art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("Fetch shallow: %v", err)
 		}
@@ -306,7 +306,7 @@ func TestFetch_ShallowClone(t *testing.T) {
 			URL:            "file://" + src,
 			SparseCheckout: []string{"apps/a"},
 		}
-		art, err := f.Fetch(context.Background(), repo)
+		art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("Fetch shallow sparse: %v", err)
 		}

@@ -30,13 +30,15 @@ func helmChart(repoName, chart, version string) *manifest.HelmChartSource {
 
 // stubOCI records the OCIRepository handed to it and returns a canned result.
 type stubOCI struct {
-	got *manifest.OCIRepository
-	art *store.SourceArtifact
-	err error
+	got   *manifest.OCIRepository
+	retry cache.RetryConfig
+	art   *store.SourceArtifact
+	err   error
 }
 
-func (s *stubOCI) Fetch(_ context.Context, r *manifest.OCIRepository) (*store.SourceArtifact, error) {
+func (s *stubOCI) Fetch(_ context.Context, r *manifest.OCIRepository, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	s.got = r
+	s.retry = retry
 	return s.art, s.err
 }
 
@@ -138,7 +140,11 @@ func TestFetch_OCIBranch(t *testing.T) {
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot"}}
 	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub}
 
-	art, err := f.Fetch(context.Background(), helmChart("truecharts", "kromgo", "3.0.0"))
+	retry := cache.RetryConfig{Attempts: 3}
+	art, err := f.Fetch(context.Background(), helmChart("truecharts", "kromgo", "3.0.0"), retry)
+	if stub.retry != retry {
+		t.Fatalf("nested policy=%+v, want %+v", stub.retry, retry)
+	}
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -158,7 +164,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 
 func TestFetch_RepoNotFound(t *testing.T) {
 	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
-	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"))
+	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"), cache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound", err)
 	}
@@ -168,7 +174,7 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 	repo := ociRepo("oci://example.test/charts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
 	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub, disableChartDigestTracking: true}
-	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0")); err != nil {
+	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0"), cache.RetryConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.got.Interval.Duration != cache.Forever {

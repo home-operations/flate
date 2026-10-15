@@ -14,9 +14,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"golang.org/x/crypto/ssh"
-
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestFetcher_WipedCredentials(t *testing.T) {
@@ -71,7 +71,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 		URL:      "https://github.com/x/y.git",
 		Provider: sourcev1.GitProviderGitHub,
 	}
-	_, err := f.Fetch(context.Background(), repo)
+	_, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -232,7 +232,7 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), repo)
+	_, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}

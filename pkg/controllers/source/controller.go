@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -29,6 +30,7 @@ import (
 // Store with the result.
 type Controller struct {
 	*base.Controller
+	retry cache.RetryConfig
 
 	// Fetchers maps source CR kind → Fetcher implementation. Source
 	// kinds with no entry are ignored, which is also how a flate caller
@@ -73,8 +75,9 @@ func New(s *store.Store, t *task.Service) *Controller {
 
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle.
-func (c *Controller) Configure(opts FetchOptions) {
+func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
 	c.SetFilter(opts.Filter)
+	c.retry = retry
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 	c.producers = opts.Producers
 }
@@ -145,7 +148,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 	var artifact *store.SourceArtifact
 	var fetchErr error
 	c.Tasks.YieldSlot(func() {
-		artifact, fetchErr = fetcher.Fetch(ctx, obj)
+		artifact, fetchErr = fetcher.Fetch(ctx, obj, c.retry)
 	})
 	// A Kustomization may still emit or patch this Secret. Wait for the
 	// rendered contents; only fall back, fail or skip for a missing Secret

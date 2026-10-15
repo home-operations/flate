@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/go-git/go-git/v5"
 
@@ -185,8 +186,8 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 				}
 				key := sourcecache.BlobKey{ID: "blob-before-stop"}
 				if cfg.Cache != nil {
-					reader, _, err := cfg.Cache.Blob(t.Context(), key, time.Hour,
-						func(w io.Writer) (ocispec.Descriptor, error) {
+					reader, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour},
+						func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 							_, err := io.WriteString(w, "caller-owned")
 							return ocispec.Descriptor{}, err
 						})
@@ -215,7 +216,7 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 					}
 				}
 				if cfg.Cache != nil {
-					reader, _, err := cfg.Cache.Blob(t.Context(), key, time.Hour, nil)
+					reader, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
 					assert.NoError(t, err)
 					assert.NoError(t, reader.Close())
 				}
@@ -1888,12 +1889,12 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				t.Cleanup(func() { _ = c.Close() })
 				calls := 0
 				key := sourcecache.BlobKey{ID: "blob-owner-test"}
-				produce := func(w io.Writer) (ocispec.Descriptor, error) {
+				produce := func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 					calls++
 					_, err := io.WriteString(w, "held")
 					return ocispec.Descriptor{}, err
 				}
-				reader, _, err := c.Blob(t.Context(), key, time.Hour, produce)
+				reader, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1915,7 +1916,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				if err != nil || len(entries) != 0 {
 					t.Fatalf("diff sides created independent cache backing: entries=%v err=%v", entries, err)
 				}
-				reader, _, err = c.Blob(t.Context(), key, time.Hour, produce)
+				reader, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 				if err != nil {
 					t.Fatal(err)
 				}

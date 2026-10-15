@@ -15,7 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/spf13/pflag"
 	"sigs.k8s.io/yaml"
 )
@@ -766,7 +766,7 @@ func copyTree(t *testing.T, src, dst string) {
 // TestBindCommon_DefaultValues sanity-checks the persistent flag set:
 // every common flag binds with a known-good default.
 func TestBindCommon_DefaultValues(t *testing.T) {
-	assert.Equal(t, buildOrchCfg(commonFlags{}, helmFlags{}).SourceRetry, source.RetryConfig{
+	assert.Equal(t, buildOrchCfg(commonFlags{}, helmFlags{}).SourceRetry, sourcecache.RetryConfig{
 		Attempts: 3, MinWait: 200 * time.Millisecond, MaxWait: 3 * time.Second, Jitter: 0.1,
 	})
 	cmd := New("test")

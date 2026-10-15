@@ -5,12 +5,16 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,29 +44,49 @@ func TestFetcher_PackedContent(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, files)
 	for _, mode := range []string{"memory", "disk"} {
-		t.Run(mode, func(t *testing.T) {
-			root := ""
-			if mode == "disk" {
-				root = t.TempDir()
-			}
-			f := &Fetcher{Cache: newGitCache(t, root)}
-			art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: "file://" + filepath.ToSlash(src)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var readers sync.WaitGroup
-			for range 2 {
-				readers.Go(func() {
-					for file, want := range files {
-						got, err := fs.ReadFile(art.FS, file)
-						if err != nil || string(got) != want {
-							t.Errorf("packed %s content differs: bytes=%d, err=%v", file, len(got), err)
-						}
+		for _, attempts := range []int{1, 3} {
+			t.Run(fmt.Sprintf("%s/attempts-%d", mode, attempts), func(t *testing.T) {
+				var acquisitions atomic.Int32
+				handler := gitHTTPHandler(t, src)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodGet && acquisitions.Add(1) == 1 {
+						w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+						w.Header().Set("Content-Length", "100")
+						_, _ = io.WriteString(w, "001e# service=git-upload-pack\n00000040abc")
+						return
 					}
-				})
-			}
-			readers.Wait()
-		})
+					handler.ServeHTTP(w, r)
+				}))
+				defer srv.Close()
+				root := ""
+				if mode == "disk" {
+					root = t.TempDir()
+				}
+				f := &Fetcher{Cache: newGitCache(t, root)}
+				art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL}, sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
+				if attempts == 1 {
+					if err == nil || art != nil || acquisitions.Load() != 1 {
+						t.Fatalf("retry-off artifact=%v, error=%v, acquisitions=%d", art, err, acquisitions.Load())
+					}
+					return
+				}
+				if err != nil || acquisitions.Load() != 2 {
+					t.Fatalf("original caller error=%v, acquisitions=%d, want 2", err, acquisitions.Load())
+				}
+				var readers sync.WaitGroup
+				for range 2 {
+					readers.Go(func() {
+						for file, want := range files {
+							got, err := fs.ReadFile(art.FS, file)
+							if err != nil || string(got) != want {
+								t.Errorf("packed %s content differs: bytes=%d, err=%v", file, len(got), err)
+							}
+						}
+					})
+				}
+				readers.Wait()
+			})
+		}
 	}
 }
 
@@ -87,7 +111,7 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 	}
 	mustCommitFile(t, src, "hello.txt", "hi")
 	f := &Fetcher{Cache: newGitCache(t, "")}
-	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src})
+	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +151,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	}
 
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -139,7 +163,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 		t.Errorf("expected checked-out file: %v", err)
 	}
 
-	art2, err := f.Fetch(context.Background(), repo)
+	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
@@ -162,7 +186,7 @@ func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
 	}
 
 	blocked := &Fetcher{Cache: newGitCache(t, t.TempDir()), RestrictSchemes: true}
-	_, err := blocked.Fetch(context.Background(), repo)
+	_, err := blocked.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("RestrictSchemes: true must reject a file:// GitRepository")
 	}
@@ -174,7 +198,7 @@ func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
 	}
 
 	allowed := &Fetcher{Cache: newGitCache(t, t.TempDir())} // RestrictSchemes defaults off
-	if _, err := allowed.Fetch(context.Background(), repo); err != nil {
+	if _, err := allowed.Fetch(context.Background(), repo, sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("RestrictSchemes off must allow file://: %v", err)
 	}
 }
@@ -234,12 +258,12 @@ func TestFetcher_MutableDefaultRefRefreshesCache(t *testing.T) {
 	}
 	f := &Fetcher{Cache: cache}
 
-	art1, err := f.Fetch(context.Background(), repo)
+	art1, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch first: %v", err)
 	}
 	want := mustCommitFile(t, src, "later.txt", "new content")
-	art2, err := f.Fetch(context.Background(), repo)
+	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
@@ -266,12 +290,12 @@ func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
 	}
 	f := &Fetcher{Cache: cache}
 
-	art1, err := f.Fetch(context.Background(), repo)
+	art1, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch first: %v", err)
 	}
 	mustCommitFile(t, src, "later.txt", "new content")
-	art2, err := f.Fetch(context.Background(), repo)
+	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
@@ -294,14 +318,14 @@ func TestFetcher_MutableRefreshFailureKeepsHeldGeneration(t *testing.T) {
 	}
 	f := &Fetcher{Cache: cache}
 
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch first: %v", err)
 	}
 	if err := os.RemoveAll(src); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.Fetch(context.Background(), repo); err == nil {
+	if _, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{}); err == nil {
 		t.Fatal("expected refresh to fail after removing upstream repo")
 	}
 	if _, err := fs.Stat(art.FS, path.Join("hello.txt")); err != nil {
@@ -324,7 +348,7 @@ func TestFetcher_RefByName(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch by ref.name: %v", err)
 	}
@@ -346,7 +370,7 @@ func TestFetcher_RefByName_Unresolvable(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
 	}
 	f := &Fetcher{Cache: cache}
-	_, err := f.Fetch(context.Background(), repo)
+	_, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected unresolvable-ref error")
 	}
@@ -368,7 +392,7 @@ func TestFetcher_RefByNameFallbackFetchesExplicitRef(t *testing.T) {
 		SparseCheckout: []string{"apps/a"},
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch non-branch ref.name with sparse checkout: %v", err)
 	}
@@ -397,7 +421,7 @@ func TestFetcher_SemVerRef(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch semver: %v", err)
 	}
@@ -426,7 +450,7 @@ func TestFetcher_CommitPrecedesRefName(t *testing.T) {
 		},
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch commit+name: %v", err)
 	}
@@ -454,7 +478,7 @@ func TestFetcher_CommitPrecedesUnresolvableRefName(t *testing.T) {
 		},
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch commit+unresolvable name: %v", err)
 	}
@@ -478,7 +502,7 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Commit: mainOnly},
 	}
-	if _, err := f.Fetch(context.Background(), commitOnly); err != nil {
+	if _, err := f.Fetch(context.Background(), commitOnly, sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("commit-only fetch should populate the unconstrained cache slot: %v", err)
 	}
 
@@ -490,7 +514,7 @@ func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
 			Commit: mainOnly,
 		},
 	}
-	_, err := f.Fetch(context.Background(), constrained)
+	_, err := f.Fetch(context.Background(), constrained, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected branch-constrained commit fetch to fail")
 	}
@@ -513,7 +537,7 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
 				Name: "test", Namespace: "flux-system", URL: "file://" + src,
 				SparseCheckout: []string{prefix},
-			})
+			}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -550,7 +574,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 		Ignore: &patterns,
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -583,7 +607,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 		Ignore:    &patterns,
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo)
+	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -593,7 +617,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 	if err := os.RemoveAll(src); err != nil {
 		t.Fatal(err)
 	}
-	art2, err := f.Fetch(context.Background(), repo)
+	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
@@ -619,7 +643,7 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
 		Ignore:    &ignore,
 	}
-	ignored, err := f.Fetch(context.Background(), ignoredRepo)
+	ignored, err := f.Fetch(context.Background(), ignoredRepo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch ignored: %v", err)
 	}
@@ -632,7 +656,7 @@ func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
 	}
-	plain, err := f.Fetch(context.Background(), plainRepo)
+	plain, err := f.Fetch(context.Background(), plainRepo, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("Fetch plain: %v", err)
 	}

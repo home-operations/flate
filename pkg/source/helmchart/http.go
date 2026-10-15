@@ -26,15 +26,16 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, chartName, version string) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, hc *manifest.HelmChartSource, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+	chartName, version := hc.Chart, hc.Version
 	h := manifest.Fingerprint([5]any{r.URL, chartName, version, helmRepoAuthIdentity(r), r.PassCredentials})
 	key := cache.BlobKey{ID: "blob-chart-" + h}
 	maxAge := r.Interval.Duration
 	if f.disableChartDigestTracking && isExactSemver(version) {
 		maxAge = cache.Forever
 	}
-	reader, desc, err := f.cache.Blob(ctx, key, maxAge, func(w io.Writer) (ocispec.Descriptor, error) {
-		idx, err := f.fetchIndex(ctx, r)
+	reader, desc, err := f.cache.Blob(ctx, key, cache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		idx, err := f.fetchIndex(ctx, r, retry)
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
@@ -71,53 +72,59 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}, nil
 }
 
-func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository) (*repo.IndexFile, error) {
+type indexMemo struct {
+	digest digest.Digest
+	index  *repo.IndexFile
+}
+
+func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository, retry cache.RetryConfig) (*repo.IndexFile, error) {
 	h := manifest.Fingerprint([3]any{r.URL, helmRepoAuthIdentity(r), r.PassCredentials})
-	release, err := f.indexLocks.Acquire(ctx, h)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	if v, ok := f.indexCache.Load(h); ok {
-		return v.(*repo.IndexFile), nil
-	}
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	var idx *repo.IndexFile
-	reader, _, err := f.cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, r.Interval.Duration, func(w io.Writer) (ocispec.Descriptor, error) {
+	var candidate indexMemo
+	reader, desc, err := f.cache.Blob(ctx, cache.BlobKey{ID: "blob-index-" + h}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		candidate = indexMemo{}
 		var buf bytes.Buffer
 		desc, err := f.httpGet(ctx, r, indexURL, io.MultiWriter(w, &buf))
 		if err != nil {
 			return desc, err
 		}
-		idx, err = indexFromBytes(buf.Bytes())
+		if v, ok := f.indexCache.Load(h); ok && v.(indexMemo).digest == desc.Digest {
+			candidate = v.(indexMemo)
+			return desc, nil
+		}
+		idx, err := indexFromBytes(buf.Bytes())
 		if err != nil {
 			return desc, fmt.Errorf("parse %s: %w", indexURL, err)
 		}
+		candidate = indexMemo{desc.Digest, idx}
 		return desc, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}
-	var data []byte
-	var readErr error
-	if idx == nil {
-		data, readErr = io.ReadAll(reader)
+	release, err := f.indexLocks.Acquire(ctx, h)
+	if err != nil {
+		return nil, errors.Join(err, reader.Close())
 	}
-	closeErr := reader.Close()
-	if readErr != nil {
-		return nil, readErr
+	defer release()
+	if v, ok := f.indexCache.Load(h); ok && v.(indexMemo).digest == desc.Digest {
+		return v.(indexMemo).index, reader.Close()
 	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if idx == nil {
-		idx, err = indexFromBytes(data)
+	if candidate.digest != desc.Digest || candidate.index == nil {
+		data, readErr := io.ReadAll(reader)
+		if err := errors.Join(readErr, reader.Close()); err != nil {
+			return nil, err
+		}
+		idx, err := indexFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", indexURL, err)
 		}
+		candidate = indexMemo{desc.Digest, idx}
+	} else if err := reader.Close(); err != nil {
+		return nil, err
 	}
-	f.indexCache.Store(h, idx)
-	return idx, nil
+	f.indexCache.Store(h, candidate)
+	return candidate.index, nil
 }
 
 // indexFromBytes follows Flux's IndexFromBytes policy, including skippable chart validation.

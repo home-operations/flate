@@ -3,6 +3,7 @@ package cache
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"io"
 	"testing"
 	"time"
@@ -34,13 +35,13 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 				b.Fatal(err)
 			}
 			key := ArchiveKey{ID: "source-benchmark"}
-			input, _, err := c.Acquire(b.Context(), key, time.Hour, producer(buf.Bytes(), ocispec.Descriptor{}))
+			input, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, producer(buf.Bytes(), ocispec.Descriptor{}))
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.Run("acquire", func(b *testing.B) {
 				for b.Loop() {
-					if _, _, err := c.Acquire(b.Context(), key, time.Hour, func(io.Writer) (ocispec.Descriptor, error) {
+					if _, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 						b.Fatal("warm acquisition called producer")
 						return ocispec.Descriptor{}, nil
 					}); err != nil {

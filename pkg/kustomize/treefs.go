@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/source/cache"
+
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
@@ -24,6 +26,7 @@ type treeFS struct {
 	rec         *readSet
 	changed     map[string]struct{}
 	maxAge      time.Duration
+	retry       cache.RetryConfig
 	bases       map[string]string
 	preflighted map[string]struct{}
 }

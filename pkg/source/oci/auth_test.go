@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -124,7 +125,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 		s.URL = "oci://ghcr.io/x/y"
 		s.Provider = sourcev1.AmazonOCIProvider
 	})
-	_, err := f.Fetch(t.Context(), repo)
+	_, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -164,7 +165,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 					s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				}
 			})
-			credStore, err := f.resolveRegistryConfig(t.Context(), repo)
+			credStore, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +238,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 			if tt.canceled {
 				cancel()
 			}
-			if _, err := f.Fetch(ctx, repo); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing || errors.Is(err, context.Canceled) != tt.canceled {
+			if _, err := f.Fetch(ctx, repo, sourcecache.RetryConfig{}); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing || errors.Is(err, context.Canceled) != tt.canceled {
 				t.Fatalf("Fetch error = %v, want missing=%t canceled=%t", err, tt.wantMissing, tt.canceled)
 			} else if tt.wantInput && !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("Fetch error = %v, want malformed material to be an input error", err)
@@ -261,7 +262,7 @@ func TestFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
 		s.URL = "oci://ghcr.io/x/y"
 		s.SecretRef = &manifest.LocalObjectReference{Name: "wrong-shape"}
 	})
-	_, err := f.resolveRegistryConfig(t.Context(), repo)
+	_, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
 	if err == nil || !strings.Contains(err.Error(), ".dockerconfigjson") {
 		t.Errorf("expected missing-.dockerconfigjson error; got %v", err)
 	}
@@ -280,7 +281,7 @@ func TestFetcher_ResolveConfig_SecretRefWithoutGetter(t *testing.T) {
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 	})
-	_, err := f.resolveRegistryConfig(t.Context(), repo)
+	_, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
 	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
 		t.Errorf("expected source.SecretGetter error; got %v", err)
 	}
@@ -294,7 +295,7 @@ func TestFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
 		s.URL = "oci://ghcr.io/x/y"
 		s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
 	})
-	_, err := f.resolveRegistryConfig(t.Context(), repo)
+	_, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
 	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {
 		t.Errorf("expected secret-not-found error; got %v", err)
 	}
@@ -314,7 +315,7 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 		s.Provider = sourcev1.AmazonOCIProvider
 		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 	})
-	_, err := f.Fetch(t.Context(), repo)
+	_, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}
@@ -363,7 +364,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				s.URL = "oci://ghcr.io/x/y"
 				s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			})
-			credStore, err := f.resolveRegistryConfig(t.Context(), repo)
+			credStore, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
 			switch {
 			case tt.wantRetry:
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
@@ -397,10 +398,17 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	const chart = "name: app\nversion: 1.0.0\n"
 	art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": chart})
 	upstream := startFakeRegistry(t, art.manifest, art.config, art.layer)
+	var failNext atomic.Bool
+	var failures atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, p, ok := r.BasicAuth(); !ok || u != user || p != pass {
 			w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
 			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if failNext.CompareAndSwap(true, false) {
+			failures.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		upstream.Config.Handler.ServeHTTP(w, r)
@@ -426,7 +434,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
 	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache})
-	got, err := charts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"))
+	got, err := charts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,4 +444,28 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if b := mustReadFile(t, got.FS, "Chart.yaml"); b != chart {
 		t.Errorf("Chart.yaml = %q, want %q", b, chart)
 	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	testutil.WriteFileAt(t, configPath, configJSON)
+	fallbackFetcher := &Fetcher{Cache: cache, RegistryConfig: configPath, Secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fallbackCharts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache})
+	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
+	_, err = fallbackCharts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), retry)
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok || missing.RetryWithRegistryConfig == nil {
+		t.Fatalf("missing fallback: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := missing.RetryWithRegistryConfig(cancelled, configPath); !errors.Is(err, context.Canceled) {
+		t.Fatalf("fallback context: %v", err)
+	}
+	failNext.Store(true)
+	got, err = missing.RetryWithRegistryConfig(t.Context(), configPath)
+	if err != nil || failures.Load() != 1 {
+		t.Fatalf("fallback recovery: %v, failures=%d", err, failures.Load())
+	}
+	if got.Kind != manifest.KindHelmChart || mustReadFile(t, got.FS, "Chart.yaml") != chart {
+		t.Fatalf("fallback artifact=%+v", got)
+	}
+
 }

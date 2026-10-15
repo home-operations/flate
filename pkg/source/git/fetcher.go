@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	// HTTPS operations must retain flate's header timeout and egress guard.
 	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -42,7 +43,7 @@ type Fetcher struct {
 }
 
 // Fetch publishes an immutable source view only after acquisition succeeds.
-func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		return nil, source.ErrUnsupportedProvider("GitRepository",
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
@@ -52,7 +53,7 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository) (*sto
 	if err != nil {
 		return nil, err
 	}
-	return f.fetch(ctx, repo, opts)
+	return f.fetch(ctx, repo, opts, retry)
 }
 
 func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (git.CloneOptions, error) {
@@ -81,7 +82,7 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (git.CloneOptio
 	return opts, nil
 }
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts git.CloneOptions) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts git.CloneOptions, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	if err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}
@@ -101,7 +102,8 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 	}
 	viewOptions := gittree.ViewOptions{Sparse: repo.SparseCheckout, Ignore: ignore}
 	var input *gittree.FS
-	generation, err := f.Cache.Git(ctx, key, maxAge, func(storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+	generation, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+		input = nil
 		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{repo, opts})
 		if err != nil {
 			return plumbing.ZeroHash, err

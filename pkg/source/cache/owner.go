@@ -106,8 +106,8 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	} else {
 		o.cache = &Cache{layout: l, root: disk, store: store, locks: keylock.New[string](), persistBlob: discardBlob}
 		if identity := processIdentity; identity != "" {
-			o.cache.persistBlob = func(ctx context.Context, id string, maxAge time.Duration, produce func(io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
-				return o.cache.blob(ctx, blobID(identity, id), maxAge, produce)
+			o.cache.persistBlob = func(ctx context.Context, id string, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
+				return o.cache.blob(ctx, blobID(identity, id), policy, produce)
 			}
 		}
 	}

@@ -209,7 +209,7 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 		rel, err := filepath.Rel(spec.dir, filepath.Join(dest, spec.subPath))
 		return "./" + filepath.ToSlash(rel), err
 	}
-	artifact, err := cache.gitBase(ctx, GitBaseRequest{URL: spec.repoURL, Ref: spec.ref, MaxAge: input.maxAge})
+	artifact, err := cache.gitBase(ctx, GitBaseRequest{URL: spec.repoURL, Ref: spec.ref, MaxAge: input.maxAge}, input.retry)
 	if err != nil {
 		return "", err
 	}

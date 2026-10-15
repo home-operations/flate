@@ -150,8 +150,8 @@ type Config struct {
 	// connection resets, refused connections, dial/IO timeouts. Permanent
 	// errors (bad path, missing secret, not-found) fail fast. Attempts
 	// <= 1 disables retry; the CLI defaults it to 3. See
-	// source.RetryConfig / source.WithRetry.
-	SourceRetry source.RetryConfig
+	// cache.RetryConfig.
+	SourceRetry sourcecache.RetryConfig
 
 	// GitDepth caps the shallow-clone history depth for GitRepository
 	// sources. 0 clones full
@@ -374,18 +374,6 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
 	srcCtrl.Fetchers[manifest.KindOCIRepository] = nil
 	srcCtrl.Fetchers[manifest.KindHelmChart] = nil
-	// Wrap every registered fetcher in the classified retry decorator so
-	// transient network failures (connection resets, refused connections,
-	// timeouts) get a bounded retry the same way across all source kinds,
-	// while permanent errors (bad path, auth, not-found) still fail fast.
-	// A no-op when retry is disabled (cfg.SourceRetry.Attempts <= 1), and
-	// any future kind picks this up automatically. Reassigning existing
-	// map values during range is well-defined (no keys added/removed).
-	for kind, f := range srcCtrl.Fetchers {
-		if f != nil {
-			srcCtrl.Fetchers[kind] = source.WithRetry(f, cfg.SourceRetry)
-		}
-	}
 	o := &Orchestrator{
 		cfg:      cfg,
 		cache:    owner,
@@ -580,8 +568,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 		Cache: o.cache, Secrets: secretGet, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
 	}
-	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest) (*store.SourceArtifact, error) {
-		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request))
+	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request), retry)
 	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
 	for kind, f := range map[string]source.Fetcher{
@@ -594,7 +582,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 				Cache: o.cache, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})),
 	} {
 		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
-			o.src.Fetchers[kind] = source.WithRetry(f, o.cfg.SourceRetry)
+			o.src.Fetchers[kind] = f
 		}
 	}
 	o.bootstrapped = true

@@ -37,8 +37,8 @@ type Fetcher struct {
 	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
 	cache   *cache.Cache        // content-addressed store for HTTP chart tarballs
 
-	indexCache                 sync.Map                // map[string]*repo.IndexFile (process lifetime)
-	indexLocks                 *keylock.KeyMap[string] // coalesce one index.yaml fetch per repo
+	indexCache                 sync.Map                // map[string]indexMemo
+	indexLocks                 *keylock.KeyMap[string] // serialize parsed memo publication
 	disableChartDigestTracking bool
 }
 
@@ -59,7 +59,7 @@ func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Conf
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It
 // resolves the backing HelmRepository, then pulls the chart: OCI repos via
 // the OCI fetcher (a synthesized OCIRepository), HTTP repos by streaming chart tarballs.
-func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	// Only HelmRepository-backed charts need a dedicated chart fetch. A
 	// HelmChart whose sourceRef is a GitRepository/Bucket is resolved by the
 	// consuming HelmRelease directly from that source's on-disk artifact
@@ -78,15 +78,13 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 	if isOCIHelmRepo(r) {
 		// Delegate to the OCI fetcher via a synthesized OCIRepository. The
 		// artifact is re-stamped KindHelmChart so the Store entry matches
-		// the synthetic HelmChart's identity. Retry is owned by the
-		// source.WithRetry wrapper around THIS fetcher — the inner OCI
-		// fetcher is bare (not separately wrapped).
+		// the synthetic HelmChart's identity.
 		syn := synthesizeOCIRepository(r, hc.Chart, hc.Version)
 		syn.Interval = r.Interval
 		if f.disableChartDigestTracking && isExactSemver(hc.Version) {
 			syn.Interval.Duration = cache.Forever
 		}
-		art, err := f.oci.Fetch(ctx, syn)
+		art, err := f.oci.Fetch(ctx, syn, retry)
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
 			retry := missing.RetryWithRegistryConfig
 			wrapped := *missing
@@ -107,7 +105,7 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource) (*sto
 		}
 		return art, nil
 	}
-	return f.fetchHTTPChart(ctx, r, hc.Chart, hc.Version)
+	return f.fetchHTTPChart(ctx, r, hc, retry)
 }
 
 // helmID is the "HelmRepository <namespace>/<name>" error prefix, via the

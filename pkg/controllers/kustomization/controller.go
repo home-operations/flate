@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
@@ -29,6 +30,7 @@ import (
 // encoded in the embedded *base.Controller, not just in code review.
 type Controller struct {
 	*base.Controller
+	retry cache.RetryConfig
 
 	// Trees shares remote fetches and persisted renders.
 	Trees *kustomize.TreeCache
@@ -70,8 +72,9 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
-func (c *Controller) Configure(opts Options) {
+func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
+	c.retry = retry
 	c.index = opts.Index
 	c.substitutionSources = opts.SubstituteFrom
 	c.substitute = opts.Substitute
@@ -198,7 +201,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	}
 	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents,
-	})
+	}, c.retry)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,8 @@ package kustomization
 import (
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -144,7 +146,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := New(st, task.NewBounded(2), nil, false)
-			c.Configure(tc.opts)
+			c.Configure(tc.opts, sourcecache.RetryConfig{})
 			prepared, err := kustomize.Prepare(ks, c.substitutionProvider, c.substitute)
 			if err != nil {
 				t.Fatal(err)

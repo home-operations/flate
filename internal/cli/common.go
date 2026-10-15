@@ -25,7 +25,6 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
@@ -298,7 +297,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		WipeSecrets:                true,
 		RegistryConfig:             c.registryConfig,
 		Concurrency:                c.concurrency,
-		SourceRetry: source.RetryConfig{
+		SourceRetry: sourcecache.RetryConfig{
 			Attempts: sourceRetryAttempts,
 			MinWait:  sourceRetryMinWait,
 			MaxWait:  sourceRetryMaxWait,

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,8 +28,12 @@ import (
 
 func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descriptor) {
 	t.Helper()
-	g, err := c.Git(t.Context(), GitKey{ID: key, RecurseSubmodules: true}, 0,
-		func(storage.Storer, billy.Filesystem) (plumbing.Hash, error) { return plumbing.ZeroHash, nil })
+	g, err := c.Git(t.Context(), GitKey{ID: key, RecurseSubmodules: true}, Policy{MaxAge: 0},
+		func(context.Context,
+
+			storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+			return plumbing.ZeroHash, nil
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +98,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 				}
 			}
 			if scenario == "bad-graph" {
-				r, _, err := c.Blob(t.Context(), BlobKey{ID: "a-expired"}, 0, producer([]byte("stale"), ocispec.Descriptor{}))
+				r, _, err := c.Blob(t.Context(), BlobKey{ID: "a-expired"}, Policy{MaxAge: 0}, producer([]byte("stale"), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -256,7 +261,7 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 					if err := c.store.Tag(t.Context(), desc, id); err != nil {
 						t.Fatal(err)
 					}
-					if _, err := c.Git(t.Context(), GitKey{ID: id, RecurseSubmodules: true}, Forever, nil); err != nil {
+					if _, err := c.Git(t.Context(), GitKey{ID: id, RecurseSubmodules: true}, Policy{MaxAge: Forever}, nil); err != nil {
 						t.Fatal(err)
 					}
 				} else {

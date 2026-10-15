@@ -13,14 +13,14 @@ import (
 func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 	c := NewTreeCache(newTestCache(t, ""))
 	called := false
-	c.SetGitBaseFetcher(func(context.Context, GitBaseRequest) (*store.SourceArtifact, error) {
+	c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, cache.RetryConfig) (*store.SourceArtifact, error) {
 		called = true
 		return nil, nil
 	})
 	if c.gitBase == nil {
 		t.Fatal("git base fetcher not set")
 	}
-	_, _ = c.gitBase(t.Context(), GitBaseRequest{URL: "https://example.com/x", Ref: "main"})
+	_, _ = c.gitBase(t.Context(), GitBaseRequest{URL: "https://example.com/x", Ref: "main"}, cache.RetryConfig{})
 	if !called {
 		t.Fatal("wired fetcher was not invoked")
 	}

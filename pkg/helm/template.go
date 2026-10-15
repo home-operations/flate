@@ -80,7 +80,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	key := computeTemplateKey(loaded, finalValues, opts, hr)
 	blobKey := cache.BlobKey{ID: key, PersistOnly: true}
 	if key != "" {
-		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Forever, nil)
+		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, nil)
 		if err == nil {
 			data, readErr := io.ReadAll(reader)
 			if err := errors.Join(readErr, reader.Close()); err != nil {
@@ -154,7 +154,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
 	if key != "" {
-		reader, _, err := c.cache.Blob(ctx, blobKey, 0, func(w io.Writer) (ocispec.Descriptor, error) {
+		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 			_, err := io.WriteString(w, out)
 			return ocispec.Descriptor{}, err
 		})

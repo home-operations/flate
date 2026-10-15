@@ -1,7 +1,9 @@
 package kustomize
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
@@ -172,7 +175,7 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	}})
+	}}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -269,7 +272,7 @@ func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := httpGetURL(context.Background(), srv.URL+"/big.yaml")
+	_, err := httpGetURL(context.Background(), srv.URL+"/big.yaml", io.Discard)
 	if err == nil {
 		t.Fatalf("expected oversized-body error, got nil")
 	}
@@ -342,7 +345,9 @@ func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	body, err := httpGetURL(context.Background(), srv.URL+"/atcap.yaml")
+	var buf bytes.Buffer
+	_, err := httpGetURL(context.Background(), srv.URL+"/atcap.yaml", &buf)
+	body := buf.Bytes()
 	if err != nil {
 		t.Fatalf("body exactly at cap should succeed, got: %v", err)
 	}
@@ -372,11 +377,11 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := NewTreeCache(newTestCache(t, ""))
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec})
+			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if err != nil || !strings.Contains(string(out), "name: remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
-			if _, err := cache.FetchRemote(t.Context(), url); err != nil {
+			if _, err := cache.FetchRemote(t.Context(), url, sourcecache.RetryConfig{}); err != nil {
 				t.Fatal(err)
 			}
 			if got := hits.Load(); got != 1 {

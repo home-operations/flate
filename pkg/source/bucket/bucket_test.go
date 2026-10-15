@@ -31,7 +31,7 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 		Provider:   sourcev1.BucketProviderAmazon,
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 	}
-	_, err := f.Fetch(context.Background(), b)
+	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -48,7 +48,7 @@ func TestFetcher_SecretRefWithoutGetter(t *testing.T) {
 		BucketName: "x", Endpoint: "minio:9000",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b)
+	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error when SecretRef set but no SecretGetter")
 	}
@@ -72,7 +72,7 @@ func TestFetcher_SecretRefMissingKeys(t *testing.T) {
 		BucketName: "x", Endpoint: "minio:9000",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b)
+	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error when accesskey/secretkey missing")
 	}
@@ -95,7 +95,7 @@ func TestFetcher_WipedCredentials(t *testing.T) {
 				}
 				f := &bucket.Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
 				b := &manifest.Bucket{Name: "b", Namespace: "ns", BucketName: "fixture", Endpoint: "127.0.0.1:1", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-				if _, err := f.Fetch(t.Context(), b); !errors.Is(err, manifest.ErrMissingSecret) {
+				if _, err := f.Fetch(t.Context(), b, cache.RetryConfig{}); !errors.Is(err, manifest.ErrMissingSecret) {
 					t.Fatalf("got %v, want ErrMissingSecret", err)
 				}
 			})
@@ -113,7 +113,7 @@ func TestFetcher_SecretRefNotFound(t *testing.T) {
 		BucketName: "x", Endpoint: "minio:9000",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b)
+	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected error when SecretRef not resolvable")
 	}
@@ -134,7 +134,7 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b)
+	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}
@@ -148,84 +148,156 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 
 func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 	for _, backing := range []string{"memory", "disk"} {
-		t.Run(backing, func(t *testing.T) {
-			var listings atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				files := map[string]string{"dir/file.yaml": "first", "dir/drop.yaml": "drop", ".sourceignore": "dir/drop.yaml\n", "image.png": "image", ".git/config": "git"}
-				if strings.Contains(r.Header.Get("Authorization"), "Credential=second/") {
-					files["dir/file.yaml"] = "other"
-				}
-				if r.URL.Query().Get("list-type") != "" {
-					listings.Add(1)
-					_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
-					for _, name := range []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore", ".git/config"} {
-						_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%x"</ETag></Contents>`, name, len(files[name]), sha256.Sum256([]byte(files[name])))
+		for _, attempts := range []int{1, 3} {
+			t.Run(fmt.Sprintf("%s/attempts-%d", backing, attempts), func(t *testing.T) {
+				var listings atomic.Int32
+				sequences := map[string]*atomic.Int32{"first": {}, "second": {}, "canceled": {}}
+				streaming, canceled := make(chan struct{}), make(chan struct{})
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					namespace := "first"
+					for _, name := range []string{"second", "canceled"} {
+						if strings.Contains(r.Header.Get("Authorization"), "Credential="+name+"/") {
+							namespace = name
+						}
 					}
-					_, _ = fmt.Fprint(w, `</ListBucketResult>`)
-					return
-				}
-				name := strings.TrimPrefix(r.URL.Path, "/data/prefix/")
-				data, ok := files[name]
-				if !ok {
-					http.NotFound(w, r)
-					return
-				}
-				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-				w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(data))))
-				w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
-				_, _ = fmt.Fprint(w, data)
-			}))
-			t.Cleanup(srv.Close)
-			root := ""
-			if backing == "disk" {
-				root = t.TempDir()
-			}
-			c, err := cache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = c.Close() })
-			f := &bucket.Fetcher{Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
-			}}
-			var wg sync.WaitGroup
-			for _, namespace := range []string{"first", "second"} {
-				wg.Go(func() {
-					b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/",
-						Endpoint: srv.URL, Insecure: true, Region: "us-east-1", Interval: metav1.Duration{Duration: time.Hour},
-						SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-					for range 2 {
-						art, err := f.Fetch(t.Context(), b)
-						if err != nil {
-							t.Error(err)
+					sequence := sequences[namespace]
+					files := map[string]string{"dir/file.yaml": "first", "dir/drop.yaml": "drop", ".sourceignore": "dir/drop.yaml\n", "image.png": "image", ".git/config": "git"}
+					if namespace == "second" {
+						files["dir/file.yaml"] = "other"
+					}
+					listing := r.URL.Query().Get("list-type") != ""
+					if listing {
+						listings.Add(1)
+						sequence.Add(1)
+					}
+					if sequence.Load() == 1 {
+						files["attempt-only.yaml"] = "discard"
+					}
+					if listing {
+						names := []string{"dir/drop.yaml", "image.png", "dir/file.yaml", ".sourceignore", ".git/config"}
+						if sequence.Load() == 1 {
+							names = append(names, "attempt-only.yaml")
+						}
+						_, _ = fmt.Fprint(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>`)
+						for _, name := range names {
+							data := files[name]
+							_, _ = fmt.Fprintf(w, `<Contents><Key>prefix/%s</Key><Size>%d</Size><ETag>"%x"</ETag></Contents>`, name, len(data), sha256.Sum256([]byte(data)))
+						}
+						_, _ = fmt.Fprint(w, `</ListBucketResult>`)
+						return
+					}
+					name := strings.TrimPrefix(r.URL.Path, "/data/prefix/")
+					data, ok := files[name]
+					if !ok {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+					w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(data))))
+					w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+					if name == "image.png" {
+						if namespace == "canceled" {
+							_, _ = fmt.Fprint(w, data[:2])
+							w.(http.Flusher).Flush()
+							close(streaming)
+							<-r.Context().Done()
+							close(canceled)
 							return
 						}
-						want := namespace
-						if namespace == "second" {
-							want = "other"
-						}
-						if data, err := fs.ReadFile(art.FS, "dir/file.yaml"); err != nil || string(data) != want {
-							t.Errorf("%s content=%q err=%v", namespace, data, err)
-						}
-						if _, err := fs.Stat(art.FS, "dir/drop.yaml"); !errors.Is(err, fs.ErrNotExist) {
-							t.Errorf("ignored file: %v", err)
-						}
-						if _, err := fs.Stat(art.FS, "image.png"); err != nil {
-							t.Errorf("bucket flavor excluded image: %v", err)
-						}
-						if data, err := fs.ReadFile(art.FS, ".git/config"); err != nil || string(data) != "git" {
-							t.Errorf("bucket flavor excluded git content: %q %v", data, err)
-						}
-						if art.Metadata["objectCount"] != "5" || art.Revision == "" {
-							t.Errorf("bucket metadata: %v", art.Metadata)
+						if sequence.Load() == 1 {
+							_, _ = fmt.Fprint(w, data[:2])
+							return
 						}
 					}
-				})
-			}
-			wg.Wait()
-			if listings.Load() != 2 {
-				t.Fatalf("listings=%d, want one per auth identity", listings.Load())
-			}
-		})
+					_, _ = fmt.Fprint(w, data)
+				}))
+				t.Cleanup(srv.Close)
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c, err := cache.New(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = c.Close() })
+				f := &bucket.Fetcher{Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
+					return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
+				}}
+				var wg sync.WaitGroup
+				for _, namespace := range []string{"first", "second"} {
+					wg.Go(func() {
+						b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/",
+							Endpoint: srv.URL, Insecure: true, Region: "us-east-1", Interval: metav1.Duration{Duration: time.Hour},
+							SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+						for range 2 {
+							art, err := f.Fetch(t.Context(), b, cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
+							if attempts == 1 {
+								if err == nil || art != nil {
+									t.Errorf("%s retry-off artifact=%v, error=%v", namespace, art, err)
+								}
+								return
+							}
+							if err != nil {
+								t.Error(err)
+								return
+							}
+							want := namespace
+							if namespace == "second" {
+								want = "other"
+							}
+							if data, err := fs.ReadFile(art.FS, "dir/file.yaml"); err != nil || string(data) != want {
+								t.Errorf("%s content=%q err=%v", namespace, data, err)
+							}
+							if _, err := fs.Stat(art.FS, "attempt-only.yaml"); !errors.Is(err, fs.ErrNotExist) {
+								t.Errorf("failed acquisition leaked a file: %v", err)
+							}
+							if _, err := fs.Stat(art.FS, "dir/drop.yaml"); !errors.Is(err, fs.ErrNotExist) {
+								t.Errorf("ignored file: %v", err)
+							}
+							if data, err := fs.ReadFile(art.FS, "image.png"); err != nil || string(data) != "image" {
+								t.Errorf("complete image=%q, error=%v", data, err)
+							}
+							if data, err := fs.ReadFile(art.FS, ".git/config"); err != nil || string(data) != "git" {
+								t.Errorf("bucket flavor excluded git content: %q %v", data, err)
+							}
+							if art.Metadata["objectCount"] != "5" || art.Revision == "" {
+								t.Errorf("bucket metadata: %v", art.Metadata)
+							}
+						}
+					})
+				}
+				wg.Wait()
+				want := int32(2 * min(attempts, 2))
+				if listings.Load() != want {
+					t.Fatalf("producer sequences=%d, want %d", listings.Load(), want)
+				}
+				if attempts == 1 {
+					return
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					b := &manifest.Bucket{Name: "source", Namespace: "canceled", BucketName: "data", Prefix: "prefix/",
+						Endpoint: srv.URL, Insecure: true, Region: "us-east-1", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+					_, err := f.Fetch(ctx, b, cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
+					done <- err
+				}()
+				select {
+				case <-streaming:
+				case err := <-done:
+					t.Fatalf("fetch ended before cancellation: %v", err)
+				}
+				cancel()
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatalf("canceled fetch: %v", err)
+				}
+				<-canceled
+				if sequences["canceled"].Load() != 1 {
+					t.Fatalf("canceled producer sequences=%d, want 1", sequences["canceled"].Load())
+				}
+			})
+		}
 	}
 }

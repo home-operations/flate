@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -21,7 +22,7 @@ type Fetcher struct{}
 
 // Fetch implements source.TypedFetcher[*manifest.ExternalArtifact].
 // Wrapped via source.Wrap at orchestrator registration.
-func (*Fetcher) Fetch(ctx context.Context, ea *manifest.ExternalArtifact) (*store.SourceArtifact, error) {
+func (*Fetcher) Fetch(ctx context.Context, ea *manifest.ExternalArtifact, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	if ea.ArtifactURL == "" {
 		return nil, fmt.Errorf(
 			"ExternalArtifact %s/%s requires status.artifact to be populated for offline use — "+

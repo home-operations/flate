@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -25,7 +26,7 @@ type secretChartFetcher struct {
 	chart string
 }
 
-func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest) (*store.SourceArtifact, error) {
+func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	repo := obj.(*manifest.OCIRepository)
 	secret, ok := f.store.GetByName[*manifest.Secret](manifest.KindSecret, repo.Namespace, repo.CertSecretRef.Name)
 	if !ok {

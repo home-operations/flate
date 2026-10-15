@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"math"
 	"math/rand/v2"
 	"net"
@@ -67,7 +68,9 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, prod
 		if attempt >= max(1, policy.Retry.Attempts) {
 			return nil, &TerminalError{Err: err, Attempted: true}
 		}
-		timer := time.NewTimer(policy.Retry.backoff(attempt - 1))
+		delay := policy.Retry.backoff(attempt - 1)
+		slog.Debug("cache: acquisition failed, retrying", "key", key.ID, "attempt", attempt, "delay", delay, "error", err)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

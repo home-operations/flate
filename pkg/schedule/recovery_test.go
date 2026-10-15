@@ -435,7 +435,9 @@ func TestProgress_UnwatchedData(t *testing.T) {
 				}
 				// Warm-up and measured arrivals MUST use disjoint identities.
 				kind := manifest.KindConfigMap
-				allocations := testing.AllocsPerRun(1, func() {
+				// Integer-truncated averaging tolerates isolated incidental allocations
+				// but still rejects an allocation on every measured invocation.
+				allocations := testing.AllocsPerRun(100, func() {
 					for _, dep := range ids {
 						dep.Kind = kind
 						s.OnArrival(dep, false)

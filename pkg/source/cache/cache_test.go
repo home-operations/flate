@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
@@ -279,6 +280,248 @@ func TestAcquire_ExpandedCapCountsIgnoredDuplicates(t *testing.T) {
 }
 
 func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
+	t.Run("due", func(t *testing.T) {
+		for _, callers := range []int{2, 4} {
+			for _, cold := range []bool{false, true} {
+				for _, result := range []string{"success", "eligible", "unsupported", "local", "publication"} {
+					t.Run(fmt.Sprintf("%d/cold-%t/%s", callers, cold, result), func(t *testing.T) {
+						synctest.Test(t, func(t *testing.T) {
+							root := t.TempDir()
+							c := newCache(t, root)
+							key := BlobKey{Content: "due-wave"}
+							held, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("held"), ocispec.Descriptor{}))
+							if err != nil {
+								t.Fatal(err)
+							}
+							good, err := c.store.Resolve(t.Context(), id)
+							if err != nil {
+								t.Fatal(err)
+							}
+							_, _, _, err = c.Blob(t.Context(), key, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, connReset() })
+							if _, ok := errors.AsType[*TerminalError](err); !ok {
+								t.Fatal(err)
+							}
+							if data, err := io.ReadAll(held); err != nil || string(data) != "held" {
+								t.Fatalf("held=%q, error=%v", data, err)
+							}
+							if err := held.Close(); err != nil {
+								t.Fatal(err)
+							}
+							before, err := c.store.Resolve(t.Context(), id)
+							if err != nil {
+								t.Fatal(err)
+							}
+							time.Sleep(750 * time.Millisecond)
+							if cold {
+								if err := c.Close(); err != nil {
+									t.Fatal(err)
+								}
+								c = newCache(t, root)
+							}
+							unlock, err := c.locks.Acquire(t.Context(), id)
+							if err != nil {
+								t.Fatal(err)
+							}
+							started, release := make(chan struct{}), make(chan struct{})
+							done := make(chan error, callers)
+							calls := 0
+							var cause error
+							switch result {
+							case "eligible", "publication":
+								cause = connReset()
+							case "unsupported":
+								cause = timeoutErr{}
+							case "local":
+								cause = &fs.PathError{Op: "write", Path: "sink", Err: fs.ErrPermission}
+							}
+							fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+								calls++
+								if calls == 1 {
+									close(started)
+								}
+								<-release
+								if cause != nil {
+									return ocispec.Descriptor{}, cause
+								}
+								return producer([]byte("complete"), ocispec.Descriptor{})(ctx, w)
+							}
+							launch := func(ctx context.Context, results chan error) {
+								go func() {
+									r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
+									if r != nil {
+										data, readErr := io.ReadAll(r)
+										err = errors.Join(err, readErr, r.Close())
+										if string(data) != "complete" {
+											t.Errorf("shared payload=%q", data)
+										}
+									}
+									results <- err
+								}()
+							}
+							for range callers {
+								launch(t.Context(), done)
+							}
+							synctest.Wait()
+							if cold {
+								v, ok := c.entries.Load(id)
+								if !ok || !v.(*entry).unloaded {
+									t.Fatal("cold callers did not share an unloaded observation")
+								}
+							}
+							unlock()
+							<-started
+							ctx, cancel := context.WithCancel(t.Context())
+							canceled := make(chan error, 1)
+							launch(ctx, canceled)
+							synctest.Wait()
+							cancel()
+							if err := <-canceled; !errors.Is(err, context.Canceled) {
+								t.Fatalf("canceled waiter=%v", err)
+							}
+							time.Sleep(10 * time.Second)
+							if result == "publication" {
+								if err := c.root.Remove("oci/index.json"); err != nil {
+									t.Fatal(err)
+								}
+								if err := c.root.Mkdir("oci/index.json", 0o750); err != nil {
+									t.Fatal(err)
+								}
+							}
+							close(release)
+							live := 0
+							for range callers {
+								err := <-done
+								if cause == nil && err != nil || cause != nil && !errors.Is(err, cause) && result != "eligible" {
+									t.Fatalf("shared error=%v, cause=%v", err, cause)
+								}
+								if result == "eligible" || result == "publication" {
+									if !errors.Is(err, syscall.ECONNRESET) {
+										t.Fatalf("remote cause lost: %v", err)
+									}
+								}
+								if result == "publication" {
+									if _, ok := errors.AsType[*CacheError](err); !ok {
+										t.Fatalf("publication failure lost: %v", err)
+									}
+								}
+								terminal, ok := errors.AsType[*TerminalError](err)
+								if cause != nil && (!ok || terminal.Attempted) {
+									live++
+								}
+							}
+							if calls != 1 || cause != nil && live != 1 {
+								t.Fatalf("due calls=%d, live results=%d", calls, live)
+							}
+							after, err := c.store.Resolve(t.Context(), id)
+							if err != nil {
+								t.Fatal(err)
+							}
+							if result == "eligible" {
+								o, err := c.readOutcome(t.Context(), after)
+								if err != nil || o == nil || o.record.Count != 2 || !o.record.Completed.Equal(time.Now()) || o.lastGood.Digest != good.Digest {
+									t.Fatalf("due outcome=%+v, error=%v", o, err)
+								}
+							} else if cause != nil && after.Digest != before.Digest {
+								t.Fatal("unsupported/local failure changed the durable outcome")
+							}
+							if result != "eligible" {
+								if result == "publication" {
+									if err := c.root.Remove("oci/index.json"); err != nil {
+										t.Fatal(err)
+									}
+								}
+								r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("independent"), ocispec.Descriptor{}))
+								if err != nil {
+									t.Fatal(err)
+								}
+								data, readErr := io.ReadAll(r)
+								if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "independent" {
+									t.Fatalf("independent result=%q, error=%v", data, err)
+								}
+							}
+						})
+					})
+				}
+			}
+		}
+	})
+
+	for _, callers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("due/canceled-winner/%d", callers), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := newCache(t, t.TempDir())
+				key := BlobKey{Content: "due-canceled-winner"}
+				var id string
+				if _, _, _, err := c.Blob(t.Context(), key, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+					return ocispec.Descriptor{}, connReset()
+				}); err == nil {
+					t.Fatal("want initial failure")
+				}
+				c.entries.Range(func(key, _ any) bool { id = key.(string); return false })
+				time.Sleep(750 * time.Millisecond)
+				unlock, err := c.locks.Acquire(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var calls atomic.Int32
+				winnerCtx, cancelWinner := context.WithCancel(t.Context())
+				defer cancelWinner()
+				started := make(chan struct{})
+				winnerFill := func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+					calls.Add(1)
+					close(started)
+					<-ctx.Done()
+					return ocispec.Descriptor{}, ctx.Err()
+				}
+				liveFill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					calls.Add(1)
+					return producer([]byte("complete"), ocispec.Descriptor{})(ctx, w)
+				}
+				type result struct {
+					err  error
+					data string
+				}
+				done := make(chan result, callers)
+				launch := func(ctx context.Context, fill func(context.Context, io.Writer) (ocispec.Descriptor, error)) {
+					go func() {
+						r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
+						var data string
+						if r != nil {
+							b, readErr := io.ReadAll(r)
+							data = string(b)
+							err = errors.Join(err, readErr, r.Close())
+						}
+						done <- result{err: err, data: data}
+					}()
+				}
+				launch(winnerCtx, winnerFill)
+				synctest.Wait()
+				unlock()
+				<-started
+				for range callers - 1 {
+					launch(t.Context(), liveFill)
+				}
+				synctest.Wait()
+				cancelWinner()
+				winnerCanceled, liveResults := 0, 0
+				for range callers {
+					got := <-done
+					if errors.Is(got.err, context.Canceled) {
+						winnerCanceled++
+						continue
+					}
+					if got.err != nil || got.data != "complete" {
+						t.Fatalf("live result=%q, error=%v", got.data, got.err)
+					}
+					liveResults++
+				}
+				if winnerCanceled != 1 || liveResults != callers-1 || calls.Load() != 2 {
+					t.Fatalf("winner canceled=%d, live=%d, producer calls=%d", winnerCanceled, liveResults, calls.Load())
+				}
+			})
+		})
+	}
+
 	for _, concurrency := range []int{2, 4} {
 		for _, root := range []string{"", t.TempDir()} {
 			c := newCache(t, root)
@@ -407,6 +650,34 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 }
 
 func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
+	t.Run("outcome", func(t *testing.T) {
+		c := newCache(t, t.TempDir())
+		index := filepath.Join(c.layout.OCI(), "index.json")
+		if err := os.Remove(index); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(index, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		for range 2 {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outcome-save"}, Policy{MaxAge: Forever}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+				calls++
+				return ocispec.Descriptor{}, connReset()
+			})
+			if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
+				t.Fatalf("publication cause=%v", err)
+			}
+			v, ok := c.entries.Load(manifest.Fingerprint(struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"outcome-save"}}))
+			if !ok || v.(*entry).outcome != nil {
+				t.Fatal("failed publication installed a durable hit")
+			}
+		}
+		if calls != 2 {
+			t.Fatalf("uncommitted failure reused: calls=%d", calls)
+		}
+	})
+
 	c := newCache(t, t.TempDir())
 	index := filepath.Join(c.layout.OCI(), "index.json")
 	if err := os.Remove(index); err != nil {
@@ -878,7 +1149,7 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 }
 
 func TestGit_RestartAndInvalidation(t *testing.T) {
-	for _, scenario := range []string{"hit", "ref-mismatch", "missing-objects", "touch-failure"} {
+	for _, scenario := range []string{"hit", "ref-mismatch", "missing-objects", "touch-failure", "outcome"} {
 		t.Run(scenario, func(t *testing.T) {
 			src, root := t.TempDir(), t.TempDir()
 			repo, err := git.PlainInit(src, false)
@@ -938,6 +1209,20 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			if err := os.Chtimes(blob, stale, stale); err != nil {
 				t.Fatal(err)
 			}
+			if scenario == "outcome" {
+				o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, e.stored)
+				for n := uint32(1); n <= 4; n++ {
+					o.record.Count = n
+					desc, err := c.publishOutcome(t.Context(), id, o, connReset())
+					if err != nil {
+						t.Fatal(err)
+					}
+					o, err = c.readOutcome(t.Context(), desc)
+					if err != nil || o == nil || o.lastGood.Digest != e.stored.Digest || o.lastGood.Annotations[prefix+"git-generation"] != first.id {
+						t.Fatalf("direct last-good anchor: %+v, %v", o, err)
+					}
+				}
+			}
 			if scenario == "missing-objects" {
 				if err := os.RemoveAll(filepath.Join(c.layout.GitObjects(first.id), "objects")); err != nil {
 					t.Fatal(err)
@@ -971,6 +1256,24 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			data, readErr := io.ReadAll(r)
 			if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "blob" {
 				t.Fatalf("restored blob payload: %q, %v", data, err)
+			}
+			if scenario == "outcome" {
+				desc, err := c.store.Resolve(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				o, err := c.readOutcome(t.Context(), desc)
+				if err != nil || o == nil || o.record.Count != 4 || o.lastGood.Digest != e.stored.Digest || calls != 1 {
+					t.Fatalf("restored outcome: %+v, %v", o, err)
+				}
+				input, _, err := gittree.New(t.Context(), first.Backing, first.Commit, gittree.ViewOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if data, err := fs.ReadFile(input, "file"); err != nil || string(data) != "committed" {
+					t.Fatalf("held Git content: %q, %v", data, err)
+				}
+				return
 			}
 			second, _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce)
 			if scenario == "ref-mismatch" || scenario == "missing-objects" {

@@ -31,6 +31,7 @@ const prefix = "flate."
 const maxTrailingBytes = 1 << 20
 
 // ArchiveKey identifies an archive and its source-ignore policy.
+// Content MUST include the effective credentials used by the producer.
 type ArchiveKey struct {
 	// Content describes the producer inputs.
 	Content      any
@@ -41,6 +42,7 @@ type ArchiveKey struct {
 }
 
 // BlobKey identifies single-file content.
+// Content MUST include the effective credentials used by the producer.
 type BlobKey struct {
 	// Content describes the producer inputs, or a render identity with PersistOnly.
 	Content any
@@ -67,6 +69,10 @@ type entry struct {
 	stored     ocispec.Descriptor
 	resolved   time.Time
 	git        *GitGeneration
+	outcome    *outcome
+	unloaded   bool
+	waveResult *entry
+	waveErr    error
 }
 
 // CacheError identifies a cache operation failure, including failed persistence.
@@ -139,83 +145,184 @@ func (c *Cache) blob(ctx context.Context, key acquireKey, policy Policy, produce
 	return &blobHandle{ReadCloser: r, input: input}, e.descriptor, id, nil
 }
 
-func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, maxAge time.Duration, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
+func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
 	id := key.id
+	var observed *entry
+	if v, ok := c.entries.Load(id); ok {
+		observed = v.(*entry)
+	} else if c.store != nil {
+		v, _ := c.entries.LoadOrStore(id, &entry{unloaded: true})
+		observed = v.(*entry)
+	}
 	release, err := c.locks.Acquire(ctx, id)
 	if err != nil {
 		return nil, &CacheError{err}
 	}
 	defer release()
+	if observed != nil && !key.lookupOnly {
+		if observed.waveErr != nil {
+			return nil, &TerminalError{Err: observed.waveErr, Attempted: false}
+		}
+		if observed.waveResult != nil {
+			return observed.waveResult, nil
+		}
+	}
 	var e *entry
 	if v, ok := c.entries.Load(id); ok {
 		e = v.(*entry)
 	}
-	if e == nil && c.store != nil {
-		desc, err := c.store.Resolve(ctx, id)
-		if err != nil && !errors.Is(err, errdef.ErrNotFound) {
-			return nil, &CacheError{err}
-		}
-		if err == nil {
-			upstream, at, valid := decode(desc, key.Required)
-			if valid && fresh(at, maxAge) {
-				e = &entry{descriptor: upstream, stored: desc, resolved: at}
-				if key.git != nil {
-					e.git, err = c.restoreGit(desc, key.git.key)
-					if err != nil {
-						return nil, &CacheError{err}
-					}
-					if e.git == nil {
-						e = nil
-					}
-				} else if key.archive {
-					index := &tarFS{root: c.root, digest: desc.Digest}
-					index.identify(desc.Digest, key.ArchiveKey)
-					file, err := c.root.Open(blobPath(desc.Digest))
-					if err != nil {
-						return nil, &CacheError{err}
-					}
-					e.fs, err = readArchive(file, key.ArchiveKey, index)
-					closeErr := file.Close()
-					if err := errors.Join(err, closeErr); err != nil {
-						return nil, &CacheError{err}
-					}
-				} else {
-					e.fs = fileFS{name: "content", identity: desc.Digest.String(), size: desc.Size, open: func() (io.ReadCloser, error) {
-						return c.root.Open(blobPath(desc.Digest))
-					}}
-				}
-			}
+	if e != nil && e.unloaded {
+		if err := c.loadEntry(ctx, key, policy.MaxAge, e); err != nil {
+			return nil, err
 		}
 	}
-	if e != nil && fresh(e.resolved, maxAge) {
-		if c.store != nil {
-			now := time.Now()
-			if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
-				if !key.lookupOnly {
-					c.entries.Store(id, &entry{})
-				}
-				return nil, &CacheError{err}
+	due := false
+	if e != nil && e.outcome != nil {
+		isFresh, valid := e.outcome.observe(time.Now().UTC())
+		if isFresh {
+			if err := c.touch(e); err != nil {
+				return nil, err
 			}
+			return nil, e.outcome.replay()
 		}
-		c.entries.Store(id, e)
+		due = valid
+	}
+	if e != nil && fresh(e.resolved, policy.MaxAge) {
+		if err := c.touch(e); err != nil {
+			if !key.lookupOnly {
+				c.entries.Store(id, &entry{stored: e.stored})
+			}
+			return nil, err
+		}
 		return e, nil
 	}
 	if key.lookupOnly {
+		if e != nil && e.stored.Digest == "" && e.resolved.IsZero() {
+			c.entries.CompareAndDelete(id, e)
+		}
 		return nil, &CacheError{errdef.ErrNotFound}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, &CacheError{err}
 	}
-	e, err = c.fill(ctx, key, produce)
-	if err != nil {
-		c.entries.Store(id, &entry{})
-		if failure, ok := err.(*producerError); ok {
-			return nil, failure
+	var lastGood ocispec.Descriptor
+	var count uint32
+	if e != nil {
+		lastGood = e.stored
+		if e.outcome != nil {
+			lastGood = e.outcome.lastGood
+			if due {
+				count = e.outcome.record.Count
+			}
 		}
-		return nil, &CacheError{err}
 	}
-	c.entries.Store(id, e)
-	return e, nil
+	if due {
+		policy.Retry.Attempts = 1
+		ctx = context.WithValue(ctx, attemptCeilingKey{}, true)
+	}
+	result, err := c.fill(ctx, key, produce)
+	if err != nil {
+		if _, ok := err.(*producerError); !ok {
+			err = &CacheError{err}
+		} else if _, terminal := errors.AsType[*TerminalError](err); !terminal && retryable(err) && policy.Retry.Attempts <= 1 {
+			err = &TerminalError{Err: err, Attempted: true}
+		}
+		// A canceled winner leaves the due state available to the next live waiter.
+		if due && (ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return nil, err
+		}
+		next := &entry{stored: lastGood}
+		if due {
+			next.stored, next.outcome = e.stored, e.outcome
+		}
+		if c.store != nil && ctx.Err() == nil {
+			if _, producer := errors.AsType[*producerError](err); producer {
+				if o := newOutcome(err, time.Now().UTC(), nextOutcomeCount(count), lastGood); o != nil {
+					stored, saveErr := c.publishOutcome(ctx, id, o, err)
+					if saveErr != nil {
+						err = saveErr
+					} else if stored.Digest != "" {
+						next.stored, next.outcome = stored, o
+					}
+				}
+			}
+		}
+		if due {
+			e.waveErr = err
+		}
+		c.entries.Store(id, next)
+		return nil, err
+	}
+	if due {
+		e.waveResult = result
+	}
+	c.entries.Store(id, result)
+	return result, nil
+}
+
+func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Duration, e *entry) error {
+	desc, err := c.store.Resolve(ctx, key.id)
+	if errors.Is(err, errdef.ErrNotFound) {
+		e.unloaded = false
+		return nil
+	}
+	if err != nil {
+		return &CacheError{err}
+	}
+	if desc.MediaType == ocispec.MediaTypeImageManifest {
+		o, err := c.readOutcome(ctx, desc)
+		if err != nil {
+			return err
+		}
+		e.stored, e.outcome, e.unloaded = desc, o, false
+		if o == nil {
+			e.stored = ocispec.Descriptor{}
+		}
+		return nil
+	}
+	upstream, at, valid := decode(desc, key.Required)
+	if valid {
+		e.stored = desc
+	}
+	if valid && fresh(at, maxAge) {
+		e.descriptor, e.resolved = upstream, at
+		if key.git != nil {
+			e.git, err = c.restoreGit(desc, key.git.key)
+			if err != nil {
+				return &CacheError{err}
+			}
+			if e.git == nil {
+				e.resolved = time.Time{}
+			}
+		} else if key.archive {
+			index := &tarFS{root: c.root, digest: desc.Digest}
+			index.identify(desc.Digest, key.ArchiveKey)
+			file, err := c.root.Open(blobPath(desc.Digest))
+			if err != nil {
+				return &CacheError{err}
+			}
+			e.fs, err = readArchive(file, key.ArchiveKey, index)
+			if err := errors.Join(err, file.Close()); err != nil {
+				return &CacheError{err}
+			}
+		} else {
+			e.fs = fileFS{name: "content", identity: desc.Digest.String(), size: desc.Size, open: func() (io.ReadCloser, error) {
+				return c.root.Open(blobPath(desc.Digest))
+			}}
+		}
+	}
+	e.unloaded = valid && e.resolved.IsZero()
+	return nil
+}
+
+func (c *Cache) touch(e *entry) error {
+	if c.store != nil {
+		now := time.Now()
+		if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
+			return &CacheError{err}
+		}
+	}
+	return nil
 }
 
 // Forever retains a successfully resolved pin regardless of elapsed time.

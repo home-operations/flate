@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -577,11 +578,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		tlsCfg, err := f.resolveTLS(repo)
-		if err != nil {
-			t.Fatal(err)
-		}
-		client, err := f.newRepoClient(repo, nil, tlsCfg, nil)
+		client, material, err := f.newRepoClient(t.Context(), repo, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -615,7 +612,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 				current := *repo
 				fetcher := &Fetcher{Cache: c}
 				tc.change(&current, fetcher)
-				got, err := fetcher.fetch(t.Context(), &current, client, sourcecache.RetryConfig{})
+				got, err := fetcher.fetch(t.Context(), &current, registryAcquisition{client, material}, sourcecache.RetryConfig{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -636,65 +633,91 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 
 func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 	for _, backing := range []string{"memory", "disk"} {
-		t.Run(backing, func(t *testing.T) {
-			honest := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-			tampered := mustTarGz(t, map[string]string{"app.yaml": "version: v2\n"})
-			if len(tampered) != len(honest.layer) {
-				t.Fatal("fixture lengths differ")
-			}
-			var repaired atomic.Bool
-			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch {
-				case strings.Contains(r.URL.Path, "/manifests/"):
-					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
-					w.Header().Set("Docker-Content-Digest", honest.manifestDigest)
-					_, _ = w.Write(honest.manifest)
-				case strings.HasSuffix(r.URL.Path, honest.layerDigest):
-					if repaired.Load() {
-						_, _ = w.Write(honest.layer)
+		for _, corruption := range []string{"digest", "gzip header", "gzip trailer"} {
+			t.Run(backing+"/"+corruption, func(t *testing.T) {
+				honest := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+				broken := honest
+				payload := mustTarGz(t, map[string]string{"app.yaml": "version: v2\n"})
+				if corruption != "digest" {
+					if corruption == "gzip header" {
+						payload = []byte{0x1f, 0x8b}
 					} else {
-						_, _ = w.Write(tampered)
+						payload = honest.layer[:len(honest.layer)-4]
 					}
-				case strings.HasSuffix(r.URL.Path, honest.configDigest):
-					_, _ = w.Write(honest.config)
+					broken.layerDigest = sha256Digest(payload)
+					broken.manifest = mustManifestJSON(t, honest.config, payload,
+						"application/vnd.cncf.flux.config.v1+json", "application/vnd.cncf.flux.content.v1.tar+gzip")
+					broken.manifestDigest = sha256Digest(broken.manifest)
+				} else if len(payload) != len(honest.layer) {
+					t.Fatal("fixture lengths differ")
 				}
-			}))
-			t.Cleanup(srv.Close)
-			root := ""
-			if backing == "disk" {
-				root = t.TempDir()
-			}
-			c, err := sourcecache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = c.Close() })
-			f := &Fetcher{Cache: c}
-			repo := &manifest.OCIRepository{Name: "tampered", Namespace: "test",
-				URL: "oci://" + mustURL(t, srv.URL).Host + "/chart", Insecure: true,
-				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: metav1.Duration{Duration: time.Hour}}
-			if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err == nil {
-				t.Fatal("tampered layer accepted")
-			}
-			repaired.Store(true)
-			if backing == "disk" {
-				if err := c.Close(); err != nil {
-					t.Fatal(err)
+				var repaired atomic.Bool
+				var layers atomic.Int32
+				srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					current := broken
+					if repaired.Load() {
+						current = honest
+					}
+					switch {
+					case strings.Contains(r.URL.Path, "/manifests/"):
+						w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+						w.Header().Set("Docker-Content-Digest", current.manifestDigest)
+						_, _ = w.Write(current.manifest)
+					case strings.HasSuffix(r.URL.Path, current.layerDigest):
+						layers.Add(1)
+						if repaired.Load() {
+							_, _ = w.Write(honest.layer)
+						} else {
+							_, _ = w.Write(payload)
+						}
+					case strings.HasSuffix(r.URL.Path, current.configDigest):
+						_, _ = w.Write(current.config)
+					}
+				}))
+				t.Cleanup(srv.Close)
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
 				}
-				c, err = sourcecache.New(t.Context(), root)
+				c, err := sourcecache.New(t.Context(), root)
 				if err != nil {
 					t.Fatal(err)
 				}
-				f.Cache = c
-			}
-			art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := mustReadFile(t, art.FS, "app.yaml"); got != "version: v1\n" {
-				t.Fatalf("published %q", got)
-			}
-		})
+				t.Cleanup(func() { _ = c.Close() })
+				f := &Fetcher{Cache: c}
+				repo := &manifest.OCIRepository{Name: "tampered", Namespace: "test",
+					URL: "oci://" + mustURL(t, srv.URL).Host + "/chart", Insecure: true,
+					Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: metav1.Duration{Duration: time.Hour}}
+				for attempt := range 3 {
+					if attempt == 2 && backing == "disk" {
+						if err := c.Close(); err != nil {
+							t.Fatal(err)
+						}
+						c, err = sourcecache.New(t.Context(), root)
+						if err != nil {
+							t.Fatal(err)
+						}
+						f.Cache = c
+					}
+					_, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+					terminal, _ := errors.AsType[*sourcecache.TerminalError](err)
+					if err == nil || terminal != nil && !terminal.Attempted || layers.Load() != int32(attempt+1) {
+						t.Fatalf("integrity failure suppressed: layers=%d terminal=%+v error=%v", layers.Load(), terminal, err)
+					}
+					if corruption != "digest" && !errors.Is(err, io.ErrUnexpectedEOF) {
+						t.Fatalf("lost gzip cause: %v", err)
+					}
+				}
+				repaired.Store(true)
+				art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := mustReadFile(t, art.FS, "app.yaml"); got != "version: v1\n" {
+					t.Fatalf("published %q", got)
+				}
+			})
+		}
 	}
 }
 

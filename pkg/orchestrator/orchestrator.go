@@ -247,8 +247,9 @@ type Orchestrator struct {
 	// stopOnce guards Stop so a New+Bootstrap-then-abort caller's
 	// manual Stop and Run's deferred Stop don't double-close the
 	// staging cache / controller unsubs.
-	stopOnce sync.Once
-	stopErr  error
+	stopOnce    sync.Once
+	stopErr     error
+	closeCharts func()
 }
 
 // Result is the structured output of Orchestrator.Render: the rendered
@@ -589,14 +590,15 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request), retry)
 	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
+	chartFetcher, closeCharts := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{
+		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
+	o.closeCharts = closeCharts
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
 			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
-		manifest.KindHelmChart: source.Wrap(manifest.KindHelmChart,
-			helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{
-				Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})),
+		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
 	} {
 		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
 			o.src.Fetchers[kind] = f

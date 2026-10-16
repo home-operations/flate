@@ -14,6 +14,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -21,10 +22,23 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, client *remote.Repository, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, ociID(repo))
 	}
+	client, material, err := f.newRepoClient(ctx, repo, credStore)
+	if err != nil {
+		return nil, err
+	}
+	return f.fetch(ctx, repo, registryAcquisition{client, material}, retry)
+}
+
+type registryAcquisition struct {
+	client   *remote.Repository
+	material any
+}
+
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = *repo.Reference
@@ -33,10 +47,10 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
 	}
-	request := struct {
-		Source         any
-		RegistryConfig string
-	}{repo.Content(ref), f.RegistryConfig}
+	content := struct {
+		Source, Transport any
+		RegistryConfig    string
+	}{repo.Content(ref), request.material, f.RegistryConfig}
 	var id string
 	maxAge := repo.Interval.Duration
 	if ref.Digest != "" {
@@ -45,17 +59,17 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	var input fs.FS
 	var descriptor ocispec.Descriptor
 	produce := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		selected, err := resolveRef(ctx, client, repo, ref)
+		selected, err := resolveRef(ctx, request.client, repo, ref)
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
 		selectedRepo := *repo
 		selectedRepo.Reference = &selected
-		return produceLayer(ctx, client, &selectedRepo, w)
+		return produceLayer(ctx, request.client, &selectedRepo, w)
 	}
 	switch effectiveLayerOperation(repo.LayerSelector) {
 	case sourcev1.OCILayerCopy:
-		r, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: request, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
+		r, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
@@ -65,7 +79,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		}
 	case sourcev1.OCILayerExtract:
 		var err error
-		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: request, Ignore: ignore, WithDefaults: true, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
+		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, WithDefaults: true, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}

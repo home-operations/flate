@@ -12,7 +12,7 @@ import (
 
 // Git secretRef may contain only auth credentials, so TLS material is optional.
 // Validate PEM before go-git appends the CA bundle to the system trust roots.
-func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (git.CloneOptions, error) {
+func (f *Fetcher) resolveTLS(repo *manifest.GitRepository, sec *manifest.Secret) (git.CloneOptions, error) {
 	var opts git.CloneOptions
 	if repo.SecretRef == nil {
 		return opts, nil
@@ -29,7 +29,6 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository) (git.CloneOptions, er
 		// guard anyway so this method is safe to call standalone.
 		return opts, nil
 	}
-	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
 		// resolveAuth reports the missing-secret error first.
 		return opts, nil

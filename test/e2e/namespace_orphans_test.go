@@ -6,11 +6,14 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -264,6 +267,66 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			}
 		})
 	}
+	t.Run("terminal replay", func(t *testing.T) {
+		for _, concurrency := range []int{2, 4} {
+			t.Run(fmt.Sprintf("concurrency%d", concurrency), func(t *testing.T) {
+				root, cache, _ := namespaceOrphanFixture(t, "explicit")
+				flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", fmt.Sprint(concurrency), "--no-progress"}
+				out, _ := requireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+				if !strings.Contains(out, "name: demo-chart") {
+					t.Fatalf("last-good chart did not render: %s", out)
+				}
+				repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
+				chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
+				key := sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}
+				completed := time.Now()
+				// CLI signal handlers MUST stay outside the bubble. Seed a capped
+				// deadline at the real wall clock so CLI scheduling cannot expire it.
+				synctest.Test(t, func(t *testing.T) {
+					time.Sleep(time.Until(completed.Add(-11 * 15 * time.Minute)))
+					c, err := sourcecache.New(t.Context(), cache)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for attempt := range 12 {
+						_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							return ocispec.Descriptor{}, &sourcecache.TerminalError{Err: syscall.ECONNRESET, Attempted: true}
+						})
+						if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || !terminal.Attempted || !errors.Is(err, syscall.ECONNRESET) {
+							t.Fatalf("seeded failure lost its classification: %v", err)
+						}
+						if attempt < 11 {
+							time.Sleep(15 * time.Minute)
+						}
+					}
+					if err := c.Close(); err != nil {
+						t.Fatal(err)
+					}
+				})
+				for _, command := range [][]string{{"build", "all"}, {"test", "all"}} {
+					out, stderr, code := runCLIBuffers(append(command, flags...)...)
+					if code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) || strings.Contains(out, "name: demo-chart") || strings.Contains(out+stderr, "warning") {
+						t.Fatalf("terminal replay became success or warning: exit=%d stdout=%s stderr=%s", code, out, stderr)
+					}
+				}
+				c, err := sourcecache.New(t.Context(), cache)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+					t.Fatal("fresh replay invoked producer")
+					return ocispec.Descriptor{}, nil
+				})
+				if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
+					t.Fatalf("fresh replay lost its non-attempt classification: %v", err)
+				}
+				if err := c.Close(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	})
+
 }
 
 func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
@@ -305,6 +368,11 @@ func namespaceOrphanSourceNamespace(scenario, namespace string) string {
 }
 
 func namespaceOrphanFixture(t *testing.T, scenario string) (string, string, []string) {
+	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("NO_PROXY", "*")
+	t.Setenv("no_proxy", "*")
 	t.Helper()
 	root, cache := t.TempDir(), t.TempDir()
 	gitInit(t, root)
@@ -394,7 +462,7 @@ spec:
 	}
 	repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
 	chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
-	r, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart any }{repository.Content(), chart.Content()}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	r, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(archive.Bytes())
 		return ocispec.Descriptor{Digest: digest.FromBytes(archive.Bytes()), Size: int64(archive.Len()), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
 	})

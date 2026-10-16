@@ -25,10 +25,14 @@ func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, arti
 	if spec.Reference != nil && gitRefLabel(*spec.Reference) != "" {
 		ref = gitRefLabel(*spec.Reference)
 	}
+	request, err := f.resolveTransport(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
 	key := sourcecache.GitKey{Content: struct {
-		Source any
-		Depth  int
-	}{spec.Content(effectiveRef(spec.Reference)), f.Depth}, Ref: ref, RecurseSubmodules: spec.RecurseSubmodules}
+		Source, Transport any
+		Depth             int
+	}{spec.Content(effectiveRef(spec.Reference)), request.material, f.Depth}, Ref: ref, RecurseSubmodules: spec.RecurseSubmodules}
 	generation, id, err := f.Cache.Git(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil {
 		t.Fatal(err)

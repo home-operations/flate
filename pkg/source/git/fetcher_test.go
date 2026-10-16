@@ -16,7 +16,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	c := newGitCache(t, "")
 	f := &Fetcher{Cache: c}
 	base := &manifest.GitRepository{URL: "file://" + root, Reference: &manifest.GitRepositoryRef{Commit: commit}}
-	first, err := f.fetch(t.Context(), base, gitlib.CloneOptions{URL: base.URL, NoCheckout: true}, sourcecache.RetryConfig{})
+	first, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 			r := *base
 			fetcher := &Fetcher{Cache: c}
 			tc.change(&r, fetcher)
-			art, err := fetcher.fetch(t.Context(), &r, gitlib.CloneOptions{URL: r.URL, NoCheckout: true}, sourcecache.RetryConfig{})
+			art, err := fetcher.fetch(t.Context(), gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}

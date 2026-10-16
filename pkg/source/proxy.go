@@ -33,7 +33,7 @@ func (p *ProxyConfig) URL() (*url.URL, error) {
 }
 
 // ResolveProxy reads the configured proxy address and optional credentials.
-// Missing or wiped material returns MissingSecretError; a nil ref disables proxying.
+// Missing or wiped material returns MissingSecretError; a nil ref selects environment policy.
 func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *manifest.LocalObjectReference) (*ProxyConfig, error) {
 	if ref == nil {
 		return nil, nil

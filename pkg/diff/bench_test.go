@@ -94,7 +94,7 @@ func buildDiffCorpus(n, changeCount int) (left, right []Doc) {
 	right = make([]Doc, 0, n)
 	for i := range n {
 		name := fmt.Sprintf("cm-%d", i)
-		parent := Parent{NamedResource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i/10)}} //nolint:modernize // Corpus fixtures MUST spell the embedded resource identity explicitly.
+		parent := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i/10)} //nolint:modernize // Corpus fixtures MUST spell the embedded resource identity explicitly.
 		baseValue := fmt.Sprintf("value-%d", i)
 		other := baseValue
 		if i < changeCount {

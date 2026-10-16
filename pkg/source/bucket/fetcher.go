@@ -7,6 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+
+	"golang.org/x/net/http/httpproxy"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
@@ -44,20 +48,22 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 			"S3-compatible")
 	}
 
-	client, endpoint, secure, err := f.newMinioClient(b)
+	client, material, err := f.newMinioClient(b)
 	if err != nil {
 		return nil, err
 	}
 
+	endpoint, secure := client.EndpointURL().Host, client.EndpointURL().Scheme == "https"
 	ignore := ""
 	if b.Ignore != nil {
 		ignore = *b.Ignore
 	}
-	key := cache.ArchiveKey{Content: b.Content(endpoint, secure), Ignore: ignore, Required: []string{"revision", "object-count"}}
+	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(endpoint, secure), material}, Ignore: ignore, Required: []string{"revision", "object-count"}}
 	input, desc, id, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		desc, err := walkBucket(ctx, client, b, w)
-		if status, ok := errors.AsType[minio.ErrorResponse](err); ok {
-			err = &statusError{err: err, status: &errcode.ErrorResponse{StatusCode: status.StatusCode}}
+		if status, ok := errors.AsType[minio.ErrorResponse](err); ok &&
+			(status.StatusCode == http.StatusTooManyRequests || status.StatusCode >= 500 && status.StatusCode < 600) {
+			err = fmt.Errorf("%v: %w", err, &errcode.ErrorResponse{StatusCode: status.StatusCode})
 		}
 		return desc, err
 	})
@@ -77,31 +83,59 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 	}, nil
 }
 
-type statusError struct {
-	err    error
-	status *errcode.ErrorResponse
-}
-
-func (e *statusError) Error() string   { return e.err.Error() }
-func (e *statusError) Unwrap() []error { return []error{e.err, e.status} }
-
 // newMinioClient resolves credentials, endpoint, and TLS/proxy transport for b
-// and constructs the minio client. Returns the resolved endpoint + secure flag
-// too, since the cache key and artifact URL both need them.
-func (f *Fetcher) newMinioClient(b *manifest.Bucket) (client *minio.Client, endpoint string, secure bool, err error) {
-	creds, err := f.resolveCredentials(b)
-	if err != nil {
-		return nil, "", false, err
+// and constructs the minio client with the captured producer material.
+func (f *Fetcher) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error) {
+	var certMaterial any
+	prepared := *f
+	if f.Secrets != nil {
+		captured := make(map[string]*manifest.Secret)
+		prepared.Secrets = func(ns, name string) *manifest.Secret {
+			sec, ok := captured[name]
+			if !ok {
+				sec = f.Secrets(ns, name)
+				captured[name] = sec
+			}
+			if b.CertSecretRef != nil && name == b.CertSecretRef.Name && sec != nil {
+				certMaterial = [2]any{sec.Data, sec.StringData}
+			}
+			return sec
+		}
 	}
-	endpoint, secure, err = normalizeEndpoint(b.Endpoint, b.Insecure)
+	creds, err := prepared.resolveCredentials(b)
 	if err != nil {
-		return nil, "", false, err
+		return nil, nil, err
 	}
-	transport, err := f.resolveTransport(b)
+	endpoint, secure, err := normalizeEndpoint(b.Endpoint, b.Insecure)
 	if err != nil {
-		return nil, "", false, err
+		return nil, nil, err
 	}
-	client, err = minio.New(endpoint, &minio.Options{
+	proxyPolicy := httpproxy.FromEnvironment()
+	transport, err := prepared.resolveTransport(b)
+	if err != nil {
+		return nil, nil, err
+	}
+	if b.ProxySecretRef == nil {
+		proxyForURL := proxyPolicy.ProxyFunc()
+		transport.Proxy = func(req *http.Request) (*url.URL, error) { return proxyForURL(req.URL) }
+	}
+
+	value, _ := creds.GetWithContext(nil)
+	selected, err := transport.Proxy(&http.Request{URL: &url.URL{Scheme: schemeFor(secure), Host: endpoint}})
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: resolve bucket proxy: %w", manifest.ErrInput, err)
+	}
+	var proxyIdentity any
+	if b.ProxySecretRef == nil && (proxyPolicy.HTTPProxy != "" || proxyPolicy.HTTPSProxy != "") {
+		proxyIdentity = proxyPolicy
+	} else if selected != nil {
+		proxyIdentity = selected.String()
+	}
+	var material any
+	if value.AccessKeyID != "" || value.SecretAccessKey != "" || certMaterial != nil || proxyIdentity != nil {
+		material = [3]any{value, certMaterial, proxyIdentity}
+	}
+	client, err := minio.New(endpoint, &minio.Options{
 		MaxRetries: 1,
 		Creds:      creds,
 		Secure:     secure,
@@ -109,9 +143,9 @@ func (f *Fetcher) newMinioClient(b *manifest.Bucket) (client *minio.Client, endp
 		Transport:  f.Network.HTTPTransport(transport),
 	})
 	if err != nil {
-		return nil, "", false, fmt.Errorf("%s: minio client: %w", bucketID(b), err)
+		return nil, nil, fmt.Errorf("%s: minio client: %w", bucketID(b), err)
 	}
-	return client, endpoint, secure, nil
+	return client, material, nil
 }
 
 // bucketID is the "Bucket <namespace>/<name>" error prefix, via the shared

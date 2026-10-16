@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -17,6 +20,114 @@ import (
 )
 
 func TestBlob_LookupAndReplacement(t *testing.T) {
+	t.Run("outcomes", func(t *testing.T) {
+		for _, maxAge := range []time.Duration{0, time.Hour, Forever, -2} {
+			t.Run(maxAge.String(), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					root := t.TempDir()
+					c := newCache(t, root)
+					key := BlobKey{Content: "recorded"}
+					calls := 0
+					fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						calls++
+						return ocispec.Descriptor{}, connReset()
+					}
+					policy := Policy{MaxAge: maxAge, Retry: fastRetry(3)}
+					r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("original"), ocispec.Descriptor{}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := r.Close(); err != nil {
+						t.Fatal(err)
+					}
+					lastGood, err := c.store.Resolve(t.Context(), id)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := c.Close(); err != nil {
+						t.Fatal(err)
+					}
+					c = newCache(t, root)
+					_, _, _, err = c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, fail)
+					terminal, ok := errors.AsType[*TerminalError](err)
+					if !ok || !terminal.Attempted || calls != 3 {
+						t.Fatalf("initial calls=%d, error=%v", calls, err)
+					}
+					desc, err := c.store.Resolve(t.Context(), id)
+					if err != nil || desc.MediaType != ocispec.MediaTypeImageManifest {
+						t.Fatalf("same-tag outcome=%+v, error=%v", desc, err)
+					}
+					initial, err := c.readOutcome(t.Context(), desc)
+					if err != nil || initial == nil || initial.record.Count != 1 || initial.lastGood.Digest != lastGood.Digest {
+						t.Fatalf("initial outcome=%+v, error=%v", initial, err)
+					}
+					for range 2 {
+						if err := c.Close(); err != nil {
+							t.Fatal(err)
+						}
+						c = newCache(t, root)
+						for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, fail} {
+							_, _, _, err := c.Blob(t.Context(), key, policy, produce)
+							terminal, ok := errors.AsType[*TerminalError](err)
+							if !ok || terminal.Attempted || !errors.Is(err, syscall.ECONNRESET) || !errors.Is(err, manifest.ErrFlux) || calls != 3 {
+								t.Fatalf("fresh calls=%d, error=%v", calls, err)
+							}
+						}
+					}
+					time.Sleep(750*time.Millisecond - time.Nanosecond)
+					_, _, _, err = c.Blob(t.Context(), key, policy, fail)
+					if terminal, ok := errors.AsType[*TerminalError](err); !ok || terminal.Attempted || calls != 3 {
+						t.Fatalf("before deadline calls=%d, error=%v", calls, err)
+					}
+					unchanged, err := c.readOutcome(t.Context(), desc)
+					if err != nil || unchanged == nil || unchanged.record.Count != initial.record.Count || !unchanged.record.Completed.Equal(initial.record.Completed) {
+						t.Fatalf("read renewed outcome: %+v, error=%v", unchanged, err)
+					}
+					time.Sleep(time.Nanosecond)
+					if _, _, _, err := c.Blob(t.Context(), key, policy, nil); !errors.Is(err, errdef.ErrNotFound) {
+						t.Fatalf("due lookup: %v", err)
+					}
+					_, _, _, err = c.Blob(t.Context(), key, policy, fail)
+					if terminal, ok := errors.AsType[*TerminalError](err); !ok || !terminal.Attempted || calls != 4 {
+						t.Fatalf("due calls=%d, error=%v", calls, err)
+					}
+					nextDesc, err := c.store.Resolve(t.Context(), id)
+					if err != nil {
+						t.Fatal(err)
+					}
+					next, err := c.readOutcome(t.Context(), nextDesc)
+					if err != nil || next == nil || next.record.Count != 2 || !next.record.Completed.Equal(time.Now()) {
+						t.Fatalf("second outcome=%+v, error=%v", next, err)
+					}
+					time.Sleep(1500 * time.Millisecond)
+					r, _, _, err = c.Blob(t.Context(), key, policy, producer([]byte("recovered"), ocispec.Descriptor{}))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := r.Close(); err != nil {
+						t.Fatal(err)
+					}
+					good, err := c.store.Resolve(t.Context(), id)
+					if err != nil || good.MediaType != "application/octet-stream" {
+						t.Fatalf("recovery descriptor=%+v, error=%v", good, err)
+					}
+					_, _, _, err = c.Blob(t.Context(), key, Policy{}, fail)
+					if !errors.Is(err, syscall.ECONNRESET) || calls != 5 {
+						t.Fatalf("new sequence calls=%d, error=%v", calls, err)
+					}
+					resetDesc, err := c.store.Resolve(t.Context(), id)
+					if err != nil {
+						t.Fatal(err)
+					}
+					reset, err := c.readOutcome(t.Context(), resetDesc)
+					if err != nil || reset == nil || reset.record.Count != 1 || reset.lastGood.Digest != good.Digest {
+						t.Fatalf("reset outcome=%+v, error=%v", reset, err)
+					}
+				})
+			})
+		}
+	})
+
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
 			root := ""
@@ -66,6 +177,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 						t.Fatal(err)
 					}
 					c = newCache(t, root)
+					if r, _, _, err := c.Blob(t.Context(), key, Policy{}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+						t.Fatalf("cold zero-age lookup: reader=%v, error=%v", r, err)
+					}
 				}
 				first, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 				if err != nil {
@@ -166,6 +280,18 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 							t.Fatalf("reopened frame=%q, error=%v", data, err)
 						}
 						return
+					}
+					for range 2 {
+						r, _, _, err := c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							t.Fatal("disabled PersistOnly ran failing producer")
+							return ocispec.Descriptor{}, connReset()
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := r.Close(); err != nil {
+							t.Fatal(err)
+						}
 					}
 					ctx, cancel := context.WithCancel(t.Context())
 					cancel()

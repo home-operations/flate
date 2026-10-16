@@ -5,12 +5,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -146,6 +150,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 		{name: "Secret wins malformed fallback", registry: "ghcr.io", secret: secretJSON, config: `{"auths":`, user: "alice", pass: "hunter2"},
 		{name: "explicit wins Docker defaults", registry: "ghcr.io", config: explicitJSON, user: "explicit", pass: "explicit"},
 		{name: "Docker fallback", registry: "ghcr.io", user: "default", pass: "default"},
+		{name: "Docker Hub docker.io", registry: "docker.io", secret: `{"auths":{"https://index.docker.io/v1/":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`, user: "alice", pass: "hunter2"},
 		{name: "Docker Hub alias", registry: "registry-1.docker.io", secret: `{"auths":{"index.docker.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`, user: "alice", pass: "hunter2"},
 	}
 	for _, tt := range tests {
@@ -171,10 +176,30 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := credentials.Credential(credStore)(t.Context(), tt.registry)
+			client, identity, err := f.newRepoClient(t.Context(), repo, credStore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := client.Client.(*auth.Client).Credential(t.Context(), client.Reference.Host())
 			want := auth.Credential{Username: tt.user, Password: tt.pass}
 			if err != nil || got != want {
 				t.Fatalf("credentials = %+v, %v; want %+v", got, err, want)
+			}
+			if identity == nil {
+				t.Fatal("authenticated acquisition has anonymous identity")
+			}
+			if tt.secret != "" {
+				if err := credStore.Put(t.Context(), credentials.ServerAddressFromHostname(client.Reference.Host()), auth.Credential{Username: "rotated", Password: "rotated"}); err != nil {
+					t.Fatal(err)
+				}
+				captured, err := client.Client.(*auth.Client).Credential(t.Context(), client.Reference.Host())
+				if err != nil || captured != want {
+					t.Fatal("producer reread mutable credentials")
+				}
+				_, rotated, err := f.newRepoClient(t.Context(), repo, credStore)
+				if err != nil || cmp.Equal(identity, rotated) {
+					t.Fatal("credential rotation reused identity")
+				}
 			}
 		})
 	}
@@ -438,7 +463,8 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		URL: "oci://" + host + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: true,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache, Network: &network})
+	charts, cleanup := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache, Network: &network})
+	t.Cleanup(cleanup)
 	got, err := charts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -449,10 +475,12 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if b := mustReadFile(t, got.FS, "Chart.yaml"); b != chart {
 		t.Errorf("Chart.yaml = %q, want %q", b, chart)
 	}
+	initialKey := got.Key
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, configPath, configJSON)
 	fallbackFetcher := &Fetcher{Cache: cache, Network: &network, RegistryConfig: configPath, Secrets: func(_, _ string) *manifest.Secret { return nil }}
-	fallbackCharts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
+	fallbackCharts, fallbackCleanup := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
+	t.Cleanup(fallbackCleanup)
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	_, err = fallbackCharts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), retry)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
@@ -469,7 +497,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if err != nil || failures.Load() != 1 {
 		t.Fatalf("fallback recovery: %v, failures=%d", err, failures.Load())
 	}
-	if got.Kind != manifest.KindHelmChart || mustReadFile(t, got.FS, "Chart.yaml") != chart {
+	if got.Key == initialKey || got.Kind != manifest.KindHelmChart || mustReadFile(t, got.FS, "Chart.yaml") != chart {
 		t.Fatalf("fallback artifact=%+v", got)
 	}
 	tr, _ := source.NewHTTPTransport(nil, nil)
@@ -485,5 +513,252 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	_, err = missing.RetryWithRegistryConfig(t.Context(), configPath)
 	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, cause) || requests.Load() != before {
 		t.Fatalf("suppressed fallback: %v, additional requests=%d", err, requests.Load()-before)
+	}
+}
+
+type countedCredentials struct {
+	credentials.Store
+	calls   int
+	failure error
+}
+
+func (s *countedCredentials) Get(context.Context, string) (auth.Credential, error) {
+	s.calls++
+	if s.failure != nil {
+		return auth.EmptyCredential, s.failure
+	}
+	return auth.Credential{Username: "helper", Password: fmt.Sprint(s.calls)}, nil
+}
+
+func TestFetcher_ResolveConfig_HelperSnapshot(t *testing.T) {
+	t.Setenv("NO_PROXY", "*")
+	t.Setenv("no_proxy", "*")
+	store := &countedCredentials{}
+	repo := ociRepo("helper", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
+	client, first, err := (&Fetcher{}).newRepoClient(t.Context(), repo, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		cred, err := client.Client.(*auth.Client).Credential(t.Context(), "registry-1.docker.io")
+		if err != nil || cred.Password != "1" || store.calls != 1 {
+			t.Fatalf("helper was not frozen: calls=%d error=%v", store.calls, err)
+		}
+	}
+	_, second, err := (&Fetcher{}).newRepoClient(t.Context(), repo, store)
+	if err != nil || cmp.Equal(first, second) || store.calls != 2 {
+		t.Fatalf("next acquisition did not resolve rotated helper: calls=%d error=%v", store.calls, err)
+	}
+	store.failure = os.ErrPermission
+	failed, identity, err := (&Fetcher{}).newRepoClient(t.Context(), repo, store)
+	if failed != nil || identity != nil || !errors.Is(err, os.ErrPermission) || !errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("failed helper admitted acquisition: %v", err)
+	}
+}
+
+func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
+	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap"})
+	upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
+	var fail atomic.Bool
+	var requests, lookups atomic.Int32
+	var password atomic.Value
+	password.Store("first")
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "alice" || pass != password.Load().(string) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if fail.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		upstream.Config.Handler.ServeHTTP(w, r)
+	}))
+	_ = srv.Listener.Close()
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Listener = listener
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	var proxyPassword atomic.Value
+	proxyPassword.Store("first")
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:"+proxyPassword.Load().(string))) {
+			t.Error("transport used a different proxy snapshot")
+			w.WriteHeader(http.StatusProxyAuthRequired)
+			return
+		}
+		remote, err := (&net.Dialer{}).DialContext(r.Context(), "tcp", r.Host)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer remote.Close()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		go func() { _, _ = io.Copy(remote, conn); _ = remote.Close() }()
+		_, _ = io.Copy(conn, remote)
+	}))
+	t.Cleanup(proxy.Close)
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	repo := ociRepo("snapshot", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = "oci://" + mustURL(t, srv.URL).Host + "/app"
+		s.Insecure = true
+		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+		s.CertSecretRef = &manifest.LocalObjectReference{Name: "creds"}
+		s.Interval.Duration = time.Hour
+	})
+	root := t.TempDir()
+	ca := testutil.SelfSignedCA(t)
+	var previous string
+	for _, wave := range []string{"first", "password", "certificate", "proxy", "direct"} {
+		t.Run(wave, func(t *testing.T) {
+			if wave == "password" {
+				password.Store("second")
+			}
+			if wave == "certificate" {
+				ca = testutil.SelfSignedCA(t)
+			}
+			proxyURL := strings.Replace(proxy.URL, "://", "://proxy:first@", 1)
+			if wave == "proxy" || wave == "direct" {
+				proxyURL = strings.Replace(proxy.URL, "://", "://proxy:second@", 1)
+				proxyPassword.Store("second")
+			}
+			t.Setenv("https_proxy", proxyURL)
+			if wave == "direct" {
+				t.Setenv("no_proxy", "*")
+			}
+			c, err := sourcecache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret {
+				lookups.Add(1)
+				config := fmt.Sprintf(`{"auths":{%q:{"username":"alice","password":%q}}}`, mustURL(t, srv.URL).Host, password.Load().(string))
+				return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config, "ca.crt": ca}}
+			}}
+			before := requests.Load()
+			art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{Attempts: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if previous == art.Key || requests.Load() <= before {
+				t.Fatal("changed material reused acquisition")
+			}
+			previous = art.Key
+			before = requests.Load()
+			if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil || requests.Load() != before {
+				t.Fatalf("warm snapshot missed: %v", err)
+			}
+			fail.Store(true)
+			failed := *repo
+			failed.Interval.Duration = 0
+			_, err = f.Fetch(t.Context(), &failed, sourcecache.RetryConfig{})
+			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !terminal.Attempted {
+				t.Fatalf("failed snapshot: %v", err)
+			}
+			fail.Store(false)
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			c, err = sourcecache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Cache = c
+			before = requests.Load()
+			_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || terminal.Attempted || requests.Load() != before {
+				t.Fatalf("reopened snapshot replay: %v", err)
+			}
+
+		})
+	}
+	if lookups.Load() != 20 {
+		t.Fatalf("auth and cert reread Secrets: %d", lookups.Load())
+	}
+	if err := fs.WalkDir(os.DirFS(root), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		data, err := fs.ReadFile(os.DirFS(root), path)
+		if err != nil {
+			return err
+		}
+		for _, secret := range []string{"proxy:first@", "proxy:second@", "BEGIN CERTIFICATE"} {
+			if strings.Contains(string(data), secret) {
+				t.Errorf("credential material persisted in %s", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
+	for _, callers := range []int{2, 4} {
+		t.Run(fmt.Sprint(callers), func(t *testing.T) {
+			ca := testutil.SelfSignedCA(t)
+			config := filepath.Join(t.TempDir(), "config.json")
+			testutil.WriteFileAt(t, config, `{"auths":{"ghcr.io":{"username":"alice","password":"test"}}}`)
+			c, err := sourcecache.New(t.Context(), t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			var lookups atomic.Int32
+			f := &Fetcher{Cache: c, RegistryConfig: config, Secrets: func(_, name string) *manifest.Secret {
+				lookups.Add(1)
+				if name == "tls" {
+					return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+				}
+				return nil
+			}}
+			repo := ociRepo("fallback", func(s *sourcev1.OCIRepositorySpec) {
+				s.URL = "oci://ghcr.io/app"
+				s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
+				s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+			})
+			_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok || missing.RetryWithRegistryConfig == nil || lookups.Load() != 2 {
+				t.Fatalf("snapshot before handoff: reads=%d error=%v", lookups.Load(), err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			var wg sync.WaitGroup
+			for range callers {
+				wg.Go(func() {
+					_, err := missing.RetryWithRegistryConfig(ctx, config)
+					if !errors.Is(err, context.Canceled) {
+						t.Errorf("canceled fallback: %v", err)
+					}
+				})
+			}
+			wg.Wait()
+			if lookups.Load() != 2 {
+				t.Fatalf("retained fallback reread mutable Secrets: %d", lookups.Load())
+			}
+		})
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 
@@ -31,13 +30,13 @@ type ociFetcher = source.TypedFetcher[*manifest.OCIRepository]
 
 // Fetcher resolves a HelmChart into an immutable source artifact.
 type Fetcher struct {
-	secrets   source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
-	repos     RepoLookup          // resolves the chart's backing HelmRepository
-	oci       ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
-	cache     *cache.Cache        // content-addressed store for HTTP chart tarballs
-	network   *source.Network
-	transport http.RoundTripper
+	secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
+	repos   RepoLookup          // resolves the chart's backing HelmRepository
+	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
+	cache   *cache.Cache        // content-addressed store for HTTP chart tarballs
+	network *source.Network
 
+	clients                    sync.Map                // map[string]*httpClient
 	indexCache                 sync.Map                // map[string]*repo.IndexFile
 	indexLocks                 *keylock.KeyMap[string] // serialize parsed memo publication
 	disableChartDigestTracking bool
@@ -54,11 +53,19 @@ type Config struct {
 }
 
 // New constructs a fetcher using the caller-owned acquisition cache.
-func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Config) *Fetcher {
-	tr, _ := helmTransport(nil)
-	return &Fetcher{secrets: secrets, repos: repos, oci: oci, cache: cfg.Cache,
-		network: cfg.Network, transport: cfg.Network.HTTPTransport(tr),
+// Callers MUST finish and join fetches before invoking the returned cleanup.
+func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Config) (*Fetcher, func()) {
+	f := &Fetcher{secrets: secrets, repos: repos, oci: oci, cache: cfg.Cache,
+		network:                    cfg.Network,
 		disableChartDigestTracking: cfg.DisableChartDigestTracking, indexLocks: keylock.New[string]()}
+	return f, func() {
+		f.clients.Range(func(_, value any) bool {
+			if tr := value.(*httpClient).transport; tr != nil {
+				tr.CloseIdleConnections()
+			}
+			return true
+		})
+	}
 }
 
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It
@@ -110,7 +117,11 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, retry
 		}
 		return art, nil
 	}
-	return f.fetchHTTPChart(ctx, r, hc, retry)
+	prepared, err := f.prepareHTTP(r)
+	if err != nil {
+		return nil, err
+	}
+	return f.fetchHTTPChart(ctx, prepared, hc, retry)
 }
 
 // helmID is the "HelmRepository <namespace>/<name>" error prefix, via the

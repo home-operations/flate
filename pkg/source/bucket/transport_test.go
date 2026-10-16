@@ -2,11 +2,16 @@ package bucket
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"io"
+	"io/fs"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -158,4 +163,135 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls, time.Since(start))
 		}
 	})
+}
+
+func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
+	var fail atomic.Bool
+	var requests, lookups atomic.Int32
+	var proxyPassword atomic.Value
+	proxyPassword.Store("first")
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.IsAbs() && r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:"+proxyPassword.Load().(string))) {
+			t.Error("transport used a different proxy snapshot")
+			w.WriteHeader(http.StatusProxyAuthRequired)
+			return
+		}
+		requests.Add(1)
+		if !strings.Contains(r.Header.Get("Authorization"), "Credential=access/") {
+			t.Error("static credentials lost")
+		}
+		if fail.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+	})
+	srv := httptest.NewUnstartedServer(handler)
+	_ = srv.Listener.Close()
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Listener = listener
+	srv.Start()
+	t.Cleanup(srv.Close)
+	proxy := httptest.NewServer(handler)
+	t.Cleanup(proxy.Close)
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	root := t.TempDir()
+	b := &manifest.Bucket{Name: "snapshot", Namespace: "ns", Endpoint: srv.URL, Insecure: true, Region: "us-east-1", BucketName: "data",
+		SecretRef: &manifest.LocalObjectReference{Name: "creds"}, CertSecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+	b.Interval.Duration = time.Hour
+	password, ca := "first", testutil.SelfSignedCA(t)
+	var previous string
+	for _, wave := range []string{"first", "password", "certificate", "proxy", "direct"} {
+		t.Run(wave, func(t *testing.T) {
+			if wave == "password" {
+				password = "second"
+			}
+			if wave == "certificate" {
+				ca = testutil.SelfSignedCA(t)
+			}
+			proxyURL := strings.Replace(proxy.URL, "://", "://proxy:first@", 1)
+			if wave == "proxy" || wave == "direct" {
+				proxyURL = strings.Replace(proxy.URL, "://", "://proxy:second@", 1)
+				proxyPassword.Store("second")
+			}
+			t.Setenv("http_proxy", proxyURL)
+			if wave == "direct" {
+				t.Setenv("no_proxy", "*")
+			}
+			c, err := cache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret {
+				lookups.Add(1)
+				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca}}
+			}}
+			before := requests.Load()
+			art, err := f.Fetch(t.Context(), b, cache.RetryConfig{Attempts: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if previous == art.Key || requests.Load() != before+1 {
+				t.Fatal("changed material reused acquisition")
+			}
+			previous = art.Key
+			before = requests.Load()
+			if _, err := f.Fetch(t.Context(), b, cache.RetryConfig{}); err != nil || requests.Load() != before {
+				t.Fatalf("warm snapshot missed: %v", err)
+			}
+			fail.Store(true)
+			failed := *b
+			failed.Interval.Duration = 0
+			_, err = f.Fetch(t.Context(), &failed, cache.RetryConfig{})
+			terminal, ok := errors.AsType[*cache.TerminalError](err)
+			if !ok || !terminal.Attempted {
+				t.Fatalf("failed snapshot: %v", err)
+			}
+			fail.Store(false)
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			c, err = cache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Cache = c
+			before = requests.Load()
+			_, err = f.Fetch(t.Context(), b, cache.RetryConfig{})
+			terminal, ok = errors.AsType[*cache.TerminalError](err)
+			if !ok || terminal.Attempted || requests.Load() != before {
+				t.Fatalf("reopened snapshot replay: %v", err)
+			}
+
+		})
+	}
+	if lookups.Load() != 20 {
+		t.Fatalf("credentials and cert reread Secrets: %d", lookups.Load())
+	}
+	if err := fs.WalkDir(os.DirFS(root), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		data, err := fs.ReadFile(os.DirFS(root), path)
+		if err != nil {
+			return err
+		}
+		for _, secret := range []string{"proxy:first@", "proxy:second@", "BEGIN CERTIFICATE"} {
+			if strings.Contains(string(data), secret) {
+				t.Errorf("credential material persisted in %s", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

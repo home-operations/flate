@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +23,9 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -359,6 +363,95 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFetcher_TerminalStatusReplay(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `<Error><Code>SlowDown</Code><Message>temporary failure</Message></Error>`)
+			}))
+			t.Cleanup(srv.Close)
+			root := t.TempDir()
+			c, err := cache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			f := &bucket.Fetcher{Cache: c, Network: new(source.Network)}
+			b := &manifest.Bucket{
+				Name: "terminal", Namespace: "test", BucketName: "data",
+				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
+			}
+			retry := cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}
+			_, err = f.Fetch(t.Context(), b, retry)
+			terminal, ok := errors.AsType[*cache.TerminalError](err)
+			cause, typed := errors.AsType[*errcode.ErrorResponse](err)
+			if !ok || !terminal.Attempted || !typed || cause.StatusCode != status || calls.Load() != 3 {
+				t.Fatalf("terminal failure: %v, requests=%d", err, calls.Load())
+			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			readRecord := func() (ocispec.Descriptor, []byte) {
+				t.Helper()
+				data, err := os.ReadFile(filepath.Join(root, "oci", "index.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var index ocispec.Index
+				if err := json.Unmarshal(data, &index); err != nil || len(index.Manifests) != 1 {
+					t.Fatalf("persisted outcome index: %s, %v", data, err)
+				}
+				desc := index.Manifests[0]
+				data, err = os.ReadFile(filepath.Join(root, "oci", "blobs", desc.Digest.Algorithm().String(), desc.Digest.Encoded()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var m ocispec.Manifest
+				if err := json.Unmarshal(data, &m); err != nil || m.ArtifactType != "application/vnd.flate.failure.v1" {
+					t.Fatalf("persisted outcome manifest: %s, %v", data, err)
+				}
+				data, err = os.ReadFile(filepath.Join(root, "oci", "blobs", m.Config.Digest.Algorithm().String(), m.Config.Digest.Encoded()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return desc, data
+			}
+			initial, record := readRecord()
+			var timing struct {
+				Completed time.Time `json:"completed"`
+				Count     uint32    `json:"count"`
+			}
+			if err := json.Unmarshal(record, &timing); err != nil || timing.Completed.IsZero() || timing.Count != 1 {
+				t.Fatalf("persisted timing: %s, %v", record, err)
+			}
+			deadline := timing.Completed.Add(750 * time.Millisecond)
+			reopened, err := cache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = reopened.Close() })
+			f.Cache = reopened
+			_, err = f.Fetch(t.Context(), b, retry)
+			terminal, ok = errors.AsType[*cache.TerminalError](err)
+			cause, typed = errors.AsType[*errcode.ErrorResponse](err)
+			if !ok || terminal.Attempted || !typed || cause.StatusCode != status || calls.Load() != 3 {
+				t.Fatalf("replayed failure: %v, requests=%d", err, calls.Load())
+			}
+			if !time.Now().Before(deadline) {
+				t.Fatal("replay did not finish before the recorded deadline")
+			}
+			unchanged, replayed := readRecord()
+			if unchanged.Digest != initial.Digest || unchanged.Annotations[ocispec.AnnotationRefName] != initial.Annotations[ocispec.AnnotationRefName] || string(replayed) != string(record) {
+				t.Fatalf("replay changed persisted record or deadline: %s -> %s", record, replayed)
+			}
+		})
 	}
 }
 

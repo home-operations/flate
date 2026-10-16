@@ -5,7 +5,6 @@ import (
 	"context"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -39,28 +38,24 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, retry
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
 			"SecretRef or --registry-config credentials")
 	}
-	credStore, err := f.resolveRegistryConfig(ctx, repo, retry)
-	if err != nil {
-		return nil, err
+	prepared := *f
+	if f.Secrets != nil {
+		captured := make(map[string]*manifest.Secret)
+		for _, ref := range []*manifest.LocalObjectReference{repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef} {
+			if ref != nil {
+				if _, ok := captured[ref.Name]; !ok {
+					captured[ref.Name] = f.Secrets(repo.Namespace, ref.Name)
+				}
+			}
+		}
+		prepared.Secrets = func(_, name string) *manifest.Secret { return captured[name] }
 	}
-	return f.fetchWithCredentials(ctx, repo, credStore, retry)
-}
 
-func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, retry cache.RetryConfig) (*store.SourceArtifact, error) {
-	tlsCfg, err := f.resolveTLS(repo)
+	credStore, err := prepared.resolveRegistryConfig(ctx, repo, retry)
 	if err != nil {
 		return nil, err
 	}
-	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "OCIRepository",
-		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
-	if err != nil {
-		return nil, err
-	}
-	client, err := f.newRepoClient(repo, credStore, tlsCfg, proxy)
-	if err != nil {
-		return nil, err
-	}
-	return f.fetch(ctx, repo, client, retry)
+	return prepared.fetchWithCredentials(ctx, repo, credStore, retry)
 }
 
 // ociID is the "OCIRepository <namespace>/<name>" prefix shared by this

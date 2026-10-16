@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"golang.org/x/net/http/httpproxy"
 
 	// HTTPS operations must retain flate's header timeout and egress guard.
 	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
@@ -48,40 +50,70 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, retry
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
 			"SecretRef-based credentials")
 	}
-	opts, err := f.resolveTransport(repo)
+	request, err := f.resolveTransport(repo)
 	if err != nil {
 		return nil, err
 	}
-	return f.fetch(ctx, repo, opts, retry)
+	return f.fetch(ctx, request, retry)
 }
 
-func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (git.CloneOptions, error) {
-	auth, err := f.resolveAuth(repo)
-	if err != nil {
-		return git.CloneOptions{}, err
+func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (gitAcquisition, error) {
+	var sec *manifest.Secret
+	if repo.SecretRef != nil && f.Secrets != nil {
+		sec = f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	}
-	opts, err := f.resolveTLS(repo)
+	auth, err := f.resolveAuth(repo, sec)
 	if err != nil {
-		return git.CloneOptions{}, err
+		return gitAcquisition{}, err
 	}
-	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "GitRepository",
+	opts, err := f.resolveTLS(repo, sec)
+	if err != nil {
+		return gitAcquisition{}, err
+	}
+	secrets := f.Secrets
+	if sec != nil {
+		secrets = func(ns, name string) *manifest.Secret {
+			if name == repo.SecretRef.Name {
+				return sec
+			}
+			return f.Secrets(ns, name)
+		}
+	}
+	proxy, err := source.ResolveProxy(secrets, repo.Namespace, "GitRepository",
 		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
 	if err != nil {
-		return git.CloneOptions{}, err
+		return gitAcquisition{}, err
 	}
 	opts.URL, opts.NoCheckout, opts.Auth = repo.URL, true, auth
 	opts.Depth = effectiveDepth(f.Depth, repo.Reference)
 	if proxy != nil {
 		if _, err := proxy.URL(); err != nil {
-			return git.CloneOptions{}, fmt.Errorf("%w: %s: proxySecretRef %s/%s: invalid proxy address",
+			return gitAcquisition{}, fmt.Errorf("%w: %s: proxySecretRef %s/%s: invalid proxy address",
 				manifest.ErrInput, gitID(repo), repo.Namespace, repo.ProxySecretRef.Name)
 		}
 		opts.ProxyOptions = transport.ProxyOptions{URL: proxy.Address, Username: proxy.Username, Password: proxy.Password}
+	} else if target, err := url.Parse(repo.URL); err == nil && (target.Scheme == "http" || target.Scheme == "https") {
+		selected, err := httpproxy.FromEnvironment().ProxyFunc()(target)
+		if err != nil {
+			return gitAcquisition{}, fmt.Errorf("%w: %s: resolve proxy: %w", manifest.ErrInput, gitID(repo), err)
+		}
+		if selected != nil {
+			opts.ProxyOptions.URL = selected.String()
+		}
 	}
-	return opts, nil
+	var material any
+	if sec != nil || opts.ProxyOptions.URL != "" {
+		var secretMaterial any
+		if sec != nil {
+			secretMaterial = [2]any{sec.Data, sec.StringData}
+		}
+		material = [2]any{secretMaterial, opts.ProxyOptions}
+	}
+	return gitAcquisition{spec: repo, options: opts, material: material}, nil
 }
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts git.CloneOptions, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+	repo, opts := request.spec, request.options
 	if err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}
@@ -90,9 +122,9 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
 	content := struct {
-		Source any
-		Depth  int
-	}{repo.Content(effectiveRef(repo.Reference)), f.Depth}
+		Source, Transport any
+		Depth             int
+	}{repo.Content(effectiveRef(repo.Reference)), request.material, f.Depth}
 	key := sourcecache.GitKey{Content: content, Ref: refLabel, RecurseSubmodules: repo.RecurseSubmodules}
 	maxAge := repo.Interval.Duration
 	if canUseCachedGitSlot(repo.Reference) {
@@ -106,7 +138,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 	var input *gittree.FS
 	generation, id, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
-		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{repo, opts})
+		cloned, err := f.acquire(ctx, storer, worktree, request)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
@@ -140,8 +172,9 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 }
 
 type gitAcquisition struct {
-	spec    *manifest.GitRepository
-	options git.CloneOptions
+	spec     *manifest.GitRepository
+	options  git.CloneOptions
+	material any
 }
 
 func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree billy.Filesystem, request gitAcquisition) (*git.Repository, error) {

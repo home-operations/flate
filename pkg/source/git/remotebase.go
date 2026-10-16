@@ -54,7 +54,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		if !plumbing.IsHash(request.Ref) {
 			acquisition.Reference = nil
 		}
-		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{&acquisition, git.CloneOptions{URL: request.URL, NoCheckout: true}})
+		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{spec: &acquisition, options: git.CloneOptions{URL: request.URL, NoCheckout: true}})
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}

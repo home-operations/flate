@@ -45,10 +45,10 @@ func TestFetcher_WipedCredentials(t *testing.T) {
 					repo.URL = "ssh://git@host/repo"
 				}
 				if field == "tls.crt" {
-					_, err = f.resolveTLS(repo)
+					_, err = f.resolveTLS(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
 				} else {
 					var auth transport.AuthMethod
-					auth, err = f.resolveAuth(repo)
+					auth, err = f.resolveAuth(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
 					if field == "bearerToken" {
 						if _, ok := auth.(*githttp.BasicAuth); !ok {
 							t.Fatalf("got %T, want basic auth", auth)
@@ -97,7 +97,7 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 		"./a@b",
 	} {
 		t.Run(url, func(t *testing.T) {
-			auth, err := f.resolveAuth(gitRepoWithSecret("g", url, "creds"))
+			auth, err := f.resolveAuth(gitRepoWithSecret("g", url, "creds"), f.Secrets("ns", "creds"))
 			if err != nil {
 				t.Fatalf("resolveAuth: %v", err)
 			}
@@ -129,7 +129,7 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 		URL:       "https://github.com/x/y.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	auth, err := f.resolveAuth(repo)
+	auth, err := f.resolveAuth(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestFetcher_HTTPSMissingCreds(t *testing.T) {
 		URL:       "https://github.com/x/y.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.resolveAuth(repo)
+	_, err := f.resolveAuth(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
 	if err == nil || !strings.Contains(err.Error(), "missing username/password") {
 		t.Errorf("expected missing-creds error; got %v", err)
 	}
@@ -165,7 +165,7 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 		Name: "g", Namespace: "ns",
 		URL: "https://github.com/x/y.git",
 	}
-	auth, err := f.resolveAuth(repo)
+	auth, err := f.resolveAuth(repo, nil)
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestFetcher_SecretRefMissingGetter(t *testing.T) {
 		URL:       "https://github.com/x/y.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.resolveAuth(repo)
+	_, err := f.resolveAuth(repo, nil)
 	if err == nil || !strings.Contains(err.Error(), "SecretGetter") {
 		t.Errorf("expected SecretGetter error; got %v", err)
 	}
@@ -205,7 +205,7 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 		{"ssh://@example.com/r.git", "git"},
 	} {
 		t.Run(tc.url, func(t *testing.T) {
-			auth, err := f.resolveAuth(gitRepoWithSecret("g", tc.url, "creds"))
+			auth, err := f.resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), f.Secrets("ns", "creds"))
 			if err != nil {
 				t.Fatal(err)
 			}

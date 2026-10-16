@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+
+	"golang.org/x/net/http/httpproxy"
 
 	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
@@ -24,36 +27,71 @@ import (
 // Secret stores its credentials under.
 const dockerConfigJSONKey = ".dockerconfigjson"
 
-// newRepoClient builds the oras registry client for repo: it parses the ref,
-// uses the supplied credentials, and wires a bounded HTTP transport
-// (TLS + proxy) plus docker-style auth.
-//
-// Retries belong to cache acquisition; this client uses a plain transport.
-// source.NewHTTPTransport always returns a
-// bounded transport (a http.DefaultTransport clone carrying
-// ResponseHeaderTimeout as a liveness backstop, plus any TLS/proxy), so oras
-// never falls back to its retry-enabled auth.DefaultClient and a black-holed
-// registry can't hang the fetch waiting on response headers.
-func (f *Fetcher) newRepoClient(repo *manifest.OCIRepository, credStore credentials.Store, tlsCfg *tls.Config, proxy *source.ProxyConfig) (*remote.Repository, error) {
-	// parseOCIRef strips any oci:// prefix itself, so pass repo.URL as-is.
+// newRepoClient binds one credential and transport snapshot before cache admission.
+func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store) (*remote.Repository, any, error) {
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	repoClient, err := remote.NewRepository(reference)
+	client, err := remote.NewRepository(reference)
 	if err != nil {
-		return nil, fmt.Errorf("oras: %w", err)
+		return nil, nil, fmt.Errorf("oras: %w", err)
 	}
-	transport, err := source.NewHTTPTransport(tlsCfg, proxy)
-	if err != nil {
-		return nil, err
-	}
-	authClient := &auth.Client{Client: &http.Client{Transport: f.Network.HTTPTransport(transport)}}
+	cred := auth.EmptyCredential
 	if credStore != nil {
-		authClient.Credential = credentials.Credential(credStore)
+		cred, err = credentials.Credential(credStore)(ctx, client.Reference.Host())
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
+		}
 	}
-	repoClient.Client = authClient
-	return repoClient, nil
+	var certMaterial any
+	prepared := *f
+	if f.Secrets != nil {
+		prepared.Secrets = func(ns, name string) *manifest.Secret {
+			sec := f.Secrets(ns, name)
+			if sec != nil {
+				certMaterial = [2]any{sec.Data, sec.StringData}
+			}
+			return sec
+		}
+	}
+	tlsCfg, err := prepared.resolveTLS(repo)
+	if err != nil {
+		return nil, nil, err
+	}
+	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "OCIRepository",
+		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	if err != nil {
+		return nil, nil, err
+	}
+	proxyPolicy := httpproxy.FromEnvironment()
+	tr, err := source.NewHTTPTransport(tlsCfg, proxy)
+	if err != nil {
+		return nil, nil, err
+	}
+	if proxy == nil {
+		proxyForURL := proxyPolicy.ProxyFunc()
+		tr.Proxy = func(req *http.Request) (*url.URL, error) { return proxyForURL(req.URL) }
+	}
+
+	target := &url.URL{Scheme: "https", Host: client.Reference.Host()}
+	selected, err := tr.Proxy(&http.Request{URL: target})
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: resolve registry proxy: %w", manifest.ErrInput, err)
+	}
+	var proxyIdentity any
+	if proxy == nil && (proxyPolicy.HTTPProxy != "" || proxyPolicy.HTTPSProxy != "") {
+		proxyIdentity = proxyPolicy
+	} else if selected != nil {
+		proxyIdentity = selected.String()
+	}
+	var material any
+	if cred != auth.EmptyCredential || certMaterial != nil || proxyIdentity != nil {
+		material = [3]any{cred, certMaterial, proxyIdentity}
+	}
+	client.Client = &auth.Client{Client: &http.Client{Transport: f.Network.HTTPTransport(tr)},
+		Credential: auth.StaticCredential(client.Reference.Registry, cred)}
+	return client, material, nil
 }
 
 // resolveTLS builds a *tls.Config from spec.certSecretRef (PEM-encoded

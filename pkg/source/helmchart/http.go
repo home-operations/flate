@@ -26,9 +26,9 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository, hc *manifest.HelmChartSource, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *manifest.HelmChartSource, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	chartName, version := hc.Chart, hc.Version
-	key := cache.BlobKey{Content: struct{ Repository, Chart any }{r.Content(), hc.Content()}, Required: []string{"chart-version", "chart-url"}}
+	key := cache.BlobKey{Content: struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material}, Required: []string{"chart-version", "chart-url"}}
 	maxAge := r.Interval.Duration
 	if f.disableChartDigestTracking && isExactSemver(version) {
 		maxAge = cache.Forever
@@ -49,7 +49,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
-		desc, err := f.httpGet(ctx, r, chartURL, w)
+		desc, err := r.get(ctx, chartURL, w)
 		if err != nil {
 			return desc, err
 		}
@@ -61,7 +61,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		return desc, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", helmID(r), err)
+		return nil, fmt.Errorf("%s: %w", helmID(r.HelmRepository), err)
 	}
 	input := cache.FileFS(source.HelmChartArchiveFilename, reader)
 	if err := reader.Close(); err != nil {
@@ -71,14 +71,14 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *manifest.HelmRepository
 		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}, nil
 }
 
-func (f *Fetcher) fetchIndex(ctx context.Context, r *manifest.HelmRepository, retry cache.RetryConfig) (*repo.IndexFile, error) {
+func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache.RetryConfig) (*repo.IndexFile, error) {
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
 	var candidate *repo.IndexFile
 	var candidateDigest digest.Digest
-	reader, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: r.Content()}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	reader, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		candidate = nil
 		var buf bytes.Buffer
-		desc, err := f.httpGet(ctx, r, indexURL, io.MultiWriter(w, &buf))
+		desc, err := r.get(ctx, indexURL, io.MultiWriter(w, &buf))
 		if err != nil {
 			return desc, err
 		}
@@ -179,7 +179,7 @@ func normalizeChartDigest(d string) string {
 
 var helmHTTPTimeout = 120 * time.Second
 
-func (f *Fetcher) httpGet(ctx context.Context, r *manifest.HelmRepository, target string, w io.Writer) (ocispec.Descriptor, error) {
+func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (ocispec.Descriptor, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return ocispec.Descriptor{}, err
@@ -188,23 +188,10 @@ func (f *Fetcher) httpGet(ctx context.Context, r *manifest.HelmRepository, targe
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	username, password, err := f.helmRepoCredentials(r)
-	if err != nil {
-		return ocispec.Descriptor{}, err
+	if (r.PassCredentials || base.Scheme == req.URL.Scheme && base.Host == req.URL.Host) && r.username != "" && r.password != "" {
+		req.SetBasicAuth(r.username, r.password)
 	}
-	if (r.PassCredentials || base.Scheme == req.URL.Scheme && base.Host == req.URL.Host) && username != "" && password != "" {
-		req.SetBasicAuth(username, password)
-	}
-	tr, err := f.helmRepoTransport(r)
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	transport := f.transport
-	if tr != nil {
-		transport = f.network.HTTPTransport(tr)
-	}
-	client := &http.Client{Transport: transport, Timeout: helmHTTPTimeout}
-	response, err := client.Do(req)
+	response, err := r.client.Do(req)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}

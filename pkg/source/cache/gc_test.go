@@ -302,6 +302,11 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 	for _, id := range []string{"source-git-shared", "git-base-shared"} {
 		g, desc, key := sweepGit(t, c, id)
 		generations = append(generations, g)
+		o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, desc)
+		desc, err := c.publishOutcome(t.Context(), key, o, connReset())
+		if err != nil {
+			t.Fatal(err)
+		}
 		anchors = append(anchors, desc)
 		if err := c.store.Untag(t.Context(), key); err != nil {
 			t.Fatal(err)
@@ -376,12 +381,12 @@ func TestSweep_SharedIntermediateRetainsGitAnchor(t *testing.T) {
 	if err := c.store.Untag(t.Context(), key); err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(ocispec.Index{SchemaVersion: 2, Manifests: []ocispec.Descriptor{anchor}})
+	o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, anchor)
+	shared, err := c.publishOutcome(t.Context(), "shared-outcome", o, connReset())
 	if err != nil {
 		t.Fatal(err)
 	}
-	shared := content.NewDescriptorFromBytes(ocispec.MediaTypeImageIndex, data)
-	if err := c.store.Push(t.Context(), shared, bytes.NewReader(data)); err != nil {
+	if err := c.store.Untag(t.Context(), "shared-outcome"); err != nil {
 		t.Fatal(err)
 	}
 	var stale ocispec.Descriptor

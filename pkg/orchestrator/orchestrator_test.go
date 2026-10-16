@@ -2092,7 +2092,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		for _, boundary := range []string{"stop", "bootstrap-error", "bootstrap-cancel", "run", "run-error", "run-cancel", "render", "render-error"} {
 			t.Run(fmt.Sprintf("%d/%s", workers, boundary), func(t *testing.T) {
-				owner, err := sourcecache.New(t.Context(), "")
+				owner, err := sourcecache.New(t.Context(), t.TempDir())
 				assert.NoError(t, err)
 				t.Cleanup(func() { assert.NoError(t, owner.Close()) })
 				root := t.TempDir()
@@ -2113,10 +2113,33 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				var result *Result
+				cleanupCalls := 0
+				trackCleanup := func() {
+					cleanup := o.closeCharts
+					o.closeCharts = func() {
+						cleanupCalls++
+						if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+							t.Errorf("chart cleanup preceded worker drain: %v", err)
+						}
+						reader, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "cleanup-order"}, sourcecache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							_, err := io.WriteString(w, "live")
+							return ocispec.Descriptor{}, err
+						})
+						assert.NoError(t, err)
+						if reader != nil {
+							assert.NoError(t, reader.Close())
+						}
+						if cleanup != nil {
+							cleanup()
+						}
+					}
+				}
 				switch boundary {
 				case "stop":
+					trackCleanup()
 					err = o.Stop()
 				case "bootstrap-error", "bootstrap-cancel":
+					trackCleanup()
 					if boundary == "bootstrap-error" {
 						o.cfg.Input = &store.SourceArtifact{}
 					} else {
@@ -2140,8 +2163,9 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					if strings.HasSuffix(boundary, "error") {
 						assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
 					}
+					assert.NoError(t, o.Bootstrap(ctx))
+					trackCleanup()
 					if strings.HasPrefix(boundary, "run") {
-						assert.NoError(t, o.Bootstrap(ctx))
 						if boundary == "run-cancel" {
 							cancel()
 						}
@@ -2175,6 +2199,9 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					}
 				}
 
+				if cleanupCalls != 1 {
+					t.Fatalf("chart cleanup calls = %d, want 1 with injected cache and repeated Stop", cleanupCalls)
+				}
 				if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("TreeCache not terminal: %v", err)
 				}
@@ -2183,6 +2210,31 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 				}
 			})
 		}
+		t.Run(fmt.Sprintf("%d/owned-backing", workers), func(t *testing.T) {
+			o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: workers})
+			assert.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+			cleanupCalls := 0
+			o.closeCharts = func() {
+				cleanupCalls++
+				if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+					t.Errorf("chart cleanup preceded worker drain: %v", err)
+				}
+				res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
+				if err == nil && len(res.Errors) == 0 {
+					t.Error("owned backing released before chart cleanup")
+				}
+			}
+			assert.NoError(t, o.Stop())
+			assert.NoError(t, o.Stop())
+			if cleanupCalls != 1 {
+				t.Fatalf("chart cleanup calls = %d, want 1", cleanupCalls)
+			}
+			res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
+			if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("owned backing not released after cleanup: %+v, %v", res, err)
+			}
+		})
 	}
 }
 

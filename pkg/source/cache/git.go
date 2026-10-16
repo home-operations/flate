@@ -21,6 +21,7 @@ import (
 )
 
 // GitKey identifies a Git family, its normalized requested ref and recursion policy.
+// Content MUST include the effective credentials used by the producer.
 type GitKey struct {
 	Content           any
 	Ref               string

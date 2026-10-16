@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -470,7 +471,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 			if url == "" {
 				url = "https://example.com/x.git"
 			}
-			opts, err := f.resolveTLS(gitRepoWithSecret("g", url, tc.secret))
+			opts, err := f.resolveTLS(gitRepoWithSecret("g", url, tc.secret), f.Secrets("ns", tc.secret))
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("material validation: %v", err)
@@ -503,5 +504,147 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "proxy-user") || strings.Contains(err.Error(), "proxy-password") {
 		t.Fatal("proxy credentials leaked in validation error")
+	}
+}
+
+func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
+	root := t.TempDir()
+	mustInitRepo(t, root)
+	handler := gitHTTPHandler(t, root)
+	var fail atomic.Bool
+	var requests atomic.Int32
+	var expected atomic.Pointer[manifest.Secret]
+	var lookups atomic.Int32
+	ca := testutil.SelfSignedCA(t)
+	sec := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first", "ca.crt": ca}}
+	expected.Store(sec)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		user, pass, _ := r.BasicAuth()
+		want, _, _ := expected.Load().Value("password")
+		if user != "alice" || pass != want {
+			t.Error("producer used different credential snapshot")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if fail.Load() {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := conn.(*net.TCPConn).SetLinger(0); err != nil {
+				t.Error(err)
+			}
+			_ = conn.Close()
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	_ = srv.Listener.Close()
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Listener = listener
+	srv.Start()
+	t.Cleanup(srv.Close)
+	proxy := httptest.NewServer(srv.Config.Handler)
+	t.Cleanup(proxy.Close)
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	cacheRoot := t.TempDir()
+	repo := gitRepoWithSecret("snapshot", srv.URL, "creds")
+	repo.Interval.Duration = time.Hour
+	var previous string
+	for _, wave := range []string{"first", "password", "certificate", "proxy", "direct"} {
+		t.Run(wave, func(t *testing.T) {
+			if wave == "password" {
+				sec = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": ca}}
+			}
+			if wave == "certificate" {
+				sec = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": testutil.SelfSignedCA(t)}}
+			}
+			expected.Store(sec)
+			proxyURL := strings.Replace(proxy.URL, "://", "://proxy:first@", 1)
+			if wave == "proxy" || wave == "direct" {
+				proxyURL = strings.Replace(proxy.URL, "://", "://proxy:second@", 1)
+			}
+			t.Setenv("http_proxy", proxyURL)
+			if wave == "direct" {
+				t.Setenv("no_proxy", "*")
+			}
+			c, err := sourcecache.New(t.Context(), cacheRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return sec }}
+			request, err := f.resolveTransport(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := requests.Load()
+			art, err := f.fetch(t.Context(), request, sourcecache.RetryConfig{Attempts: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if art.Key == previous || requests.Load() <= before {
+				t.Fatal("changed material reused an acquisition")
+			}
+			previous = art.Key
+			before = requests.Load()
+			if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil || requests.Load() != before {
+				t.Fatalf("warm snapshot missed: %v", err)
+			}
+			fail.Store(true)
+			failed := *repo
+			failed.Interval.Duration = 0
+			_, err = f.Fetch(t.Context(), &failed, sourcecache.RetryConfig{})
+			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !terminal.Attempted {
+				t.Fatalf("failed snapshot: %v", err)
+			}
+			fail.Store(false)
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			c, err = sourcecache.New(t.Context(), cacheRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Cache = c
+			before = requests.Load()
+			_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || terminal.Attempted || requests.Load() != before {
+				t.Fatalf("reopened snapshot replay: %v", err)
+			}
+
+		})
+	}
+	if lookups.Load() != 20 {
+		t.Fatalf("auth and TLS reread Secrets: %d", lookups.Load())
+	}
+	if err := fs.WalkDir(os.DirFS(cacheRoot), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		data, err := fs.ReadFile(os.DirFS(cacheRoot), path)
+		if err != nil {
+			return err
+		}
+		for _, secret := range []string{"proxy:first@", "proxy:second@", "BEGIN CERTIFICATE"} {
+			if strings.Contains(string(data), secret) {
+				t.Errorf("credential material persisted in %s", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -139,6 +140,71 @@ func fastRetry(attempts int) RetryConfig {
 }
 
 func TestAcquire_RetrySequence(t *testing.T) {
+	t.Run("persistence", func(t *testing.T) {
+		for _, disk := range []bool{false, true} {
+			for _, tc := range []struct {
+				name     string
+				cause    error
+				attempts int
+				record   bool
+			}{
+				{"terminal", &TerminalError{Err: connReset(), Attempted: true}, 1, true},
+				{"unsupported timeout", timeoutErr{}, 3, false},
+				{"ambiguous eof", fmt.Errorf("layer: %w", io.ErrUnexpectedEOF), 3, false},
+				{"input", errors.Join(connReset(), fmt.Errorf("invalid: %w", manifest.ErrInput)), 1, false},
+				{"missing credentials", errors.Join(connReset(), manifest.ErrMissingSecret), 1, false},
+				{"cancellation", errors.Join(connReset(), context.Canceled), 1, false},
+				{"deadline cancellation", errors.Join(connReset(), context.DeadlineExceeded), 1, false},
+				{"short write", errors.Join(connReset(), io.ErrShortWrite), 1, false},
+				{"local", errors.Join(connReset(), &fs.PathError{Op: "write", Path: "sink", Err: fs.ErrPermission}), 1, false},
+				{"nested non-attempt", &TerminalError{Err: errors.Join(connReset(), &TerminalError{Err: connReset()}), Attempted: true}, 1, false},
+			} {
+				t.Run(fmt.Sprintf("%t/%s", disk, tc.name), func(t *testing.T) {
+					root := ""
+					if disk {
+						root = t.TempDir()
+					}
+					c := newCache(t, root)
+					calls := 0
+					for i := range 2 {
+						_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "eligibility"}, Policy{Retry: fastRetry(3)}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							calls++
+							_, _ = io.WriteString(w, "partial")
+							return ocispec.Descriptor{}, tc.cause
+						})
+						want := tc.attempts * (i + 1)
+						if disk && tc.record {
+							want = 1
+						}
+						if calls != want || err == nil || !errors.Is(err, manifest.ErrFlux) {
+							t.Fatalf("calls=%d, want=%d, error=%v", calls, want, err)
+						}
+						if !disk || !tc.record || i == 0 {
+							if !errors.Is(err, tc.cause) {
+								t.Fatalf("live cause lost: %v", err)
+							}
+						}
+					}
+					if disk {
+						desc, err := c.store.Resolve(t.Context(), manifest.Fingerprint(struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"eligibility"}}))
+						if tc.record && (err != nil || desc.MediaType != ocispec.MediaTypeImageManifest) || !tc.record && !errors.Is(err, errdef.ErrNotFound) {
+							t.Fatalf("eligibility descriptor=%+v, error=%v", desc, err)
+						}
+						files, err := os.ReadDir(c.layout.OCI())
+						if err != nil {
+							t.Fatal(err)
+						}
+						for _, file := range files {
+							if strings.HasPrefix(file.Name(), "acquire-") {
+								t.Fatalf("failed sink remains: %s", file.Name())
+							}
+						}
+					}
+				})
+			}
+		}
+	})
+
 	for _, tc := range []struct {
 		name                     string
 		attempts, failures, want int
@@ -191,6 +257,94 @@ func TestAcquire_RetrySequence(t *testing.T) {
 }
 
 func TestAcquire_NestedTerminal(t *testing.T) {
+	t.Run("due-ceiling", func(t *testing.T) {
+		for _, callers := range []int{2, 4} {
+			for _, child := range []string{"missing", "due", "fresh"} {
+				t.Run(fmt.Sprintf("%d/%s", callers, child), func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						c := newCache(t, t.TempDir())
+						fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, connReset() }
+						r, _, outerID, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{}, producer(nil, ocispec.Descriptor{}))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := r.Close(); err != nil {
+							t.Fatal(err)
+						}
+						for _, id := range []string{"outer", "inner"} {
+							if id == "inner" && child != "due" {
+								continue
+							}
+							if _, _, _, err := c.Blob(t.Context(), BlobKey{Content: id}, Policy{}, fail); !errors.Is(err, syscall.ECONNRESET) {
+								t.Fatal(err)
+							}
+						}
+						time.Sleep(750 * time.Millisecond)
+						if child == "fresh" {
+							if _, _, _, err := c.Blob(t.Context(), BlobKey{Content: "inner"}, Policy{}, fail); !errors.Is(err, syscall.ECONNRESET) {
+								t.Fatal(err)
+							}
+						}
+						before, err := c.store.Resolve(t.Context(), outerID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						unlock, err := c.locks.Acquire(t.Context(), outerID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						done := make(chan error, callers)
+						outer, inner := 0, 0
+						for range callers {
+							go func() {
+								_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(5)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+									outer++
+									_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(7)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+										inner++
+										return ocispec.Descriptor{}, connReset()
+									})
+									return ocispec.Descriptor{}, err
+								})
+								done <- err
+							}()
+						}
+						synctest.Wait()
+						unlock()
+						for range callers {
+							err := <-done
+							terminal, ok := errors.AsType[*TerminalError](err)
+							if !ok || !errors.Is(err, syscall.ECONNRESET) || child == "fresh" && terminal.Attempted {
+								t.Fatalf("nested error=%v", err)
+							}
+						}
+						wantInner := 1
+						if child == "fresh" {
+							wantInner = 0
+						}
+						if outer != 1 || inner != wantInner {
+							t.Fatalf("producer calls=%d/%d", outer, inner)
+						}
+						after, err := c.store.Resolve(t.Context(), outerID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						o, err := c.readOutcome(t.Context(), after)
+						wantCount := uint32(2)
+						if child == "fresh" {
+							wantCount = 1
+							if before.Digest != after.Digest {
+								t.Fatal("cached child renewed outer outcome")
+							}
+						}
+						if err != nil || o == nil || o.record.Count != wantCount {
+							t.Fatalf("outer outcome=%+v, error=%v", o, err)
+						}
+					})
+				})
+			}
+		}
+	})
+
 	for _, attempted := range []bool{false, true} {
 		t.Run(fmt.Sprint(attempted), func(t *testing.T) {
 			c := newCache(t, "")

@@ -266,6 +266,9 @@ func (o *Orchestrator) Stop() error {
 		o.ksc.Close()
 		o.src.Close()
 		o.ksc.Trees.Close()
+		if o.closeCharts != nil {
+			o.closeCharts()
+		}
 		if o.cfg.Cache == nil && o.cache != nil {
 			o.stopErr = o.cache.Close()
 		}

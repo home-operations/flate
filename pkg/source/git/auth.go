@@ -16,14 +16,13 @@ import (
 // For HTTPS URLs the secret may carry either
 // (username, password) or (bearerToken); for SSH URLs the secret
 // carries `identity` (PEM private key) and an optional `password`.
-func (f *Fetcher) resolveAuth(repo *manifest.GitRepository) (transport.AuthMethod, error) {
+func (f *Fetcher) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret) (transport.AuthMethod, error) {
 	if repo.SecretRef == nil {
 		return nil, nil
 	}
 	if f.Secrets == nil {
 		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", gitID(repo))
 	}
-	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
 		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
 	}

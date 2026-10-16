@@ -38,7 +38,9 @@ func startHelmRepoCounted(t *testing.T, chartBytes []byte, indexDigest string) (
 // separate `flate` invocations (each with a fresh in-process indexCache).
 func fetcherWithCache(t *testing.T, r *manifest.HelmRepository, cache *sourcecache.Cache) *Fetcher {
 	t.Helper()
-	return New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: cache})
+	f, cleanup := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: cache})
+	t.Cleanup(cleanup)
+	return f
 }
 
 func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {

@@ -54,6 +54,8 @@ func (e *TerminalError) Error() string { return e.Err.Error() }
 // Unwrap exposes the domain sentinel and the underlying cause.
 func (e *TerminalError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} }
 
+type attemptCeilingKey struct{}
+
 func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, string, error) {
 	if key.id == "" {
 		var content struct {
@@ -78,8 +80,14 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, prod
 			return nil, "", &CacheError{fmt.Errorf("%w: acquisition content cannot be fingerprinted", manifest.ErrInput)}
 		}
 	}
+	policy.Retry.Attempts = max(1, policy.Retry.Attempts)
+	if ceiling, _ := ctx.Value(attemptCeilingKey{}).(bool); ceiling {
+		policy.Retry.Attempts = 1
+	}
 	for attempt := 1; ; attempt++ {
-		e, err := c.acquireOnce(ctx, key, policy.MaxAge, produce)
+		remaining := policy
+		remaining.Retry.Attempts -= attempt - 1
+		e, err := c.acquireOnce(ctx, key, remaining, produce)
 		if err == nil {
 			return e, key.id, nil
 		}
@@ -88,9 +96,6 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, prod
 		}
 		if _, ok := err.(*producerError); !ok || !retryable(err) {
 			return nil, "", err
-		}
-		if attempt >= max(1, policy.Retry.Attempts) {
-			return nil, "", &TerminalError{Err: err, Attempted: true}
 		}
 		delay := policy.Retry.backoff(attempt - 1)
 		slog.Debug("cache: acquisition failed, retrying", "key", key.id, "attempt", attempt, "delay", delay, "error", err)

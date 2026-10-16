@@ -154,12 +154,23 @@ func BenchmarkLoadChart_FSWarm(b *testing.B) {
 	}
 }
 
+type countingFile struct {
+	fs.File
+	bytesRead *int64
+}
+
+func (f countingFile) Read(p []byte) (int, error) {
+	n, err := f.File.Read(p)
+	*f.bytesRead += int64(n)
+	return n, err
+}
+
 func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 	old := archive.MaxDecompressedChartSize
 	archive.MaxDecompressedChartSize = 4096
 	t.Cleanup(func() { archive.MaxDecompressedChartSize = old })
 	t.Run("oversized", func(t *testing.T) {
-		data := bytes.Repeat([]byte("x"), int(archive.MaxDecompressedChartSize)+1)
+		data := bytes.Repeat([]byte("x"), 4*int(archive.MaxDecompressedChartSize))
 		input := fstest.MapFS{"chart.tgz": {Data: data}}
 		for _, tc := range []struct {
 			name     string
@@ -169,12 +180,21 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 			{"matching previous", chartCacheEntry{archive: data}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				_, missing, err := loadFSChart(input, "chart.tgz", tc.previous)
+				var bytesRead int64
+				observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) {
+					file, err := input.Open(name)
+					if err != nil {
+						return nil, err
+					}
+					return countingFile{File: file, bytesRead: &bytesRead}, nil
+				}}
+				_, missing, err := loadFSChart(observed, "chart.tgz", tc.previous)
 				assert.Equal(t, missing, false)
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				if err == nil || !strings.Contains(err.Error(), "chart archive exceeds maximum decompressed size") {
 					t.Errorf("expected archive size error, got %v", err)
 				}
+				assert.Equal(t, bytesRead, archive.MaxDecompressedChartSize+1)
 			})
 		}
 	})

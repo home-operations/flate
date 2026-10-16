@@ -17,12 +17,13 @@ func TestRun_AllPass(t *testing.T) {
 	o, s := newRunner(t)
 	s.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system"})
 	s.AddObject(&manifest.HelmRelease{Name: "demo", Namespace: "apps"})
-	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}, store.StatusReady, "")
-	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}, store.StatusReady, "")
-	s.AddObject(&manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "foreign.example/v1", Namespace: "apps", Name: "raw"})
+	s.UpdateStatus(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}, store.StatusReady, "")
+	s.UpdateStatus(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}, store.StatusReady, "")
+	raw := &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "foreign.example/v1", Namespace: "apps", Name: "raw"}
+	s.AddObject(raw)
 
 	rep := runSelected(t, o)
-	assert.Equal(t, Run(&orchestrator.Result{Objects: []manifest.BaseManifest{s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "raw"})}}).Matched, 0)
+	assert.Equal(t, Run(&orchestrator.Result{Objects: []manifest.BaseManifest{s.GetObject(raw.Named())}}).Matched, 0)
 	if rep.AnyFailed() || rep.Passed != 2 {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
@@ -38,7 +39,7 @@ func TestRun_AllPass(t *testing.T) {
 func TestRun_OneFailed(t *testing.T) {
 	o, s := newRunner(t)
 	s.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system"})
-	s.UpdateStatus(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}, store.StatusFailed, "boom")
+	s.UpdateStatus(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}, store.StatusFailed, "boom")
 
 	rep := runSelected(t, o)
 	if !rep.AnyFailed() {
@@ -53,7 +54,7 @@ func TestRun_SkippedReasonReportedAsSkipped(t *testing.T) {
 	for _, tc := range []struct {
 		name, message, reason string
 	}{
-		{"source skipped", "skipped: source GitRepository/flux-system/sealed missing auth", "missing auth"},
+		{"source skipped", "skipped: source GitRepository.source.toolkit.fluxcd.io/flux-system/sealed missing auth", "missing auth"},
 		{"unchanged", store.MsgUnchanged, store.MsgUnchanged},
 		{"suspended", store.MsgSuspended, store.MsgSuspended},
 	} {
@@ -88,14 +89,14 @@ func TestRun_NoStatus(t *testing.T) {
 
 func TestRun_SelectedNamespace(t *testing.T) {
 	o, s := newRunner(t)
-	alpha := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "alpha", Name: "apps"}
-	beta := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "beta", Name: "apps"}
+	alpha := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "alpha", Name: "apps"}
+	beta := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "beta", Name: "apps"}
 	s.AddObject(&manifest.Kustomization{Name: alpha.Name, Namespace: alpha.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: beta.Name, Namespace: beta.Namespace})
 	s.UpdateStatus(alpha, store.StatusReady, "")
 	s.UpdateStatus(beta, store.StatusReady, "")
 
-	rep := runSelected(t, o, manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "alpha"})
+	rep := runSelected(t, o, manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "alpha"})
 	if rep.Passed != 1 || len(rep.Cases) != 1 || rep.Cases[0].ID != alpha {
 		t.Errorf("selected namespace report = %+v, want only %s", rep, alpha)
 	}
@@ -104,9 +105,9 @@ func TestRun_SelectedNamespace(t *testing.T) {
 func TestRun_DeterministicOrderAndMatchCount(t *testing.T) {
 	o, s := newRunner(t)
 	for _, id := range []manifest.NamedResource{
-		{Kind: manifest.KindKustomization, Namespace: "z", Name: "last"},
-		{Kind: manifest.KindKustomization, Namespace: "a", Name: "first"},
-		{Kind: manifest.KindKustomization, Namespace: "m", Name: "middle"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "z", Name: "last"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "a", Name: "first"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "m", Name: "middle"},
 	} {
 		s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 		s.UpdateStatus(id, store.StatusReady, "")
@@ -117,23 +118,27 @@ func TestRun_DeterministicOrderAndMatchCount(t *testing.T) {
 		s.UpdateStatus(rs.Named(), store.StatusFailed, "boom")
 	}
 
-	rep := runSelected(t, o, manifest.NamedResource{Kind: manifest.KindKustomization})
+	foreign := manifest.NamedResource{Group: "example.test", Kind: manifest.KindResourceSet, Namespace: "ns", Name: "extra-z"}
+	s.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: foreign.Kind, Namespace: foreign.Namespace, Name: foreign.Name})
+	s.UpdateStatus(foreign, store.StatusFailed, "foreign failure")
+
+	rep := runSelected(t, o, manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization})
 
 	if rep.Matched != 3 {
 		t.Fatalf("Matched = %d, want 3", rep.Matched)
 	}
 	got := []manifest.NamedResource{rep.Cases[0].ID, rep.Cases[1].ID, rep.Cases[2].ID}
 	want := []manifest.NamedResource{
-		{Kind: manifest.KindKustomization, Namespace: "a", Name: "first"},
-		{Kind: manifest.KindKustomization, Namespace: "m", Name: "middle"},
-		{Kind: manifest.KindKustomization, Namespace: "z", Name: "last"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "a", Name: "first"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "m", Name: "middle"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "z", Name: "last"},
 	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("case order = %v, want %v", got, want)
 		}
 	}
-	if len(rep.Cases) != 5 || rep.Cases[3].ID.Name != "extra-a" || rep.Cases[4].ID.Name != "extra-z" {
+	if len(rep.Cases) != 6 || rep.Failed != 3 || rep.Cases[3].ID != foreign || rep.Cases[4].ID.Name != "extra-a" || rep.Cases[5].ID.Name != "extra-z" {
 		t.Fatalf("diagnostic cases must follow the roster in identity order: %+v", rep.Cases)
 	}
 }
@@ -144,8 +149,8 @@ func TestRun_DeterministicOrderAndMatchCount(t *testing.T) {
 // it traces to — the verdict counting it as blocked, the run still non-zero.
 func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 	o, s := newRunner(t)
-	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
+	root := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
 	s.AddObject(&manifest.Kustomization{Name: root.Name, Namespace: root.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
 	s.UpdateStatus(root, store.StatusFailed, "kustomize build boom") // primary
@@ -188,22 +193,40 @@ func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 // Diagnostic failures outside the roster do not count as matched roots.
 func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 	o, s := newRunner(t)
-	ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-	rs := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "broken-rs"}
+	ks := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	rs := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "broken-rs"}
 	s.AddObject(&manifest.Kustomization{Name: ks.Name, Namespace: ks.Namespace})
 	s.AddObject(&manifest.ResourceSet{Name: rs.Name, Namespace: rs.Namespace})
 	s.UpdateStatus(ks, store.StatusReady, "")
 	s.UpdateStatus(rs, store.StatusFailed, `parse template: function "nope" not defined`)
 
+	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "same"}
+	s.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
+	s.UpdateStatus(chart, store.StatusFailed, "synthetic chart failure")
+	foreignChart := chart
+	foreignChart.Group = "example.test"
+	s.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: foreignChart.Kind, Namespace: foreignChart.Namespace, Name: foreignChart.Name})
+	s.UpdateStatus(foreignChart, store.StatusFailed, "foreign chart failure")
+
 	rep := runSelected(t, o)
-	if rep.Matched != 1 || rep.Passed != 1 || rep.Failed != 1 {
-		t.Fatalf("want 1 matched, 1 passed (KS) + 1 failed (ResourceSet), got %+v", rep)
+	if rep.Matched != 1 || rep.Passed != 1 || rep.Failed != 2 {
+		t.Fatalf("want 1 matched, 1 passed (KS) + 2 diagnostic failures, got %+v", rep)
 	}
+	foreignFound := false
 	var found *output.Case
 	for i := range rep.Cases {
+		if rep.Cases[i].ID == chart {
+			t.Error("synthetic real chart failure entered diagnostic cases")
+		}
+		if rep.Cases[i].ID == foreignChart {
+			foreignFound = rep.Cases[i].Reason == "foreign chart failure"
+		}
 		if rep.Cases[i].ID == rs {
 			found = &rep.Cases[i]
 		}
+	}
+	if !foreignFound {
+		t.Errorf("foreign chart failure hidden by kind-only exemption: %+v", rep.Cases)
 	}
 	if found == nil {
 		t.Fatalf("ResourceSet failure not surfaced as a case: %+v", rep.Cases)
@@ -223,7 +246,7 @@ func TestRun_SameNameDiagnosticDoesNotMatchRequestedKind(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "missing", Namespace: "ns"}
 	s.AddObject(hr)
 	s.UpdateStatus(hr.Named(), store.StatusFailed, "boom")
-	rep := runSelected(t, o, manifest.NamedResource{Kind: manifest.KindKustomization, Name: hr.Name})
+	rep := runSelected(t, o, manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: hr.Name})
 	if rep.Matched != 0 || rep.Failed != 1 || len(rep.Cases) != 1 || rep.Cases[0].ID != hr.Named() {
 		t.Fatalf("same-name diagnostic must not count as a requested root: %+v", rep)
 	}
@@ -257,14 +280,14 @@ func TestRun_BlockedRootReason(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o, s := newRunner(t)
-			hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+			hr := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
 			root := tc.root.Named()
 			s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
 			s.AddObject(tc.root)
 			s.UpdateFailure(hr, &manifest.DependencyFailedError{Parent: hr, Failed: []manifest.NamedResource{root}})
 			s.UpdateStatus(root, store.StatusFailed, "flux error: input error: fetch artifact: 404 Not Found")
 
-			rep := runSelected(t, o, manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.namespace})
+			rep := runSelected(t, o, manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: tc.namespace})
 			if rep.Matched != 1 || rep.Failed != tc.wantFailed || len(rep.Blocked) != 1 || !rep.AnyFailed() {
 				t.Fatalf("want %d failed + 1 blocked, got %+v", tc.wantFailed, rep)
 			}
@@ -289,8 +312,8 @@ func TestRun_BlockedRootReason(t *testing.T) {
 // non-zero.
 func TestRun_BlockedByMissingDep(t *testing.T) {
 	o, s := newRunner(t)
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "volsync-system", Name: "kopiur-repository"}
-	missing := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "kopiur-system", Name: "kopiur"}
+	child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "volsync-system", Name: "kopiur-repository"}
+	missing := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "kopiur-system", Name: "kopiur"}
 	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
 	s.UpdateFailure(child, &manifest.DependencyFailedError{Parent: child, Failed: []manifest.NamedResource{missing}})
 
@@ -319,8 +342,8 @@ func TestRun_BlockedByMissingDep(t *testing.T) {
 // immediate blocker.
 func TestRun_BlockedByCycle(t *testing.T) {
 	o, s := newRunner(t)
-	ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "ks-a"}
-	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "app", Name: "hr-b"}
+	ks := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "ks-a"}
+	hr := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "app", Name: "hr-b"}
 	s.AddObject(&manifest.Kustomization{Name: ks.Name, Namespace: ks.Namespace})
 	s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
 	// A ⇄ B: each blocked on the other, both terminally failed — a closed cycle.
@@ -362,7 +385,7 @@ func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.NamedResource) output.TestReport {
 	t.Helper()
 	if len(roots) == 0 {
-		roots = []manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}
+		roots = []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}, {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease}}
 	}
 	failed := o.Store().FailedResources()
 	blocked := make(map[manifest.NamedResource][]manifest.NamedResource)

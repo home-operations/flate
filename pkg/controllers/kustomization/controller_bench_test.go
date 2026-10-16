@@ -13,7 +13,7 @@ import (
 )
 
 func BenchmarkCollectDeps(b *testing.B) {
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "target"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "target"}
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := New(st, nil, nil, false)

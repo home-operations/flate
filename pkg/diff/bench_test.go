@@ -3,6 +3,8 @@ package diff
 import (
 	"fmt"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // BenchmarkDiff_LargeTree measures RenderDocs against two 100-resource
@@ -66,7 +68,7 @@ func BenchmarkNormalizeDocs(b *testing.B) {
 					},
 				},
 			},
-			Parent: Parent{Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i)},
+			Parent: Parent{NamedResource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i)}},
 		})
 	}
 	attrs := []string{
@@ -92,7 +94,7 @@ func buildDiffCorpus(n, changeCount int) (left, right []Doc) {
 	right = make([]Doc, 0, n)
 	for i := range n {
 		name := fmt.Sprintf("cm-%d", i)
-		parent := Parent{Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i/10)}
+		parent := Parent{NamedResource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i/10)}} //nolint:modernize // Corpus fixtures MUST spell the embedded resource identity explicitly.
 		baseValue := fmt.Sprintf("value-%d", i)
 		other := baseValue
 		if i < changeCount {

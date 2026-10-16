@@ -121,5 +121,5 @@ func QualifiedName(kind, namespace, name string) string {
 // spec.*SecretRef accept one of these so they don't need a
 // back-reference to the Store. Today: GitRepository (auth + TLS),
 // OCIRepository (auth + TLS), Bucket (auth + TLS).
-// The orchestrator wires it to Store.GetByName at construction time.
+// The orchestrator wires it to the core Secret store lookup at construction time.
 type SecretGetter func(namespace, name string) *manifest.Secret

@@ -31,7 +31,7 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 			st.UpdateStatus(obj.Named(), state, "reason")
 			c := base.New(st, nil, "benchmark")
 			deps := []manifest.DependencyRef{{NamedResource: obj.Named()}}
-			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
+			id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
 			b.ReportAllocs()
 			for b.Loop() {
 				_ = c.Require(b.Context(), id, deps, manifest.DrainNone)
@@ -41,11 +41,11 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 }
 
 func BenchmarkEmit_Children(b *testing.B) {
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindResourceSet} {
-		b.Run(kind, func(b *testing.B) {
+	for _, kind := range []manifest.KindInfo{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet}} {
+		b.Run(kind.Kind, func(b *testing.B) {
 			st := store.New()
 			c := base.New(st, nil, "benchmark")
-			parent := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "parent"}
+			parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "apps", Name: "parent"}
 			docs := []map[string]any{
 				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "config", "namespace": "apps"}, "data": map[string]any{"key": "value"}},
 				{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"}}},

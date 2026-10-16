@@ -28,7 +28,7 @@ type secretChartFetcher struct {
 
 func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	repo := obj.(*manifest.OCIRepository)
-	secret, ok := f.store.GetByName[*manifest.Secret](manifest.KindSecret, repo.Namespace, repo.CertSecretRef.Name)
+	secret, ok := f.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name})
 	if !ok {
 		return nil, source.MissingSecretErr(repo.Named().Kind, repo.Namespace, repo.Name, repo.CertSecretRef.Name, "not found")
 	}
@@ -214,14 +214,14 @@ spec:
 					t.Fatalf("Render: %v", err)
 				}
 				for _, id := range []manifest.NamedResource{
-					{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
-					{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"},
+					{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
+					{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"},
 				} {
 					if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || store.IsSkipped(info) {
 						t.Errorf("%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
 					}
 				}
-				hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"}
+				hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"}
 				if docs := res.Manifests[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
 					t.Fatalf("HelmRelease output = %+v, want the chart's ConfigMap", docs)
 				}

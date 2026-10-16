@@ -8,7 +8,7 @@ import (
 )
 
 func ksDep(name string) manifest.DependencyRef {
-	return manifest.DependencyRef{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+	return manifest.DependencyRef{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
 func TestClassify_CoreStates(t *testing.T) {
@@ -16,8 +16,9 @@ func TestClassify_CoreStates(t *testing.T) {
 	ready := ksDep("ready")
 	failed := ksDep("failed")
 	pending := ksDep("pending")
-	statusless := manifest.DependencyRef{Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
+	statusless := manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
 	absent := ksDep("absent")
+	s.AddObject(&manifest.Kustomization{Name: ready.Name, Namespace: ready.Namespace})
 	s.UpdateStatus(ready.NamedResource, store.StatusReady, "")
 	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "boom")
 	s.UpdateStatus(pending.NamedResource, store.StatusPending, "working")
@@ -58,6 +59,35 @@ func TestClassify_CoreStates(t *testing.T) {
 	}
 	if got := w.Classify(absent, manifest.DrainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
 		t.Errorf("absent@cascade: got %+v, want ClassFailed 'dependency not found'", got)
+	}
+	for _, group := range []string{"", "example.test"} {
+		t.Run("group="+group, func(t *testing.T) {
+			foreign := ready
+			foreign.Group = group
+			if got := w.Classify(foreign, manifest.DrainNone); got.Kind != ClassBlocked {
+				t.Fatalf("absent lookalike borrowed Ready status: %+v", got)
+			}
+			if got := w.Classify(foreign, manifest.DrainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
+				t.Fatalf("absent lookalike at drain: %+v", got)
+			}
+			s.UpdateStatus(foreign.NamedResource, store.StatusPending, "foreign status")
+			if got := w.Classify(foreign, manifest.DrainNone); got.Kind != ClassReady {
+				t.Fatalf("status-only lookalike acquired Flux readiness: %+v", got)
+			}
+		})
+	}
+	w.AllowMissingCRDs = true
+	for _, group := range []string{"apiextensions.k8s.io", "example.test", ""} {
+		t.Run("CRD/group="+group, func(t *testing.T) {
+			dep := manifest.DependencyRef{Group: group, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.test"}
+			want := ClassFailed
+			if group == "apiextensions.k8s.io" {
+				want = ClassReady
+			}
+			if got := w.Classify(dep, manifest.DrainCascade); got.Kind != want {
+				t.Fatalf("missing CRD: %+v, want %v", got, want)
+			}
+		})
 	}
 }
 

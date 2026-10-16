@@ -128,7 +128,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					for i := range sets {
-						p, _ := s.Get[*manifest.ResourceSetInputProvider](manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "ns", Name: fmt.Sprintf("selected-%d", i)})
+						p, _ := s.Get[*manifest.ResourceSetInputProvider](manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "ns", Name: fmt.Sprintf("selected-%d", i)})
 						fresh := *p
 						fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"revision": {Raw: []byte(fmt.Sprint(generation))}}}
 						s.AddObject(&fresh)

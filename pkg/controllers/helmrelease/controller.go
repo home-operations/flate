@@ -254,7 +254,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// for the rationale (#657–#660). fp is reused for SetArtifact below.
 	var sourceIdentity string
 	if hr.UsesDirectOCIRepository() {
-		source := c.Helm.Resolver().LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
+		source := c.Helm.Resolver().LocalSourceArtifact(hr.ChartSource())
 		if source == nil {
 			return fmt.Errorf("resolve oci chart identity: %w: OCIRepository %s artifact not available",
 				manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
@@ -422,7 +422,7 @@ func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRele
 		}
 	}
 	for _, dep := range deps {
-		if dep.Kind == manifest.KindHelmRepository {
+		if dep.Group == manifest.SourceDomain && dep.Kind == manifest.KindHelmRepository {
 			continue
 		}
 		art, _ := c.Store.GetArtifact(dep.NamedResource).(*store.SourceArtifact)
@@ -454,7 +454,7 @@ func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRele
 // re-emit.
 func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
 	// RepoKind "" defaults to HelmRepository (see chart source dispatch).
-	if hr.Chart.RepoKind != "" && hr.Chart.RepoKind != manifest.KindHelmRepository {
+	if hr.Chart.RepoGroup != manifest.SourceDomain || hr.Chart.RepoKind != "" && hr.Chart.RepoKind != manifest.KindHelmRepository {
 		return hr, false
 	}
 	r := c.Helm.Resolver().HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
@@ -467,6 +467,7 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	c.KeepEmitted(id, syn)
 	c.Store.AddObject(syn)
 	hr.Chart.RepoKind = manifest.KindHelmChart
+	hr.Chart.RepoGroup = syn.Named().Group
 	hr.Chart.RepoNamespace = syn.Namespace
 	hr.Chart.RepoName = syn.Name
 	return hr, true

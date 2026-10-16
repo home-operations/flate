@@ -76,7 +76,8 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			const digestB = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			for i, release := range []*manifest.HelmRelease{hr, hrB} {
 				digest := []string{digestA, digestB}[i]
-				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: release.Chart.RepoName},
+				st.SetArtifact(manifest.NamedResource{
+					Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: release.Chart.RepoName},
 					&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			}
 			originals := []*manifest.HelmRelease{hr.Clone(), hrB.Clone()}
@@ -147,7 +148,8 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 
 			st, hr, dir := ociRenderFixture(t)
 			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-			st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
+			st.SetArtifact(manifest.NamedResource{
+				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {

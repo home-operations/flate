@@ -18,8 +18,7 @@ func selectedDocs(objects []manifest.BaseManifest, manifests map[manifest.NamedR
 }
 
 func objectParent(obj manifest.BaseManifest) Parent {
-	id := obj.Named()
-	parent := Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
+	parent := Parent{NamedResource: obj.Named()}
 	if ks, ok := obj.(*manifest.Kustomization); ok {
 		parent.Path = strings.TrimPrefix(ks.Path, "./")
 	}

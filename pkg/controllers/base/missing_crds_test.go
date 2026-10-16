@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -13,8 +15,8 @@ import (
 
 func TestConfigure_MissingCRDs(t *testing.T) {
 	c := base.New(store.New(), task.NewBounded(2), "test")
-	id := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "ns", Name: "app"}
-	deps := []manifest.DependencyRef{{Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}
+	id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "app"}
+	deps := []manifest.DependencyRef{{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}
 	err := c.Require(t.Context(), id, deps, manifest.DrainCascade)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	c.Configure(base.Options{AllowMissingCRDs: true})

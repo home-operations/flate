@@ -45,6 +45,7 @@ data:
 			Name:          "mychart",
 			RepoName:      "chart-repo",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}
@@ -87,7 +88,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{
-			Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 	vals := map[string]any{
@@ -145,7 +146,7 @@ func newHR() *manifest.HelmRelease {
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "chart-repo",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 }

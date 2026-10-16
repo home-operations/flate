@@ -19,18 +19,18 @@ type dagDispatcher struct{ o *Orchestrator }
 
 func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
 	out, blocked := d.reconcile(ctx, id, drainLevel)
-	return out, blocked, id.Kind == manifest.KindResourceSet && d.o.rsc.WantsDrainRerun(id)
+	return out, blocked, id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet && d.o.rsc.WantsDrainRerun(id)
 }
 
 func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
 	o := d.o
 	var blocked []manifest.NamedResource
 	switch {
-	case id.Kind == manifest.KindKustomization:
+	case id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization:
 		blocked = o.ksc.ReconcileNode(ctx, id, drainLevel)
-	case id.Kind == manifest.KindHelmRelease:
+	case id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease:
 		blocked = o.hrc.ReconcileNode(ctx, id, drainLevel)
-	case id.Kind == manifest.KindResourceSet:
+	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
 		before, _ := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
 		blocked = o.rsc.ReconcileNode(ctx, id, drainLevel)
 		if len(blocked) == 0 && before != nil && before.Fingerprint != "" && o.store.GetArtifact(id) == before {
@@ -68,7 +68,7 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 		if !info.Runnable {
 			continue
 		}
-		for _, obj := range o.store.ListObjects(info.Kind) {
+		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
 			if o.schedulable(obj) {
 				ids = append(ids, obj.Named())
 			}

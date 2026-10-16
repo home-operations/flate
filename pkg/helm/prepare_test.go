@@ -14,7 +14,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 	for _, tc := range []struct{ namespace, want string }{{"", "effective"}, {"foreign", "foreign"}} {
 		namespace := tc.namespace
 		t.Run("authored_"+namespace, func(t *testing.T) {
-			hr := &manifest.HelmRelease{Namespace: "authored", Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoNamespace: namespace, RepoName: "source"}}
+			hr := &manifest.HelmRelease{Namespace: "authored", Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoNamespace: namespace, RepoName: "source"}}
 			hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Namespace: namespace, Name: "source"}
 			projected := hr.WithNamespace("effective").(*manifest.HelmRelease)
 			want := tc.want

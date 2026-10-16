@@ -6,15 +6,14 @@ import (
 	"fmt"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // Parent identifies the Flux Kustomization or HelmRelease that rendered a
 // manifest. It is a pairing discriminator so resources from different
 // producers never match, and identifies the producer in structured output.
 type Parent struct {
-	Kind      string `json:"kind"`
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
+	manifest.NamedResource
 	// Path is the Flux Kustomization spec.path (only set for KS
 	// parents), with the conventional `./` prefix stripped. It is display
 	// metadata, not part of producer identity.

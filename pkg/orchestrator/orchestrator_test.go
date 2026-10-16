@@ -117,19 +117,23 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 		Path: "./apps",
 	}
 	cm := &manifest.ConfigMap{Name: "stuck", Namespace: "ns"}
+	foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Name: cm.Name, Namespace: cm.Namespace}
 
 	o := &Orchestrator{
 		store: store.New(),
 		index: indexForTest(map[manifest.NamedResource]string{
-			parent.Named(): "ks.yaml",
-			cm.Named():     "apps/stuck/cm.yaml",
+			parent.Named():  "ks.yaml",
+			cm.Named():      "apps/stuck/cm.yaml",
+			foreign.Named(): "apps/stuck/ks.yaml",
 		}),
 	}
 	o.store.AddObject(parent)
 	o.store.AddObject(cm)
+	o.store.AddObject(foreign)
 
 	failed := map[manifest.NamedResource]store.StatusInfo{
-		cm.Named(): {Status: store.StatusFailed, Message: "bogus"},
+		cm.Named():      {Status: store.StatusFailed, Message: "bogus"},
+		foreign.Named(): {Status: store.StatusFailed, Message: "foreign"},
 	}
 	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
 	if len(orphans) != 0 {
@@ -325,10 +329,10 @@ data: {k: v}
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got := len(o.Store().ListObjects(manifest.KindKustomization)); got != 1 {
+	if got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 1 {
 		t.Errorf("expected 1 Kustomization, got %d", got)
 	}
-	if got := len(o.Store().ListObjects(manifest.KindConfigMap)); got < 1 {
+	if got := len(o.Store().ListObjects("", manifest.KindConfigMap)); got < 1 {
 		t.Errorf("expected at least 1 ConfigMap after reconcile, got %d", got)
 	}
 	if entries, err := os.ReadDir(fallback); err != nil || len(entries) != 0 {
@@ -392,7 +396,7 @@ data: {k: v}
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	consumerID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
+	consumerID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
 	if msg, ok := o.preflightFailure(consumerID); ok {
 		t.Fatalf("consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
@@ -400,7 +404,7 @@ data: {k: v}
 		t.Fatalf("Run: %v", err)
 	}
 	for _, name := range []string{"produced", "consumer"} {
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		info, ok := o.Store().GetStatus(id)
 		if !ok || info.Status != store.StatusReady {
 			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
@@ -476,7 +480,7 @@ data: {k: v}
 		t.Fatalf("Run: %v", err)
 	}
 	for _, name := range []string{"config-a", "config-b", "consumer"} {
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		info, ok := o.Store().GetStatus(id)
 		if !ok || info.Status != store.StatusReady {
 			t.Fatalf("%s status = (%+v, %v), want Ready (mutual-parent deadlock regressed?)", id, info, ok)
@@ -544,12 +548,12 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 	// echo is listed → reconciled.
-	echoID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "echo"}
+	echoID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "network", Name: "echo"}
 	if _, ok := o.Store().GetStatus(echoID); !ok {
 		t.Errorf("listed KS echo should be reconciled")
 	}
 	// tunnel is commented out → never discovered or reconciled.
-	tunnelID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: "tunnel"}
+	tunnelID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "network", Name: "tunnel"}
 	if o.Store().GetObject(tunnelID) != nil {
 		t.Errorf("commented-out KS tunnel must not reach the store")
 	}
@@ -579,7 +583,7 @@ spec:
 		testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, namespace: default}\ndata: {k: v}\n")
 	}
-	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	rendersDemo := func(t *testing.T, cfg Config) bool {
 		t.Helper()
 		o, err := New(t.Context(), cfg)
@@ -668,7 +672,7 @@ spec:
 	if err := o.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	if info, ok := o.Store().GetStatus(ksID); !ok || info.Status != store.StatusReady {
 		t.Fatalf("cluster-apps status = (%+v, %v), want Ready (self-substitute deadlock regressed?)", info, ok)
 	}
@@ -711,7 +715,7 @@ spec:
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = o.Run(ctx) // reconcile failure is recorded in status, not returned
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	info, ok := o.Store().GetStatus(ksID)
 	if !ok || info.Status != store.StatusFailed {
 		t.Fatalf("cluster-apps status = (%+v, %v), want Failed (absent substituteFrom CM must fail loud)", info, ok)
@@ -764,9 +768,9 @@ data: {k: v}
 // sink now owns the deterministic commit-time dedup that the deleted
 // post-run errgroup pass used to perform serially in store order.
 func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-	ownerA := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
-	ownerB := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
+	parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ownerA := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
+	ownerB := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
 	mkDoc := func(owner string) map[string]any {
 		return map[string]any{
 			"apiVersion": "example.com/v1",
@@ -776,6 +780,10 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 		}
 	}
 	docA, docB := mkDoc("a-wins"), mkDoc("b-loses")
+	other := mkDoc("other-group")
+	other["apiVersion"] = "other.example/v1"
+	version := mkDoc("version-loses")
+	version["apiVersion"] = "example.com/v2"
 	key := resourceset.DedupKey(docA) // same identity → same key for both
 
 	// Record in both orders across many iterations; rs-a (sorts first) must
@@ -789,10 +797,21 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			sink.Record(ownerA, parent, key, docA)
 			sink.Record(ownerB, parent, key, docB)
 		}
+		sink.Record(ownerB, parent, resourceset.DedupKey(version), version)
+		sink.Record(ownerB, parent, resourceset.DedupKey(other), other)
+		for _, incomplete := range []map[string]any{
+			{"apiVersion": "example.com/v1", "kind": "Widget"},
+			{"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "incomplete"}},
+		} {
+			sink.Record(ownerA, parent, resourceset.DedupKey(incomplete), incomplete)
+		}
 		out := sink.commit()
 		docs := out[parent]
-		if len(docs) != 1 {
-			t.Fatalf("iter %d: out[apps] = %d docs, want 1 (deduped to one winner)", iter, len(docs))
+		if len(docs) != 2 {
+			t.Fatalf("iter %d: out[apps] = %d docs, want 2 (one winner per group)", iter, len(docs))
+		}
+		if manifest.DocAPIVersion(docs[1]) != "other.example/v1" {
+			t.Fatalf("foreign group lost: %v", docs)
 		}
 		spec, _ := docs[0]["spec"].(map[string]any)
 		if got := spec["owner"]; got != "a-wins" {
@@ -838,7 +857,7 @@ data: {k: v}
 	if res == nil {
 		t.Fatal("Render returned nil Result")
 	}
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	mans, ok := res.Manifests[ksID]
 	if !ok {
 		t.Fatalf("Result.Manifests missing %s; keys=%v", ksID, keysOf(res.Manifests))
@@ -919,7 +938,7 @@ spec:
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			rsID := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
+			rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
 			if _, ok := o.index.Lookup(rsID); ok {
 				t.Fatal("fixture ResourceSet must only exist in render output")
 			}
@@ -927,7 +946,7 @@ spec:
 			if err != nil {
 				t.Fatalf("Render: %v", err)
 			}
-			ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+			ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 			if owner, ok := o.Store().EmittedParent(rsID); !ok || owner != ksID {
 				t.Errorf("ResourceSet owner = (%v, %v), want %s", owner, ok, ksID)
 			}
@@ -1001,7 +1020,7 @@ stringData: {password: hunter2}
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	mans := res.Manifests[ksID]
 	if len(mans) == 0 {
 		t.Fatalf("Result.Manifests[apps] should retain non-Secret docs; got empty")
@@ -1067,8 +1086,8 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	ociID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "default", Name: "private-app"}
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "default", Name: "private-app"}
+	ociID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "default", Name: "private-app"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "default", Name: "private-app"}
 
 	if _, failed := res.Failed[ociID]; failed {
 		t.Errorf("OCIRepository must not be in Failed when --allow-missing-secrets is on; got %v", res.Failed[ociID])
@@ -1134,7 +1153,7 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
+	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
 	if _, failed := res.Failed[hrID]; failed {
 		t.Errorf("HR must propagate skip before helm.TemplateDocs runs; got %v", res.Failed[hrID])
 	}
@@ -1276,7 +1295,7 @@ spec:
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	producerID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-vars"}
+	producerID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-vars"}
 	f := o.filter
 	if f == nil {
 		t.Fatalf("filter returned nil; ExternalChanges should have activated changed-only mode")
@@ -1365,7 +1384,7 @@ data:
 	if f == nil {
 		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
 	}
-	apps := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "apps", Namespace: "flux-system"}
+	apps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "apps", Namespace: "flux-system"}
 	if !f.ShouldReconcile(apps) {
 		t.Fatalf("KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
 	}
@@ -1442,8 +1461,8 @@ spec:
 	if !o.bootstrapped {
 		t.Fatal("orchestrator.bootstrapped must be true after first Bootstrap")
 	}
-	ksCount1 := len(o.Store().ListObjects(manifest.KindKustomization))
-	cmCount1 := len(o.Store().ListObjects(manifest.KindConfigMap))
+	ksCount1 := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	cmCount1 := len(o.Store().ListObjects("", manifest.KindConfigMap))
 	filter1 := o.filter
 	if filter1 == nil {
 		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
@@ -1452,8 +1471,8 @@ spec:
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap (2nd): %v", err)
 	}
-	ksCount2 := len(o.Store().ListObjects(manifest.KindKustomization))
-	cmCount2 := len(o.Store().ListObjects(manifest.KindConfigMap))
+	ksCount2 := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	cmCount2 := len(o.Store().ListObjects("", manifest.KindConfigMap))
 	filter2 := o.filter
 
 	if ksCount1 != ksCount2 {
@@ -1471,7 +1490,7 @@ spec:
 	// duplicated, never dropped. The Store is keyed by NamedResource
 	// so a true duplicate would be a no-op; this check pins that the
 	// canonical id is reachable post second-Bootstrap.
-	appsID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	appsID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	if got := o.Store().GetObject(appsID); got == nil {
 		t.Errorf("apps KS missing after second Bootstrap")
 	}
@@ -1656,7 +1675,7 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 						assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 					}
 					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
-					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
+					id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
 					assert.Equal(t, o.store.GetObject(id) == nil, covered)
 					_, indexed := o.index.Lookup(id)
 					assert.Equal(t, indexed, true)
@@ -1799,7 +1818,7 @@ spec:
 				if err != nil {
 					t.Fatal(err)
 				}
-				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
+				id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
 				hr, ok := o.store.Get[*manifest.HelmRelease](id)
 				if !ok {
 					t.Fatal("qualifying rendered release missing")
@@ -1809,7 +1828,7 @@ spec:
 				assert.Equal(t, strings.Contains(patches[0].(map[string]any)["patch"].(string), "DisableChartDigestTracking=true"), true)
 				assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
-				ks := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+				ks := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 				docs := slices.Clone(res.Manifests[ks])
 				slices.SortFunc(docs, func(a, b map[string]any) int {
 					return strings.Compare(a["kind"].(string), b["kind"].(string))
@@ -2159,7 +2178,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 				if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("TreeCache not terminal: %v", err)
 				}
-				if result != nil && len(o.Store().ListObjects(manifest.KindKustomization)) == 0 {
+				if result != nil && len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) == 0 {
 					t.Fatal("Stop discarded readable store")
 				}
 			})

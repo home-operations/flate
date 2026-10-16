@@ -18,28 +18,28 @@ import (
 // for the readiness-gate semantics — rather than the deleted blocking Watch loop.
 
 func celDep(name string) manifest.NamedResource {
-	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+	return manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
 // TestReadyExpr_ProjectsObservedGeneration: the common Flux readiness idiom
 // `status.observedGeneration == metadata.generation` projects and compares.
 func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
-	for _, tc := range []struct{ kind, version string }{
-		{manifest.KindKustomization, "kustomize.toolkit.fluxcd.io/v1"},
-		{manifest.KindHelmRelease, "helm.toolkit.fluxcd.io/v2"},
-		{manifest.KindGitRepository, "source.toolkit.fluxcd.io/v1"},
-		{manifest.KindOCIRepository, "source.toolkit.fluxcd.io/v1"},
-		{manifest.KindHelmRepository, "source.toolkit.fluxcd.io/v1"},
-		{manifest.KindHelmChart, "source.toolkit.fluxcd.io/v1"},
-		{manifest.KindBucket, "source.toolkit.fluxcd.io/v1"},
-		{manifest.KindExternalArtifact, "source.toolkit.fluxcd.io/v1"},
-		{manifest.KindResourceSet, ""},
-		{manifest.KindConfigMap, ""},
-		{"Unknown", ""},
+	for _, tc := range []struct{ group, kind, version string }{
+		{manifest.FluxKustomizeDomain, manifest.KindKustomization, "kustomize.toolkit.fluxcd.io/v1"},
+		{manifest.HelmReleaseDomain, manifest.KindHelmRelease, "helm.toolkit.fluxcd.io/v2"},
+		{manifest.SourceDomain, manifest.KindGitRepository, "source.toolkit.fluxcd.io/v1"},
+		{manifest.SourceDomain, manifest.KindOCIRepository, "source.toolkit.fluxcd.io/v1"},
+		{manifest.SourceDomain, manifest.KindHelmRepository, "source.toolkit.fluxcd.io/v1"},
+		{manifest.SourceDomain, manifest.KindHelmChart, "source.toolkit.fluxcd.io/v1"},
+		{manifest.SourceDomain, manifest.KindBucket, "source.toolkit.fluxcd.io/v1"},
+		{manifest.SourceDomain, manifest.KindExternalArtifact, "source.toolkit.fluxcd.io/v1"},
+		{manifest.FluxOperatorDomain, manifest.KindResourceSet, ""},
+		{"", manifest.KindConfigMap, ""},
+		{"", "Unknown", ""},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			s := store.New()
-			dep := manifest.NamedResource{Kind: tc.kind, Namespace: "ns", Name: "infra"}
+			dep := manifest.NamedResource{Group: tc.group, Kind: tc.kind, Namespace: "ns", Name: "infra"}
 			s.UpdateStatus(dep, store.StatusReady, "")
 			expr := fmt.Sprintf(`dep.status.observedGeneration == dep.metadata.generation && dep.apiVersion == %q`, tc.version)
 			ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
@@ -127,7 +127,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 // readyExpr can read dep.metadata.{labels,annotations} via the CEL projection.
 func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	s := store.New()
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	dep := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
 	s.AddObject(&manifest.Kustomization{
 		Name: "child", Namespace: "ns",
 		Labels:      map[string]string{"tier": "data"},
@@ -150,14 +150,28 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 // both `self` (the consumer / Waiter.Parent) and `dep` (the dependency).
 func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	s := store.New()
-	self := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
-	dep := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	self := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+	dep := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
 	s.UpdateStatus(self, store.StatusReady, "")
 	s.UpdateStatus(dep, store.StatusReady, "")
 
 	ok, err := evaluateReadyExpr(`self.metadata.namespace == dep.metadata.namespace`, s, self, dep)
 	if err != nil || !ok {
 		t.Errorf("self/dep binding: ok=%v err=%v, want true/nil", ok, err)
+	}
+	for _, group := range []string{"", "example.test"} {
+		t.Run("group="+group, func(t *testing.T) {
+			foreignSelf, foreignDep := self, dep
+			foreignSelf.Group, foreignDep.Group = group, group
+			expr := `self.apiVersion == '' && dep.apiVersion == '' && !dep.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')`
+			if ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep); err != nil || !ok {
+				t.Fatalf("foreign projection borrowed Flux identity or conditions: ok=%v err=%v", ok, err)
+			}
+			s.UpdateStatus(foreignDep, store.StatusPending, "foreign")
+			if ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep); err != nil || !ok {
+				t.Fatalf("status-only projection borrowed Flux identity: ok=%v err=%v", ok, err)
+			}
+		})
 	}
 }
 

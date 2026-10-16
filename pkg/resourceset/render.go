@@ -41,10 +41,10 @@ import (
 )
 
 // ProviderResolver returns the ResourceSetInputProviders matching a
-// single spec.inputsFrom reference within the given namespace. Callers
+// single spec.inputsFrom reference at the canonical identity. Callers
 // implement this against their object store (orchestrator) or pass nil
 // to disable inputsFrom resolution (tests, simple cases).
-type ProviderResolver func(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error)
+type ProviderResolver func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error)
 
 // Render evaluates the ResourceSet's resources or ordered steps across its
 // input matrix, deduplicates within each step, and stamps common metadata.
@@ -75,7 +75,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 		steps = []fluxopv1.ResourceSetStep{{Resources: rs.Resources, ResourcesTemplate: rs.ResourcesTemplate}}
 	}
 	var docs []map[string]any
-	stepOfObject := make(map[string]string)
+	stepOfObject := make(map[manifest.NamedResource]string)
 	for _, step := range steps {
 		rendered, err := renderStep(step, inputs)
 		if err != nil {
@@ -108,12 +108,12 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver) ([]map[string]an
 }
 
 func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]map[string]any, error) {
-	seen := make(map[string]struct{})
+	seen := make(map[manifest.NamedResource]struct{})
 	var docs []map[string]any
 	appendUnique := func(rendered []map[string]any, dedup bool) {
 		for _, doc := range rendered {
 			key := DedupKey(doc)
-			if key == "" {
+			if key == (manifest.NamedResource{}) {
 				continue
 			}
 			if _, dup := seen[key]; dedup && dup {

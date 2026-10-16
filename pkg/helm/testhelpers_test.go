@@ -38,7 +38,7 @@ data:
 	hr := &manifest.HelmRelease{
 		Name: "podinfo", Namespace: "apps",
 		ChartRef:         &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: src.Name},
-		Chart:            manifest.HelmChart{RepoKind: manifest.KindOCIRepository, RepoNamespace: src.Namespace, RepoName: src.Name},
+		Chart:            manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoNamespace: src.Namespace, RepoName: src.Name},
 		ChartValuesFiles: []string{"prod.yaml"},
 	}
 	st.AddObject(hr)

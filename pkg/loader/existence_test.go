@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -40,7 +43,11 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
-			id := manifest.NamedResource{Kind: tc.kind, Name: "fixture", Namespace: "flux-system"}
+			group, _, found := strings.Cut(tc.api, "/")
+			if !found {
+				group = ""
+			}
+			id := manifest.NamedResource{Group: group, Kind: tc.kind, Name: "fixture", Namespace: "flux-system"}
 			assert.Equal(t, st.GetObject(id) != nil, tc.admitted)
 			_, indexed := l.Index.Lookup(id)
 			assert.Equal(t, indexed, true)
@@ -263,9 +270,9 @@ spec:
 	}
 
 	for _, want := range []manifest.NamedResource{
-		{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "upstream"},
-		{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
-		{Kind: manifest.KindHelmRepository, Namespace: "default", Name: "podinfo"},
+		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "upstream"},
+		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
+		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmRepository, Namespace: "default", Name: "podinfo"},
 	} {
 		if st.GetObject(want) == nil {
 			t.Errorf("source %s must stay in Store during discovery; got nil", want.String())
@@ -291,10 +298,10 @@ spec:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "bundle.yaml", fmt.Sprintf(doc, "other", "2.0.0")+"---\n"+fmt.Sprintf(doc, tc.authored, "1.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
+			testutil.WriteFile(t, dir, "bundle.yaml", strings.Replace(fmt.Sprintf(doc, tc.authored, "9.0.0"), manifest.HelmReleaseDomain, "foreign.example", 1)+"---\n"+fmt.Sprintf(doc, "other", "2.0.0")+"---\n"+fmt.Sprintf(doc, tc.authored, "1.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
 			st := store.New()
 			admitForTest(st, dir)
-			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.namespace, Name: "podinfo"}
+			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: tc.namespace, Name: "podinfo"}
 			record := manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
 			if tc.evidence {
 				record.Authored = id
@@ -305,6 +312,11 @@ spec:
 			}
 			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
 				t.Errorf("%s chart version = %s, want %s", id, got, tc.version)
+			}
+			foreign := id
+			foreign.Group = "foreign.example"
+			if Promote(st, foreign, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}) {
+				t.Fatal("foreign promotion borrowed the real HelmRelease")
 			}
 			sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
 			if st.GetObject(sibling) == nil {
@@ -331,7 +343,26 @@ func TestPromote_SourceView(t *testing.T) {
 			st := store.New()
 			source := &manifest.GitRepository{Name: "source"}
 			st.AddObject(source)
-			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: dir, FS: input})
+			repoRoot := t.TempDir()
+			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: repoRoot, LocalPath: dir, Key: "pinned", FS: input})
+			foreign := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Name: source.Name}
+			st.AddObject(foreign)
+			st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: dir, FS: fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte(fmt.Sprintf(doc, "foreign"))}}})
+			for _, version := range []string{"", manifest.SourceDomain + "/v1", "v1", "foreign.example/v1", "missing.example/v1"} {
+				ks := &manifest.Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: version, Kind: manifest.KindGitRepository, Name: source.Name}}
+				root, pinned, external := SourceView(st, ks, repoRoot)
+				admitted := version == "" || version == manifest.SourceDomain+"/v1"
+				wantRoot := repoRoot
+				if admitted {
+					wantRoot = dir
+				}
+				if root != wantRoot || pinned != admitted || external != (version == "foreign.example/v1") {
+					t.Fatalf("SourceView(%q) = %s, %t, %t", version, root, pinned, external)
+				}
+				if !admitted && st.GetArtifact(ks.SourceID()) != nil && version != "foreign.example/v1" {
+					t.Fatalf("missing source %s borrowed the real artifact", ks.SourceID())
+				}
+			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml")}
 			record.Authored.Namespace = "authored"

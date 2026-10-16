@@ -113,8 +113,8 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 			input = fstest.MapFS{"chart.tgz": {Data: buf.Bytes()}}
 		}
 		art := &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: key, FS: acquireChartFS(t, newTestCache(t, ""), input)}
-		st.SetArtifact(manifest.NamedResource{Kind: manifest.KindHelmChart, Name: name, Namespace: "test"}, art)
-		hr := &manifest.HelmRelease{Namespace: "test", Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoName: name}}
+		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: name, Namespace: "test"}, art)
+		hr := &manifest.HelmRelease{Namespace: "test", Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: name}}
 		loaded, err := cli.loadChart(t.Context(), hr)
 		if name == "invalid-metadata" || name == "invalid-archive" {
 			if !errors.Is(err, manifest.ErrInput) || strings.Count(err.Error(), "input error") != 1 {
@@ -138,10 +138,11 @@ func BenchmarkLoadChart_FSWarm(b *testing.B) {
 	}
 	st := store.New()
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "test", Name: "chart"},
+	st.SetArtifact(manifest.NamedResource{
+		Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "test", Name: "chart"},
 		&store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "generation",
 			FS: fstest.MapFS{"Chart.yaml": {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")}}})
-	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoName: "chart", RepoNamespace: "test"}}
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: "chart", RepoNamespace: "test"}}
 	if _, err := cli.loadChart(b.Context(), hr); err != nil {
 		b.Fatal(err)
 	}
@@ -226,8 +227,8 @@ func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	label := t.TempDir()
 	testutil.WriteFile(t, label, "Chart.yaml", "apiVersion: v2\nname: host\nversion: 1.0.0\n")
-	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoName: "chart", RepoNamespace: "n"}}
-	st.SetArtifact(manifest.NamedResource{Kind: hr.Chart.RepoKind, Namespace: "n", Name: "chart"},
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: "chart", RepoNamespace: "n"}}
+	st.SetArtifact(hr.ChartSource(),
 		&store.SourceArtifact{LocalPath: label, Key: "pin"})
 	if _, err := cli.loadChart(t.Context(), hr); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("released content used host chart: %v", err)
@@ -240,8 +241,8 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 	cli, err := NewClient(newTestCache(t, ""))
 	assert.NoError(t, err)
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	id := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "n", Name: "chart"}
-	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: id.Kind, RepoNamespace: id.Namespace, RepoName: id.Name}}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "n", Name: "chart"}
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: id.Group, RepoKind: id.Kind, RepoNamespace: id.Namespace, RepoName: id.Name}}
 	var previous *chart.Chart
 	var previousInfo fs.FileInfo
 	for _, tc := range []struct {
@@ -291,8 +292,8 @@ func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
 	client, err := NewClient(newTestCache(t, ""))
 	assert.NoError(t, err)
 	client.SetSourceResolver(NewStoreSourceResolver(st))
-	id := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}
-	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoKind: id.Kind, RepoName: id.Name, RepoNamespace: id.Namespace}}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: id.Group, RepoKind: id.Kind, RepoName: id.Name, RepoNamespace: id.Namespace}}
 	for _, label := range []string{"", "mutable"} {
 		for _, value := range []string{"one", "two", "one"} {
 			input := fstest.MapFS{
@@ -367,7 +368,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		cli, err := NewClient(newTestCache(t, ""))
 		assert.NoError(t, err)
 		st := store.New()
-		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
+		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
 		cli.SetSourceResolver(NewStoreSourceResolver(st))
 		loaded, err := cli.loadChart(t.Context(), hr)
@@ -442,7 +443,7 @@ func TestLoadFSChart_FailureRecovery(t *testing.T) {
 			cli, err := NewClient(newTestCache(t, ""))
 			assert.NoError(t, err)
 			st := store.New()
-			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
+			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed, Key: "untrusted"})
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
 			_, err = cli.loadChart(t.Context(), hr)

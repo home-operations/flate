@@ -121,8 +121,7 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 	if r == nil {
 		return nil
 	}
-	source := hr.ChartSource()
-	return r.LocalSourceArtifact(source.Kind, source.Namespace, source.Name)
+	return r.LocalSourceArtifact(hr.ChartSource())
 }
 
 type chartLoadResult struct {

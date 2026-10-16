@@ -67,6 +67,13 @@ func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 				baseDir, headDir := t.TempDir(), t.TempDir()
 				testutil.WriteFilteredOrderingCluster(t, baseDir, "v1", broken)
 				testutil.WriteFilteredOrderingCluster(t, headDir, "v2", broken)
+				foreignKind := "Kustomization"
+				if kind == "hr" {
+					foreignKind = "HelmRelease"
+				}
+				for _, dir := range []string{baseDir, headDir} {
+					testutil.WriteFile(t, dir, "foreign.yaml", "apiVersion: example.test/v1\nkind: "+foreignKind+"\nmetadata: {name: selected, namespace: flux-system}\nspec: {value: foreign-marker}\n")
+				}
 				stdout, stderr, code := runCLI(t, "diff", kind, "selected", "--path", headDir, "--path-orig", baseDir,
 					"--cache-dir", t.TempDir(), "--concurrency", "4", "-o", "diff")
 				if broken {
@@ -91,7 +98,7 @@ func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 						t.Errorf("missing selected diff %q: %s", want, stdout)
 					}
 				}
-				for _, excluded := range []string{"monitor-a", "monitor-b", "excluded-source", "excluded-values"} {
+				for _, excluded := range []string{"monitor-a", "monitor-b", "excluded-source", "excluded-values", "foreign-marker", "example.test"} {
 					if (kind == "hr" && strings.Contains(stdout, excluded)) || strings.Contains(stderr, excluded) {
 						t.Errorf("excluded chain contaminated diff: %s\n%s", stdout, stderr)
 					}

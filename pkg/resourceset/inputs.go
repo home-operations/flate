@@ -93,14 +93,14 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		return groups, nil
 	}
 
-	seen := make(map[string]struct{})
+	seen := make(map[manifest.NamedResource]struct{})
 	var providers []*manifest.ResourceSetInputProvider
 	for edge := range manifest.References(rs) {
 		if edge.Use != "inputsFrom" {
 			continue
 		}
 		ref := rs.InputsFrom[edge.Position]
-		matches, err := resolve(ref, edge.Namespace)
+		matches, err := resolve(ref, edge.NamedResource)
 		if err != nil {
 			return nil, fmt.Errorf("inputsFrom %q: %w", ref.Name, err)
 		}
@@ -108,7 +108,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 			if p == nil {
 				continue
 			}
-			k := p.Namespace + "/" + p.Name
+			k := p.Named()
 			if _, dup := seen[k]; dup {
 				continue
 			}
@@ -118,8 +118,8 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 	}
 	// Sort providers by (namespace, name) for deterministic output,
 	// matching upstream's Combine routine ordering. NamedResource.Compare
-	// orders by (kind, namespace, name); every provider here shares the
-	// same kind so the Kind comparison is always 0 and the order reduces
+	// orders by (kind, group, namespace, name); every provider here shares the
+	// same group and kind so the order reduces
 	// to the desired (namespace, name).
 	slices.SortFunc(providers, func(a, b *manifest.ResourceSetInputProvider) int {
 		return a.Named().Compare(b.Named())
@@ -192,17 +192,10 @@ func MatchSelector(sel *metav1.LabelSelector, lbls map[string]string) (bool, err
 // StoreResolver returns a ProviderResolver backed by s. Name-only refs
 // perform a direct id lookup; selector refs walk the store's
 // ResourceSetInputProviders in the requested namespace and filter by
-// metadata.labels. This is the canonical implementation shared by
-// discovery and the orchestrator — both call sites previously carried
-// identical local copies.
+// metadata.labels using the reference's exact group and kind.
 func StoreResolver(s *store.Store) ProviderResolver {
-	return func(ref fluxopv1.InputProviderReference, namespace string) ([]*manifest.ResourceSetInputProvider, error) {
-		if ref.Name != "" {
-			id := manifest.NamedResource{
-				Kind:      manifest.KindResourceSetInputProvider,
-				Namespace: namespace,
-				Name:      ref.Name,
-			}
+	return func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+		if id.Name != "" {
 			obj, ok := s.Get[*manifest.ResourceSetInputProvider](id)
 			if !ok {
 				return nil, nil
@@ -213,8 +206,8 @@ func StoreResolver(s *store.Store) ProviderResolver {
 			return nil, nil
 		}
 		var out []*manifest.ResourceSetInputProvider
-		for _, p := range s.ListAs[*manifest.ResourceSetInputProvider](manifest.KindResourceSetInputProvider) {
-			if p.Namespace != namespace {
+		for _, p := range s.ListAs[*manifest.ResourceSetInputProvider](id.Group, id.Kind) {
+			if p.Namespace != id.Namespace {
 				continue
 			}
 			match, err := MatchSelector(ref.Selector, p.Labels)

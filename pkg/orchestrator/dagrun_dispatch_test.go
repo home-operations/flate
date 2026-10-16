@@ -88,7 +88,7 @@ data: {key: fixed}
 				case "empty fingerprint":
 					s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{Manifests: before.Manifests})
 				case "blocked gate", "failed gate":
-					fresh.DependsOn = []fluxopv1.Dependency{{Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
 					s.AddObject(&fresh)
 					want = schedule.OutcomeBlocked
 					if name == "failed gate" {
@@ -110,7 +110,7 @@ data: {key: fixed}
 				case "refresh suspended":
 					gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns", Suspend: true}
 					s.AddObject(gate)
-					fresh.DependsOn = []fluxopv1.Dependency{{Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
 					s.AddObject(&fresh)
 					s.UpdateStatus(gate.Named(), store.StatusReady, store.MsgSuspended)
 					s.UpdateStatus(rs.Named(), store.StatusPending, "queued")

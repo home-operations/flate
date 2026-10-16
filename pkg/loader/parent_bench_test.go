@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkBuildParentIndex(b *testing.B) {
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	st := store.New()
 	st.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace, Path: "apps"})
 	files := make(map[manifest.NamedResource]string, 1000)

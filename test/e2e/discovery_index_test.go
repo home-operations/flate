@@ -212,7 +212,7 @@ spec:
 	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: wrong-working-tree-output}\n")
 	for _, workers := range []string{"2", "8"} {
 		stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
-		if code != 1 || !strings.Contains(stderr, "unknown OCI artifact root") || !strings.Contains(stderr, "OCIRepository/flux-system/missing") || strings.Contains(stdout, "wrong-working-tree-output") {
+		if code != 1 || !strings.Contains(stderr, "unknown OCI artifact root") || !strings.Contains(stderr, "OCIRepository.source.toolkit.fluxcd.io/flux-system/missing") || strings.Contains(stdout, "wrong-working-tree-output") {
 			t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}
 	}

@@ -199,8 +199,8 @@ spec:
 				if o == nil || res == nil {
 					t.Fatal("full-mode fixture did not complete")
 				}
-				hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "selected"}
-				producer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "producer"}
+				hr := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "selected"}
+				producer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "producer"}
 				if len(res.Manifests[hr]) == 0 || len(res.Blocked[hr]) != 0 {
 					t.Fatalf("consumer did not render independently: failed=%v blocked=%v", res.Failed, res.Blocked)
 				}
@@ -213,7 +213,7 @@ spec:
 				}
 				stdout, stderr, code := runCLI(t, args...)
 				selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
-					[]manifest.NamedResource{{Kind: hr.Kind, Name: hr.Name}}, nil)
+					[]manifest.NamedResource{{Group: hr.Group, Kind: hr.Kind, Name: hr.Name}}, nil)
 				if len(selection) != 1 {
 					t.Fatalf("selection failed: %v", selectedErr)
 				}
@@ -291,7 +291,7 @@ spec:
 					cfg.Concurrency = 4
 				}
 				_, res, _ := runOrchestratorCfg(t.Context(), cfg)
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "selected"}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "selected"}
 				if res == nil || len(res.Manifests[id]) == 0 || len(res.Blocked[id]) != 0 {
 					t.Fatalf("consumer did not render independently: %+v", res)
 				}
@@ -374,7 +374,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	}
 	selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 	o.Store().AddObject(selected)
-	other := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "other"}
+	other := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "other"}
 	res := &orchestrator.Result{Manifests: map[manifest.NamedResource][]map[string]any{selected.Named(): {{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}}}, Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
 	t.Cleanup(func() {
 		if err := o.Stop(); err != nil {
@@ -386,7 +386,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 		t.Run(fatal.Error(), func(t *testing.T) {
 			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
 			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
-				[]manifest.NamedResource{{Kind: manifest.KindKustomization, Name: selected.Name}}, nil)
+				[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: selected.Name}}, nil)
 			if len(selection) != 1 || len(selection[0].Manifests[selected.Named()]) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
@@ -536,7 +536,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		}
 	})
 	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
+		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
 	a, b, other := id("a"), id("b"), id("other")
 	res := &orchestrator.Result{
@@ -548,7 +548,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {b}, b: {a}},
 	}
 	selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Kind: a.Kind, Name: a.Name}}, nil)
+		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Group: a.Group, Kind: a.Kind, Name: a.Name}}, nil)
 	if len(selection) != 1 {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
@@ -569,7 +569,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	if err != nil || res == nil {
 		t.Fatalf("fresh fixture failed: %v", err)
 	}
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "selected"}
+	id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "selected"}
 	hr, _ := o.Store().Get[*manifest.HelmRelease](id)
 	artifact := o.Store().GetArtifact(id)
 	if artifact == nil {
@@ -586,7 +586,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		old:     {Status: store.StatusFailed, Message: "old input failure"},
 	}}
 	selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Kind: id.Kind, Name: id.Name}}, nil)
+		&orchestrator.FailuresError{Message: "raw reconcile failures"}, []manifest.NamedResource{{Group: id.Group, Kind: id.Kind, Name: id.Name}}, nil)
 	if len(selection) != 1 || selectedErr == nil {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
@@ -601,7 +601,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 
 func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	want := "reconcile completed with 1 failure(s):\n  Kustomization/flux-system/outside: not found\n  (+1 blocked by failed/missing dependencies)"
+	want := "reconcile completed with 1 failure(s):\n  Kustomization.kustomize.toolkit.fluxcd.io/flux-system/outside: not found\n  (+1 blocked by failed/missing dependencies)"
 	for _, verb := range []string{"get", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			kind := "ks"
@@ -665,7 +665,7 @@ func TestRun_NamedScope_TestWarningFooter(t *testing.T) {
 				"--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, strings.Count(out, "warnings (1)"), 1)
-			assert.Equal(t, strings.Count(out, "Kustomization/flux-system/unrelated"), 1)
+			assert.Equal(t, strings.Count(out, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 1)
 			assert.Equal(t, strings.Contains(out, "outside"), true)
 			if fatal {
 				assert.Equal(t, strings.Count(stderr, "apps/fatal-dependency"), 1)
@@ -944,10 +944,10 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 					t.Errorf("Stop: %v", err)
 				}
 			})
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
+			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
 			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
-			query := manifest.NamedResource{Kind: id.Kind}
+			query := manifest.NamedResource{Group: id.Group, Kind: id.Kind}
 			if named {
 				query.Name = id.Name
 			}
@@ -1012,7 +1012,7 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 
 func TestFailureModel(t *testing.T) {
 	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 	}
 	failed := func(ids ...manifest.NamedResource) map[manifest.NamedResource]store.StatusInfo {
 		m := make(map[manifest.NamedResource]store.StatusInfo, len(ids))
@@ -1098,7 +1098,7 @@ func TestFailureModel(t *testing.T) {
 					}
 				})
 				selected, err, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: result}},
-					&orchestrator.FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Kind: manifest.KindKustomization}}, nil)
+					&orchestrator.FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}, nil)
 				if len(selected) != 1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", tc.want.Blocked)) {
 					t.Fatalf("selected error and report counts disagree: %v", err)
 				}

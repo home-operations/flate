@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
@@ -147,7 +149,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 		if manifest.DocKind(doc) == "ClusterRole" && manifest.DocAPIVersion(doc) == "rbac.authorization.k8s.io/v1" {
 			want = ""
 		}
-		if s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
 			t.Errorf("missing effective child %s/%s", want, name)
 		}
 	}
@@ -300,10 +302,10 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 			want = ""
 		}
 		assert.Equal(t, ns, want)
-		if s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
 			t.Errorf("replayed child %s/%s missing", want, name)
 		}
-		if want != "" && s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Name: name}) != nil {
+		if want != "" && s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Name: name}) != nil {
 			t.Errorf("replay published duplicate bare child %s", name)
 		}
 	}
@@ -538,7 +540,7 @@ data: {greeting: hi}
 			level := manifest.DrainNone
 			if tt.cascade {
 				doc["spec"].(map[string]any)["sourceRef"] = map[string]any{"kind": manifest.KindOCIRepository, "name": "missing"}
-				st.UpdateStatus(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "")
+				st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "")
 				level = manifest.DrainCascade
 			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})

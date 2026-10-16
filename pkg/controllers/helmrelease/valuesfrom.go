@@ -173,7 +173,7 @@ func cloneWithValuesFrom(hr *manifest.HelmRelease, filtered []manifest.ValuesRef
 }
 
 func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
-	return c.Store.GetObjectByName(id.Kind, id.Namespace, id.Name) != nil
+	return c.Store.GetObject(id) != nil
 }
 
 func valuesRefID(ref manifest.Reference) (manifest.NamedResource, bool) {

@@ -105,11 +105,28 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			l := loaderFixture(store.New(), nil)
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "stray"}
+			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "stray"}
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
 			rendererFixture(t, l, dir, nil)
 			if got := l.Index.Records[id].Excluded; got != tc.want {
 				t.Errorf("Excluded(%q) = %v, want %v", tc.file, got, tc.want)
+			}
+		})
+	}
+	for _, version := range []string{"", "/", "example.test/", "example.test/v1/extra"} {
+		t.Run("unlisted ResourceSet/"+version, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [selected.yaml]\n")
+			testutil.WriteFile(t, root, "selected.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected}\nspec: {url: https://example.test/repo.git}\n")
+			testutil.WriteFile(t, root, "excluded.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: excluded}\nspec:\n  dependsOn: [{apiVersion: '"+version+"', kind: Kustomization, name: missing}]\n")
+			l := New(store.New())
+			_, err := l.Load(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.FinalizeIndex(root, nil)
+			if len(l.Index.Errors) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "selected"}) == nil {
+				t.Fatalf("unlisted input affected selected source: errors=%v", l.Index.Errors)
 			}
 		})
 	}
@@ -183,7 +200,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		if _, err := l.Load(t.Context(), child); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("missing mounted child error = %v, want absent source content", err)
 		}
-		if len(st.ListObjects(manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(l.Index.Errors) != 0 {
+		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(l.Index.Errors) != 0 {
 			t.Fatal("physical decoy supplied an object or indexed evidence")
 		}
 		if st.GetArtifact(manifest.BootstrapSourceID) != input || l.documents.mountedRoot(child) != committed {

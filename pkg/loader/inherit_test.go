@@ -140,7 +140,7 @@ spec:
 				l.Store.SetArtifact(manifest.BootstrapSourceID, input)
 				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
 				assert.NoError(t, err)
-				id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+				id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 				l.Store.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + root})
 				l.Store.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, LocalRoot: root, LocalPath: filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name), InputAlias: true, FS: view})
 			}
@@ -148,7 +148,7 @@ spec:
 				artifact := t.TempDir()
 				testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
 				testutil.WriteFile(t, artifact, "apps/hr.yaml", hrDoc)
-				l.Store.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, Key: "pinned", FS: os.DirFS(artifact), LocalPath: artifact})
+				l.Store.SetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, Key: "pinned", FS: os.DirFS(artifact), LocalPath: artifact})
 				l.documents = readerForTest(root)
 				l.documents.views[artifact] = os.DirFS(artifact)
 				l.documents.read(filepath.Join(artifact, "apps"))
@@ -159,13 +159,13 @@ spec:
 				}
 				if tc.name == "named_ready" && scan == "flux" {
 					l.ApplyNamespaces(root)
-					if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); !ok {
+					if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "app"}); !ok {
 						t.Fatalf("unresolved source records before loading its path: %+v", l.Index.Records)
 					}
 				}
 			}
 			if tc.pinned || tc.alias {
-				ks := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)[0]
+				ks := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)[0]
 				artifact := l.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
 				if _, err := l.Load(t.Context(), filepath.Join(artifact.LocalPath, "apps")); err != nil {
 					t.Fatal(err)
@@ -174,7 +174,7 @@ spec:
 			var original, snapshot *manifest.Kustomization
 			var raw manifest.DiscoveryRecord
 			if len(tc.wantKS) != 0 {
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
 				original, _ = l.Store.Get[*manifest.Kustomization](id)
 				if original == nil {
 					t.Fatal("authored Kustomization missing")
@@ -195,27 +195,27 @@ spec:
 					}
 				}
 				for _, ns := range tc.wantKS {
-					id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
-					want[id] = []manifest.NamedResource{{Kind: manifest.KindGitRepository, Namespace: ns, Name: "cluster"}}
+					id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
+					want[id] = []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: ns, Name: "cluster"}}
 				}
 				assert.Diff(t, got, want)
 			}
 			if tc.name == "self_claim" {
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "owner"}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "owner"}
 				if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) == nil {
 					t.Fatal("Kustomization inherited its own targetNamespace as its identity")
 				}
 			}
 			if tc.pinned {
 				l.FinalizeIndex(root, nil)
-				r, _ := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"})
+				r, _ := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"})
 				readers := l.Index.Readers[r.File]
-				if len(readers) != 1 || readers[0] != (manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "pinned"}) {
+				if len(readers) != 1 || readers[0] != (manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "pinned"}) {
 					t.Fatalf("committed source file %q readers = %v", r.File, readers)
 				}
 			}
 			if tc.name == "cross_tree" {
-				ks, ok := l.Store.Get[*manifest.Kustomization](manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "games", Name: "games"})
+				ks, ok := l.Store.Get[*manifest.Kustomization](manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "games", Name: "games"})
 				if !ok {
 					t.Fatal("projected Kustomization missing")
 				}
@@ -230,7 +230,7 @@ spec:
 				}
 			}
 			for _, ns := range tc.want {
-				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: ns, Name: "app"}
+				id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: ns, Name: "app"}
 				r, ok := l.Index.Lookup(id)
 				if !ok || len(r.Refs) != 3 {
 					t.Fatalf("%s record=%+v present=%t", id, r, ok)
@@ -245,13 +245,13 @@ spec:
 				}
 
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "app"}); ok && !slices.Contains(tc.want, "") {
+			if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "app"}); ok && !slices.Contains(tc.want, "") {
 				t.Fatal("stale raw consumer record")
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}); ok {
+			if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}); ok {
 				t.Fatal("ancestor fallback retained a stale consumer identity")
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "inner", Name: "app"}); ok {
+			if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "inner", Name: "app"}); ok {
 				t.Fatal("inner base namespace must not override its overlay")
 			}
 		})
@@ -272,7 +272,7 @@ spec: {path: ./output, targetNamespace: pg}
 		}
 		l.ApplyNamespaces(root)
 		l.FinalizeIndex(root, nil)
-		canonical := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "immich", Name: "immich-db"}
+		canonical := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "immich", Name: "immich-db"}
 		ks, ok := l.Store.Get[*manifest.Kustomization](canonical)
 		if !ok || ks.TargetNamespace != "pg" {
 			t.Fatalf("canonical declaration = %+v, want targetNamespace pg", ks)
@@ -280,7 +280,7 @@ spec: {path: ./output, targetNamespace: pg}
 		if _, ok := l.Index.Lookup(canonical); !ok {
 			t.Fatal("canonical declaration missing from finalized index")
 		}
-		stale := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "pg", Name: "immich-db"}
+		stale := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "pg", Name: "immich-db"}
 		_, indexed := l.Index.Lookup(stale)
 		if l.Store.GetObject(stale) != nil || indexed {
 			t.Fatal("stale pg/immich-db declaration survived projection")
@@ -306,7 +306,7 @@ func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
 			if _, err := l.Load(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			raw := manifest.NamedResource{Kind: tc.kind, Name: "source"}
+			raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "source"}
 			original := l.Store.GetObject(raw)
 			if original == nil {
 				t.Fatal("source not loaded")
@@ -358,7 +358,7 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 				t.Fatal(err)
 			}
 			l.ApplyNamespaces(root)
-			for _, obj := range l.Store.ListObjects("") {
+			for _, obj := range l.Store.ListObjects("", "") {
 				if obj.Named().Kind == manifest.KindKustomization {
 					continue
 				}

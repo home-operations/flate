@@ -53,12 +53,12 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 			work = append(work, id)
 		}
 	}
-	kinds := make(map[string]bool, len(roots))
+	kinds := make(map[manifest.NamedResource]bool, len(roots))
 	for _, root := range roots {
-		kinds[root.Kind] = true
+		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
 	}
 	seed := func(id manifest.NamedResource) {
-		if kinds[id.Kind] && id.Name == roots[0].Name && s.includes(id.Namespace) {
+		if kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] && id.Name == roots[0].Name && s.includes(id.Namespace) {
 			add(id)
 		}
 	}

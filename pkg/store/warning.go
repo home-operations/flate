@@ -18,7 +18,7 @@ func (s *Store) AddWarning(w manifest.Warning) {
 		w.Count = 1
 	}
 	w.Detail = slices.Clone(w.Detail) // defensive: caller can't mutate stored state
-	key := warningKey(w)
+	key := warningKey{w.Resource, w.Category, w.Message, strings.Join(w.Detail, "\x00")}
 
 	s.warnMu.Lock()
 	defer s.warnMu.Unlock()
@@ -27,7 +27,7 @@ func (s *Store) AddWarning(w manifest.Warning) {
 		return
 	}
 	if s.warnIndex == nil {
-		s.warnIndex = make(map[string]int)
+		s.warnIndex = make(map[warningKey]int)
 	}
 	s.warnIndex[key] = len(s.warnOrder)
 	s.warnOrder = append(s.warnOrder, w)
@@ -52,10 +52,7 @@ func (s *Store) Warnings() []manifest.Warning {
 	return out
 }
 
-// warningKey is the identity used to collapse repeat warnings. Fields (and
-// Detail elements) are NUL-joined — a byte that can't appear in a resource id,
-// category, message, or dotted value path — so distinct warnings never collide
-// (e.g. Detail ["a,b"] and ["a","b"] stay separate).
-func warningKey(w manifest.Warning) string {
-	return w.Resource.String() + "\x00" + w.Category + "\x00" + w.Message + "\x00" + strings.Join(w.Detail, "\x00")
+type warningKey struct {
+	resource                  manifest.NamedResource
+	category, message, detail string
 }

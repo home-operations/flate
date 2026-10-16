@@ -56,7 +56,7 @@ spec:
 		t.Errorf("foreign Bucket CRD must not fail the run; failed=%+v", res.Failed)
 	}
 
-	id := manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "observability", Name: "greptimedb"}
+	id := manifest.NamedResource{Group: "seaweed.seaweedfs.com", Kind: manifest.KindBucket, Namespace: "observability", Name: "greptimedb"}
 	if info, ok := o.Store().GetStatus(id); ok {
 		t.Errorf("foreign Bucket CRD is not a source node, so it must carry no status; got %+v", info)
 	}
@@ -70,7 +70,7 @@ spec:
 
 	// The resource still renders — dropping it would show up in a diff as a
 	// deletion of a live resource.
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	var found bool
 	for _, doc := range res.Manifests[ksID] {
 		name, ns := manifest.DocMetadata(doc)
@@ -83,6 +83,21 @@ spec:
 	}
 	if !found {
 		t.Errorf("foreign Bucket missing from the parent's rendered output: %+v", res.Manifests[ksID])
+	}
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet} {
+		t.Run(kind, func(t *testing.T) {
+			foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: kind, Name: "apps", Namespace: "flux-system"}
+			o.store.AddObject(foreign)
+			_, blocked, rerun := (dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || len(blocked) != 0 || rerun {
+				t.Fatalf("foreign %s entered a Flux controller", kind)
+			}
+			o.store.UpdateStatus(foreign.Named(), store.StatusPending, "foreign status")
+			(dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+			if info, _ := o.store.GetStatus(foreign.Named()); info.Status != store.StatusPending || info.Message != "foreign status" {
+				t.Fatalf("foreign %s status was rewritten by a Flux controller: %+v", kind, info)
+			}
+		})
 	}
 }
 
@@ -112,7 +127,7 @@ spec:
 	if _, err := o.Render(context.Background()); err == nil {
 		t.Fatal("expected the unreachable Flux Bucket's fetch to fail")
 	}
-	id := manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "flux-system", Name: "minio"}
+	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "flux-system", Name: "minio"}
 	info, ok := o.Store().GetStatus(id)
 	if !ok || info.Status != store.StatusFailed {
 		t.Fatalf("Flux Bucket status = %+v (present=%v), want Failed from the fetch attempt", info, ok)

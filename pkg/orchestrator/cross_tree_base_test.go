@@ -148,7 +148,7 @@ metadata:
 	}
 
 	for _, name := range []string{"app-a", "app-b"} {
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		ks, ok := o.store.GetObject(id).(*manifest.Kustomization)
 		if !ok {
 			t.Fatalf("%s missing from store", name)

@@ -138,6 +138,9 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("workers_%d/%s", workers, tc.name), func(t *testing.T) {
 				rs := strings.Replace(suspendedIssueResourceSet(), "kind: CustomResourceDefinition", "kind: "+tc.kind, 1)
+				if tc.kind == manifest.KindConfigMap || tc.kind == manifest.KindSecret {
+					rs = strings.Replace(rs, "apiVersion: apiextensions.k8s.io/v1", "apiVersion: v1", 1)
+				}
 				if tc.namespace != "" {
 					rs = strings.Replace(rs, "      kind: "+tc.kind+"\n", "      kind: "+tc.kind+"\n      namespace: "+tc.namespace+"\n", 1)
 				}
@@ -167,8 +170,8 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 					t.Fatalf("warning count=%d want %d: %s", got, wantWarning, diagnostics)
 				}
 				if wantWarning == 1 {
-					crd := manifest.NamedResource{Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
-					want := "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet/flux-system/flux-operator"
+					crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
+					want := "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"
 					if !strings.Contains(diagnostics, want) {
 						t.Fatalf("canonical warning absent: %s", diagnostics)
 					}
@@ -252,7 +255,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 				t.Fatalf("warnings=%v", lines)
 			}
 			for _, line := range lines {
-				if strings.Count(line, "ResourceSet/flux-system/flux-operator") != 1 || strings.Count(line, "ResourceSet/flux-system/z-dependent") != 1 {
+				if strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator") != 1 || strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/z-dependent") != 1 {
 					t.Fatalf("distinct sorted dependents missing: %s", line)
 				}
 			}

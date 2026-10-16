@@ -20,7 +20,7 @@ var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 func visibleLen(s string) int { return len([]rune(ansiRE.ReplaceAllString(s, ""))) }
 
 func barID(name string) manifest.NamedResource {
-	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
 // inflightModel builds a model with names tracked as in-flight (Pending).
@@ -197,7 +197,7 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 	m := newBarModel(false)
 	boot := manifest.BootstrapSourceID
-	chart := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
+	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
 	declared := barID("declared")
 
 	for _, id := range []manifest.NamedResource{boot, chart, declared} {

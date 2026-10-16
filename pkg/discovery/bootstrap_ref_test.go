@@ -88,9 +88,10 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			if err := os.Remove(filepath.Join(root, "apps/cm.yaml")); err != nil {
 				t.Fatal(err)
 			}
+			testutil.WriteFile(t, root, "apps/child.yaml", strings.Replace(child, manifest.FluxKustomizeDomain, "foreign.example", 1))
 			testutil.WriteFile(t, root, "apps/phantom.yaml", strings.Replace(child, "name: child", "name: phantom", 1))
 			testutil.WriteFile(t, root, "apps/input.txt", "dirty")
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [phantom.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=dirty]\n- name: phantom-generated\n  literals: [value=dirty]\n")
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [phantom.yaml, child.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=dirty]\n- name: phantom-generated\n  literals: [value=dirty]\n")
 			if _, err := wt.Add("."); err != nil {
 				t.Fatal(err)
 			}
@@ -98,6 +99,10 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 				t.Fatal(err)
 			}
 			st := store.New()
+			foreignSource := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			st.AddObject(foreignSource)
+			foreignArtifact := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+			st.SetArtifact(foreignSource.Named(), foreignArtifact)
 			scan := filepath.Join(root, "flux")
 			if tc.broad {
 				scan = root
@@ -108,11 +113,14 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			if err != nil {
 				t.Fatal(err)
 			}
-			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
-			childID := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "child"}
-			phantom := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "phantom"}
+			if st.GetArtifact(foreignSource.Named()) != foreignArtifact {
+				t.Fatal("pinned source replaced a foreign artifact")
+			}
+			parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
+			childID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "child"}
+			phantom := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "phantom"}
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
-			artifact := st.GetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
+			artifact := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
 			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
 				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
 			}
@@ -337,7 +345,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := discoveryRefFixture(t)
 			st := store.New()
-			id := manifest.NamedResource{Kind: tc.kind, Namespace: "flux-system", Name: "cluster"}
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "flux-system", Name: "cluster"}
 			if tc.kind == manifest.KindGitRepository {
 				st.AddObject(&manifest.GitRepository{
 					Name: id.Name, Namespace: id.Namespace, URL: tc.url,
@@ -370,7 +378,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			}
 			l := loader.New(st)
 			l.FinalizeIndex(root, nil)
-			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
+			child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
 			owners, _ := l.Index.OwnersOfFile("apps/release.yaml")
 			parent := manifest.NamedResource{}
 			for _, owner := range owners {
@@ -434,7 +442,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		cli.SetSourceResolver(helm.NewStoreSourceResolver(st))
-		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", RepoKind: alias.Named().Kind, RepoName: alias.Name, RepoNamespace: alias.Namespace}}
+		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", RepoGroup: alias.Named().Group, RepoKind: alias.Named().Kind, RepoName: alias.Name, RepoNamespace: alias.Namespace}}
 		for _, exists := range []bool{false, true, false} {
 			if exists {
 				testutil.WriteFile(t, root, "chart/templates/arrived/deep/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: arrived\n")

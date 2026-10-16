@@ -88,7 +88,7 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	canonical := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "myns", Name: "myapp"}
+	canonical := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "myns", Name: "myapp"}
 	if o.store.GetObject(canonical) == nil {
 		t.Error("transformer-projected Kustomization is missing")
 	}
@@ -98,14 +98,14 @@ spec:
 		t.Error("authored Kustomization identity survived the namespace transformer")
 	}
 
-	namespaced := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "myns", Name: "myapp"}
+	namespaced := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "myns", Name: "myapp"}
 	if o.store.GetObject(namespaced) == nil {
 		t.Errorf("expected HelmRelease at myns/myapp; HR objects in store: %v",
 			hrIDs(o))
 	}
 
 	// The empty-namespace phantom must never reach the store.
-	phantom := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "", Name: "myapp"}
+	phantom := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "", Name: "myapp"}
 	if obj := o.store.GetObject(phantom); obj != nil {
 		t.Errorf("empty-namespace HelmRelease phantom present in store: %v", phantom)
 	}
@@ -140,8 +140,9 @@ spec: {path: ./apps/shared}
 		t.Fatalf("shared-context failures: %v", res.Failed)
 	}
 	for _, ns := range []string{"myns", "other"} {
-		for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-			id := manifest.NamedResource{Kind: kind, Namespace: ns, Name: "myapp"}
+		for _, info := range reconcilableKinds {
+			kind := info.Kind
+			id := manifest.NamedResource{Group: info.Group, Kind: kind, Namespace: ns, Name: "myapp"}
 			if o.store.GetObject(id) == nil {
 				t.Errorf("shared-context render omitted %s", id)
 			}
@@ -179,7 +180,7 @@ spec:
 			t.Fatalf("Bootstrap: %v", err)
 		}
 		for _, ns := range []string{"myns", "other"} {
-			source := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: ns, Name: "flux-system"}
+			source := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: ns, Name: "flux-system"}
 			record, ok := o.index.Lookup(source)
 			if !ok || record.File != "cluster/source-"+ns+".yaml" {
 				t.Fatalf("source fixture %s: indexed=%t record=%+v", source, ok, record)
@@ -189,15 +190,15 @@ spec:
 			if len(owners) != 0 || len(ancestors) != 0 {
 				t.Fatalf("source fixture %s has unrelated ownership selection", source)
 			}
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
+			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
 			record, ok = o.index.Lookup(id)
 			t.Logf("consumer %s: indexed=%t File=%s Authored=%s Refs=%v", id, ok, record.File, record.Authored, record.Refs)
-			authored := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
+			authored := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
 			if !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored || !slices.Equal(record.Refs, []manifest.NamedResource{source}) {
 				t.Errorf("projected consumer %s: indexed=%t record=%+v", id, ok, record)
 			}
 		}
-		other := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "other", Name: "myapp"}
+		other := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "other", Name: "myapp"}
 		t.Logf("dirty=%s ShouldReconcile(%s)=%t keep=%v", dirty, other, o.filter.ShouldReconcile(other), o.filter.KeepNames())
 		if !o.filter.Enabled() || !o.filter.ShouldReconcile(other) {
 			t.Errorf("second-source change did not select %s", other)
@@ -218,7 +219,7 @@ spec:
 
 func hrIDs(o *Orchestrator) []string {
 	var out []string
-	for _, obj := range o.store.ListObjects(manifest.KindHelmRelease) {
+	for _, obj := range o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease) {
 		out = append(out, obj.Named().String())
 	}
 	return out

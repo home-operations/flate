@@ -22,7 +22,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				hr.ChartRef = nil
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
 			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)
@@ -52,7 +52,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	var previous string
 	for i, dir := range []string{first, second} {
-		st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
 		loaded, err := cli.loadChart(t.Context(), hr)
 		if err != nil {
 			t.Fatal(err)
@@ -71,7 +71,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 
 func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	st, hr, dir := ociRenderFixture(t)
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
+	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
 	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)

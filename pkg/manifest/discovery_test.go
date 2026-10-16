@@ -9,7 +9,7 @@ func TestDiscoveryIndex_DataOwnersNamespaceBridge(t *testing.T) {
 	raw := NamedResource{Kind: KindConfigMap, Name: "settings"}
 	projected := raw
 	projected.Namespace = "apps"
-	owner := NamedResource{Kind: KindKustomization, Namespace: "apps", Name: "producer"}
+	owner := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "producer"}
 	index := &DiscoveryIndex{Records: map[NamedResource]DiscoveryRecord{
 		raw:       {Owners: []NamedResource{owner}},
 		projected: {},
@@ -17,6 +17,13 @@ func TestDiscoveryIndex_DataOwnersNamespaceBridge(t *testing.T) {
 	for _, id := range []NamedResource{raw, projected} {
 		if got := index.DataOwners(id); !slices.Equal(got, []NamedResource{owner}) {
 			t.Errorf("DataOwners(%s) = %v; want [%s]", id, got, owner)
+		}
+	}
+	foreign := raw
+	foreign.Group = "foreign.example"
+	for _, id := range []NamedResource{foreign, Resolve(foreign, "apps", "")} {
+		if _, ok := index.Lookup(id); ok || len(index.DataOwners(id)) != 0 || len(index.DataProducers(id)) != 0 {
+			t.Fatalf("foreign lookup borrowed core ownership: %s", id)
 		}
 	}
 	delete(index.Records, raw)
@@ -30,7 +37,7 @@ func TestDiscoveryIndex_DataOwnersNamespaceBridge(t *testing.T) {
 
 func BenchmarkDiscoveryIndex_Lookup(b *testing.B) {
 	id := NamedResource{Kind: KindConfigMap, Namespace: "apps", Name: "settings"}
-	owner := NamedResource{Kind: KindKustomization, Namespace: "apps", Name: "producer"}
+	owner := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "producer"}
 	index := &DiscoveryIndex{Records: map[NamedResource]DiscoveryRecord{
 		id: {Owners: []NamedResource{owner}},
 	}}
@@ -44,8 +51,8 @@ func BenchmarkDiscoveryIndex_Lookup(b *testing.B) {
 }
 
 func TestDiscoveryIndex_ReadersOfFileReplay(t *testing.T) {
-	exact := NamedResource{Kind: KindKustomization, Name: "exact"}
-	ancestor := NamedResource{Kind: KindKustomization, Name: "ancestor"}
+	exact := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "exact"}
+	ancestor := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "ancestor"}
 	index := &DiscoveryIndex{Readers: map[string][]NamedResource{
 		"missing/nested/input.yaml": {exact},
 		"missing":                   {ancestor},

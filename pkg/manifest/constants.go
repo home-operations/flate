@@ -47,7 +47,7 @@ const DefaultNamespace = "flux-system"
 // Exported so orchestrator and kustomization controller share one
 // declaration.
 var BootstrapSourceID = NamedResource{
-	Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
+	Group: SourceDomain, Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
 }
 
 // ValuePlaceholderTemplate is the format string used when wiping Secret

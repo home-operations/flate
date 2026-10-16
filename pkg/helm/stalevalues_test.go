@@ -249,7 +249,7 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 	cli, err := NewClient(newTestCache(t, ""))
 	assert.NoError(t, err)
 	st := store.New()
-	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
+	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, Key: "misleading"})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second")), []string{"second"})

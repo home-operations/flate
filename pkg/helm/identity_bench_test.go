@@ -19,7 +19,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 				}
 				owner := newTestCache(b, root)
 				resolver := benchLocalChartResolver(b, "chart-repo", "flux-system", dir)
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository}}
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
 				newClient := func() *Client {
 					cli, err := NewClient(owner)
 					if err != nil {
@@ -54,7 +54,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 			b.Run(fmt.Sprintf("disk_%t/disabled_%t", disk, disabled), func(b *testing.B) {
 				st, hr, dir := ociRenderFixture(b)
 				const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-				st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+				st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
 				root := ""
 				if disk {
 					root = b.TempDir()
@@ -81,7 +81,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
+	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
 	cli, err := NewClient(newTestCache(b, ""))
 	if err != nil {
 		b.Fatal(err)

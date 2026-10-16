@@ -17,7 +17,7 @@ type ConfigMap struct {
 
 // Named identifies the ConfigMap.
 func (c *ConfigMap) Named() NamedResource {
-	return NamedResource{Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
+	return NamedResource{Group: kindTable[kindConfigMap].Group, Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -69,7 +69,7 @@ type Secret struct {
 
 // Named identifies the Secret.
 func (s *Secret) Named() NamedResource {
-	return NamedResource{Kind: KindSecret, Namespace: s.Namespace, Name: s.Name}
+	return NamedResource{Group: kindTable[kindSecret].Group, Kind: KindSecret, Namespace: s.Namespace, Name: s.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.

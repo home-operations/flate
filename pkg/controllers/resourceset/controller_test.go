@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -87,7 +89,7 @@ func TestReconcile_NamedInputsFrom_ParksOnRSIP(t *testing.T) {
 	rs := &manifest.ResourceSet{
 		Name: "acl", Namespace: "flux-system",
 		InputsFrom: []fluxopv1.InputProviderReference{
-			{Kind: manifest.KindResourceSetInputProvider, Name: "rsip"},
+			{Name: "rsip"},
 		},
 		ResourcesTemplate: `---
 apiVersion: example.com/v1
@@ -103,7 +105,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	if len(blocked) != 1 {
 		t.Fatalf("first dispatch blocked = %v, want [rsip] (parked on the named RSIP)", blocked)
 	}
-	want := manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
+	want := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
 	if blocked[0] != want {
 		t.Fatalf("blocked on %v, want %v", blocked[0], want)
 	}
@@ -201,7 +203,7 @@ metadata: {name: bare}
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
-	childID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
+	childID := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
 	child, ok := s.Get[*manifest.Kustomization](childID)
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
@@ -218,7 +220,7 @@ metadata: {name: bare}
 		if ns != want {
 			t.Fatalf("rendered namespace = %q, want %q", ns, want)
 		}
-		if s.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
 			t.Fatalf("missing effective child %s/%s", want, name)
 		}
 	}
@@ -268,7 +270,7 @@ func TestWantsDrainRerun_NamedOnly(t *testing.T) {
 		t.Error("WantsDrainRerun = true for a named-only inputsFrom RS, want false")
 	}
 	// Unknown id → false.
-	if c.WantsDrainRerun(manifest.NamedResource{Kind: manifest.KindResourceSet, Name: "ghost"}) {
+	if c.WantsDrainRerun(manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"}) {
 		t.Error("WantsDrainRerun = true for an absent RS, want false")
 	}
 }
@@ -421,7 +423,7 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 			}
 			info, _ := st.GetStatus(rs.Named())
 			art, _ := st.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
-			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "rs-refresh-child"}
+			child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "rs-refresh-child"}
 			if suspended {
 				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 					t.Errorf("status = %+v, want Ready/suspended", info)
@@ -436,7 +438,7 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 	}
 }
 
-func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
+func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	c, s := newController(t)
 	provider := staticRSIP("inputs", "apps", nil, map[string]string{"user": "alice"})
 	s.AddObject(provider)
@@ -453,20 +455,19 @@ func TestReconcile_InputsFromAuthoredKindUsesRSIP(t *testing.T) {
 	}
 	rs := obj.(*manifest.ResourceSet)
 	s.AddObject(rs)
+	want := manifest.NamedResource{Kind: "Unsupported", Namespace: "apps", Name: provider.Name}
 	deps := c.collectDeps(rs)
-	if len(deps) != 1 || deps[0].NamedResource != provider.Named() {
-		t.Fatalf("input dependencies = %+v, want existence edge to %s", deps, provider.Named())
+	if len(deps) != 1 || deps[0].NamedResource != want {
+		t.Fatalf("input dependencies = %+v, want edge to %s", deps, want)
 	}
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
-		t.Fatalf("blocked = %v with existing provider", blocked)
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 1 || blocked[0] != want {
+		t.Fatalf("blocked = %v, want [%s]", blocked, want)
 	}
-	info, _ := s.GetStatus(rs.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want Ready", info)
+	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusFailed {
+		t.Fatalf("status = %+v, want Failed", info)
 	}
-	art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
-	if !hasRenderedDoc(art, "Widget", "alice") {
-		t.Fatalf("expected rendered Widget/alice; artifact = %+v", art)
+	if art := s.GetArtifact(rs.Named()); art != nil {
+		t.Fatalf("unsupported input kind rendered: artifact = %+v", art)
 	}
 	if rs.InputsFrom[0].Kind != "Unsupported" {
 		t.Fatal("authored input kind mutated")

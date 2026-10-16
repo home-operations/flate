@@ -18,19 +18,20 @@ import (
 
 func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 	for _, tc := range []struct {
-		name, kind, namespace, ref string
-		accepted                   bool
+		name, group, kind, namespace, ref string
+		accepted                          bool
 	}{
-		{"exact", "ConfigMap", "apps", "external", true},
-		{"wrong kind", "Secret", "apps", "external", false},
-		{"wrong namespace", "ConfigMap", "other", "external", false},
-		{"wrong name", "ConfigMap", "apps", "other", false},
+		{"exact", "", "ConfigMap", "apps", "external", true},
+		{"wrong group", "example.test", "ConfigMap", "apps", "external", false},
+		{"wrong kind", "", "Secret", "apps", "external", false},
+		{"wrong namespace", "", "ConfigMap", "other", "external", false},
+		{"wrong name", "", "ConfigMap", "apps", "other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := store.New()
 			c := New(st, task.NewBounded(2), nil, true)
 			source := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
-			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
+			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Group: tc.group, Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
 			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}}
 			deps := c.collectDeps(ks)

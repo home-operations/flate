@@ -110,7 +110,9 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 				victim, driver := id("consumer"), id("driver")
-				first, second, replacement := id("a"), id("b"), id("c")
+				first := id("dependency")
+				second, replacement, unrelated := first, first, first
+				second.Group, replacement.Group, unrelated.Group = "example.test", "replacement.test", "unrelated.test"
 				if reverse {
 					first, second = second, first
 				}
@@ -122,10 +124,20 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 						if !awaitTerminal(ctx, s, victim) {
 							return OutcomeTerminal, nil, false
 						}
+						s.OnArrival(unrelated, false)
+						s.OnStatusWake(unrelated, true, false)
+						s.mu.Lock()
+						assert.Equal(t, s.nodes[victim].state, stateTerminal)
+						s.mu.Unlock()
+						assert.Equal(t, runs.Load(), int64(1))
 						s.OnStatusWake(first, true, false)
 						if !awaitSignal(ctx, entered) {
 							return OutcomeTerminal, nil, false
 						}
+						s.OnStatusWake(unrelated, true, false)
+						s.mu.Lock()
+						assert.Equal(t, s.nodes[victim].rerunRequested, false)
+						s.mu.Unlock()
 						s.OnStatusWake(second, true, false)
 						if mode == "cancellation" {
 							cancel()

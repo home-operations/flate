@@ -90,7 +90,7 @@ func TestProducerTargets(t *testing.T) {
 
 func TestProducerIndex(t *testing.T) {
 	target := NamedResource{Kind: KindSecret, Namespace: "default", Name: "app-values"}
-	producer := NamedResource{Kind: "ExternalSecret", Namespace: "default", Name: "app-creds"}
+	producer := NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "default", Name: "app-creds"}
 
 	var idx ProducerIndex
 	if _, ok := idx.Producer(target); ok {

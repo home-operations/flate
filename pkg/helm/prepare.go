@@ -30,7 +30,7 @@ func Prepare(hr *manifest.HelmRelease, lookup manifest.HelmChartLookup, provider
 	hr = hr.Clone()
 	chart := hr.Chart
 	if source := hr.ChartSource(); source.Name != "" {
-		chart.RepoKind, chart.RepoNamespace, chart.RepoName = source.Kind, source.Namespace, source.Name
+		chart.RepoGroup, chart.RepoKind, chart.RepoNamespace, chart.RepoName = source.Group, source.Kind, source.Namespace, source.Name
 	}
 	hr.Chart = chart
 	if err := hr.ResolveChartRef(lookup); err != nil {

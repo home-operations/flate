@@ -280,8 +280,8 @@ func TestWithNamespace_Copy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			projected := ks.WithNamespace(tc.namespace).(*Kustomization)
-			assert.Equal(t, projected.Named(), NamedResource{Kind: KindKustomization, Namespace: tc.namespace, Name: "app"})
-			assert.Equal(t, ks.Named(), NamedResource{Kind: KindKustomization, Namespace: "authored", Name: "app"})
+			assert.Equal(t, projected.Named(), NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.namespace, Name: "app"})
+			assert.Equal(t, ks.Named(), NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "authored", Name: "app"})
 			assert.Diff(t, ks.Contents, map[string]any{"metadata": map[string]any{"namespace": "authored"}})
 			assert.Diff(t, ks.PostBuild, &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}})
 			assert.Diff(t, projected.Contents, ks.Contents)

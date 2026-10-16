@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -74,11 +76,30 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 // aggregated error string. Pulled out of Run so the lifecycle entry
 // point reads as start → drain → finalize.
 func (o *Orchestrator) finalize() error {
+	var prefixes []manifest.KSClaim
+	var inputErrs []error
+	if o.index != nil && len(o.index.Errors) != 0 {
+		prefixes = loader.Claims(o.store, o.repoRoot)
+		for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
+			_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
+			for reader := range o.index.ReadersOfFile(file) {
+				owned = true
+				if !o.filter.ShouldReconcile(reader) {
+					continue
+				}
+				if info, _ := o.store.GetStatus(reader); info.Status != store.StatusFailed && !store.IsSuspended(info) {
+					o.store.UpdateFailure(reader, o.index.Errors[file])
+				}
+			}
+			if !owned {
+				inputErrs = append(inputErrs, o.index.Errors[file])
+			}
+		}
+	}
 	failed := o.store.FailedResources()
 	ksCount, hrCount := o.cascadeParentFailures(failed)
 	// Final ownership includes every Kustomization present after the drain.
-	var prefixes []manifest.KSClaim
-	if len(failed) != 0 || (o.index != nil && len(o.index.Errors) != 0) {
+	if len(failed) != 0 && prefixes == nil {
 		prefixes = loader.Claims(o.store, o.repoRoot)
 	}
 	o.orphans = o.detectOrphans(failed, prefixes)
@@ -100,22 +121,7 @@ func (o *Orchestrator) finalize() error {
 	if len(failed) != 0 {
 		errs = append(errs, o.aggregateFailures(failed))
 	}
-	if o.index != nil {
-		for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
-			_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
-			if !owned {
-				for range o.index.ReadersOfFile(file) {
-					owned = true
-					break
-				}
-			}
-			if !owned {
-				errs = append(errs, o.index.Errors[file])
-			}
-		}
-	}
-
-	return errors.Join(errs...)
+	return errors.Join(append(errs, inputErrs...)...)
 }
 
 // warnMissingCRDs uses only final canonical references and Ready/artifact
@@ -125,7 +131,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 		return
 	}
 	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})
-	for _, obj := range o.store.ListObjects(manifest.KindResourceSet) {
+	for _, obj := range o.store.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSet) {
 		rs, ok := obj.(*manifest.ResourceSet)
 		if !ok {
 			continue
@@ -139,10 +145,10 @@ func (o *Orchestrator) warnMissingCRDs() {
 			continue
 		}
 		for dep := range manifest.References(rs) {
-			if dep.Use != "dependsOn" || dep.Kind != manifest.KindCustomResourceDefinition {
+			if dep.Use != "dependsOn" || dep.Kind != manifest.KindCustomResourceDefinition || dep.Group != apiextensionsv1.GroupName {
 				continue
 			}
-			crd := manifest.NamedResource{Kind: dep.Kind, Name: dep.Name}
+			crd := dep.NamedResource
 			if o.store.GetObject(crd) != nil {
 				continue
 			}
@@ -221,8 +227,8 @@ func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]s
 			"parent", parent.String(),
 			"reason", parentInfo.Message)
 	}
-	kss := o.store.ListObjects(manifest.KindKustomization)
-	hrs := o.store.ListObjects(manifest.KindHelmRelease)
+	kss := o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	hrs := o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)
 	for _, ks := range kss {
 		cascade(ks.Named())
 	}

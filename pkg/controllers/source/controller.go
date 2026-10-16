@@ -94,7 +94,7 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 		return false
 	}
 	obj := c.Store.GetObject(id)
-	return obj == nil || manifest.KindOf(obj).Runnable
+	return obj == nil && id.Group == manifest.SourceDomain || manifest.KindOf(obj).Runnable
 }
 
 // ReconcileNode runs id's source fetch under the dag engine, returning the

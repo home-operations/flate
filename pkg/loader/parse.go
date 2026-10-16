@@ -1,10 +1,13 @@
 package loader
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"slices"
+
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -37,8 +40,8 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 // "what counts as a loadable doc" is defined, shared by the file-walk load, the
 // lazy promotion path, and the discovery-time producer scan:
 //
-//   - manifest.ParseDoc per-doc errors are swallowed at Debug level (matches
-//     flux-local — a malformed sibling doc shouldn't poison the rest).
+//   - API-version admission errors retain the source path for deferred ownership
+//     policy; other per-document parse errors are skipped.
 //   - Objects whose name/namespace still carry `${VAR}` are dropped as
 //     templates: a parent KS's postBuild.substitute(From) resolves them at
 //     render time, and Kubernetes rejects `$` in metadata.name, so the
@@ -47,8 +50,7 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 //     keepRaw is set — parseFile only persists understood kinds, while the
 //     producer scan keeps them to read ExternalSecret / SealedSecret targets.
 //
-// Per-doc parse errors carry path in their log fields; file-level errors (open,
-// decode) surface to the caller with the path baked into the wrap.
+// Parse, open and decode errors carry their source path to the caller.
 func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
 	input, name := r.input(path)
 	var f fs.File
@@ -66,12 +68,18 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 	if err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
-	for _, doc := range docs {
+	for i, doc := range docs {
 		obj, _, _, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
-			slog.Debug("loader: doc skipped", "path", path, "err", err)
-			manifest.ReleaseDoc(doc)
-			continue
+			if _, invalid := errors.AsType[*field.Error](err); !invalid {
+				slog.Debug("loader: doc skipped", "path", path, "err", err)
+				manifest.ReleaseDoc(doc)
+				continue
+			}
+			for _, pending := range docs[i:] {
+				manifest.ReleaseDoc(pending)
+			}
+			return fmt.Errorf("parse %s: %w", path, err)
 		}
 		if obj == nil || !manifest.KindOf(obj).Tracked && !keepRaw {
 			manifest.ReleaseDoc(doc)

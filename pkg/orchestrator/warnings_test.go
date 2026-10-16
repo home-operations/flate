@@ -131,8 +131,8 @@ spec:
 		t.Fatalf("advisory must not fail the render; Failed=%v", res.Failed)
 	}
 
-	app := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}
-	opaque := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "opaque"}
+	app := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}
+	opaque := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "opaque"}
 
 	var got *manifest.Warning
 	for i := range res.Warnings {
@@ -259,7 +259,7 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	demo := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+	demo := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
 	if info, failed := res.Failed[demo]; failed {
 		t.Fatalf("demo should be rescued, not failed; got %+v", info)
 	}

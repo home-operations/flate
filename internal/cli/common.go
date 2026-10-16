@@ -176,6 +176,12 @@ func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResour
 	roots := make([]manifest.NamedResource, len(kinds))
 	for i, kind := range kinds {
 		roots[i] = manifest.NamedResource{Kind: kind, Namespace: c.namespace, Name: name}
+		for info := range manifest.Kinds() {
+			if info.Kind == kind {
+				roots[i].Group = info.Group
+				break
+			}
+		}
 	}
 	return roots
 }

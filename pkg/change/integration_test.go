@@ -174,9 +174,9 @@ data:
 	// Resolve every KS's final status. The keep-cascade fix means
 	// the db side stays MsgUnchanged — proof its reconcile body
 	// never ran.
-	plex := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
-	postgres := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "db", Name: "postgres"}
-	dbApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "db-apps"}
+	plex := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
+	postgres := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "db", Name: "postgres"}
+	dbApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "db-apps"}
 
 	requireReconciled := func(id manifest.NamedResource) {
 		t.Helper()

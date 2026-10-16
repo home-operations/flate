@@ -49,16 +49,16 @@ type Filter struct {
 	// every file-loaded sibling via AddEmitted.
 	primary map[manifest.NamedResource]struct{}
 
-	// keepByName: (Kind, Name) presence set used as an O(1) fallback
+	// keepByName: (Group, Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
 	keepByName map[nameKey]struct{}
 }
 
-type nameKey struct{ kind, name string }
+type nameKey struct{ group, kind, name string }
 
 // keyOf is the namespace-agnostic key for the keepByName fallback index.
 func keyOf(id manifest.NamedResource) nameKey {
-	return nameKey{id.Kind, id.Name}
+	return nameKey{id.Group, id.Kind, id.Name}
 }
 
 // NewFilter resolves changed files through an immutable discovery index, then
@@ -75,7 +75,7 @@ func NewFilter(changes *Set, index *manifest.DiscoveryIndex, objs ObjectLister) 
 func (f *Filter) Enabled() bool { return f != nil && f.changes != nil }
 
 // ShouldReconcile reports whether the controller for id should do work
-// (true when filtering is disabled). The (Kind, Name) fallback below
+// (true when filtering is disabled). The (Group, Kind, Name) fallback below
 // bridges parent-Kustomization targetNamespace inheritance: a
 // resource loaded from disk with no namespace (entry kept with
 // Namespace="") and queried later with the inherited namespace
@@ -83,7 +83,7 @@ func (f *Filter) Enabled() bool { return f != nil && f.changes != nil }
 //
 // The fallback ONLY indexes keep-entries whose Namespace is empty —
 // so a fully-namespaced lookup never matches an unrelated fully-
-// namespaced entry that happens to share (Kind, Name). Without this
+// namespaced entry that happens to share (Group, Kind, Name). Without this
 // asymmetry the keep set would silently expand across namespaces
 // (e.g. a kept `Kustomization/cluster-infra/external-secrets`
 // dragging an unrelated `Kustomization/database/external-secrets`
@@ -502,10 +502,10 @@ func (f *Filter) resolve() {
 	f.keep = keep
 	f.primary = primary
 
-	// Index ONLY empty-namespace keep entries by (Kind, Name) — see
+	// Index ONLY empty-namespace keep entries by (Group, Kind, Name) — see
 	// ShouldReconcile's doc for the asymmetry rationale. Indexing
 	// every keep entry (regardless of namespace) would let one kept
-	// resource silently scope-in every same-(Kind, Name) resource in
+	// resource silently scope-in every same-(Group, Kind, Name) resource in
 	// other namespaces.
 	f.keepByName = make(map[nameKey]struct{})
 	for id := range keep {
@@ -566,7 +566,7 @@ func (f *Filter) KeepNamespaces() map[string]struct{} {
 // ObjectLister is the Store surface filter resolution needs.
 type ObjectLister interface {
 	GetObject(manifest.NamedResource) manifest.BaseManifest
-	ListObjects(kind string) []manifest.BaseManifest
+	ListObjects(group, kind string) []manifest.BaseManifest
 }
 
 // transitiveDeps returns the references the resource id needs to render,

@@ -33,8 +33,8 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	other.AddObject(b)
 	assert.Equal(t, resourceSetFingerprint(rs, other), fp)
 	assert.Diff(t, resolvedInputDigests(rs, s), []inputDigest{
-		{ID: a.Named().String(), Inputs: manifest.Fingerprint([]map[string]any{{"id": "one", "value": "first"}})},
-		{ID: b.Named().String(), Inputs: manifest.Fingerprint([]map[string]any{{"id": "two", "value": "second"}})},
+		{ID: a.Named(), Inputs: manifest.Fingerprint([]map[string]any{{"id": "one", "value": "first"}})},
+		{ID: b.Named(), Inputs: manifest.Fingerprint([]map[string]any{{"id": "two", "value": "second"}})},
 	})
 	for _, tc := range []struct {
 		name     string

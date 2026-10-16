@@ -10,11 +10,11 @@ type MapLister map[manifest.NamedResource]manifest.BaseManifest
 // GetObject returns the manifest stored under id, or nil if absent.
 func (m MapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
 
-// ListObjects returns all manifests whose kind matches the given string.
-func (m MapLister) ListObjects(kind string) []manifest.BaseManifest {
+// ListObjects returns all manifests matching the exact group and kind, or the complete inventory for two empty strings.
+func (m MapLister) ListObjects(group, kind string) []manifest.BaseManifest {
 	var out []manifest.BaseManifest
 	for id, obj := range m {
-		if id.Kind == kind {
+		if group == "" && kind == "" || id.Group == group && id.Kind == kind {
 			out = append(out, obj)
 		}
 	}

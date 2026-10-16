@@ -14,7 +14,7 @@ import (
 // ksNode builds a Kustomization NamedResource in the "ns" namespace for the
 // dependency-graph snapshot tests.
 func ksNode(name string) manifest.NamedResource {
-	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
 func TestDependencyGraph_CycleMessages(t *testing.T) {
@@ -216,8 +216,8 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	appID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app"}
-	baseID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "base"}
+	appID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app"}
+	baseID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "base"}
 	if got := res.DependsOn[appID]; len(got) != 1 || got[0] != baseID {
 		t.Fatalf("DependsOn[app] = %+v, want [%v]", got, baseID)
 	}

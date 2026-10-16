@@ -6,6 +6,8 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 // LocalObjectReference is a name-only reference to a same-namespace
@@ -23,9 +25,11 @@ type ValuesReference = meta.ValuesReference
 // the same three fields (Kind, Name, Optional) into a local twin.
 type SubstituteReference = kustomizev1.SubstituteReference
 
-// NamedResource uniquely identifies a Kubernetes resource by kind +
-// namespace + name. Values are comparable and safe to use as map keys.
+// NamedResource uniquely identifies a Kubernetes resource by group, kind,
+// namespace and name. Empty Group means core; version is not identity.
+// Values are comparable and safe to use as map keys.
 type NamedResource struct {
+	Group     string `json:"group,omitempty"      yaml:"group,omitempty"`
 	Kind      string `json:"kind"                yaml:"kind"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Name      string `json:"name"                yaml:"name"`
@@ -46,16 +50,21 @@ func (n NamedResource) NamespacedName() string {
 	return n.Namespace + "/" + n.Name
 }
 
-// String returns "kind/namespace/name" — the canonical id form.
+// String displays "kind.group/namespace/name", omitting empty group and namespace.
 func (n NamedResource) String() string {
-	return n.Kind + "/" + n.NamespacedName()
+	kind := n.Kind
+	if n.Group != "" {
+		kind += "." + n.Group
+	}
+	return kind + "/" + n.NamespacedName()
 }
 
-// Compare orders NamedResources by (kind, namespace, name) — returns
+// Compare orders NamedResources by (kind, group, namespace, name), returning
 // -1, 0, or +1 per cmp.Compare semantics.
 func (n NamedResource) Compare(other NamedResource) int {
 	return cmp.Or(
 		cmp.Compare(n.Kind, other.Kind),
+		cmp.Compare(n.Group, other.Group),
 		cmp.Compare(n.Namespace, other.Namespace),
 		cmp.Compare(n.Name, other.Name),
 	)
@@ -94,6 +103,7 @@ type Reference struct {
 
 // References yields dependencies in source-field order without deduplication.
 // The object and its embedded spec MUST remain immutable during iteration.
+// Direct SDK objects MUST satisfy their reference schemas, including valid explicit API versions.
 // Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
 func References(obj BaseManifest) iter.Seq[Reference] {
 	return func(yield func(Reference) bool) {
@@ -152,7 +162,7 @@ type RawObject struct {
 
 // Named identifies the resource.
 func (r *RawObject) Named() NamedResource {
-	return NamedResource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
+	return NamedResource{Group: apiGroup(r.APIVersion), Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -174,6 +184,10 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 	apiVersion := DocAPIVersion(doc)
 	if apiVersion == "" {
 		return nil, inputf("missing apiVersion")
+	}
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil || gv.Version == "" {
+		return nil, inputf("invalid %w", field.Invalid(field.NewPath("apiVersion"), apiVersion, "must have a valid version"))
 	}
 	kind := DocKind(doc)
 	if kind == "" {

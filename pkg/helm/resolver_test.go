@@ -55,8 +55,15 @@ data:
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	// Resolver wired — NO AddRepo / AddLocalSource calls below.
-	cli.SetSourceResolver(helm.NewStoreSourceResolver(st))
+	resolver := helm.NewStoreSourceResolver(st)
+	foreign := gr.Named()
+	foreign.Group = "example.test"
+	foreignArtifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "foreign"}
+	st.SetArtifact(foreign, foreignArtifact)
+	if resolver.LocalSourceArtifact(foreign) != foreignArtifact || resolver.LocalSourceArtifact(gr.Named()).URL != gr.URL {
+		t.Fatal("source resolver lost canonical artifact identity")
+	}
+	cli.SetSourceResolver(resolver)
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -64,6 +71,7 @@ data:
 			Name:          "mychart",
 			RepoName:      "chart-repo",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}

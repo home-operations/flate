@@ -21,23 +21,23 @@ func TestNewBootstrapAlias(t *testing.T) {
 	}{
 		{
 			name:    "GitRepository → file:// alias",
-			id:      manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"},
+			id:      manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"},
 			wantOK:  true,
 			wantURL: "file:///tmp/repo",
 			wantNS:  "flux-system",
 		},
 		{
 			name: "OCIRepository → unsupported (must wait for its artifact)",
-			id:   manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "source"},
+			id:   manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "source"},
 		},
 		{
 			name:   "HelmRepository → unsupported (caller should skip)",
-			id:     manifest.NamedResource{Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "repo"},
+			id:     manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "repo"},
 			wantOK: false,
 		},
 		{
 			name:   "Bucket → unsupported (caller should skip)",
-			id:     manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "flux-system", Name: "bucket"},
+			id:     manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "flux-system", Name: "bucket"},
 			wantOK: false,
 		},
 	}

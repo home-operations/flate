@@ -144,6 +144,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
 		Chart: manifest.HelmChart{
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindHelmRepository,
 			RepoNamespace: "flux-system",
 			RepoName:      "truecharts",
@@ -167,6 +168,16 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		}
 	}, false)
 
+	for _, group := range []string{"", "example.test"} {
+		t.Run("group="+group, func(t *testing.T) {
+			foreign := hr.Clone()
+			foreign.Chart.RepoGroup = group
+			if _, repointed := c.materializeHelmChartSource(foreign.Named(), foreign); repointed {
+				t.Fatal("foreign chart source borrowed the real HelmRepository")
+			}
+		})
+	}
+
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
 	if !repointed {
 		t.Fatal("materialize did not report a repoint for a HelmRepository-sourced chart")
@@ -183,8 +194,8 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		t.Errorf("chart name/version = %q/%q, want kromgo/3.0.0", got.Chart.Name, got.Chart.Version)
 	}
 
-	synID := manifest.NamedResource{Kind: manifest.KindHelmChart, Namespace: got.Chart.RepoNamespace, Name: got.Chart.RepoName}
-	obj := st.GetObjectByName(manifest.KindHelmChart, synID.Namespace, synID.Name)
+	synID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: got.Chart.RepoNamespace, Name: got.Chart.RepoName}
+	obj := st.GetObject(synID)
 	if obj == nil {
 		t.Fatalf("synthetic HelmChart %s not added to store", synID)
 	}
@@ -227,7 +238,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					{Name: "redis-b", Namespace: "apps"},
 				}
 				chart := manifest.HelmChart{
-					RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+					RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
 					Name: "redis", Version: "1.0.0",
 				}
 				for _, hr := range consumers {
@@ -236,7 +247,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 				}
 				first := *consumers[0]
 				c.materializeHelmChartSource(first.Named(), &first)
-				source := (manifest.NamedResource{Kind: first.Chart.RepoKind, Namespace: first.Chart.RepoNamespace, Name: first.Chart.RepoName})
+				source := (first.ChartSource())
 				sourceStarted := make(chan struct{})
 				sourceRelease := make(chan struct{})
 				parked := make(chan manifest.NamedResource, len(consumers))
@@ -274,8 +285,8 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 				}
 				second := *consumers[1]
 				c.materializeHelmChartSource(second.Named(), &second)
-				if (manifest.NamedResource{Kind: second.Chart.RepoKind, Namespace: second.Chart.RepoNamespace, Name: second.Chart.RepoName}) != source {
-					t.Errorf("second source = %s, want shared %s", (manifest.NamedResource{Kind: second.Chart.RepoKind, Namespace: second.Chart.RepoNamespace, Name: second.Chart.RepoName}), source)
+				if (second.ChartSource()) != source {
+					t.Errorf("second source = %s, want shared %s", (second.ChartSource()), source)
 				}
 				if info, ok := st.GetStatus(source); ok {
 					t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
@@ -312,7 +323,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
 		Chart: manifest.HelmChart{
-			RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "truecharts",
+			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "truecharts",
 			Name: "kromgo", Version: "3.0.0",
 		},
 	}
@@ -348,7 +359,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "redis", Namespace: "apps",
 		Chart: manifest.HelmChart{
-			RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
 			Name: "redis", Version: "1.0.0",
 		},
 	}
@@ -356,7 +367,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 	if !repointed || got.Chart.RepoKind != manifest.KindHelmChart {
 		t.Fatalf("HTTP HelmRepository was not materialized: %+v (repointed=%v)", got.Chart, repointed)
 	}
-	if hc, ok := st.GetObjectByName(manifest.KindHelmChart, got.Chart.RepoNamespace, got.Chart.RepoName).(*manifest.HelmChartSource); !ok || hc.SourceRef.Name != "bitnami" {
+	if hc, ok := st.GetObject(got.ChartSource()).(*manifest.HelmChartSource); !ok || hc.SourceRef.Name != "bitnami" {
 		t.Errorf("synthetic HelmChart does not reference the bitnami repo: %v", got.Chart)
 	}
 }
@@ -374,7 +385,7 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "redis", Namespace: "apps",
 		Chart: manifest.HelmChart{
-			RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
 			Name: "redis", // Version omitted
 		},
 	}
@@ -464,6 +475,7 @@ data:
 			Name:          "mychart",
 			RepoName:      "charts",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}
@@ -515,7 +527,7 @@ func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
 	st.UpdateStatus(chart.Named(), store.StatusFailed, "chart failed")
 	hr := &manifest.HelmRelease{
 		Name: "consumer", Namespace: "apps",
-		Chart:      manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: chart.Name},
+		Chart:      manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: chart.Name},
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "values"}},
 	}
 	st.AddObject(hr)
@@ -579,7 +591,7 @@ data:
 		},
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 	st.AddObject(hr)
@@ -622,7 +634,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 	st.AddObject(hr)
@@ -672,7 +684,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Chart:    manifest.HelmChart{Name: "podinfo", RepoName: "podinfo", RepoNamespace: "flux-system", RepoKind: manifest.KindHelmRepository},
+		Chart:    manifest.HelmChart{Name: "podinfo", RepoName: "podinfo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository},
 		Values:   map[string]any{"replicas": 2},
 	}
 	stamped := base.Clone()
@@ -748,7 +760,7 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 
 func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	st := store.New()
-	ts := task.NewBounded(0)
+	ts := task.NewBounded(2)
 	owner, err := sourcecache.New(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -765,6 +777,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	// "primary" emitter — Filter.AddEmitted propagates keep when the emitter
 	// is primary.
 	parent := manifest.NamedResource{
+		Group:     manifest.HelmReleaseDomain,
 		Kind:      manifest.KindHelmRelease,
 		Namespace: "flux-system",
 		Name:      "tofu",
@@ -795,21 +808,31 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 		"data":       map[string]any{"key": "value"},
 	}
 
+	foreignDoc := manifest.DeepCopyMap(ociDoc)
+	foreignDoc["apiVersion"] = "example.test/v1"
+	foreignID := manifest.NamedResource{Group: "example.test", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
 	var arrivals int
 	st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		arrivals++
-		source := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
+		source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
+		if id == source && !filter.ShouldReconcile(source) {
+			t.Errorf("source was not kept before arrival of %s", id)
+		}
+		if got, ok := st.EmittedParent(foreignID); ok {
+			t.Errorf("foreign source acquired owner %s at arrival of %s", got, id)
+		}
 		if got, ok := st.EmittedParent(source); !ok || got != parent {
 			t.Errorf("source owner at arrival of %s = (%v, %v), want %s", id, got, ok, parent)
 		}
 	}, false)
-	c.Emit(parent, []map[string]any{cmDoc, ociDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, true)
-	if arrivals != 2 {
-		t.Fatalf("arrivals = %d, want 2", arrivals)
+	c.Emit(parent, []map[string]any{cmDoc, ociDoc, foreignDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, true)
+	if arrivals != 3 {
+		t.Fatalf("arrivals = %d, want 3", arrivals)
 	}
 
 	// The OCIRepository must have been added to the store (AddObject path).
 	ociID := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindOCIRepository,
 		Namespace: "flux-system",
 		Name:      "tofu-oci",
@@ -853,7 +876,7 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	}
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
 
-	parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
+	parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
 	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "apps/tofu/helmrelease.yaml"}}}, testutil.MapLister{})
 	c := New(st, ts, hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{Filter: filter})
@@ -866,7 +889,7 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 		"metadata":   map[string]any{"name": "tofu-oci", "namespace": "flux-system"},
 		"spec":       map[string]any{"url": "oci://ghcr.io/tofu/tofu"},
 	}
-	ociID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
+	ociID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
 
 	var events int
 	st.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, _ any) { events++ }, false)
@@ -1044,7 +1067,7 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
 	assert.Equal(t, testing.AllocsPerRun(100, func() { c.collectDeps(hr) }), float64(1))
 	got := c.collectDeps(hr)
-	assert.Diff(t, got, []manifest.DependencyRef{{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"}, {Kind: manifest.KindHelmRelease, Namespace: "default", Name: "second"}, {Kind: manifest.KindHelmRelease, Namespace: "default", Name: "third"}})
+	assert.Diff(t, got, []manifest.DependencyRef{{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "second"}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "third"}})
 	got[0].Name = "mutated"
 	assert.Equal(t, hr.DependsOn[0].Name, "other")
 }
@@ -1078,7 +1101,8 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		Interval: metav1Duration(time.Hour),
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "charts", RepoNamespace: "flux-system",
-			RepoKind: manifest.KindGitRepository,
+			RepoGroup: manifest.SourceDomain,
+			RepoKind:  manifest.KindGitRepository,
 		},
 	}
 	st.AddObject(hr)
@@ -1122,17 +1146,17 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 }
 
 func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }})
 	ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported"}, {Kind: manifest.KindSecret, Name: "owned"}, {Kind: manifest.KindSecret, Name: "unreadable"}}}
 	st.AddObject(ks)
-	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), true)
+	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), true)
 	c.substitutionSources = map[manifest.NamedResource]manifest.BaseManifest{
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}:      &manifest.Secret{},
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}: &manifest.Secret{},
 	}
-	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), false)
+	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), false)
 	assert.Equal(t, len(ks.PostBuild.SubstituteFrom), 3)
 }
 
@@ -1147,18 +1171,30 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 			HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{
 				Spec: helmv2.HelmChartTemplateSpec{Chart: "app", SourceRef: helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: repo.Name}},
 			}},
-			Chart: manifest.HelmChart{RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace},
+			Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace},
 		}
 		for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainForce} {
 			if err := c.awaitChartSource(t.Context(), hr, level); err != nil {
 				t.Fatalf("repository required content: %v", err)
 			}
 		}
+		for _, group := range []string{"", "example.test"} {
+			apiVersion := "v1"
+			if group != "" {
+				apiVersion = group + "/v1"
+			}
+			st.AddObject(&manifest.RawObject{APIVersion: apiVersion, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace})
+			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{RepoGroup: group, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace}}
+			if err := c.awaitChartSource(t.Context(), foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+				t.Fatalf("foreign repository bypassed content gate: %v", err)
+			}
+		}
+
 	})
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}}
 	st.AddObject(&manifest.OCIRepository{Name: "chart", Namespace: "apps"})
-	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}
 	st.UpdateStatus(id, store.StatusReady, "released")
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(t.Context(), hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
@@ -1172,7 +1208,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin", FS: fstest.MapFS{}})
 	st.UpdateStatus(id, store.StatusReady, "reacquired")
 	assert.Equal(t, c.awaitChartSource(t.Context(), hr, manifest.DrainNone), nil)
-	st.UpdateStatus(manifest.NamedResource{Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, store.StatusPending, "fetching")
+	st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, store.StatusPending, "fetching")
 	_, blocked := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(t.Context(), hr, manifest.DrainNone))
 	assert.Equal(t, blocked, true)
 	hr.ChartRef.Kind = manifest.KindHelmChart
@@ -1181,7 +1217,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 		hr.Chart.Version = version
 		want := []manifest.DependencyRef{{Kind: manifest.KindSecret, Namespace: "apps", Name: "required"}}
 		if version == "" {
-			want = append([]manifest.DependencyRef{{Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}, want...)
+			want = append([]manifest.DependencyRef{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}, want...)
 		}
 		assert.Diff(t, preparePrereqs(hr), want)
 	}

@@ -38,14 +38,14 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 
 func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	hr := &manifest.HelmRelease{Name: "podinfo", Namespace: "apps", Values: map[string]any{"replicas": 2},
-		Chart: manifest.HelmChart{RepoKind: manifest.KindOCIRepository, RepoNamespace: "apps", RepoName: "podinfo"}}
+		Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoNamespace: "apps", RepoName: "podinfo"}}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st := store.New()
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest})
+	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest})
 	resolver := helm.NewStoreSourceResolver(st)
 	b.ReportAllocs()
 	for b.Loop() {
-		source := resolver.LocalSourceArtifact(hr.Chart.RepoKind, hr.Chart.RepoNamespace, hr.Chart.RepoName)
+		source := resolver.LocalSourceArtifact(hr.ChartSource())
 		identity := source.Digest + "\x00" + source.Revision
 		if fp := helmReleaseFingerprint(hr, identity, nil); fp == "" {
 			b.Fatal("empty fingerprint")
@@ -54,7 +54,7 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 }
 
 func BenchmarkCollectHRDeps(b *testing.B) {
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "target"}
+	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "target"}
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
@@ -79,7 +79,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			st := store.New()
 			c := &Controller{Controller: base.New(st, nil, "helmrelease")}
-			parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent"}
+			parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent"}
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()
 			for b.Loop() {

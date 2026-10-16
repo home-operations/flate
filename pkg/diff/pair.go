@@ -17,10 +17,10 @@ import (
 // (left, right) pair sharing the same parent and identity. Either side
 // is nil when the resource exists on only one side (added/removed).
 type pairedResource struct {
-	parent                Parent
-	apiVersion            string
-	kind, namespace, name string
-	a, b                  map[string]any
+	parent     Parent
+	resource   manifest.NamedResource
+	apiVersion string
+	a, b       map[string]any
 }
 
 // changedPairs yields YAML differences after normalization, which can change identities.
@@ -45,8 +45,8 @@ func changedPairs(left, right []Doc, opts Options) iter.Seq2[output.LineChange, 
 			}
 			status, _ := classify(p.a, p.b)
 			if !yield(output.LineChange{
-				Resource:   manifest.NamedResource{Kind: p.kind, Namespace: p.namespace, Name: p.name},
-				Parent:     manifest.NamedResource{Kind: p.parent.Kind, Namespace: p.parent.Namespace, Name: p.parent.Name},
+				Resource:   p.resource,
+				Parent:     p.parent.NamedResource,
 				ParentPath: p.parent.Path, From: from, To: to, Status: string(status),
 			}, nil) {
 				return
@@ -69,13 +69,11 @@ func marshalForUnified(m map[string]any) (string, error) {
 
 // pairKey identifies a resource for cross-set matching.
 type pairKey struct {
-	pKind, pNS, pName string
-	apiVersion        string
-	kind, ns, name    string
+	parent, resource manifest.NamedResource
 }
 
 // pair matches each resource in left against its counterpart in right
-// by (parent, apiVersion, kind, namespace, name), so a Deployment
+// by canonical parent and resource identity, so a Deployment
 // rendered by HelmRelease A never diffs against the same-named
 // Deployment from HelmRelease B. The result is sorted by parent then
 // resource identity for deterministic output. Duplicate identities retain
@@ -86,23 +84,25 @@ func pair(left, right []Doc) []pairedResource {
 		kind := manifest.DocKind(d.Manifest)
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
-		k := pairKey{d.Parent.Kind, d.Parent.Namespace, d.Parent.Name, apiVersion, kind, ns, name}
+		resource := (&manifest.RawObject{APIVersion: apiVersion, Kind: kind, Namespace: ns, Name: name}).Named()
+		k := pairKey{d.Parent.NamedResource, resource}
 		p, ok := idx[k]
 		if !ok {
-			p = &pairedResource{parent: d.Parent, apiVersion: apiVersion, kind: kind, namespace: ns, name: name}
+			p = &pairedResource{resource: resource}
 			idx[k] = p
 		}
+		p.parent = d.Parent
+		p.apiVersion = apiVersion
 		dst := &p.a
 		if side == "right" {
 			dst = &p.b
-			p.parent = d.Parent
 		}
 		if *dst != nil {
 			slog.Warn("diff: duplicate document shadows an earlier document",
-				"side", side, "parentKind", d.Parent.Kind,
+				"side", side, "parentGroup", d.Parent.Group, "parentKind", d.Parent.Kind,
 				"parentNamespace", d.Parent.Namespace, "parentName", d.Parent.Name,
 				"parentPath", d.Parent.Path, "apiVersion", apiVersion,
-				"kind", kind, "namespace", ns, "name", name)
+				"group", resource.Group, "kind", kind, "namespace", ns, "name", name)
 		}
 		*dst = d.Manifest
 	}
@@ -118,14 +118,8 @@ func pair(left, right []Doc) []pairedResource {
 	}
 	slices.SortFunc(out, func(a, b pairedResource) int {
 		return cmp.Or(
-			cmp.Compare(a.parent.Kind, b.parent.Kind),
-			cmp.Compare(a.parent.Namespace, b.parent.Namespace),
-			cmp.Compare(a.parent.Name, b.parent.Name),
-			cmp.Compare(a.parent.Path, b.parent.Path),
-			cmp.Compare(a.kind, b.kind),
-			cmp.Compare(a.namespace, b.namespace),
-			cmp.Compare(a.name, b.name),
-			cmp.Compare(a.apiVersion, b.apiVersion),
+			a.parent.Compare(b.parent.NamedResource),
+			a.resource.Compare(b.resource),
 		)
 	})
 	return out

@@ -22,7 +22,7 @@ type SourceResolver interface {
 	HelmRepository(namespace, name string) *manifest.HelmRepository
 	// LocalSourceArtifact returns an admitted source artifact or nil.
 	// FS supplies content and acquisition authority through source.ReadView.
-	LocalSourceArtifact(kind, namespace, name string) *store.SourceArtifact
+	LocalSourceArtifact(manifest.NamedResource) *store.SourceArtifact
 	// HelmChart returns the HelmChartSource at the given (ns, name) or
 	// nil. Used by HelmRelease.ResolveChartRef to materialize a
 	// spec.chartRef into a concrete chart reference.
@@ -41,17 +41,16 @@ type storeResolver struct {
 }
 
 func (r *storeResolver) HelmRepository(namespace, name string) *manifest.HelmRepository {
-	obj, _ := r.store.GetByName[*manifest.HelmRepository](manifest.KindHelmRepository, namespace, name)
+	obj, _ := r.store.Get[*manifest.HelmRepository](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: namespace, Name: name})
 	return obj
 }
 
-func (r *storeResolver) LocalSourceArtifact(kind, namespace, name string) *store.SourceArtifact {
-	id := manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}
+func (r *storeResolver) LocalSourceArtifact(id manifest.NamedResource) *store.SourceArtifact {
 	art, _ := r.store.GetArtifact(id).(*store.SourceArtifact)
 	return art
 }
 
 func (r *storeResolver) HelmChart(namespace, name string) *manifest.HelmChartSource {
-	obj, _ := r.store.GetByName[*manifest.HelmChartSource](manifest.KindHelmChart, namespace, name)
+	obj, _ := r.store.Get[*manifest.HelmChartSource](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name})
 	return obj
 }

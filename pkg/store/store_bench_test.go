@@ -126,15 +126,16 @@ func BenchmarkAddObject_MixedKinds(b *testing.B) {
 	}
 }
 
-func BenchmarkGetObjectByName_LongNames(b *testing.B) {
+func BenchmarkGetObject_LongNames(b *testing.B) {
 	s := New()
 	obj := &manifest.Kustomization{
 		Namespace: strings.Repeat("n", 31),
 		Name:      strings.Repeat("a", 31),
 	}
 	s.AddObject(obj)
+	id := obj.Named()
 	b.ReportAllocs()
 	for b.Loop() {
-		s.GetObjectByName(manifest.KindKustomization, obj.Namespace, obj.Name)
+		s.GetObject(id)
 	}
 }

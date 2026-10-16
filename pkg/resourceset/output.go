@@ -8,7 +8,7 @@ import (
 )
 
 // DedupKey identifies a rendered doc by (API group, kind, namespace,
-// name) for cross-render deduplication. Returns "" when kind or name
+// name) for cross-render deduplication. Returns zero when kind or name
 // are missing — signal to the caller to drop the doc rather than
 // merge with an "empty key" collision pile.
 //
@@ -16,14 +16,14 @@ import (
 // the same identity rule as the in-package RS render — without that,
 // a name-grouped RS that emits the same child from two namespace
 // variants could land both copies in the parent KS's extension list.
-func DedupKey(doc map[string]any) string {
+func DedupKey(doc map[string]any) manifest.NamedResource {
 	kind := manifest.DocKind(doc)
 	name, ns := manifest.DocMetadata(doc)
 	if kind == "" || name == "" {
-		return ""
+		return manifest.NamedResource{}
 	}
 	gv, _ := schema.ParseGroupVersion(manifest.DocAPIVersion(doc))
-	return gv.Group + "|" + kind + "|" + ns + "|" + name
+	return manifest.NamedResource{Group: gv.Group, Kind: kind, Namespace: ns, Name: name}
 }
 
 func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {

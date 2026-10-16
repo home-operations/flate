@@ -42,7 +42,7 @@ func BenchmarkAddObject_Warm(b *testing.B) {
 	}
 }
 
-// BenchmarkListObjects_Sorted measures ListObjects(KindKustomization)
+// BenchmarkListObjects_Sorted measures an exact Kustomization group/kind listing
 // against a 1000-KS store. The sort dominates; the byName-index walk
 // supplies the inputs.
 func BenchmarkListObjects_Sorted(b *testing.B) {
@@ -56,7 +56,7 @@ func BenchmarkListObjects_Sorted(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out := s.ListObjects(manifest.KindKustomization)
+		out := s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
 		if len(out) != 1000 {
 			b.Fatalf("expected 1000, got %d", len(out))
 		}
@@ -77,7 +77,7 @@ func BenchmarkListObjects_Sorted(b *testing.B) {
 // maps) is measured by BenchmarkSetArtifact_DistinctDedup below.
 func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	// Build a rendered-style artifact with realistic shape so DeepEqual
 	// has actual work to do (not a one-field comparison).
 	manifests := make([]map[string]any, 0, 20)
@@ -112,7 +112,7 @@ func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 // fast path.
 func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	manifests := make([]map[string]any, 0, 20)
 	for i := range 20 {
 		manifests = append(manifests, map[string]any{
@@ -142,8 +142,8 @@ func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
 }
 
 func BenchmarkUpdateFailure_Write(b *testing.B) {
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "consumer"}
-	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "dep"}
+	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
+	dep := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "dep"}
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -164,8 +164,8 @@ func BenchmarkUpdateFailure_Write(b *testing.B) {
 }
 
 func BenchmarkStatusInfo_Read(b *testing.B) {
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "consumer"}
-	dep := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "dep"}
+	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
+	dep := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "dep"}
 	for _, tc := range []struct {
 		name  string
 		write func(*Store)
@@ -196,7 +196,7 @@ func BenchmarkStatusFlip(b *testing.B) {
 		}
 		b.Run(name, func(b *testing.B) {
 			st := New()
-			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"}
+			id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"}
 			st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace})
 			if withListener {
 				st.AddListener(EventStatusUpdated, func(manifest.NamedResource, any) {}, false)
@@ -212,7 +212,7 @@ func BenchmarkStatusFlip(b *testing.B) {
 
 func BenchmarkGetStatus(b *testing.B) {
 	st := New()
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"}
+	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"}
 	st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace})
 	st.UpdateStatus(id, StatusReady, "y")
 	b.ReportAllocs()

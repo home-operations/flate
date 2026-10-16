@@ -464,7 +464,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 		return false
 	}
 	dirRel := filepath.ToSlash(rel) + "/"
-	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 		if ks.IsFragment() {
 			continue
 		}
@@ -742,7 +742,7 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 }
 
 func discoveryReference(ref manifest.Reference) bool {
-	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Content && ref.Kind == manifest.KindConfigMap ||
+	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Content && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
 		(ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != ""
 }
 

@@ -6,6 +6,8 @@ import (
 	"maps"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
@@ -189,7 +191,11 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	if v == "" {
 		return inputf("missing apiVersion")
 	}
-	if apiGroup(v) != want {
+	gv, err := schema.ParseGroupVersion(v)
+	if err != nil || gv.Version == "" {
+		return inputf("invalid %w", field.Invalid(field.NewPath("apiVersion"), v, "must have a valid version"))
+	}
+	if gv.Group != want {
 		return inputf("expected apiVersion %q, got %q", want, v)
 	}
 	return nil

@@ -18,7 +18,8 @@ type HelmChart struct {
 	Name string `json:"name" yaml:"name"`
 	// Version is omitted from output for tidy diffs but kept in memory.
 	Version string `json:"-" yaml:"-"`
-	// RepoName, RepoNamespace, RepoKind identify the sourceRef.
+	// RepoGroup, RepoKind, RepoNamespace and RepoName identify the sourceRef.
+	RepoGroup     string `json:"repoGroup,omitempty" yaml:"repoGroup,omitempty"`
 	RepoName      string `json:"repoName" yaml:"repoName"`
 	RepoNamespace string `json:"repoNamespace" yaml:"repoNamespace"`
 	RepoKind      string `json:"repoKind" yaml:"repoKind"`
@@ -49,6 +50,7 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
 		// ResolveChartRef reads the chart name from a HelmChartSource;
 		// other source kinds determine it from their artifact's layout.
 		return HelmChart{
+			RepoGroup:     referenceGroup(ref.Kind, ref.APIVersion),
 			RepoName:      ref.Name,
 			RepoNamespace: ref.Namespace,
 			RepoKind:      ref.Kind,
@@ -69,6 +71,7 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
 	return HelmChart{
 		Name:          chartName,
 		Version:       tmpl.Spec.Version,
+		RepoGroup:     referenceGroup(cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository), tmpl.Spec.SourceRef.APIVersion),
 		RepoName:      srcName,
 		RepoNamespace: tmpl.Spec.SourceRef.Namespace,
 		RepoKind:      cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository),
@@ -83,6 +86,7 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 	return HelmChart{
 		Name:          src.Chart,
 		Version:       src.Version,
+		RepoGroup:     referenceGroup(cmp.Or(src.SourceRef.Kind, KindHelmRepository), src.SourceRef.APIVersion),
 		RepoName:      src.SourceRef.Name,
 		RepoNamespace: src.Namespace,
 		RepoKind:      cmp.Or(src.SourceRef.Kind, KindHelmRepository),
@@ -146,7 +150,7 @@ func (h *HelmRelease) Suspended() bool { return h.Suspend }
 
 // Named identifies the release.
 func (h *HelmRelease) Named() NamedResource {
-	return NamedResource{Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{Group: kindTable[kindHelmRelease].Group, Kind: KindHelmRelease, Namespace: h.Namespace, Name: h.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -158,7 +162,8 @@ func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
 
 // UsesDirectOCIRepository reports whether chartRef directly names an OCIRepository.
 func (h *HelmRelease) UsesDirectOCIRepository() bool {
-	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository
+	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository &&
+		referenceGroup(h.ChartRef.Kind, h.ChartRef.APIVersion) == kindTable[kindOCIRepository].Group
 }
 
 // Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
@@ -240,7 +245,7 @@ type HelmChartLookup func(namespace, name string) *HelmChartSource
 // dispatch. Without it, chart loading would see RepoKind=HelmChart and
 // fall through with an "unsupported chart repo kind" error.
 func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
-	if h.Chart.RepoKind != KindHelmChart || h.Chart.Version != "" {
+	if h.Chart.RepoKind != KindHelmChart || h.Chart.RepoGroup != kindTable[kindHelmChartSource].Group || h.Chart.Version != "" {
 		return nil
 	}
 	id := h.ChartSource()
@@ -328,21 +333,22 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 func (h *HelmRelease) references(yield func(Reference) bool) {
 	var authored NamedResource
 	if ref := h.ChartRef; ref != nil {
-		authored = Resolve(NamedResource{Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
+		authored = Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
 		if !yield(Reference{NamedResource: authored, Use: "chart", Content: true}) {
 			return
 		}
 	} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
 		ref := tmpl.Spec.SourceRef
-		authored = Resolve(NamedResource{Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
+		authored = Resolve(NamedResource{Group: referenceGroup(cmp.Or(ref.Kind, KindHelmRepository), ref.APIVersion), Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
 		if !yield(Reference{NamedResource: authored, Use: "source", Content: true}) {
 			return
 		}
 	}
 	// A resolved HelmChart or synthetic chart supplies its own source identity.
-	if h.Chart.RepoKind != "" && (authored.Kind != h.Chart.RepoKind || authored.Name != h.Chart.RepoName) {
+	source := Resolve(NamedResource{Group: h.Chart.RepoGroup, Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName}, "", h.Namespace)
+	if source.Kind != "" && authored != source {
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName}, "", h.Namespace),
+			NamedResource: source,
 			Use:           "source", Content: true,
 		}) {
 			return
@@ -351,7 +357,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 	for i := range h.DependsOn {
 		dep := &h.DependsOn[i]
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Kind: KindHelmRelease, Namespace: dep.Namespace, Name: dep.Name}, "", h.Namespace),
+			NamedResource: Resolve(NamedResource{Group: kindTable[kindHelmRelease].Group, Kind: KindHelmRelease, Namespace: dep.Namespace, Name: dep.Name}, "", h.Namespace),
 			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return

@@ -26,7 +26,7 @@ func ksWithDeps(name, ns string, sub map[string]any, depNames ...string) *manife
 
 func firstDepName(t *testing.T, s *store.Store, ns, name string) string {
 	t.Helper()
-	ks, ok := s.GetByName[*manifest.Kustomization](manifest.KindKustomization, ns, name)
+	ks, ok := s.Get[*manifest.Kustomization](manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: ns, Name: name})
 	if !ok {
 		t.Fatalf("Kustomization %s/%s missing from store", ns, name)
 	}
@@ -95,7 +95,7 @@ func TestResolveDependsOnSubstitutions_NoTemplateUntouchedAndAgreeingVarOK(t *te
 	assert.Equal(t, firstDepName(t, s, "flux-system", "plain"), "0-biohazard-config")
 	assert.Equal(t, firstDepName(t, s, "flux-system", "templated"), "0-biohazard-config")
 	withDeps := testing.AllocsPerRun(100, func() { ResolveDependsOnSubstitutions(s) })
-	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 		clone := ks.Clone()
 		clone.DependsOn = nil
 		s.AddObject(clone)

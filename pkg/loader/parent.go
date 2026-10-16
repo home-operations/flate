@@ -17,7 +17,7 @@ import (
 func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
 	reader := documentReader{cache: map[string]document{}}
 	reader.mountSources(s)
-	return buildClaims(s, repoRoot, reader, s.ListAs[*manifest.Kustomization](manifest.KindKustomization))
+	return buildClaims(s, repoRoot, reader, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 }
 
 // Claims reuses discovery's source-view documents while the Loader is mutable.
@@ -27,7 +27,7 @@ func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
 }
 
 func localKustomizations(s *store.Store, repoRoot string) []*manifest.Kustomization {
-	return slices.DeleteFunc(s.ListAs[*manifest.Kustomization](manifest.KindKustomization), func(ks *manifest.Kustomization) bool {
+	return slices.DeleteFunc(s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization), func(ks *manifest.Kustomization) bool {
 		_, _, external := SourceView(s, ks, repoRoot)
 		return external
 	})
@@ -126,5 +126,5 @@ func SourceView(s *store.Store, ks *manifest.Kustomization, repoRoot string) (ro
 			return art.LocalPath, art.Key != "" && !art.InputAlias, false
 		}
 	}
-	return repoRoot, false, s.GetObject(ref) != nil || ref.Kind == manifest.KindOCIRepository
+	return repoRoot, false, s.GetObject(ref) != nil || ref.Group == manifest.SourceDomain && ref.Kind == manifest.KindOCIRepository
 }

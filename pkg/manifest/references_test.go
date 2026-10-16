@@ -34,14 +34,14 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{
 		{Kind: KindConfigMap, Name: "shared"}, {Kind: "Unsupported"}, {Kind: KindSecret, Name: "shared"}, {Kind: KindConfigMap, Name: "shared", Optional: true}, {Kind: KindConfigMap, Name: "shared"},
 	}}
-	hr := &HelmRelease{Namespace: "authored", Chart: HelmChart{RepoKind: KindOCIRepository, RepoNamespace: "authored", RepoName: "chart"}}
+	hr := &HelmRelease{Namespace: "authored", Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindOCIRepository, RepoName: "chart"}}
 	hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}
 	hr.DependsOn = []helmv2.DependencyReference{{Name: "parent"}}
 	hr.ValuesFrom = []ValuesReference{{Kind: KindConfigMap, Name: "vars", Optional: true}}
 	r := &ResourceSet{Namespace: "authored"}
 	r.DependsOn = []fluxopv1.Dependency{
-		{Kind: KindKustomization, Name: "ready", Ready: true, ReadyExpr: "true"},
-		{Kind: KindKustomization, Name: "exists"},
+		{APIVersion: FluxKustomizeDomain + "/v1", Kind: KindKustomization, Name: "ready", Ready: true, ReadyExpr: "true"},
+		{APIVersion: FluxKustomizeDomain + "/v1", Kind: KindKustomization, Name: "exists"},
 		{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "cluster", Namespace: "ignored"},
 		{APIVersion: "foreign.example/v1", Kind: "ClusterRole", Name: "foreign"},
 		{APIVersion: "nvidia.com/v1", Kind: "ClusterPolicy", Name: "gpu", Namespace: "ignored"},
@@ -50,40 +50,55 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		{APIVersion: "cert-manager.io/v1", Kind: "ClusterIssuer", Name: "issuer", Namespace: "ignored"},
 		{APIVersion: "external-secrets.io/v1beta1", Kind: "ClusterSecretStore", Name: "store", Namespace: "ignored"},
 		{APIVersion: "rbac.authorization.k8s.io/v999", Kind: "ClusterRole", Name: "unknown-version"},
+		{APIVersion: "v1", Kind: KindKustomization, Name: "ready"},
+		{APIVersion: "foreign.example/v2", Kind: KindKustomization, Name: "ready"},
+		{APIVersion: FluxKustomizeDomain + "/v2", Kind: KindKustomization, Name: "ready"},
 	}
-	r.InputsFrom = []fluxopv1.InputProviderReference{{Kind: "Unsupported", Name: "inputs"}, {Selector: &metav1.LabelSelector{}}}
+	r.InputsFrom = []fluxopv1.InputProviderReference{
+		{Kind: "Unsupported", Name: "inputs"}, {Selector: &metav1.LabelSelector{}},
+		{Name: "inputs"}, {APIVersion: "v1", Name: "inputs"},
+		{Kind: KindGitRepository, Name: "source"},
+		{APIVersion: "foreign.example/v1", Kind: KindResourceSetInputProvider, Name: "inputs"},
+	}
 	for _, tc := range []struct {
 		name, namespace string
 		obj             BaseManifest
 		want            []Reference
 	}{
 		{"kustomization", "effective", k, []Reference{
-			{Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true},
-			{Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: "true"},
-			{Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: "true"},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Content: true},
 			{Kind: KindSecret, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 2, Content: true},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 3, Optional: true},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 4, Content: true},
 		}},
 		{"helmrelease", "effective", hr, []Reference{
-			{Kind: KindOCIRepository, Namespace: "effective", Name: "chart", Use: "chart", Content: true},
-			{Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
+			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "effective", Name: "chart", Use: "chart", Content: true},
+			{Group: HelmReleaseDomain, Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
 		}},
 		{"resourceset", "apps", r, []Reference{
-			{Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: "true"},
-			{Kind: KindKustomization, Namespace: "apps", Name: "exists", Use: "dependsOn", Position: 1},
-			{Kind: "ClusterRole", Name: "cluster", Use: "dependsOn", Position: 2},
-			{Kind: "ClusterRole", Namespace: "apps", Name: "foreign", Use: "dependsOn", Position: 3},
-			{Kind: "ClusterPolicy", Namespace: "ignored", Name: "gpu", Use: "dependsOn", Position: 4},
-			{Kind: "ClusterPolicy", Namespace: "apps", Name: "foreign-policy", Use: "dependsOn", Position: 5},
-			{Kind: "ClusterPolicy", Namespace: "ignored", Name: "policy", Use: "dependsOn", Position: 6},
-			{Kind: "ClusterIssuer", Namespace: "ignored", Name: "issuer", Use: "dependsOn", Position: 7},
-			{Kind: "ClusterSecretStore", Namespace: "ignored", Name: "store", Use: "dependsOn", Position: 8},
-			{Kind: "ClusterRole", Namespace: "apps", Name: "unknown-version", Use: "dependsOn", Position: 9},
-			{Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Content: true},
-			{Kind: KindResourceSetInputProvider, Namespace: "apps", Use: "inputsFrom", Position: 1, Content: true},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: "true"},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "exists", Use: "dependsOn", Position: 1},
+			{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "cluster", Use: "dependsOn", Position: 2},
+			{Group: "foreign.example", Kind: "ClusterRole", Namespace: "apps", Name: "foreign", Use: "dependsOn", Position: 3},
+			{Group: "nvidia.com", Kind: "ClusterPolicy", Namespace: "ignored", Name: "gpu", Use: "dependsOn", Position: 4},
+			{Group: "foreign.example", Kind: "ClusterPolicy", Namespace: "apps", Name: "foreign-policy", Use: "dependsOn", Position: 5},
+			{Group: "kyverno.io", Kind: "ClusterPolicy", Namespace: "ignored", Name: "policy", Use: "dependsOn", Position: 6},
+			{Group: "cert-manager.io", Kind: "ClusterIssuer", Namespace: "ignored", Name: "issuer", Use: "dependsOn", Position: 7},
+			{Group: "external-secrets.io", Kind: "ClusterSecretStore", Namespace: "ignored", Name: "store", Use: "dependsOn", Position: 8},
+			{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Namespace: "apps", Name: "unknown-version", Use: "dependsOn", Position: 9},
+			{Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", Position: 10},
+			{Group: "foreign.example", Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", Position: 11},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", Position: 12},
+			{Kind: "Unsupported", Namespace: "apps", Name: "inputs", Use: "inputsFrom", Content: true},
+			{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Namespace: "apps", Use: "inputsFrom", Position: 1, Content: true},
+			{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Position: 2, Content: true},
+			{Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Position: 3, Content: true},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "apps", Name: "source", Use: "inputsFrom", Position: 4, Content: true},
+			{Group: "foreign.example", Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Position: 5, Content: true},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,30 +138,54 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		})
 	}
 	hr = hr.WithNamespace("effective").(*HelmRelease)
-	hr.Chart = HelmChart{RepoKind: KindGitRepository, RepoName: "resolved"}
-	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true}})
+	hr.Chart = HelmChart{RepoGroup: SourceDomain, RepoKind: KindGitRepository, RepoName: "resolved"}
+	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true}})
 	assert.Equal(t, r.InputsFrom[0].Kind, "Unsupported")
 }
 
 func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
-	for _, tc := range []struct{ namespace, want string }{{"", "effective"}, {"foreign", "foreign"}} {
-		t.Run(tc.want, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace, want, apiVersion, group string
+		resolve                                  bool
+	}{
+		{"inherited namespace", "", "effective", "", SourceDomain, true},
+		{"explicit namespace", "other", "other", "", SourceDomain, true},
+		{"explicit source group", "", "effective", SourceDomain + "/v1", SourceDomain, true},
+		{"explicit core group", "", "effective", "v1", "", false},
+		{"foreign group", "", "effective", "foreign.example/v1", "foreign.example", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := map[string]any{"kind": KindHelmChart, "name": "chart", "namespace": tc.namespace}
+			if tc.apiVersion != "" {
+				ref["apiVersion"] = tc.apiVersion
+			}
 			obj, _, _, err := ParseDoc(map[string]any{
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": KindHelmRelease,
 				"metadata": map[string]any{"name": "app", "namespace": "authored"},
-				"spec":     map[string]any{"chartRef": map[string]any{"kind": KindHelmChart, "name": "chart", "namespace": tc.namespace}},
+				"spec":     map[string]any{"chartRef": ref},
 			}, ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
 				t.Fatal(err)
 			}
 			hr := obj.(*HelmRelease)
 			projected := hr.WithNamespace("effective").(*HelmRelease)
+			before := projected.Chart
+			assert.Equal(t, projected.ChartSource(), NamedResource{Group: tc.group, Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
+			called := false
 			if err := projected.ResolveChartRef(func(ns, name string) *HelmChartSource {
-				assert.Equal(t, NamedResource{Kind: KindHelmChart, Namespace: ns, Name: name}, NamedResource{Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
+				called = true
+				assert.Equal(t, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: ns, Name: name}, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
 				return &HelmChartSource{Namespace: ns, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindHelmRepository, Name: name}}
 			}); err != nil {
 				t.Fatal(err)
 			}
+			assert.Equal(t, called, tc.resolve)
+			if tc.resolve {
+				assert.Equal(t, projected.ChartSource(), NamedResource{Group: SourceDomain, Kind: KindHelmRepository, Namespace: tc.want, Name: "chart"})
+			} else {
+				assert.Equal(t, projected.Chart, before)
+			}
+			assert.Equal(t, hr.Chart, before)
 			assert.Equal(t, hr.ChartRef.Namespace, tc.namespace)
 			assert.Equal(t, hr.Namespace, "authored")
 		})
@@ -175,8 +214,8 @@ func TestReferences_NoAllocations(t *testing.T) {
 	assert.Equal(t, KindOf(nil), KindInfo{})
 	assert.Equal(t, KindOf(&Kustomization{}), kindTable[kindKustomization].KindInfo)
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		assert.Equal(t, unsafe.Sizeof(DependencyRef{}), uintptr(64))
-		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(96))
+		assert.Equal(t, unsafe.Sizeof(DependencyRef{}), uintptr(80))
+		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(112))
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(40))
 	}
 	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{ValuesFrom: []ValuesReference{{Name: "values"}}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {

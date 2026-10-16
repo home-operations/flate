@@ -30,7 +30,7 @@ func TestMissingSecretErr(t *testing.T) {
 	if mse.Secret != wantSecret {
 		t.Errorf("recovered Secret = %v, want %v", mse.Secret, wantSecret)
 	}
-	wantOwner := manifest.NamedResource{Kind: "OCIRepository", Namespace: "ns", Name: "r"}
+	wantOwner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: "OCIRepository", Namespace: "ns", Name: "r"}
 	if mse.Owner != wantOwner {
 		t.Errorf("recovered Owner = %v, want %v", mse.Owner, wantOwner)
 	}

@@ -60,8 +60,8 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 				consumer.PostBuild = nil
 			}
 			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, st)
-			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
-			producers := []manifest.NamedResource{{Kind: manifest.KindKustomization, Namespace: "apps", Name: "second"}, {Kind: manifest.KindKustomization, Namespace: "apps", Name: "first"}}
+			parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+			producers := []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "second"}, {Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "first"}}
 			c := New(st, nil, nil, false)
 			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Renderers: producers}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Renderers: []manifest.NamedResource{consumer.Named()}}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, ParentOf: mapResolver(map[manifest.NamedResource]manifest.NamedResource{consumer.Named(): parent}), SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "ignored"}: &manifest.ConfigMap{}}}, sourcecache.RetryConfig{})
 			size := len(filter.KeepNames())
@@ -70,7 +70,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			if tc.retain {
 				want = append(want, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "true"})
 			}
-			want = append(want, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"})
+			want = append(want, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"})
 			if !tc.noData {
 				want = append(want, manifest.DependencyRef{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"})
 				for _, producer := range producers {

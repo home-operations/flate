@@ -5,51 +5,70 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// TestPair_DistinguishesByParent locks the parent-aware pairing: two
-// HelmReleases each rendering a same-named Deployment are tracked
-// independently, so a change to HR/a's copy doesn't leak into a phantom
-// pair against HR/b's copy. Without the parent in the key the two would
-// collapse into one entry.
 func TestPair_DistinguishesByParent(t *testing.T) {
-	dep := func(hr, spec string) Doc {
-		return Doc{
-			Manifest: map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "x", "namespace": "ns"}, "spec": spec},
-			Parent:   Parent{Kind: "HelmRelease", Namespace: "ns", Name: hr},
-		}
-	}
-	left := []Doc{dep("a", "old"), dep("b", "old")}
-	right := []Doc{dep("a", "new"), dep("b", "old")}
-
-	pairs := pair(left, right)
-	if len(pairs) != 2 {
-		t.Fatalf("expected 2 paired resources (one per parent), got %d: %+v", len(pairs), pairs)
-	}
-	for _, p := range pairs {
-		changed := p.a["spec"] != p.b["spec"]
-		switch p.parent.Name {
-		case "a":
-			if !changed {
-				t.Errorf("HR a's Deployment should show a spec change: %+v", p)
+	for _, tt := range []struct {
+		name, parentGroup, parentName, apiVersion string
+		pairs                                     int
+	}{
+		{"parent name", manifest.HelmReleaseDomain, "b", "apps/v1", 2},
+		{"parent group", "example.test", "a", "apps/v1", 2},
+		{"resource group", manifest.HelmReleaseDomain, "a", "example.test/v1", 2},
+		{"resource version", manifest.HelmReleaseDomain, "a", "apps/v2", 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parent := Parent{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "a"}
+			left := cmDoc(parent, "x", "ns", "old", "")
+			left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
+			parent.Group, parent.Name = tt.parentGroup, tt.parentName
+			right := cmDoc(parent, "x", "ns", "new", "")
+			right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", tt.apiVersion
+			l, r := []Doc{left}, []Doc{right}
+			if got := pair(l, r); len(got) != tt.pairs {
+				t.Fatalf("pairs = %+v, want %d", got, tt.pairs)
 			}
-		case "b":
-			if changed {
-				t.Errorf("HR b's Deployment should be unchanged: %+v", p)
+			changes := Changes(l, r, Options{})
+			if len(changes) != tt.pairs {
+				t.Fatalf("changes = %+v, want %d", changes, tt.pairs)
 			}
-		default:
-			t.Errorf("unexpected parent %q", p.parent.Name)
-		}
+			count := 0
+			for c, err := range changedPairs(l, r, Options{}) {
+				count++
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := left
+				if c.Status != string(StatusRemoved) {
+					want = right
+				}
+				group := "apps"
+				if want.Manifest["apiVersion"] == "example.test/v1" {
+					group = "example.test"
+				}
+				if c.Parent != want.Parent.NamedResource || c.Resource != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}) {
+					t.Errorf("line change dropped identity: %+v", c)
+				}
+			}
+			if count != tt.pairs {
+				t.Errorf("line changes = %d, want %d", count, tt.pairs)
+			}
+			if tt.pairs == 1 && (changes[0].Status != StatusChanged || changes[0].APIVersion != tt.apiVersion) {
+				t.Errorf("version change must retain the current authored version: %+v", changes)
+			}
+		})
 	}
 }
 
 func TestPair_PathIsPresentation(t *testing.T) {
-	leftParent := Parent{Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "old/apps"}
+	leftParent := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "old/apps"}
 	for _, tt := range []struct {
 		name, path, resource, parent string
 	}{
-		{"moved", "new/apps", "ConfigMap apps/shared (new/apps)", "Kustomization flux-system/apps (new/apps)"},
-		{"cleared", "", "ConfigMap apps/shared", "Kustomization flux-system/apps"},
+		{"moved", "new/apps", "ConfigMap apps/shared (new/apps)", "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps (new/apps)"},
+		{"cleared", "", "ConfigMap apps/shared", "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rightParent := leftParent
@@ -100,7 +119,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 }
 
 func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
-	parent := Parent{Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "./apps"}
+	parent := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "./apps"}
 	for _, side := range []string{"left", "right"} {
 		t.Run(side, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -111,6 +130,7 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			first := cmDoc(parent, "shared", "ns", "shadowed", "")
 			last := cmDoc(parent, "shared", "ns", "retained", "")
 			last.Parent.Path = "new/apps"
+			last.Manifest["apiVersion"] = "v2"
 			other := cmDoc(parent, "shared", "ns", "other-side", "")
 			left, right := []Doc{first, last}, []Doc{other}
 			if side == "right" {
@@ -130,7 +150,7 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if strings.Count(logs.String(), "level=WARN") != 1 {
 				t.Fatalf("expected one duplicate warning, got %q", logs.String())
 			}
-			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v1", "kind=ConfigMap", "namespace=ns", "name=shared"} {
+			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v2", "kind=ConfigMap", "namespace=ns", "name=shared"} {
 				if !strings.Contains(logs.String(), field) {
 					t.Errorf("warning missing %q: %s", field, logs.String())
 				}

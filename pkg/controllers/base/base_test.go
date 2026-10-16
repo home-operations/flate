@@ -89,7 +89,7 @@ func TestRunWithStatusOutcome_Panic(t *testing.T) {
 
 func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 	s := store.New()
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
+	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
 	called := false
 	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
 		func(_ context.Context, _ *manifest.HelmRelease) error {
@@ -393,7 +393,7 @@ func TestFingerprintDedup(t *testing.T) {
 		t.Errorf("match: handled=%v err=%v; want true,nil", handled, err)
 	}
 	// No artifact for the id → render (not handled).
-	none := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
+	none := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
 	if handled, _ := c.FingerprintDedup(none, "fp1", emit); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}

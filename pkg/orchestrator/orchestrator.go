@@ -30,11 +30,11 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-var reconcilableKinds = func() []string {
-	var kinds []string
+var reconcilableKinds = func() []manifest.KindInfo {
+	var kinds []manifest.KindInfo
 	for info := range manifest.Kinds() {
 		if info.Includes("render") {
-			kinds = append(kinds, info.Kind)
+			kinds = append(kinds, info)
 		}
 	}
 	return kinds
@@ -577,7 +577,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 		o.hrc.Options.DisableChartDigestTracking = *requested
 	}
 	secretGet := func(ns, name string) *manifest.Secret {
-		secret, _ := o.store.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
+		secret, _ := o.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name})
 		return secret
 	}
 	resolver := helm.NewStoreSourceResolver(o.store)

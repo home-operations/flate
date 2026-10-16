@@ -49,7 +49,7 @@ func (e Encoder) Lines(changes iter.Seq2[LineChange, error], notes iter.Seq[stri
 		if err != nil {
 			return err
 		}
-		label := p.Resource.Kind + " " + p.Resource.NamespacedName()
+		label := kindLabel(p.Resource) + " " + p.Resource.NamespacedName()
 		if p.ParentPath != "" {
 			label += " (" + p.ParentPath + ")"
 		}

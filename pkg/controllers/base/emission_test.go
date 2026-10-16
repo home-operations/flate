@@ -14,12 +14,12 @@ import (
 )
 
 func TestEmit_DefaultsNamespace(t *testing.T) {
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindResourceSet, manifest.KindHelmRelease} {
+	for _, kind := range []manifest.KindInfo{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}} {
 		for _, fallback := range []string{"", "apps"} {
-			t.Run(kind+"/default="+fallback, func(t *testing.T) {
+			t.Run(kind.Kind+"/default="+fallback, func(t *testing.T) {
 				s := store.New()
 				c := New(s, nil, "test")
-				parent := manifest.NamedResource{Kind: kind, Namespace: "parent", Name: "infra"}
+				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "parent", Name: "infra"}
 				docs := []map[string]any{
 					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "chart"}, "spec": map[string]any{"url": "oci://example.test/chart"}},
 					{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm", "namespace": "release"}},
@@ -58,14 +58,14 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 }
 
 func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindResourceSet} {
+	for _, kind := range []manifest.KindInfo{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet}} {
 		for _, publish := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/publish=%t", kind, publish), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/publish=%t", kind.Kind, publish), func(t *testing.T) {
 				s := store.New()
 				c := New(s, nil, "test")
-				parent := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "parent"}
-				rs := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "apps", Name: "rs"}
-				consumer := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "apps", Name: "parent"}
+				rs := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "rs"}
+				consumer := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 				source := &manifest.Bucket{Name: "shared", Namespace: "apps"}
 				s.AddObject(source)
 				s.UpdateStatus(source.Named(), store.StatusReady, "unchanged")
@@ -126,22 +126,28 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 	s := store.New()
 	c := New(s, nil, "test")
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings"}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}}
 	release := &manifest.HelmRelease{Name: "release", Namespace: "apps",
-		Chart: manifest.HelmChart{RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: "chart"}}
+		Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: "chart"}}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
 		s.UpdateStatus(obj.Named(), store.StatusReady, "unchanged")
 	}
+	foreignProducer := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Name: producer.Name, Namespace: producer.Namespace}
+	s.AddObject(foreignProducer)
+	s.UpdateStatus(foreignProducer.Named(), store.StatusReady, "foreign unchanged")
+	foreignSettings := settings
+	foreignSettings.Group = "example.test"
 	c.SetFilter(change.NewFilter(change.NewSet([]string{"parent.yaml"}), &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-			parent:   {File: "parent.yaml"},
-			settings: {Owners: []manifest.NamedResource{producer.Named()}},
+			parent:          {File: "parent.yaml"},
+			settings:        {Owners: []manifest.NamedResource{producer.Named()}},
+			foreignSettings: {Owners: []manifest.NamedResource{foreignProducer.Named()}},
 		},
 	}, s))
 
@@ -151,7 +157,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 	for _, tc := range []struct {
 		obj  manifest.BaseManifest
 		want store.Status
-	}{{producer, store.StatusPending}, {chart, store.StatusReady}} {
+	}{{producer, store.StatusPending}, {chart, store.StatusReady}, {foreignProducer, store.StatusReady}} {
 		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != tc.want {
 			t.Errorf("%s status = %s, want %s", tc.obj.Named(), info.Status, tc.want)
 		}
@@ -197,7 +203,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 	s := store.New()
 	c := New(s, nil, "test")
-	parent := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "apps", Name: "parent"}
+	parent := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "parent"}
 
 	c.Emit(parent, []map[string]any{
 		{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": "parent"}, "spec": map[string]any{}},
@@ -217,7 +223,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 		{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "valid"}, "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},
 		{"apiVersion": "v1", "kind": "Secret", "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},
 	}
-	parent := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "parent"}
+	parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "parent"}
 	children, retained := c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "effective"}, true)
 	if len(children) != 1 || len(retained) != 2 {
 		t.Fatalf("children=%d retained=%d", len(children), len(retained))

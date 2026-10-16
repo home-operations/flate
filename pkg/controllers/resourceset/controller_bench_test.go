@@ -13,18 +13,18 @@ import (
 )
 
 func BenchmarkCollectDeps_Scope(b *testing.B) {
-	for _, kind := range []string{manifest.KindCustomResourceDefinition, manifest.KindConfigMap, "Widget"} {
+	for _, target := range []struct{ api, kind string }{{"apiextensions.k8s.io/v1", manifest.KindCustomResourceDefinition}, {"v1", manifest.KindConfigMap}, {"example.com/v1", "Widget"}} {
 		for _, hasParent := range []bool{false, true} {
-			b.Run(fmt.Sprintf("%s/parent=%t", kind, hasParent), func(b *testing.B) {
+			b.Run(fmt.Sprintf("%s/parent=%t", target.kind, hasParent), func(b *testing.B) {
 				c := New(store.New(), task.NewBounded(2), true)
 				opts := base.Options{}
 				if hasParent {
 					opts.ParentOf = func(manifest.NamedResource) (manifest.NamedResource, bool) {
-						return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}, true
+						return manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}, true
 					}
 				}
 				c.Configure(Options{Options: opts})
-				rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{Kind: kind, Name: "dependency"}}}
+				rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: target.api, Kind: target.kind, Name: "dependency"}}}
 				for b.Loop() {
 					c.collectDeps(rs)
 				}

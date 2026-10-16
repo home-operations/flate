@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"cmp"
 	"fmt"
 	"iter"
 	"slices"
@@ -38,14 +37,14 @@ func (s Suppression) String() string {
 	if s.Count == 1 {
 		noun = "object"
 	}
-	id := manifest.NamedResource{Namespace: s.Parent.Namespace, Name: s.Parent.Name}
+	label := strings.Replace(s.Parent.String(), "/", " ", 1)
 	reason := strings.Join(strings.Fields(s.Reason), " ")
 	if s.Side == SideBoth {
-		return fmt.Sprintf("%s %s: %d %s withheld; diff suppressed (%s)",
-			s.Parent.Kind, id.NamespacedName(), s.Count, noun, reason)
+		return fmt.Sprintf("%s: %d %s withheld; diff suppressed (%s)",
+			label, s.Count, noun, reason)
 	}
-	return fmt.Sprintf("%s %s: %d %s not rendered on the %s side; diff suppressed (%s)",
-		s.Parent.Kind, id.NamespacedName(), s.Count, noun, s.Side, reason)
+	return fmt.Sprintf("%s: %d %s not rendered on the %s side; diff suppressed (%s)",
+		label, s.Count, noun, s.Side, reason)
 }
 
 type suppressionPlan struct {
@@ -57,7 +56,7 @@ func selectedSuppressionPlans(left, right map[manifest.NamedResource]store.Statu
 	plans := make(map[manifest.NamedResource]suppressionPlan, len(left)+len(right))
 	add := func(id manifest.NamedResource) {
 		if plan, ok := planSuppression(left[id], right[id]); ok {
-			plan.note.Parent = Parent{Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
+			plan.note.Parent = Parent{NamedResource: id}
 			plans[id] = plan
 		}
 	}
@@ -152,11 +151,7 @@ func suppress(orig, current Snapshot) ([]manifest.BaseManifest, []manifest.BaseM
 		}
 	}
 	slices.SortFunc(suppressed, func(a, b Suppression) int {
-		return cmp.Or(
-			cmp.Compare(a.Parent.Kind, b.Parent.Kind),
-			cmp.Compare(a.Parent.Namespace, b.Parent.Namespace),
-			cmp.Compare(a.Parent.Name, b.Parent.Name),
-		)
+		return a.Parent.Compare(b.Parent.NamedResource)
 	})
 	return l, r, suppressed
 }

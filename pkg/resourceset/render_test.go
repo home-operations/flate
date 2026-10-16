@@ -1,15 +1,18 @@
 package resourceset_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // TestRender_PermuteScopesByProviderName locks the core Permute
@@ -41,7 +44,7 @@ metadata:
 		Type:          fluxopv1.InputProviderStatic,
 		DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
 	}
-	resolver := func(ref fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+	resolver := func(ref fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		if ref.Name == "myrsip" {
 			return []*manifest.ResourceSetInputProvider{rsip}, nil
 		}
@@ -82,7 +85,7 @@ metadata:
   name: << index inputs "rset" "env" >>-<< index inputs "rsip" "tenant" >>
   namespace: default`,
 	}
-	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+	resolver := func(_ fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{{
 			Name: "rsip", Namespace: "default",
 			Type:          fluxopv1.InputProviderStatic,
@@ -123,7 +126,7 @@ metadata:
   name: << index inputs "rset" "env" >>
   namespace: default`,
 	}
-	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+	resolver := func(_ fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		// Dynamic provider (GitHubBranch etc.) — flate can't fetch
 		// remote APIs offline, so it exports zero input sets.
 		return []*manifest.ResourceSetInputProvider{{
@@ -160,7 +163,7 @@ func TestRender_PermuteIncludeEmptyProvidersCollapses(t *testing.T) {
 kind: ConfigMap
 metadata: {name: x, namespace: default}`,
 	}
-	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+	resolver := func(_ fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{{
 			Name: "dyn", Namespace: "default",
 			Type: fluxopv1.InputProviderGitHubBranch,
@@ -523,7 +526,7 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 		},
 	}
 
-	docs, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, string) ([]*manifest.ResourceSetInputProvider, error) {
+	docs, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
 	})
 	if err != nil {
@@ -617,7 +620,7 @@ spec:
 // set the template iterates over with `<<- range $app := inputs.apps >>`.
 func TestRender_InputsFrom_StaticProvider(t *testing.T) {
 	rsip := &manifest.ResourceSetInputProvider{
-		Name: "apps", Namespace: "kube-system",
+		Name: "apps", Namespace: "kube-system", Labels: map[string]string{"set": "apps"},
 		Type: fluxopv1.InputProviderStatic,
 		DefaultValues: fluxopv1.ResourceSetInput{
 			"defaults": jsonTmpl(t, `{"capacity": "1Gi"}`),
@@ -641,12 +644,13 @@ data:
 <<- end >>
 `,
 	}
-	resolver := func(ref fluxopv1.InputProviderReference, ns string) ([]*manifest.ResourceSetInputProvider, error) {
-		if ref.Name == "apps" && ns == "kube-system" {
-			return []*manifest.ResourceSetInputProvider{rsip}, nil
-		}
-		return nil, nil
-	}
+	st := store.New()
+	st.AddObject(rsip)
+	other := *rsip
+	other.Namespace = "other"
+	st.AddObject(&other)
+	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindResourceSetInputProvider, Name: rsip.Name, Namespace: rsip.Namespace})
+	resolver := resourceset.StoreResolver(st)
 	docs, err := resourceset.Render(rs, resolver)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -663,6 +667,34 @@ data:
 	// alpha falls back to inputs.defaults.capacity (1Gi); bravo
 	// overrides via its own per-app capacity (5Gi).
 	assert.Diff(t, caps, map[string]string{"alpha": "1Gi", "bravo": "5Gi"})
+	for _, selector := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, apiVersion, kind string
+			want                   int
+		}{
+			{"omitted", "", "", 2},
+			{"explicit", "fluxcd.controlplane.io/v1", manifest.KindResourceSetInputProvider, 2},
+			{"kind only", "", manifest.KindResourceSetInputProvider, 2},
+			{"version only", "fluxcd.controlplane.io/v1", "", 2},
+			{"foreign", "example.test/v1", "", 0},
+			{"core", "v1", "", 0},
+			{"other kind", "", manifest.KindResourceSet, 0},
+		} {
+			t.Run(fmt.Sprintf("%s/selector=%t", tc.name, selector), func(t *testing.T) {
+				candidate := *rs
+				ref := fluxopv1.InputProviderReference{APIVersion: tc.apiVersion, Kind: tc.kind, Name: rsip.Name}
+				if selector {
+					ref.Name = ""
+					ref.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"set": "apps"}}
+				}
+				candidate.InputsFrom = []fluxopv1.InputProviderReference{ref}
+				docs, err := resourceset.Render(&candidate, resolver)
+				if err != nil || len(docs) != tc.want {
+					t.Fatalf("docs=%d, error=%v, want %d", len(docs), err, tc.want)
+				}
+			})
+		}
+	}
 }
 
 // TestRender_InputsFrom_DynamicProviderEmptySkip verifies that a
@@ -690,7 +722,7 @@ metadata:
   namespace: flux-system
 `,
 	}
-	resolver := func(_ fluxopv1.InputProviderReference, _ string) ([]*manifest.ResourceSetInputProvider, error) {
+	resolver := func(_ fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
 	}
 	docs, err := resourceset.Render(rs, resolver)
@@ -854,7 +886,7 @@ func TestRender_EmptyInputRule(t *testing.T) {
 					rs.InputsFrom = []fluxopv1.InputProviderReference{{Name: "empty"}}
 					want = 0
 				}
-				resolve := func(fluxopv1.InputProviderReference, string) ([]*manifest.ResourceSetInputProvider, error) {
+				resolve := func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 					return []*manifest.ResourceSetInputProvider{{Name: "empty", Type: fluxopv1.InputProviderGitHubBranch}}, nil
 				}
 				docs, err := resourceset.Render(rs, resolve)
@@ -878,7 +910,14 @@ metadata: {name: shared}
 ---
 apiVersion: other.example/v1
 kind: Deployment
-metadata: {name: shared}`}
+metadata: {name: shared}
+---
+apiVersion: example.test/v1
+kind: Deployment
+metadata: {}
+---
+apiVersion: example.test/v1
+metadata: {name: incomplete}`}
 	docs, err := resourceset.Render(rs, nil)
 	if err != nil {
 		t.Fatal(err)

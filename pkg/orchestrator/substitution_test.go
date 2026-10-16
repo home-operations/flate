@@ -179,7 +179,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 		if got := substitutionValue(t, res, id); got != "overlay" {
 			t.Fatalf("owned values changed: %q", got)
 		}
@@ -310,7 +310,7 @@ spec:
 				if res == nil {
 					t.Fatal("missing render result")
 				}
-				demo := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+				demo := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
 				if _, failed := res.Failed[demo]; failed == rescued {
 					t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
 				}
@@ -406,7 +406,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				t.Fatal("test requires unpromoted file identity")
 			}
 			if kind == "known Kustomization producer" {
-				producer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
+				producer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
 				if !o.filter.ShouldReconcile(producer) || !slices.Contains(o.filter.ProducersFor(input.Object.Named()), producer) {
 					t.Fatal("known producer selection/edge lost")
 				}
@@ -418,7 +418,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 			if got := substitutionValue(t, res, id); got != want {
 				t.Fatalf("repository precedence got %q, want %q", got, want)
 			}
@@ -506,7 +506,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+				consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 				if got := substitutionValue(t, res, consumer); got != "supplied" {
 					t.Fatalf("late producer revoked accepted source: %q", got)
 				}
@@ -544,7 +544,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+	child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 	if o.store.GetObject(child) != nil {
 		t.Fatal("consumer existed at bootstrap")
 	}
@@ -577,8 +577,8 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
-	stable := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "stable"}
+	consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+	stable := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "stable"}
 	for i, side := range []Rendered{base, head} {
 		want := "overlay-base"
 		if i == 1 {
@@ -617,7 +617,7 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 		if o.filter.ShouldReconcile(id) || len(res.Manifests) != 0 {
 			t.Fatal("external input/overlay selected unchanged consumer")
 		}
@@ -636,7 +636,7 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 	if got := substitutionValue(t, res, id); got != "last-gone" {
 		t.Fatalf("duplicate maps merged: %q", got)
 	}

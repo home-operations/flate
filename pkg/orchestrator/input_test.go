@@ -28,7 +28,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			baseRoot, headRoot := t.TempDir(), t.TempDir()
 			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
-			changed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
+			changed := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
 			same := changed
 			same.Name = "app-b"
 			const url = "git://fixture.invalid/cluster"
@@ -110,7 +110,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				if len(result.Manifests[changed]) != 0 || len(result.Manifests[same]) != 0 {
 					t.Fatalf("unavailable producer or unchanged sibling emitted: %v", result.Manifests)
 				}
-				for _, cm := range o.Store().ListObjects(manifest.KindConfigMap) {
+				for _, cm := range o.Store().ListObjects("", manifest.KindConfigMap) {
 					if cm.Named().Name == "cfg-a" {
 						t.Fatal("unavailable source admitted the host decoy ConfigMap")
 					}

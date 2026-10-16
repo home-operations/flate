@@ -1,9 +1,10 @@
 package diff
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func cmDoc(parent Parent, name, ns, dataVal, chart string) Doc {
@@ -27,7 +28,7 @@ func cmDoc(parent Parent, name, ns, dataVal, chart string) Doc {
 // TestChanges_Classification locks added / changed / removed and the
 // drop of byte-identical resources.
 func TestChanges_Classification(t *testing.T) {
-	p := Parent{Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
+	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
 	left := []Doc{
 		cmDoc(p, "keep", "ns", "same", ""),
 		cmDoc(p, "edit", "ns", "old", ""),
@@ -53,7 +54,7 @@ func TestChanges_Classification(t *testing.T) {
 // stripped attribute (a chart-label bump with identical content) is not
 // reported — the diff stays churn-free.
 func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
-	p := Parent{Kind: "HelmRelease", Namespace: "ns", Name: "app"}
+	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
 	left := []Doc{cmDoc(p, "x", "ns", "same", "app-1.0.0")}
 	right := []Doc{cmDoc(p, "x", "ns", "same", "app-2.0.0")}
 	if got := Changes(left, right, Options{StripAttrs: DefaultStripAttrs}); len(got) != 0 {
@@ -64,7 +65,7 @@ func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 // TestChanges_CapturesChartBeforeStrip locks that OldChart/NewChart read
 // helm.sh/chart from the pre-strip manifest while Old/New are stripped.
 func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
-	p := Parent{Kind: "HelmRelease", Namespace: "ns", Name: "app"}
+	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
 	left := []Doc{cmDoc(p, "x", "ns", "old", "app-1.0.0")}
 	right := []Doc{cmDoc(p, "x", "ns", "new", "app-2.0.0")}
 
@@ -88,7 +89,7 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 // render-random Secret value reads as a change by default, but a redaction
 // hook constant-izes it so it no longer does.
 func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
-	p := Parent{Kind: "Kustomization", Namespace: "ns", Name: "apps"}
+	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
 	secret := func(val string) Doc {
 		return Doc{
 			Parent: p,
@@ -122,28 +123,22 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 
 // TestChanges_Sorted locks deterministic ordering by parent then identity.
 func TestChanges_Sorted(t *testing.T) {
-	pa := Parent{Kind: "Kustomization", Namespace: "ns", Name: "a"}
-	pb := Parent{Kind: "Kustomization", Namespace: "ns", Name: "b"}
+	pa := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "a"}
+	pb := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "b"}
 	left := []Doc{cmDoc(pb, "z", "ns", "1", ""), cmDoc(pa, "y", "ns", "1", "")}
 	right := []Doc{cmDoc(pb, "z", "ns", "2", ""), cmDoc(pa, "y", "ns", "2", "")}
-	for version := 8; version > 1; version-- {
-		doc := cmDoc(pa, "y", "ns", "3", "")
-		doc.Manifest["apiVersion"] = fmt.Sprintf("v%d", version)
-		left = append(left, doc)
-	}
+	foreign := cmDoc(pa, "y", "ns", "3", "")
+	foreign.Manifest["apiVersion"] = "example.test/v1"
+	left = append(left, foreign)
 	got := Changes(left, right, Options{})
-	if len(got) != 9 || got[8].Parent.Name != "b" {
-		t.Fatalf("changes not sorted by parent: %+v", got)
-	}
-	for i := range 8 {
-		if got[i].Parent.Name != "a" || got[i].APIVersion != fmt.Sprintf("v%d", i+1) {
-			t.Fatalf("changes not sorted by apiVersion: %+v", got)
-		}
+	if len(got) != 3 || got[0].Parent != pa || got[1].Parent != pa || got[2].Parent != pb ||
+		got[0].APIVersion != "v1" || got[1].APIVersion != "example.test/v1" {
+		t.Fatalf("changes not sorted by canonical parent and resource identity: %+v", got)
 	}
 }
 
 func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
-	p := Parent{Kind: "Kustomization", Namespace: "ns", Name: "apps"}
+	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
 	left := []Doc{cmDoc(p, "shared", "ns", "shadowed", ""), cmDoc(p, "shared", "ns", "retained", "")}
 	for _, tt := range []struct {
 		name string

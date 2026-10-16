@@ -826,31 +826,34 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 	}
 }
 
-// TestCompareDocs_OrdersByKindNamespaceName pins the sort order
-// build uses when emitting multi-doc YAML: (kind, namespace, name)
-// lexical, so renders are byte-stable across runs even when the
-// underlying maps iterate in random order.
-func TestCompareDocs_OrdersByKindNamespaceName(t *testing.T) {
-	mkDoc := func(kind, ns, name string) map[string]any {
+func TestCompareDocs_OrdersByIdentity(t *testing.T) {
+	mkDoc := func(apiVersion, kind, ns, name string) map[string]any {
 		return map[string]any{
-			"kind":     kind,
-			"metadata": map[string]any{"namespace": ns, "name": name},
+			"apiVersion": apiVersion,
+			"kind":       kind,
+			"metadata":   map[string]any{"namespace": ns, "name": name},
 		}
 	}
 	cases := []struct {
+		name string
 		a, b map[string]any
 		want int
 	}{
-		{mkDoc("ConfigMap", "a", "x"), mkDoc("Secret", "a", "x"), -1}, // kind wins
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "b", "x"), -1},            // ns wins after kind tie
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "y"), -1},            // name wins last
-		{mkDoc("CM", "a", "x"), mkDoc("CM", "a", "x"), 0},             // identical
+		{"kind", mkDoc("v1", "ConfigMap", "a", "x"), mkDoc("v1", "Secret", "a", "x"), -1},
+		{"group", mkDoc("a.example/v1", "CM", "z", "x"), mkDoc("z.example/v1", "CM", "a", "x"), -1},
+		{"core", mkDoc("v1", "CM", "z", "x"), mkDoc("a.example/v1", "CM", "a", "x"), -1},
+		{"namespace", mkDoc("v1", "CM", "a", "x"), mkDoc("v1", "CM", "b", "x"), -1},
+		{"name", mkDoc("v1", "CM", "a", "x"), mkDoc("v1", "CM", "a", "y"), -1},
+		{"same", mkDoc("v1", "CM", "a", "x"), mkDoc("v1", "CM", "a", "x"), 0},
+		{"version", mkDoc("a.example/v1", "CM", "a", "x"), mkDoc("a.example/v2", "CM", "a", "x"), 0},
 	}
 	for _, tc := range cases {
-		got := compareDocs(tc.a, tc.b)
-		if (got < 0) != (tc.want < 0) || (got == 0) != (tc.want == 0) {
-			t.Errorf("compareDocs(%v, %v) = %d, want sign of %d", tc.a, tc.b, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got := compareDocs(tc.a, tc.b)
+			if (got < 0) != (tc.want < 0) || (got == 0) != (tc.want == 0) {
+				t.Errorf("compareDocs(%v, %v) = %d, want sign of %d", tc.a, tc.b, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -910,7 +913,7 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	if strings.Contains(stdout, "document removed") || strings.Contains(stdout, "greeting") {
 		t.Errorf("the orig-only objects must be suppressed, not diffed as removals:\n%s", stdout)
 	}
-	if !strings.HasPrefix(stdout, "! Kustomization flux-system/apps: 1 object not rendered on the current side; diff suppressed (") {
+	if !strings.HasPrefix(stdout, "! Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps: 1 object not rendered on the current side; diff suppressed (") {
 		t.Errorf("stdout should lead with the suppression note; got:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "flate error: current snapshot: reconcile completed with 1 failure(s)") {

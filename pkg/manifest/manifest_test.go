@@ -33,11 +33,11 @@ func mustYAML(t *testing.T, doc string) map[string]any {
 }
 
 func TestNamedResource(t *testing.T) {
-	n := NamedResource{Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
+	n := NamedResource{Group: FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
 	if got, want := n.NamespacedName(), "flux-system/apps"; got != want {
 		t.Errorf("NamespacedName = %q, want %q", got, want)
 	}
-	if got, want := n.String(), "Kustomization/flux-system/apps"; got != want {
+	if got, want := n.String(), "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps"; got != want {
 		t.Errorf("String = %q, want %q", got, want)
 	}
 
@@ -46,11 +46,51 @@ func TestNamedResource(t *testing.T) {
 		t.Errorf("cluster-scoped NamespacedName = %q, want %q", got, want)
 	}
 
-	a := NamedResource{Kind: "A", Namespace: "ns", Name: "1"}
-	b := NamedResource{Kind: "A", Namespace: "ns", Name: "2"}
-	if a.Compare(b) >= 0 {
-		t.Errorf("expected a < b for %v / %v", a, b)
+	for _, tc := range []struct {
+		name string
+		a, b NamedResource
+	}{
+		{"kind before group", NamedResource{Kind: "A", Group: "z"}, NamedResource{Kind: "B"}},
+		{"core before group", NamedResource{Kind: "A", Namespace: "z"}, NamedResource{Kind: "A", Group: "a"}},
+		{"group before namespace", NamedResource{Kind: "A", Group: "a", Namespace: "z"}, NamedResource{Kind: "A", Group: "b"}},
+		{"namespace before name", NamedResource{Kind: "A", Namespace: "a", Name: "z"}, NamedResource{Kind: "A", Namespace: "b"}},
+		{"name", NamedResource{Kind: "A", Name: "1"}, NamedResource{Kind: "A", Name: "2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.a.Compare(tc.b), -1)
+			assert.Equal(t, tc.b.Compare(tc.a), 1)
+			assert.Equal(t, tc.a.Compare(tc.a), 0)
+		})
 	}
+	assert.Equal(t, cluster.String(), "ClusterRole/view")
+	for _, tc := range []struct {
+		obj   BaseManifest
+		group string
+	}{
+		{&Kustomization{}, FluxKustomizeDomain},
+		{&HelmRelease{}, HelmReleaseDomain},
+		{&GitRepository{}, SourceDomain},
+		{&OCIRepository{}, SourceDomain},
+		{&HelmRepository{}, SourceDomain},
+		{&HelmChartSource{}, SourceDomain},
+		{&ExternalArtifact{}, SourceDomain},
+		{&Bucket{}, SourceDomain},
+		{&ResourceSet{}, FluxOperatorDomain},
+		{&ResourceSetInputProvider{}, FluxOperatorDomain},
+		{&ConfigMap{}, ""},
+		{&Secret{}, ""},
+		{&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v2"}, "foreign.example"},
+	} {
+		t.Run(tc.obj.Named().Kind, func(t *testing.T) {
+			id := tc.obj.Named()
+			assert.Equal(t, id.Group, tc.group)
+			id.Namespace = "effective"
+			assert.Equal(t, tc.obj.WithNamespace("effective").Named(), id)
+			assert.Equal(t, Resolve(tc.obj.Named(), "effective", "fallback"), id)
+		})
+	}
+	assert.Equal(t, (&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v1"}).Named(),
+		(&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v2"}).Named())
 }
 
 // TestParse_Suspend covers the spec.suspend passthrough across the
@@ -542,6 +582,38 @@ spec:
 	if len(rs.Resources) != 1 {
 		t.Errorf("expected 1 templated resource, got %d", len(rs.Resources))
 	}
+	for _, tc := range []struct {
+		name, field string
+		ref         map[string]any
+		valid       bool
+	}{
+		{"required missing", "dependsOn", map[string]any{}, false},
+		{"required empty", "dependsOn", map[string]any{"apiVersion": ""}, false},
+		{"required slash", "dependsOn", map[string]any{"apiVersion": "/"}, false},
+		{"required no version", "dependsOn", map[string]any{"apiVersion": "example.test/"}, false},
+		{"required multi slash", "dependsOn", map[string]any{"apiVersion": "example.test/v1/extra"}, false},
+		{"required core", "dependsOn", map[string]any{"apiVersion": "v1"}, true},
+		{"optional omitted", "inputsFrom", map[string]any{}, true},
+		{"optional core", "inputsFrom", map[string]any{"apiVersion": "v1"}, true},
+		{"optional empty", "inputsFrom", map[string]any{"apiVersion": ""}, false},
+		{"optional slash", "inputsFrom", map[string]any{"apiVersion": "/"}, false},
+		{"optional no version", "inputsFrom", map[string]any{"apiVersion": "example.test/"}, false},
+		{"optional multi slash", "inputsFrom", map[string]any{"apiVersion": "example.test/v1/extra"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := DeepCopyMap(doc)
+			tc.ref["kind"], tc.ref["name"] = KindResourceSetInputProvider, "inputs"
+			input["spec"].(map[string]any)[tc.field] = []any{tc.ref}
+			before := DeepCopyMap(input)
+			_, _, _, err := ParseDoc(input, defaultParseDocOptions())
+			if tc.valid {
+				assert.NoError(t, err)
+			} else if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), "spec."+tc.field+"[0].apiVersion") {
+				t.Fatalf("invalid reference error = %v", err)
+			}
+			assert.Diff(t, input, before)
+		})
+	}
 }
 
 func TestParseResourceSet_PreservesEmptyNamespace(t *testing.T) {
@@ -803,7 +875,7 @@ spec:
 		t.Errorf("after resolve: %+v", hr.Chart)
 	}
 
-	missing := &HelmRelease{Chart: HelmChart{RepoKind: KindHelmChart, RepoName: "absent", RepoNamespace: "ns"}}
+	missing := &HelmRelease{Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindHelmChart, RepoName: "absent", RepoNamespace: "ns"}}
 	none := func(_, _ string) *HelmChartSource { return nil }
 	if err := missing.ResolveChartRef(none); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
@@ -1180,6 +1252,10 @@ metadata: {name: c, namespace: ns}`, KindConfigMap, false},
 apiVersion: v1
 kind: Secret
 metadata: {name: s, namespace: ns}`, KindSecret, false},
+		{"externalartifact", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: a}", KindExternalArtifact, false},
+		{"bucket", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: Bucket\nmetadata: {name: b}\nspec: {bucketName: b, endpoint: example.test}", KindBucket, false},
+		{"resourceset", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: s}", KindResourceSet, false},
+		{"resourcesetinputprovider", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: p}", KindResourceSetInputProvider, false},
 		{"unknown", `
 apiVersion: example.com/v1
 kind: Foo
@@ -1224,6 +1300,7 @@ metadata: {name: x}`, "Foo", false},
 					want = ns.fallback
 				}
 				assert.Equal(t, obj.Named().Kind, tc.kind)
+				assert.Equal(t, obj.Named().Group, apiGroup(DocAPIVersion(doc)))
 				assert.Equal(t, obj.Named().Namespace, want)
 				defaulted := ns.authored == "" && want != ""
 				assert.Equal(t, changed, defaulted)
@@ -1310,6 +1387,10 @@ kind: Bucket
 metadata: {name: b, namespace: default}
 spec: {name: b}`},
 	}
+	for _, kind := range []string{KindKustomization, KindHelmChart, KindExternalArtifact, KindResourceSet, KindResourceSetInputProvider, KindSecret} {
+		cases = append(cases, struct{ name, yaml string }{kind, "apiVersion: foreign.example/v1\nkind: " + kind + "\nmetadata: {name: raw}"})
+	}
+	cases = append(cases, struct{ name, yaml string }{"explicit core flux kind", "apiVersion: v1\nkind: Kustomization\nmetadata: {name: raw}"})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := mustYAML(t, tc.yaml)
@@ -1324,6 +1405,7 @@ spec: {name: b}`},
 				t.Fatalf("got %T, want *RawObject", obj)
 			}
 			assert.Equal(t, obj.Named().Namespace, "apps")
+			assert.Equal(t, obj.Named().Group, apiGroup(DocAPIVersion(doc)))
 			assert.Equal(t, changed, true)
 			assert.Diff(t, doc, before)
 			before["metadata"].(map[string]any)["namespace"] = "apps"
@@ -1963,10 +2045,10 @@ func TestResolve_NamespacePrecedence(t *testing.T) {
 		{"empty", "", "", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			id := NamedResource{Kind: KindKustomization, Namespace: tc.authored, Name: "app"}
-			want := NamedResource{Kind: KindKustomization, Namespace: tc.want, Name: "app"}
+			id := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.authored, Name: "app"}
+			want := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.want, Name: "app"}
 			assert.Equal(t, Resolve(id, tc.forced, tc.fallback), want)
-			assert.Equal(t, id, NamedResource{Kind: KindKustomization, Namespace: tc.authored, Name: "app"})
+			assert.Equal(t, id, NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.authored, Name: "app"})
 		})
 	}
 }

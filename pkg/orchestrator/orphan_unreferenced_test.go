@@ -77,7 +77,7 @@ spec:
 	}
 
 	for _, name := range []string{"app-a", "app-b"} {
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		if info, failed := res.Failed[id]; failed {
 			t.Errorf("%s hard-failed, want orphaned: %s", name, info.Message)
 		}

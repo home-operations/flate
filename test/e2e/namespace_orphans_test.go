@@ -34,8 +34,14 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 				root := t.TempDir()
 				testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
 				testutil.WriteFile(t, root, "flux/parent.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: flux-system}\nspec:\n  path: ./apps\n"+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n")
-				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml]\n")
+				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, raw.yaml]\n")
 				testutil.WriteFile(t, root, "apps/child.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child"+tc.authored+"}\nspec:\n  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system}\n")
+				rawVersions := []string{"example.test/v1", "other.test/v1"}
+				rawBodies := []string{
+					"apiVersion: example.test/v1\nkind: Kustomization\nmetadata: {name: child" + tc.authored + "}\nspec: {value: first}\n",
+					"apiVersion: other.test/v1\nkind: Kustomization\nmetadata: {name: child" + tc.authored + "}\nspec: {value: second}\n",
+				}
+				testutil.WriteFile(t, root, "apps/raw.yaml", strings.Join(rawBodies, "---\n"))
 				testutil.WriteFile(t, root, "apps/child/kustomization.yaml", "resources: [cm.yaml]\n")
 				testutil.WriteFile(t, root, "apps/child/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output}\n")
 				flags := []string{"--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress"}
@@ -62,7 +68,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 							t.Errorf("child identity namespace=%q want=%q", obj.Namespace, tc.namespace)
 						}
 						if obj.SourceRef.Kind != manifest.KindGitRepository || obj.SourceRef.Name != "flux-system" || obj.SourceRef.Namespace != tc.namespace {
-							t.Errorf("implicit source=%+v want GitRepository/%s/flux-system", obj.SourceRef, tc.namespace)
+							t.Errorf("implicit source=%+v want GitRepository.source.toolkit.fluxcd.io/%s/flux-system", obj.SourceRef, tc.namespace)
 						}
 					}
 				}
@@ -78,10 +84,21 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 				children, maps := 0, 0
+				raw := make(map[string]string)
 				for _, doc := range docs {
 					name, ns := manifest.DocMetadata(doc)
 					if manifest.DocKind(doc) == manifest.KindKustomization && name == "child" {
-						children++
+						version := manifest.DocAPIVersion(doc)
+						if version == "kustomize.toolkit.fluxcd.io/v1" {
+							children++
+						} else {
+							spec, _ := doc["spec"].(map[string]any)
+							value, _ := spec["value"].(string)
+							if _, duplicate := raw[version]; duplicate {
+								t.Errorf("duplicate raw document for %s", version)
+							}
+							raw[version] = value
+						}
 						if ns != tc.namespace {
 							t.Errorf("child document namespace=%q want=%q", ns, tc.namespace)
 						}
@@ -90,6 +107,9 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 						maps++
 					}
 				}
+				if len(raw) != 2 || raw["example.test/v1"] != "first" || raw["other.test/v1"] != "second" {
+					t.Errorf("raw stdout lost group-specific authored content: %v; output=%s", raw, out)
+				}
 				if children != 1 || maps != wantMaps {
 					t.Errorf("rendered children=%d ConfigMaps=%d want=1/%d; output=%s", children, maps, wantMaps, out)
 				}
@@ -97,8 +117,64 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 				if code != wantCode || strings.Contains(out+stderr, "blocked") != (wantCode == 1) {
 					t.Errorf("test exit=%d want=%d output=%s stderr=%s", code, wantCode, out, stderr)
 				}
+				if strings.Contains(out+stderr, "Kustomization.example.test") || strings.Contains(out+stderr, "Kustomization.other.test") {
+					t.Errorf("raw lookalikes entered test status: output=%s stderr=%s", out, stderr)
+				}
 				if wantCode == 1 && !strings.Contains(out+stderr, "blocked by flux-system (not found)") {
 					t.Errorf("bare child must block on its missing implicit source: output=%s stderr=%s", out, stderr)
+				}
+				if tc.name != "authored" {
+					return
+				}
+				for _, order := range [][2]int{{0, 1}, {1, 0}} {
+					for _, removed := range []int{0, 1} {
+						t.Run(fmt.Sprintf("insert%d%d/remove%d", order[0], order[1], removed), func(t *testing.T) {
+							renderRaw := func() map[string]string {
+								t.Helper()
+								out, stderr, code := runCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+								if code != 0 {
+									t.Fatalf("build exit=%d stderr=%s", code, stderr)
+								}
+								raw := make(map[string]string)
+								for body := range strings.SplitSeq(out, "---\n") {
+									docs, err := manifest.SplitDocs([]byte(body))
+									if err != nil {
+										t.Fatal(err)
+									}
+									for _, doc := range docs {
+										version := manifest.DocAPIVersion(doc)
+										name, ns := manifest.DocMetadata(doc)
+										if manifest.DocKind(doc) != manifest.KindKustomization || name != "child" || version == "kustomize.toolkit.fluxcd.io/v1" {
+											continue
+										}
+										if _, duplicate := raw[version]; duplicate || ns != tc.namespace {
+											t.Fatalf("duplicate or wrong namespace for raw %s: %s", version, body)
+										}
+										raw[version] = body
+									}
+								}
+								return raw
+							}
+							testutil.WriteFile(t, root, "apps/raw.yaml", rawBodies[order[0]]+"---\n"+rawBodies[order[1]])
+							before := renderRaw()
+							if len(before) != 2 || before[rawVersions[0]] == "" || before[rawVersions[1]] == "" {
+								t.Fatalf("raw groups did not coexist: %v", before)
+							}
+							remaining := 1 - removed
+							version := rawVersions[remaining]
+							testutil.WriteFile(t, root, "apps/raw.yaml", rawBodies[remaining])
+							after := renderRaw()
+							if len(after) != 1 || after[version] != before[version] {
+								t.Fatalf("withdrawal changed surviving bytes or retained stale output: before=%v after=%v", before, after)
+							}
+							nextVersion := strings.TrimSuffix(version, "/v1") + "/v2"
+							testutil.WriteFile(t, root, "apps/raw.yaml", strings.Replace(rawBodies[remaining], version, nextVersion, 1))
+							versioned := renderRaw()
+							if len(versioned) != 1 || versioned[nextVersion] != strings.Replace(before[version], version, nextVersion, 1) {
+								t.Fatalf("version-only change split identity or changed content: before=%v after=%v", before, versioned)
+							}
+						})
+					}
 				}
 			})
 		}
@@ -116,7 +192,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 						if _, err := discovery.Run(t.Context(), discovery.Config{Path: root, RepoRoot: root, Store: st, WipeSecrets: true}); err != nil {
 							t.Fatal(err)
 						}
-						repos := st.ListAs[*manifest.HelmRepository](manifest.KindHelmRepository)
+						repos := st.ListAs[*manifest.HelmRepository](manifest.SourceDomain, manifest.KindHelmRepository)
 						if len(repos) != 1 || repos[0].Name != "demo" || repos[0].Namespace != namespaceOrphanSourceNamespace(scenario, "demo") {
 							t.Errorf("standalone source collection = %+v", repos)
 						}
@@ -199,7 +275,7 @@ func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 			if _, err := discovery.Run(t.Context(), discovery.Config{Path: root, RepoRoot: root, Store: st, WipeSecrets: true}); err != nil {
 				t.Fatal(err)
 			}
-			if releases := st.ListObjects(manifest.KindHelmRelease); len(releases) != 0 {
+			if releases := st.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease); len(releases) != 0 {
 				t.Fatalf("failed owner's raw releases admitted during discovery: %+v", releases)
 			}
 			flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", fmt.Sprint(concurrency), "--no-progress"}

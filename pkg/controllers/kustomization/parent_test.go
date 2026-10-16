@@ -20,7 +20,8 @@ import (
 // before rendering. See #102.
 func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 	parent := manifest.NamedResource{
-		Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps",
+		Group: manifest.FluxKustomizeDomain,
+		Kind:  manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps",
 	}
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 
@@ -49,8 +50,8 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 }
 
 func TestCollectDeps_SubstitutionProducers(t *testing.T) {
-	consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
-	producer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
+	consumer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+	producer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	for _, tc := range []struct {
 		name                    string

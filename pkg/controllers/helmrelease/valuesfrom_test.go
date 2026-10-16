@@ -57,7 +57,7 @@ data:
 				ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
 				Chart: manifest.HelmChart{
 					Name: "mychart", RepoName: "charts",
-					RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+					RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 				},
 			}
 			if tc.duplicate {
@@ -109,7 +109,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	s.AddObject(chart)
 	s.UpdateStatus(chart.Named(), store.StatusFailed, "chart unavailable")
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{
-		RepoKind: manifest.KindHelmChart, RepoName: chart.Name, RepoNamespace: chart.Namespace,
+		RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: chart.Name, RepoNamespace: chart.Namespace,
 	}}
 	s.AddObject(hr)
 	attempts := 0

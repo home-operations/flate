@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,7 +52,6 @@ func TestStore_AddObject_ContentDedup(t *testing.T) {
 					insert.add(s, changed)
 					assert.Equal(t, seen, 2)
 					assert.Equal(t, s.GetObject(obj.Named()), manifest.BaseManifest(changed))
-					assert.Equal(t, s.GetObjectByName(obj.Kind, obj.Namespace, obj.Name), manifest.BaseManifest(changed))
 				})
 			}
 		})
@@ -213,25 +213,30 @@ func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
 	s := New()
 	a := newCM("a", "ns")
-	b := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "b", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
-	idA := a.Named()
-	idB := b.Named()
-
-	var sawBOnA bool
-	var seen int
-	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		seen++
-		if id == idA {
-			sawBOnA = s.GetObject(idB) != nil
+	b := &manifest.RawObject{Kind: manifest.KindConfigMap, APIVersion: "example.test/v1", Name: "a", Namespace: "ns"}
+	c := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "b", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
+	idA, idB, idC := a.Named(), b.Named(), c.Named()
+	seen := map[manifest.NamedResource]int{}
+	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		seen[id]++
+		assert.Equal(t, payload.(manifest.BaseManifest).Named(), id)
+		assert.Equal(t, s.GetObject(idA), manifest.BaseManifest(a))
+		assert.Equal(t, s.GetObject(idC), manifest.BaseManifest(c))
+		if got := s.GetObject(idB); got == nil || got.Named() != idB {
+			t.Errorf("batch listener cannot see foreign sibling: %v", got)
 		}
 	}, false)
 
-	s.AddObjects([]manifest.BaseManifest{a, b})
-	s.AddObjects([]manifest.BaseManifest{newCM("a", "ns"), b.Clone()})
-	assert.Equal(t, seen, 2)
-	if !sawBOnA {
-		t.Fatal("listener for first object did not see later batch sibling")
-	}
+	s.AddObjects([]manifest.BaseManifest{a, b, c})
+	s.AddObjects([]manifest.BaseManifest{newCM("a", "ns"), b.Clone(), c.Clone()})
+	assert.Diff(t, seen, map[manifest.NamedResource]int{idA: 1, idB: 1, idC: 1})
+	newVersion := b.Clone()
+	newVersion.APIVersion = "example.test/v2"
+	assert.Equal(t, newVersion.Named(), idB)
+	s.AddObjects([]manifest.BaseManifest{newVersion})
+	assert.Equal(t, s.GetObject(idB), manifest.BaseManifest(newVersion))
+	assert.Equal(t, len(s.ListObjects("example.test", manifest.KindConfigMap)), 1)
+	assert.Diff(t, seen, map[manifest.NamedResource]int{idA: 1, idB: 2, idC: 1})
 }
 
 func TestStore_AddListener_Flush(t *testing.T) {
@@ -253,7 +258,7 @@ func TestStore_AddListener_Flush(t *testing.T) {
 // must never see the stale Ready left by an initial PreGate skip.
 func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "src"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "src"}
 	s.AddObject(&manifest.OCIRepository{Name: "src", Namespace: "flux-system"})
 	s.UpdateStatus(id, StatusReady, MsgUnchanged) // simulate PreGate skip
 
@@ -280,7 +285,7 @@ func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
 // refire ids that race a DeleteObject.
 func TestStore_Refire_NoopMissingID(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "nope"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "nope"}
 
 	fired := 0
 	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) { fired++ }, false)
@@ -293,7 +298,7 @@ func TestStore_Refire_NoopMissingID(t *testing.T) {
 
 func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
 
 	count := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
@@ -316,7 +321,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	// but listeners that need finer granularity (depwait's CEL path)
 	// re-query GetConditions to see the change.
 	s := New()
-	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
 	s.UpdateStatus(id, StatusPending, "starting")
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
@@ -331,7 +336,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 
 func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		statusEvents++
@@ -349,7 +354,7 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 
 func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) { statusEvents++ }, false)
 
@@ -376,26 +381,66 @@ func TestStore_FailedResources(t *testing.T) {
 	assert.Equal(t, len(s.FailedResources()), 0) // phantom entry must not leak
 }
 
-// PR125 switched ListObjects(kind) to a byName-index walk when kind is
-// non-empty. Verify it returns exactly the entries for that kind, that
-// the empty-kind path still walks everything, and that DeleteObject
-// keeps the secondary index consistent.
 func TestStore_ListObjects_ByKindIndex(t *testing.T) {
-	s := New()
-	s.AddObject(newCM("a", "ns1"))
-	s.AddObject(newCM("b", "ns2"))
-	s.AddObject(&manifest.Secret{Name: "s", Namespace: "ns1"})
-
-	assert.Equal(t, len(s.ListObjects(manifest.KindConfigMap)), 2)
-	assert.Equal(t, len(s.ListObjects(manifest.KindSecret)), 1)
-	assert.Equal(t, len(s.ListObjects("")), 3) // empty kind walks all
-	s.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns1", Name: "a"})
-	assert.Equal(t, len(s.ListObjects(manifest.KindConfigMap)), 1) // index stays consistent
+	for _, core := range []bool{false, true} {
+		for _, insertForeignFirst := range []bool{false, true} {
+			for _, withdrawForeignFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("core=%t/insertForeignFirst=%t/withdrawForeignFirst=%t", core, insertForeignFirst, withdrawForeignFirst), func(t *testing.T) {
+					s := New()
+					var typed manifest.BaseManifest = &manifest.Kustomization{Name: "a", Namespace: "ns1"}
+					if core {
+						typed = newCM("a", "ns1")
+					}
+					id := typed.Named()
+					foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}
+					pair := []manifest.BaseManifest{typed, foreign}
+					if insertForeignFirst {
+						pair[0], pair[1] = pair[1], pair[0]
+					}
+					s.AddObjects(pair)
+					other := &manifest.Secret{Name: "s", Namespace: "ns1"}
+					s.AddObject(other)
+					for _, tt := range []struct {
+						name, group, kind string
+						want              []manifest.BaseManifest
+					}{
+						{"real", id.Group, id.Kind, []manifest.BaseManifest{typed}},
+						{"foreign", "example.test", id.Kind, []manifest.BaseManifest{foreign}},
+						{"other kind", "", manifest.KindSecret, []manifest.BaseManifest{other}},
+						{"group without kind", "example.test", "", []manifest.BaseManifest{}},
+					} {
+						t.Run(tt.name, func(t *testing.T) {
+							assert.Diff(t, s.ListObjects(tt.group, tt.kind), tt.want)
+						})
+					}
+					inventory := []manifest.BaseManifest{typed, foreign, other}
+					slices.SortFunc(inventory, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
+					assert.Diff(t, s.ListObjects("", ""), inventory)
+					pair = []manifest.BaseManifest{typed, foreign}
+					if withdrawForeignFirst {
+						pair[0], pair[1] = pair[1], pair[0]
+					}
+					for i, obj := range pair {
+						assert.Equal(t, s.GetObject(obj.Named()), obj)
+						assert.Equal(t, s.DeleteObject(obj.Named()), true)
+						assert.Equal(t, s.GetObject(obj.Named()), nil)
+						assert.Equal(t, len(s.ListObjects(obj.Named().Group, id.Kind)), 0)
+						if i == 0 {
+							remaining := pair[1]
+							assert.Equal(t, s.GetObject(remaining.Named()), remaining)
+							assert.Diff(t, s.ListObjects(remaining.Named().Group, id.Kind), []manifest.BaseManifest{remaining})
+						}
+					}
+					assert.Diff(t, s.ListObjects("", ""), []manifest.BaseManifest{other})
+				})
+			}
+		}
+	}
 }
 
 // TestStore_ListObjects_DeterministicOrder pins the sort contract:
 // two ListObjects calls with concurrent concurrent adds must return
-// objects in the same (Kind, Namespace, Name) order. Without the
+// objects in the same (Kind, Group, Namespace, Name) order. Without the
 // sort, Go map iteration is randomized and ownership tie-breaking in
 // change/ownership.go can attribute the same file to different KS
 // owners on different runs.
@@ -414,8 +459,8 @@ func TestStore_ListObjects_DeterministicOrder(t *testing.T) {
 		s.AddObject(obj)
 	}
 
-	first := s.ListObjects(manifest.KindConfigMap)
-	second := s.ListObjects(manifest.KindConfigMap)
+	first := s.ListObjects("", manifest.KindConfigMap)
+	second := s.ListObjects("", manifest.KindConfigMap)
 
 	if len(first) != len(second) {
 		t.Fatalf("lengths differ: %d vs %d", len(first), len(second))
@@ -450,7 +495,7 @@ func TestStore_AddListener_Unsubscribe(t *testing.T) {
 
 func TestStore_SetArtifact(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: "GitRepository", Name: "r"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: "GitRepository", Name: "r"}
 	art := &SourceArtifact{Kind: "GitRepository", URL: "https://example", LocalPath: "/tmp/x"}
 
 	count := 0
@@ -473,7 +518,7 @@ func TestStore_SetArtifact(t *testing.T) {
 // this in production.
 func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	makeArt := func() *KustomizationArtifact {
 		return &KustomizationArtifact{
 			Path: "./apps",
@@ -506,7 +551,7 @@ func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 // aliased pointers) to ~17 ns (the map lookup alone).
 func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "r"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "r"}
 	art := &SourceArtifact{Kind: "GitRepository", URL: "https://example", LocalPath: "/tmp/x"}
 
 	events := 0
@@ -523,7 +568,7 @@ func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
 // re-set with DIFFERENT content fires an event.
 func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
@@ -587,7 +632,7 @@ func TestStore_Concurrency(_ *testing.T) {
 	})
 	wg.Go(func() {
 		for range N {
-			_ = s.ListObjects("ConfigMap")
+			_ = s.ListObjects("", "ConfigMap")
 		}
 	})
 	wg.Wait()
@@ -851,54 +896,94 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	}
 }
 
-// TestStore_ShardedConcurrentDifferentKinds hammers two distinct Kinds
-// (Kustomization, HelmRelease) from many goroutines concurrently and
-// asserts the operations complete cleanly under -race. The KS and HR
-// Kinds hash to different shards (verified manually: KS→14, HR→10), so
-// the workload exercises the cross-Kind parallelism that justifies the
-// shard refactor — under the old single-mutex design these goroutines
-// would all serialize on the single global lock. The bug bar here is correctness, not
-// timing: -race surfaces any shard-locking mistake (cross-shard
-// dangling reads, missed unlock paths, deadlocks) as a data race or
-// hang within the 30s test budget.
 func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
-	s := New()
-	const N = 50
-	const workers = 8
-	var wg sync.WaitGroup
-
-	// 4 goroutines on Kustomizations, 4 on HelmReleases.
-	for w := range workers {
-		wg.Go(func() {
-			isKS := w%2 == 0
-			for i := range N {
-				if isKS {
-					ks := &manifest.Kustomization{Name: fmt.Sprintf("ks-%d-%d", w, i), Namespace: "ns"}
-					s.AddObject(ks)
-					s.UpdateStatus(ks.Named(), StatusReady, "ok")
-					_ = s.GetObject(ks.Named())
-				} else {
-					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-%d-%d", w, i), Namespace: "ns"}
-					s.AddObject(hr)
-					s.UpdateStatus(hr.Named(), StatusReady, "ok")
-					_ = s.GetObject(hr.Named())
-				}
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			s := New()
+			arrived, release := make(chan struct{}, workers), make(chan struct{})
+			var events [numEventKinds + 1]sync.Map
+			for kind := EventObjectAdded; int(kind) <= numEventKinds; kind++ {
+				s.AddListener(kind, func(id manifest.NamedResource, _ any) {
+					count, _ := events[kind].LoadOrStore(id, new(atomic.Int64))
+					count.(*atomic.Int64).Add(1)
+					if kind == EventObjectAdded && strings.HasSuffix(id.Name, "-0") && id.Group != "example.test" {
+						arrived <- struct{}{}
+						<-release
+					}
+				}, false)
 			}
+			var wg sync.WaitGroup
+			for w := range workers {
+				wg.Go(func() {
+					for i := range 20 {
+						name := fmt.Sprintf("%d-%d", w, i)
+						var typed manifest.BaseManifest = &manifest.Kustomization{Name: name, Namespace: "ns"}
+						if w%2 != 0 {
+							typed = &manifest.HelmRelease{Name: name, Namespace: "ns"}
+						}
+						foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: typed.Named().Kind, Namespace: "ns", Name: name}
+						objects := [2]manifest.BaseManifest{typed, foreign}
+						if i%2 != 0 {
+							objects[0], objects[1] = objects[1], objects[0]
+						}
+						for _, obj := range objects {
+							id := obj.Named()
+							parent := id
+							parent.Name = "parent"
+							s.RecordEmitted(parent, []manifest.NamedResource{id})
+							s.AddObject(obj)
+							s.UpdateStatus(id, StatusReady, id.Group)
+							s.SetArtifact(id, &SourceArtifact{URL: id.Group})
+						}
+						for _, obj := range objects {
+							id := obj.Named()
+							assert.Equal(t, s.GetObject(id), obj)
+							status, ok := s.GetStatus(id)
+							assert.Equal(t, ok, true)
+							assert.Equal(t, status.Status, StatusReady)
+							assert.Equal(t, status.Message, id.Group)
+							assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
+							parent, ok := s.EmittedParent(id)
+							assert.Equal(t, ok, true)
+							assert.Equal(t, parent.Group, id.Group)
+							for kind := EventObjectAdded; int(kind) <= numEventKinds; kind++ {
+								count, ok := events[kind].Load(id)
+								if !ok || count.(*atomic.Int64).Load() != 1 {
+									t.Errorf("event %v for %v = %v", kind, id, count)
+								}
+							}
+						}
+						if i%4 >= 2 {
+							objects[0], objects[1] = objects[1], objects[0]
+						}
+						removed := objects[0].Named()
+						assert.Equal(t, s.DeleteObject(removed), true)
+						assert.Equal(t, s.GetObject(removed), nil)
+						assert.Equal(t, len(s.GetConditions(removed)), 0)
+						assert.Equal(t, s.GetArtifact(removed), nil)
+						id := objects[1].Named()
+						assert.Equal(t, s.GetObject(id), objects[1])
+						status, ok := s.GetStatus(id)
+						assert.Equal(t, ok, true)
+						assert.Equal(t, status.Message, id.Group)
+						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
+						assert.Diff(t, s.GetConditions(id), []Condition{readyCondition(StatusReady, id.Group)})
+						assert.Equal(t, s.DeleteObject(id), true)
+					}
+				})
+			}
+			for range workers {
+				<-arrived
+			}
+			close(release)
+			wg.Wait()
+			assert.Equal(t, len(s.ListObjects("", "")), 0)
 		})
-	}
-	wg.Wait()
-
-	// Sanity: every object landed.
-	if got := len(s.ListObjects(manifest.KindKustomization)); got != N*(workers/2) {
-		t.Errorf("expected %d KSes, got %d", N*(workers/2), got)
-	}
-	if got := len(s.ListObjects(manifest.KindHelmRelease)); got != N*(workers/2) {
-		t.Errorf("expected %d HRs, got %d", N*(workers/2), got)
 	}
 }
 
 // TestStore_CrossKindOperationDoesntDeadlock pounds the cross-shard
-// paths (ListObjects(""), FailedResources, AddListener(replay=true))
+// paths (ListObjects("", ""), FailedResources, AddListener(replay=true))
 // from many goroutines while per-shard writers churn through different
 // Kinds. The canonical-order lockAll/rLockAll rule prevents two
 // cross-shard operations from deadlocking by taking shards in opposing
@@ -924,7 +1009,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 			for i := range ops {
 				switch (w + i) % 5 {
 				case 0:
-					_ = s.ListObjects("")
+					_ = s.ListObjects("", "")
 				case 1:
 					_ = s.FailedResources()
 				case 2:

@@ -47,6 +47,7 @@ func BenchmarkTemplate_AppTemplateChart(b *testing.B) {
 			Name:          "mychart",
 			RepoName:      "chart-repo",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}
@@ -82,6 +83,7 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 			Name:          "mychart",
 			RepoName:      "chart-repo",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}
@@ -166,6 +168,7 @@ func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 			Name:          "mychart",
 			RepoName:      "chart-repo",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}
@@ -208,6 +211,7 @@ func BenchmarkLoadChart_Cached(b *testing.B) {
 			Name:          "mychart",
 			RepoName:      "chart-repo",
 			RepoNamespace: "flux-system",
+			RepoGroup:     manifest.SourceDomain,
 			RepoKind:      manifest.KindGitRepository,
 		},
 	}

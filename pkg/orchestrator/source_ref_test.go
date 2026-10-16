@@ -69,7 +69,7 @@ func TestRun_DefaultGitCache(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"first", "second"} {
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 				artifact, ok := o.Store().GetArtifact(id).(*store.KustomizationArtifact)
 				if !ok || len(artifact.Manifests) != 1 {
 					t.Fatalf("remote render %s = %v", name, artifact)
@@ -148,7 +148,7 @@ spec:
 					t.Fatalf("injected owner created independent cache backing: entries=%v err=%v", entries, err)
 				}
 			}
-			id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			artifact := o.Store().GetArtifact(id).(*store.SourceArtifact)
 			if artifact.FS == nil || artifact.Key == "" {
 				t.Fatalf("selected cache %s did not reach discovery: %+v", selectedRoot, artifact)

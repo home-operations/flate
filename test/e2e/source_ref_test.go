@@ -78,8 +78,8 @@ spec:
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			root, st, res := fixture(t, path.field)
-			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}
-			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
+			parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}
+			child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 			record, _ := res.Index.Lookup(child)
 			if st.GetObject(child) == nil || record.Parent != parent {
 				t.Fatalf("source-root child not discovered or owned by root: parent=%v", record.Parent)
@@ -172,9 +172,9 @@ spec: {interval: 1m, prune: true}
 				}
 			}
 			assert.Diff(t, seen, map[manifest.NamedResource]bool{
-				{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}: true,
-				{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "tmpl"}: true,
-				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "apps-cm"}:         true,
+				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}: true,
+				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "tmpl"}: true,
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "apps-cm"}:                                               true,
 			})
 		})
 	}
@@ -281,7 +281,7 @@ spec:
 							}
 							out, stderr, code := runCLIBuffers(args...)
 							if tt.sourceURL != "" {
-								wantCode, wantReason := 0, "external source GitRepository/flux-system/pinned is outside the local tree; not rendered"
+								wantCode, wantReason := 0, "external source GitRepository.source.toolkit.fluxcd.io/flux-system/pinned is outside the local tree; not rendered"
 								if command == "build" {
 									wantCode, wantReason = 1, "repository not found"
 								}
@@ -322,7 +322,7 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			artifact, ok := st.GetArtifact(manifest.NamedResource{
+			artifact, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 				Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "pinned",
 			}).(*store.SourceArtifact)
 			if !ok || artifact.LocalPath == root {
@@ -576,7 +576,7 @@ spec:
 				Path: filepath.Join(root, "flux"), Store: st,
 			})
 			for _, namespace := range []string{"alpha", "beta"} {
-				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{
+				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
 					Kind: manifest.KindKustomization, Namespace: namespace, Name: "apps",
 				})
 				if !ok || ks.SourceRef.Namespace != "" || ks.Path != "./broken" {
@@ -588,7 +588,7 @@ spec:
 					}
 				}
 			}
-			art, ok := st.GetArtifact(manifest.NamedResource{
+			art, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 				Kind: manifest.KindGitRepository, Namespace: "alpha", Name: "cluster",
 			}).(*store.SourceArtifact)
 			if !ok || art.LocalRoot != root || art.LocalPath == root || art.Key == "" || art.FS == nil {
@@ -599,7 +599,7 @@ spec:
 				t.Fatalf("alpha lost committed bytes: %q, %v", pinned, err)
 			}
 			if tt.workingTree {
-				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{
+				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 					Kind: manifest.KindGitRepository, Namespace: "beta", Name: "cluster",
 				}).(*store.SourceArtifact)
 				if !ok || betaArtifact.LocalRoot != root || betaArtifact.LocalPath == root || betaArtifact.LocalPath == art.LocalPath || betaArtifact.Key != "" || betaArtifact.FS == nil {
@@ -810,7 +810,7 @@ spec:
 			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
 			})
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "shifted", Name: "a-held"}
+			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "shifted", Name: "a-held"}
 			ks, ok := st.Get[*manifest.Kustomization](id)
 			if !ok || ks.Path != "./held" || ks.SourceRef.Name != "unknown" {
 				t.Fatalf("expected surviving consumer with inherited namespace and unchanged path/source, got %+v", ks)
@@ -997,7 +997,7 @@ spec:
 				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"], manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree diagnostic, got %v", err)
 				}
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}
 				ks, ok := st.Get[*manifest.Kustomization](id)
 				if !ok || ks.Path != tt.survivorPath || ks.SourceRef.Name != tt.survivorSource || ks.SourceRef.Namespace != "" {
 					t.Fatalf("expected survivor with independently changed identity field, got %+v", ks)
@@ -1262,17 +1262,22 @@ data:
 		t.Fatalf("local pin accessed transport %d times", loader.calls.Load())
 	}
 	var docs []struct {
-		Kind     string
-		Metadata struct{ Name, Namespace string }
-		Data     map[string]string
-		Spec     struct{ Values map[string]string }
+		APIVersion string
+		Kind       string
+		Metadata   struct{ Name, Namespace string }
+		Data       map[string]string
+		Spec       struct{ Values map[string]string }
 	}
 	if err := json.Unmarshal([]byte(out), &docs); err != nil {
 		t.Fatal(err)
 	}
 	ids := make(map[manifest.NamedResource]int)
 	for _, doc := range docs {
-		ids[manifest.NamedResource{Kind: doc.Kind, Namespace: doc.Metadata.Namespace, Name: doc.Metadata.Name}]++
+		group, _, hasGroup := strings.Cut(doc.APIVersion, "/")
+		if !hasGroup {
+			group = ""
+		}
+		ids[manifest.NamedResource{Group: group, Kind: doc.Kind, Namespace: doc.Metadata.Namespace, Name: doc.Metadata.Name}]++
 		if doc.Kind == manifest.KindHelmRelease && doc.Spec.Values["greeting"] != "pinned" ||
 			doc.Kind == manifest.KindConfigMap && doc.Metadata.Name == "existing-cm" && doc.Data["greeting"] != "pinned" ||
 			doc.Metadata.Name == "hello" && doc.Data["value"] != "v1.0.0" {
@@ -1280,9 +1285,9 @@ data:
 		}
 	}
 	want := map[manifest.NamedResource]int{
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:       1,
-		{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "existing"}:  1,
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}: 1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:                                       1,
+		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "existing"}: 1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}:                                 1,
 	}
 	if diff := cmp.Diff(want, ids); diff != "" {
 		t.Fatalf("pinned object ids (-want +got):\n%s\n%s", diff, out)

@@ -81,11 +81,11 @@ func (d *discoverer) aliasMissingKustomizationSources(ctx context.Context, repoR
 	// the new id so repeated sourceRefs across KSes are skipped without
 	// a second map.
 	existing := make(map[manifest.NamedResource]struct{})
-	for _, obj := range d.cfg.Store.ListObjects(manifest.KindGitRepository) {
+	for _, obj := range d.cfg.Store.ListObjects(manifest.SourceDomain, manifest.KindGitRepository) {
 		existing[obj.Named()] = struct{}{}
 	}
 	var aliased []manifest.NamedResource
-	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 		id := ks.SourceID()
 		if _, ok := existing[id]; ok {
 			continue
@@ -124,7 +124,7 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(ctx context.Context,
 		return nil, nil
 	}
 	var overridden []manifest.NamedResource
-	repositories := d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository)
+	repositories := d.cfg.Store.ListAs[*manifest.GitRepository](manifest.SourceDomain, manifest.KindGitRepository)
 	var pinned []*manifest.GitRepository
 	for _, repo := range repositories {
 		if d.resolvedSources[repo.Named()] == repo {
@@ -243,7 +243,7 @@ func (d *discoverer) publishBootstrapAlias(ctx context.Context, id manifest.Name
 // returned separately so callers can stamp it onto the SourceArtifact
 // without re-reading the manifest.
 func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.BaseManifest, string, bool) {
-	if id.Kind != manifest.KindGitRepository || id.Namespace == "" {
+	if id.Group != manifest.SourceDomain || id.Kind != manifest.KindGitRepository || id.Namespace == "" {
 		return nil, "", false
 	}
 	url := "file://" + repoRoot

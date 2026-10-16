@@ -5,11 +5,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func hrID(name string) manifest.NamedResource {
-	return manifest.NamedResource{Kind: "HelmRelease", Namespace: "default", Name: name}
+	return manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: name}
 }
 
 // TestWarnings_Empty: a fresh store reports nil (not empty slice) — matching
@@ -21,28 +22,35 @@ func TestWarnings_Empty(t *testing.T) {
 }
 
 // TestAddWarning_DedupAndCount: identical advisories collapse and accumulate a
-// Count; a differing field (detail here) is a distinct entry.
+// Count; a differing resource or detail is a distinct entry.
 func TestAddWarning_DedupAndCount(t *testing.T) {
 	s := New()
 	w := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues,
 		Message: "values not defined by the chart schema", Detail: []string{"a", "b"}}
 	s.AddWarning(w)
-	s.AddWarning(w) // identical → Count bump
-	s.AddWarning(manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues,
-		Message: "values not defined by the chart schema", Detail: []string{"c"}}) // distinct detail
+	s.AddWarning(w)
+	detail := w
+	detail.Detail = []string{"c"}
+	s.AddWarning(detail)
+	foreign := w
+	foreign.Resource.Group = "example.test"
+	s.AddWarning(foreign)
+	core := w
+	core.Resource.Kind += "." + core.Resource.Group
+	core.Resource.Group = ""
+	assert.Equal(t, core.Resource.String(), w.Resource.String())
+	s.AddWarning(core)
 
 	got := s.Warnings()
-	if len(got) != 2 {
-		t.Fatalf("want 2 distinct warnings, got %d: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("want 4 distinct warnings, got %d: %+v", len(got), got)
 	}
-	var first manifest.Warning
-	for _, w := range got {
-		if slices.Equal(w.Detail, []string{"a", "b"}) {
-			first = w
+	for _, warning := range got {
+		want := 1
+		if warning.Resource == w.Resource && slices.Equal(warning.Detail, w.Detail) {
+			want = 2
 		}
-	}
-	if first.Count != 2 {
-		t.Errorf("identical warning Count = %d, want 2", first.Count)
+		assert.Equal(t, warning.Count, want)
 	}
 }
 

@@ -29,13 +29,13 @@ type rsRawSink struct {
 type rsRawEntry struct {
 	owner    manifest.NamedResource // the ResourceSet that emitted doc
 	parentKS manifest.NamedResource // doc's grouping parent
-	key      string                 // resourceset.DedupKey(doc)
+	key      manifest.NamedResource // resourceset.DedupKey(doc)
 	doc      map[string]any
 }
 
 // Record appends one RawObject child. owner is the emitting RS, key its
 // DedupKey; both feed the deterministic commit-time dedup.
-func (s *rsRawSink) Record(owner, parentKS manifest.NamedResource, key string, doc map[string]any) {
+func (s *rsRawSink) Record(owner, parentKS manifest.NamedResource, key manifest.NamedResource, doc map[string]any) {
 	s.mu.Lock()
 	s.entries = append(s.entries, rsRawEntry{owner: owner, parentKS: parentKS, key: key, doc: doc})
 	s.mu.Unlock()
@@ -54,13 +54,13 @@ func (s *rsRawSink) commit() map[manifest.NamedResource][]map[string]any {
 		return cmp.Or(
 			a.owner.Compare(b.owner),
 			a.parentKS.Compare(b.parentKS),
-			cmp.Compare(a.key, b.key),
+			a.key.Compare(b.key),
 		)
 	})
-	seen := map[string]struct{}{}
+	seen := map[manifest.NamedResource]struct{}{}
 	out := map[manifest.NamedResource][]map[string]any{}
 	for _, e := range ordered {
-		if e.key == "" {
+		if e.key == (manifest.NamedResource{}) {
 			continue
 		}
 		if _, dup := seen[e.key]; dup {

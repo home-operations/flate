@@ -41,7 +41,7 @@ type GitRepository struct {
 
 // Named identifies the GitRepository.
 func (g *GitRepository) Named() NamedResource {
-	return NamedResource{Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
+	return NamedResource{Group: kindTable[kindGitRepository].Group, Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -120,7 +120,7 @@ type OCILayerSelector = sourcev1.OCILayerSelector
 
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
-	return NamedResource{Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
+	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -192,7 +192,7 @@ type ExternalArtifact struct {
 
 // Named identifies the ExternalArtifact.
 func (e *ExternalArtifact) Named() NamedResource {
-	return NamedResource{Kind: KindExternalArtifact, Namespace: e.Namespace, Name: e.Name}
+	return NamedResource{Group: kindTable[kindExternalArtifact].Group, Kind: KindExternalArtifact, Namespace: e.Namespace, Name: e.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.

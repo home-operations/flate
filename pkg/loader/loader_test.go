@@ -3,8 +3,10 @@ package loader
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -21,7 +23,7 @@ import (
 func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.T) {
 	root, artifactDir := t.TempDir(), t.TempDir()
 	s := store.New()
-	sourceID := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+	sourceID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 	s.AddObject(&manifest.Kustomization{
 		Name: "pinned", Namespace: "flux-system", TargetNamespace: "apps", Path: "./apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: sourceID.Kind, Name: sourceID.Name, Namespace: sourceID.Namespace},
@@ -37,7 +39,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	l.documents.read(filepath.Join(root, "apps"))
 	l.documents.read(filepath.Join(artifactDir, "apps"))
 	l.FinalizeIndex(root, nil)
-	objects := s.ListAs[*manifest.ConfigMap](manifest.KindConfigMap)
+	objects := s.ListAs[*manifest.ConfigMap]("", manifest.KindConfigMap)
 	if len(objects) != 1 || objects[0].Name != "pinned" || objects[0].Namespace != "apps" || objects[0].Data["value"] != "pinned" {
 		t.Fatalf("expected only the artifact generator: %+v", objects)
 	}
@@ -123,7 +125,7 @@ spec:
 				name string
 				want bool
 			}{{"echo", true}, {"tunnel", tc.listed}} {
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "network", Name: child.name}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "network", Name: child.name}
 				if got := st.GetObject(id) != nil; got != child.want {
 					t.Errorf("Store admission for %s = %v, want %v", child.name, got, child.want)
 				}
@@ -180,10 +182,10 @@ spec:
 		t.Fatalf("Load: %v", err)
 	}
 
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "entry"}) == nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "entry"}) == nil {
 		t.Errorf("real bootstrap-entry KS (has spec.path) must surface")
 	}
-	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "", Name: "patch"}); got != nil {
+	if got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "", Name: "patch"}); got != nil {
 		t.Errorf("path-less/source-less patch-fragment Kustomization must NOT be surfaced; got %v", got)
 	}
 }
@@ -220,7 +222,7 @@ data:
 	if n != 1 || len(l.Index.Records) != 2 {
 		t.Errorf("admitted %d objects with %d records, want 1 and 2", n, len(l.Index.Records))
 	}
-	if got := len(s.ListObjects(manifest.KindKustomization)); got != 1 {
+	if got := len(s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 1 {
 		t.Errorf("expected 1 Kustomization, got %d", got)
 	}
 }
@@ -257,7 +259,7 @@ spec:
 	if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "crds"}) == nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "crds"}) == nil {
 		t.Fatal("escaping dir resource not followed: Kustomization flux-system/crds missing from store")
 	}
 }
@@ -286,7 +288,7 @@ spec:
 	if _, err := loaderFixture(s, nil).Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "escaped"}) != nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "escaped"}) != nil {
 		t.Fatal("escaping FILE resource was loaded; the opened-path escape guard regressed")
 	}
 }
@@ -329,10 +331,10 @@ spec: {path: ./visible, sourceRef: {kind: GitRepository, name: flux-system}}
 			if _, err := New(s).Load(t.Context(), dir); err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "hidden"}) != nil {
+			if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "hidden"}) != nil {
 				t.Error("dot-directory manifest was loaded")
 			}
-			if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "visible"}) == nil {
+			if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "visible"}) == nil {
 				t.Error("root manifest was skipped")
 			}
 		})
@@ -369,7 +371,7 @@ metadata: {name: real, namespace: ns}
 	if n != 0 || len(l.Index.Records) != 1 {
 		t.Errorf("admitted %d objects with records %v, want only the real ConfigMap indexed", n, l.Index.Records)
 	}
-	if got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-db"}); got != nil {
+	if got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-db"}); got != nil {
 		t.Errorf("Component-subtree resource should not be loaded; got %v", got)
 	}
 }
@@ -390,7 +392,7 @@ spec:
 	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"})
+	got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"})
 	if got != nil {
 		t.Errorf("Component subtree leaked a templated KS: %v", got)
 	}
@@ -425,7 +427,7 @@ spec:
 	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	got := s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "addons"})
+	got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "addons"})
 	if got == nil {
 		t.Error("foreign 'kind: Component' (non-kustomize apiVersion) silently skipped sibling KS — Component gate fired without apiVersion check")
 	}
@@ -476,7 +478,7 @@ spec:
 	if n != 0 || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
 		t.Errorf("generator scan: admitted=%d records=%v errors=%v", n, l.Index.Records, l.Index.Errors)
 	}
-	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}); !ok {
+	if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}); !ok {
 		t.Errorf("HelmRelease should still be indexed")
 	}
 }
@@ -672,16 +674,16 @@ spec:
 		t.Fatalf("Load: %v", err)
 	}
 	// Valheim (claimed) MUST be present.
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
 		t.Error("claimed Kustomization 'valheim' missing")
 	}
 	// Atuin (commented out) MUST be absent.
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "atuin"}) != nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "atuin"}) != nil {
 		t.Error("orphan Kustomization 'atuin' should be skipped (#346 deep-orphan)")
 	}
 	// Atuin's deep HR MUST also be absent — its only kustomize-graph
 	// connection is via the orphan wrapper.
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "atuin"}) != nil {
+	if s.GetObject(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "atuin"}) != nil {
 		t.Error("HelmRelease only reachable via orphan wrapper should be skipped")
 	}
 	// Valheim's HR should NOT load via the initial graph walk either
@@ -691,7 +693,7 @@ spec:
 	// loadAt(valheim/app/) which becomes a fresh entry-point.
 	// (This test stops before that step, so the HR is absent here —
 	// which is the correct flux-local behavior.)
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "valheim"}) != nil {
+	if s.GetObject(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "valheim"}) != nil {
 		t.Error("HelmRelease in unreachable subtree leaked into initial walk")
 	}
 }
@@ -749,11 +751,11 @@ spec:
 	// is left empty by the parser (the YAML has no
 	// metadata.namespace); the parent kustomization.yaml's
 	// `namespace:` overlay would fill it at render time.
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
 		t.Error("referenced Kustomization 'valheim' missing from store")
 	}
 	// vrising is NOT referenced — must be skipped as orphan.
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Name: "vrising"}) != nil {
+	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "vrising"}) != nil {
 		t.Error("orphan Kustomization 'vrising' should not be loaded (issue #342)")
 	}
 }
@@ -805,7 +807,7 @@ spec:
 	// envsubst guard even if walkComponentData tried to publish it,
 	// but this assertion pins the "Component CRs stay hidden" contract
 	// at the boundary the caller cares about: the Store.
-	leakID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"}
+	leakID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"}
 	if s.GetObject(leakID) != nil {
 		t.Errorf("templated Flux CR inside a Component must NOT leak into the Store")
 	}
@@ -822,9 +824,9 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
-	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
+	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
 	assert.Equal(t, s.GetObject(hrID), manifest.BaseManifest(nil))
-	assert.Diff(t, l.Index.Records[hrID].Refs, []manifest.NamedResource{{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}})
+	assert.Diff(t, l.Index.Records[hrID].Refs, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}})
 	assert.Equal(t, len(l.documents.cache[path].objects), 1)
 	ksPath := filepath.Join(dir, "ks.yaml")
 	testutil.WriteFile(t, dir, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app, namespace: apps}\nspec: {path: ./apps}\n")
@@ -843,7 +845,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps", SourceRef: sourcev1.LocalHelmChartSourceReference{Name: "source"}}
 	l.recordObject(chart, filepath.Join(dir, "chart.yaml"))
-	assert.Diff(t, l.Index.Records[chart.Named()].Refs, []manifest.NamedResource{{Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "source"}})
+	assert.Diff(t, l.Index.Records[chart.Named()].Refs, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "source"}})
 	for _, source := range []kustomizev1.CrossNamespaceSourceReference{{Kind: manifest.KindGitRepository}, {Name: "source"}, {}} {
 		ks := &manifest.Kustomization{Name: "incomplete", Namespace: "apps", SourceRef: source}
 		l.recordObject(ks, ksPath)
@@ -986,7 +988,7 @@ spec:
 		t.Fatalf("Load: %v", err)
 	}
 
-	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "flux-entry-repos"}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "flux-entry-repos"}
 	if s.GetObject(ksID) == nil {
 		t.Errorf("bootstrap-sibling Flux KS must reach the Store during discovery")
 	}
@@ -994,7 +996,7 @@ spec:
 		t.Errorf("SourceFiles[KS] = %q; want %q", got, want)
 	}
 
-	hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "stray"}
+	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "stray"}
 	if s.GetObject(hrID) != nil {
 		t.Errorf("sibling HR must NOT be picked up by the bootstrap scan (scope is Flux KS only)")
 	}
@@ -1032,7 +1034,7 @@ spec:
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := len(s.ListObjects(manifest.KindKustomization)); got != 1 {
+	if got := len(s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 1 {
 		t.Errorf("expected exactly 1 Kustomization (no double-load), got %d", got)
 	}
 }
@@ -1067,7 +1069,7 @@ spec:
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := len(s.ListObjects(manifest.KindKustomization)); got != 0 {
+	if got := len(s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 0 {
 		t.Errorf("ignored bootstrap-sibling KS must NOT load, got %d in Store", got)
 	}
 }
@@ -1104,44 +1106,59 @@ spec:
 brokenPointer: [ unclosed
 `
 	cases := []struct {
-		name  string
-		files map[string]string
+		name, body string
+		tolerated  bool
 	}{
-		{
-			name: "kustomize graph",
-			files: map[string]string{
-				"kustomization.yaml": "resources:\n  - blackbox-exporter.yaml\n",
-			},
-		},
-		{
-			name:  "ad-hoc walk",
-			files: map[string]string{},
-		},
+		{name: "invalid YAML", body: broken},
+		{name: "missing required version", body: "dependsOn: [{kind: Kustomization, name: target}]"},
+		{name: "slash", body: "dependsOn: [{apiVersion: '/', kind: Kustomization, name: target}]"},
+		{name: "empty version", body: "dependsOn: [{apiVersion: 'example.test/', kind: Kustomization, name: target}]"},
+		{name: "multi slash", body: "dependsOn: [{apiVersion: 'example.test/v1/extra', kind: Kustomization, name: target}]"},
+		{name: "optional empty version", body: "inputsFrom: [{apiVersion: '', name: target}]"},
+		{name: "optional multi slash", body: "inputsFrom: [{apiVersion: 'example.test/v1/extra', name: target}]"},
+		{name: "typed empty version", body: "apiVersion: helm.toolkit.fluxcd.io/\nkind: HelmRelease\nmetadata: {name: invalid}\n"},
+		{name: "raw empty version", body: "apiVersion: example.test/\nkind: Foreign\nmetadata: {name: invalid}\n"},
+		{name: "raw parse error", body: "apiVersion: example.test/v1/extra\nkind: Foreign\nmetadata: {name: invalid}\n"},
+		{name: "unrelated configuration", body: "kind: Configuration\nsettings: {enabled: true}\n", tolerated: true},
+		{name: "unrelated HelmRelease", body: "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: invalid}\nspec: {chart: {spec: {}}}\n", tolerated: true},
+		{name: "unrelated ResourceSet", body: "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {}\nspec: {}\n", tolerated: true},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "app")
-			testutil.WriteFile(t, dir, "blackbox-exporter.yaml", broken)
-			for name, body := range tc.files {
-				testutil.WriteFile(t, dir, name, body)
-			}
-			l := New(store.New())
-			l.SourceRoot = filepath.Dir(dir)
-			if _, err := l.Load(t.Context(), dir); err != nil {
-				t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
-			}
-			if err := l.Index.Errors["app/blackbox-exporter.yaml"]; !errors.Is(err, manifest.ErrInput) {
-				t.Fatalf("deferred decode error = %v, want manifest.ErrInput", err)
-			}
-			first := l.Index.Errors["app/blackbox-exporter.yaml"]
-			parent := filepath.Dir(dir)
-			if _, err := l.Load(t.Context(), parent); err != nil {
-				t.Fatal(err)
-			}
-			if got := l.Index.Errors["app/blackbox-exporter.yaml"]; got != first {
-				t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
-			}
-		})
+		for _, graph := range []bool{false, true} {
+			t.Run(tc.name+"/graph="+fmt.Sprint(graph), func(t *testing.T) {
+				dir := filepath.Join(t.TempDir(), "app")
+				body := tc.body
+				if strings.HasPrefix(body, "dependsOn:") || strings.HasPrefix(body, "inputsFrom:") {
+					body = "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid}\nspec:\n  " + body + "\n"
+				}
+				if tc.tolerated {
+					body += "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: healthy}\n"
+				}
+				testutil.WriteFile(t, dir, "blackbox-exporter.yaml", body)
+				if graph {
+					testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [blackbox-exporter.yaml]\n")
+				}
+				l := New(store.New())
+				l.SourceRoot = filepath.Dir(dir)
+				if _, err := l.Load(t.Context(), dir); err != nil {
+					t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
+				}
+				first := l.Index.Errors["app/blackbox-exporter.yaml"]
+				if tc.tolerated {
+					if _, indexed := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "healthy"}); first != nil || !indexed {
+						t.Fatalf("unrelated document poisoned its healthy sibling: error=%v", first)
+					}
+				} else if !errors.Is(first, manifest.ErrInput) || !strings.Contains(first.Error(), filepath.Join(dir, "blackbox-exporter.yaml")) {
+					t.Fatalf("source-qualified decode error = %v, want manifest.ErrInput", first)
+				}
+				if _, err := l.Load(t.Context(), filepath.Dir(dir)); err != nil {
+					t.Fatal(err)
+				}
+				if got := l.Index.Errors["app/blackbox-exporter.yaml"]; got != first {
+					t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
+				}
+			})
+		}
 	}
 }
 
@@ -1161,8 +1178,8 @@ func TestLoader_IndependentRoots(t *testing.T) {
 				roots[0] = filepath.Join(roots[1], "child")
 			}
 			ids := []manifest.NamedResource{
-				{Kind: manifest.KindKustomization, Name: "first"},
-				{Kind: manifest.KindKustomization, Name: "second"},
+				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "first"},
+				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "second"},
 			}
 			for i, root := range roots {
 				testutil.WriteFile(t, root, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+ids[i].Name+"}\nspec: {path: ./apps}\n")

@@ -50,7 +50,7 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 		return
 	}
 	for {
-		kss := l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+		kss := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
 		for _, ks := range kss {
 			root, _, external := SourceView(l.Store, ks, repoRoot)
 			target := filepath.Clean(filepath.Join(root, ks.Path))

@@ -5,17 +5,19 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestEncoderLines_PreservesStatus(t *testing.T) {
 	changes := func(yield func(LineChange, error) bool) {
-		yield(LineChange{From: "key: old\n", To: "key: new\n"}, nil)
+		yield(LineChange{Resource: manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "ns", Name: "same"}, Parent: manifest.NamedResource{Group: "parents.test", Kind: "Producer", Namespace: "ns", Name: "same"}, From: "key: old\n", To: "key: new\n"}, nil)
 	}
 	var buf bytes.Buffer
 	if err := (Encoder{Writer: &buf, Format: FormatHTML}).Lines(changes, slices.Values([]string(nil))); err != nil {
 		t.Fatal(err)
 	}
-	if out := buf.String(); !strings.Contains(out, "1 changed") || !strings.Contains(out, `<span class="status status-"></span>`) {
+	if out := buf.String(); !strings.Contains(out, "1 changed") || !strings.Contains(out, `<span class="status status-"></span>`) || !strings.Contains(out, "Widget.example.test ns/same") || !strings.Contains(out, "Producer.parents.test ns/same") {
 		t.Fatalf("HTML must preserve prepared empty status for unequal YAML: %s", out)
 	}
 }

@@ -19,8 +19,8 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			st := store.New()
 			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
 			id := obj.Named()
-			old := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "old"}
-			fresh := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "fresh"}
+			old := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "old"}
+			fresh := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "fresh"}
 			if mode != "vanished" {
 				st.AddObject(obj)
 			}

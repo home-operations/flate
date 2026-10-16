@@ -16,8 +16,8 @@ import (
 // Fetcher is the Fetcher implementation for KindOCIRepository.
 // RegistryConfig is the global --registry-config docker-style
 // config.json path used when no per-repo SecretRef is set. Secrets is
-// the per-repo source.SecretGetter (typically the orchestrator-provided
-// Store.GetByName), required when any OCIRepository has spec.secretRef
+// the per-repo source.SecretGetter (the orchestrator's core Secret store
+// lookup), required when any OCIRepository has spec.secretRef
 // pointing at a kubernetes.io/dockerconfigjson Secret.
 type Fetcher struct {
 	Cache          *cache.Cache

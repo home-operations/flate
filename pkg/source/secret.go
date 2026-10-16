@@ -31,9 +31,7 @@ type MissingSecretError struct {
 	RetryWithRegistryConfig func(context.Context, string) (*store.SourceArtifact, error)
 }
 
-// Error renders the same string the previous fmt.Errorf form produced, so the
-// skip reason surfaced via base.go (SkippedPrefix + TrimSentinelPrefix) is
-// byte-identical to before.
+// Error identifies the source and its unavailable Secret material.
 func (e *MissingSecretError) Error() string {
 	return fmt.Sprintf("%s: %s %s/%s: secret %s/%s %s",
 		manifest.ErrMissingSecret, e.Owner.Kind, e.Owner.Namespace, e.Owner.Name,
@@ -43,12 +41,12 @@ func (e *MissingSecretError) Error() string {
 // Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
 func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
 
-// MissingSecretErr builds a *MissingSecretError. The signature is unchanged
-// from the prior string-only form so every call site compiles untouched. The
-// owner and secret share the namespace ns (a SecretRef is same-namespace).
+// MissingSecretErr builds a *MissingSecretError for a source-group owner.
+// The owner and secret share the namespace ns (a SecretRef is same-namespace).
 func MissingSecretErr(kind, ns, name, secretRef, reason string) error {
 	return &MissingSecretError{
-		Owner:  manifest.NamedResource{Kind: kind, Namespace: ns, Name: name},
+		Owner: manifest.NamedResource{
+			Group: manifest.SourceDomain, Kind: kind, Namespace: ns, Name: name},
 		Secret: manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: secretRef},
 		Detail: reason,
 	}

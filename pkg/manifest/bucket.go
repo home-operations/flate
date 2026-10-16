@@ -26,7 +26,7 @@ type Bucket struct {
 
 // Named identifies the Bucket.
 func (b *Bucket) Named() NamedResource {
-	return NamedResource{Kind: KindBucket, Namespace: b.Namespace, Name: b.Name}
+	return NamedResource{Group: kindTable[kindBucket].Group, Kind: KindBucket, Namespace: b.Namespace, Name: b.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.

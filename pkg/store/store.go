@@ -32,6 +32,10 @@ const numEventKinds = 3
 // distinct shards.
 const shardCount = 16
 
+type kindID struct {
+	group, kind string
+}
+
 type nameID struct {
 	namespace, name string
 }
@@ -42,21 +46,15 @@ type nameID struct {
 // each is keyed by the same set of ids, and a Snapshot for one id
 // touches only this shard.
 //
-// byName is the secondary index: kind → namespace/name → object.
-// Sharding by Kind means each shard's byName only sees the Kinds
-// that hash to it; lookups in GetByName/ListObjects(kind) route to
-// exactly one shard.
+// byName indexes exact group/kind buckets by namespace/name.
+// Kind-only sharding keeps every bucket for one kind on the same shard.
 type shard struct {
 	mu         sync.RWMutex
 	objects    map[manifest.NamedResource]manifest.BaseManifest
 	conditions map[manifest.NamedResource]conditionRecord
 	artifacts  map[manifest.NamedResource]Artifact
 
-	// byName mirrors the per-shard slice of the Store-wide secondary
-	// index. Keyed by Kind first so a single GetByName lookup is two
-	// map indexes; sharding by Kind guarantees a shard only ever
-	// holds Kinds that hash to it.
-	byName map[string]map[nameID]manifest.BaseManifest
+	byName map[kindID]map[nameID]manifest.BaseManifest
 }
 
 func newShard() *shard {
@@ -64,7 +62,7 @@ func newShard() *shard {
 		objects:    make(map[manifest.NamedResource]manifest.BaseManifest),
 		conditions: make(map[manifest.NamedResource]conditionRecord),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
-		byName:     make(map[string]map[nameID]manifest.BaseManifest),
+		byName:     make(map[kindID]map[nameID]manifest.BaseManifest),
 	}
 }
 
@@ -80,7 +78,7 @@ func newShard() *shard {
 // all of it cross-Kind contention (KS writers blocking HR writers
 // blocking source-controller readers).
 //
-// Cross-shard operations (the ListObjects(""), FailedResources,
+// Cross-shard operations (the ListObjects("", ""), FailedResources,
 // AddListener(replay=true) iterate-everything paths) acquire every
 // shard in ascending index order via lockAll/unlockAll. Holding all
 // shards in canonical order is mandatory: any code path that locks
@@ -90,8 +88,8 @@ func newShard() *shard {
 //
 // # Immutability contract
 //
-// Objects passed to AddObject (and returned by GetObject / GetByName /
-// ListObjects) are treated as IMMUTABLE after insertion. The store
+// Objects passed to AddObject (and returned by GetObject / ListObjects)
+// are treated as IMMUTABLE after insertion. The store
 // returns shared pointers rather than defensive copies for performance:
 // rendering pipelines read millions of fields per reconcile, and
 // cloning the full manifest tree on every read would dominate CPU.
@@ -135,7 +133,7 @@ type Store struct {
 	// shard locks' hot path. See warning.go.
 	warnMu    sync.Mutex
 	warnOrder []manifest.Warning
-	warnIndex map[string]int // dedupKey → index into warnOrder (Count bump)
+	warnIndex map[warningKey]int // canonical warning → index into warnOrder (Count bump)
 }
 
 // New constructs an empty Store.
@@ -160,8 +158,7 @@ func (s *Store) shardFor(id manifest.NamedResource) *shard {
 }
 
 // shardForKind is the kind-only sibling of shardFor for entrypoints
-// that have a Kind string but no full NamedResource (GetByName,
-// ListObjects).
+// that have a Kind string but no full NamedResource (ListObjects).
 func (s *Store) shardForKind(kind string) *shard {
 	return s.shards[kindShardIndex(kind)]
 }
@@ -286,10 +283,10 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 // Caller MUST hold sh.mu (write lock).
 func (sh *shard) setLocked(id manifest.NamedResource, obj manifest.BaseManifest) {
 	sh.objects[id] = obj
-	inner, ok := sh.byName[id.Kind]
+	inner, ok := sh.byName[kindID{id.Group, id.Kind}]
 	if !ok {
 		inner = make(map[nameID]manifest.BaseManifest)
-		sh.byName[id.Kind] = inner
+		sh.byName[kindID{id.Group, id.Kind}] = inner
 	}
 	inner[nameID{id.Namespace, id.Name}] = obj
 }
@@ -305,8 +302,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	delete(sh.objects, id)
 	delete(sh.conditions, id)
 	delete(sh.artifacts, id)
-	// delete is a no-op on a nil map, so byName[id.Kind] needs no guard.
-	delete(sh.byName[id.Kind], nameID{id.Namespace, id.Name})
+	// delete is a no-op on a missing secondary bucket.
+	delete(sh.byName[kindID{id.Group, id.Kind}], nameID{id.Namespace, id.Name})
 	return true
 }
 
@@ -425,51 +422,21 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	return sh.deleteLocked(id)
 }
 
-// GetObjectByName returns the object matching (kind, namespace, name), or nil
-// when none is present. Hot-path callers (valuesFrom expansion, source
-// resolution) should prefer this over filtering ListObjects. The typed
-// GetByName is its assert-to-T sibling, as Get is to GetObject.
-func (s *Store) GetObjectByName(kind, namespace, name string) manifest.BaseManifest {
-	sh := s.shardForKind(kind)
-	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	// Indexing a nil map (unseen kind) yields nil — no guard needed.
-	return sh.byName[kind][nameID{namespace, name}]
-}
-
-// ListObjects returns every stored manifest, optionally filtered by kind,
-// sorted deterministically by (Kind, Namespace, Name). An empty kind
-// matches all objects. The byName index is hit directly when kind is set
-// — O(K) instead of O(N) — which matters on the orchestrator's per-pass
-// list calls when one kind dominates the store (HelmReleases are
-// typically the bulk).
-//
-// Sharded layout: when kind is set, the lookup routes to exactly one
-// shard. When kind is empty, ALL shards are read-locked in canonical
-// (ascending) order to capture a consistent global snapshot; the
-// caller pays an N-shard read-lock cost only when truly iterating
-// everything.
-//
-// Deterministic order is a correctness requirement: ownership
-// tie-breaking in change/ownership.go (and any future tie-break) must
-// produce the same winner across runs. Go map iteration is randomized,
-// so without sorting the same file can be attributed to different
-// KS owners on different runs.
-func (s *Store) ListObjects(kind string) []manifest.BaseManifest {
-	if kind != "" {
+// ListObjects returns objects in the exact group/kind bucket, sorted by
+// NamedResource.Compare. Empty group and kind returns the complete inventory.
+// Single-bucket reads use one kind shard; inventory reads MUST use rLockAll
+// to capture a consistent snapshot across shards.
+func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
+	if group != "" || kind != "" {
 		sh := s.shardForKind(kind)
 		sh.mu.RLock()
-		inner := sh.byName[kind]
+		inner := sh.byName[kindID{group, kind}]
 		out := make([]manifest.BaseManifest, 0, len(inner))
 		for _, obj := range inner {
 			out = append(out, obj)
 		}
 		sh.mu.RUnlock()
-		// All results share the queried Kind (byName[kind] index), so
-		// NamedResource.Compare's leading Kind comparison is always 0 here.
-		// Sort by (Namespace, Name) directly — identical order, one fewer
-		// string compare per element. This path runs per-kind in hot
-		// orchestrator loops (cycles, finalize, render collection).
+		// Group and kind are identical within this bucket.
 		slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
 			an, bn := a.Named(), b.Named()
 			return cmp.Or(cmp.Compare(an.Namespace, bn.Namespace), cmp.Compare(an.Name, bn.Name))

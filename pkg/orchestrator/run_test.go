@@ -57,10 +57,10 @@ spec: {}
 		t.Fatal("selected data must be admitted")
 	}
 	for _, excluded := range []manifest.NamedResource{
-		{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "raw-hr"},
-		{Kind: manifest.KindKustomization, Namespace: "apps", Name: "raw-ks"},
-		{Kind: manifest.KindResourceSet, Namespace: "apps", Name: "raw-rs"},
-		{Kind: manifest.KindBucket, Namespace: "apps", Name: "foreign-source"},
+		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "raw-hr"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "raw-ks"},
+		{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "apps", Name: "raw-rs"},
+		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "apps", Name: "foreign-source"},
 	} {
 		if st.GetObject(excluded) != nil {
 			t.Errorf("runtime promotion admitted %s", excluded)
@@ -93,14 +93,14 @@ spec: {url: https://example.test/excluded.git}
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Name: "consumer", Namespace: "apps",
-		Chart:      manifest.HelmChart{RepoKind: manifest.KindGitRepository, RepoNamespace: "apps", RepoName: "chart"},
+		Chart:      manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoNamespace: "apps", RepoName: "chart"},
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}},
 	}
 	st.AddObject(hr)
 	selected := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	excluded := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "excluded"}
-	chart := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}
-	excludedSource := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "excluded-source"}
+	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}
+	excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "excluded-source"}
 	files := map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", selected: "bundle.yaml", excluded: "bundle.yaml", chart: "bundle.yaml", excludedSource: "bundle.yaml"}
 	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), indexForTest(files), st)
 	idx := loader.New(store.New())
@@ -151,7 +151,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			idx := loader.New(store.New())
-			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
+			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
 			if tc.raw {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: "target.yaml"}
 			} else {

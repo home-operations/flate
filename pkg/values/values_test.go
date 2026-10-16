@@ -82,7 +82,10 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 		Name: "extra", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 5\nimage:\n  tag: v2\n"},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	st := store.New()
+	st.AddObject(cm)
+	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
+	provider := NewStoreProvider(st)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
@@ -414,13 +417,19 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 		Name: "vars", Namespace: "flux-system",
 		Data: map[string]any{"DOMAIN": "example.com"},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	st := store.New()
+	st.AddObject(cm)
+	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
+	st.AddObject(&manifest.Secret{Name: "secret-vars", Namespace: cm.Namespace, StringData: map[string]any{"TOKEN": "core"}})
+	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindSecret, Name: "secret-vars", Namespace: cm.Namespace})
+	provider := NewStoreProvider(st)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Contents: map[string]any{"spec": map[string]any{}},
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: "Unsupported", Name: "vars"},
 			{Kind: "ConfigMap", Name: "vars"},
+			{Kind: "Secret", Name: "secret-vars"},
 		}},
 	}
 	postBuild := ks.PostBuild
@@ -428,7 +437,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 		t.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 	}
 	assert.Equal(t, ks.PostBuild, postBuild)
-	if ks.PostBuildSubstitute["DOMAIN"] != "example.com" {
+	if ks.PostBuildSubstitute["DOMAIN"] != "example.com" || ks.PostBuildSubstitute["TOKEN"] != "core" {
 		t.Errorf("substitute: %+v", ks.PostBuildSubstitute)
 	}
 }

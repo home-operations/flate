@@ -52,9 +52,9 @@ func TestTrimSentinelPrefix(t *testing.T) {
 }
 
 func TestDependencyFailedError_Format(t *testing.T) {
-	parent := NamedResource{Kind: KindKustomization, Namespace: "default", Name: "child"}
-	depA := NamedResource{Kind: KindKustomization, Namespace: "security", Name: "pocket-id-instance"}
-	depB := NamedResource{Kind: KindKustomization, Namespace: "database", Name: "cnpg-cluster"}
+	parent := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "default", Name: "child"}
+	depA := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "security", Name: "pocket-id-instance"}
+	depB := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "database", Name: "cnpg-cluster"}
 
 	err := &DependencyFailedError{
 		Parent: parent,
@@ -78,7 +78,7 @@ func TestDependencyFailedError_Format(t *testing.T) {
 
 func TestDependencyFailedError_Unwraps(t *testing.T) {
 	err := &DependencyFailedError{
-		Parent: NamedResource{Kind: KindKustomization, Name: "x"},
+		Parent: NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "x"},
 	}
 	if !errors.Is(err, ErrInput) {
 		t.Errorf("expected errors.Is(err, ErrInput) to be true")
@@ -94,7 +94,7 @@ func TestDependencyFailedError_Unwraps(t *testing.T) {
 
 func TestDependencyFailedError_EmptyFailedList(t *testing.T) {
 	err := &DependencyFailedError{
-		Parent: NamedResource{Kind: KindKustomization, Namespace: "ns", Name: "k"},
+		Parent: NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "ns", Name: "k"},
 	}
 	if msg := err.Error(); !strings.Contains(msg, "dependencies failed") {
 		t.Errorf("empty-failed error should still mention dependencies failed: %q", msg)

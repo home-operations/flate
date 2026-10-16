@@ -73,8 +73,8 @@ spec:
 		t.Errorf("RepoRoot = %q, want %q", res.RepoRoot, wantRoot)
 	}
 
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
+	parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
+	child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
 	for _, id := range []manifest.NamedResource{parent, child} {
 		if _, ok := filesForTest(res.Index)[id]; !ok {
 			t.Errorf("SourceFiles missing %s", id)
@@ -145,7 +145,7 @@ spec:
 						t.Fatal(err)
 					}
 					var ids []string
-					for _, ks := range st.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+					for _, ks := range st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 						ids = append(ids, ks.Named().NamespacedName())
 					}
 					slices.Sort(ids)
@@ -168,7 +168,7 @@ spec:
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system}
 `)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [release.yaml]\n")
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [release.yaml, producer.yaml]\n")
 	release := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -182,13 +182,21 @@ spec:
 `
 	testutil.WriteFile(t, dir, "apps/release.yaml", release)
 	testutil.WriteFile(t, dir, "orphan.yaml", strings.Replace(release, "name: demo", "name: orphan", 1))
+	testutil.WriteFile(t, dir, "apps/producer.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: values, namespace: apps}
+spec: {target: {name: values}}
+`)
+
 	st := store.New()
+	foreign := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+	st.AddObject(foreign)
 	res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	hr := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+	parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	if st.GetObject(hr) != nil {
 		t.Fatal("parent-owned HelmRelease must wait for rendering")
 	}
@@ -198,7 +206,23 @@ spec:
 	if got := parentsForTest(res.Index)[hr]; got != parent {
 		t.Errorf("ParentOf[%s] = %v, want %v", hr, got, parent)
 	}
-	orphan := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "orphan"}
+	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
+	producer := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "values"}
+	if got, ok := res.Producers.Producer(secret); !ok || got != producer {
+		t.Fatalf("producer not indexed before dependent arrival: %v, %t", got, ok)
+	}
+	foreignSecret := secret
+	foreignSecret.Group = "foreign.example"
+	if _, ok := res.Producers.Producer(foreignSecret); ok {
+		t.Fatal("foreign secret borrowed the core producer")
+	}
+	if st.GetObject(foreign.Named()) != foreign {
+		t.Fatal("discovery replaced the foreign HelmRelease")
+	}
+	if _, ok := res.Index.Lookup(foreign.Named()); ok {
+		t.Fatal("foreign HelmRelease borrowed the real declaration record")
+	}
+	orphan := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "orphan"}
 	if _, gated := parentsForTest(res.Index)[orphan]; gated || st.GetObject(orphan) == nil {
 		t.Error("standalone HelmRelease must be available without a parent gate")
 	}
@@ -211,7 +235,7 @@ spec:
 // root GitRepository is created out-of-band by the operator) must
 // have that GitRepository aliased to the working tree so depwait
 // resolves it. Without the fix, every consumer fails with
-// `dependency not found: GitRepository/gitops-system/gitops-system`.
+// `dependency not found: GitRepository.source.toolkit.fluxcd.io/gitops-system/gitops-system`.
 func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -239,11 +263,11 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 
-	aliased := manifest.NamedResource{
+	aliased := manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 		Kind: manifest.KindGitRepository, Namespace: "gitops-system", Name: "gitops-system",
 	}
 	if st.GetObject(aliased) == nil {
-		t.Errorf("expected GitRepository/gitops-system/gitops-system to be aliased; alias scoped only to flux-system would leave this case broken")
+		t.Errorf("expected GitRepository.source.toolkit.fluxcd.io/gitops-system/gitops-system to be aliased; alias scoped only to flux-system would leave this case broken")
 	}
 	if st.GetArtifact(aliased) == nil {
 		t.Errorf("aliased GitRepository should have a SourceArtifact so depwait resolves")
@@ -280,14 +304,14 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-system"}
+	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-system"}
 	if st.GetObject(id) != nil || st.GetArtifact(id) != nil {
 		t.Fatal("unknown OCI source must wait without a working-tree alias")
 	}
 	if owners, _ := res.Index.OwnersOfFile("apps/kustomization.yaml"); len(owners) != 0 {
 		t.Fatalf("unknown OCI source claimed working-tree files: %v", owners)
 	}
-	if st.GetObject(manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "from-working-tree"}) != nil {
+	if st.GetObject(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "from-working-tree"}) != nil {
 		t.Fatal("unknown OCI source loaded a HelmRelease from the working tree")
 	}
 }
@@ -356,19 +380,19 @@ spec:
 	}
 
 	// The RS itself is loaded into the store as a node for the run phase.
-	rsID := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "late-rs"}
+	rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "late-rs"}
 	if st.GetObject(rsID) == nil {
 		t.Errorf("expected ResourceSet %s loaded into store", rsID)
 	}
 	// The deep RSIP behind the parent KS's path is loaded — discovery
 	// walked the spec.path even though it no longer expands the RS.
-	rsipID := manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
+	rsipID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
 	if st.GetObject(rsipID) == nil {
 		t.Errorf("expected ResourceSetInputProvider %s loaded into store (parent KS path walked)", rsipID)
 	}
 	// Discovery does NOT expand the RS anymore — the child Kustomization
 	// is produced at run time by the RS controller, not here.
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child-rsip"}
+	child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child-rsip"}
 	if st.GetObject(child) != nil {
 		t.Errorf("discovery should not pre-expand the RS; %s must be produced at run time", child)
 	}
@@ -439,13 +463,13 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 
-	appA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
-	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	appA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
+	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	if got := parentsForTest(res.Index)[appA]; got != clusterApps {
 		t.Errorf("ParentOf[app-a] = %v, want cluster-apps (cross-tree emission gate)", got)
 	}
 
-	selfish := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "selfish"}
+	selfish := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "selfish"}
 	if got, gated := parentsForTest(res.Index)[selfish]; gated {
 		t.Errorf("ParentOf[selfish] = %v, want absent (a self-emit must not gate on itself)", got)
 	}
@@ -569,7 +593,7 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 
-	id := manifest.NamedResource{
+	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 		Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes",
 	}
 	art := st.GetArtifact(id)
@@ -639,7 +663,7 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 
-	id := manifest.NamedResource{
+	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 		Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared-infra",
 	}
 	if st.GetArtifact(id) != nil {
@@ -691,7 +715,7 @@ configMapGenerator:
 	cmID := manifest.NamedResource{
 		Kind: manifest.KindConfigMap, Name: "cluster-settings",
 	}
-	cm, _ := st.GetByName[*manifest.ConfigMap](manifest.KindConfigMap, "", "cluster-settings")
+	cm, _ := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "cluster-settings"})
 	if cm == nil {
 		t.Fatalf("ConfigMap %s not synthesized from configMapGenerator", cmID)
 	}
@@ -740,7 +764,7 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 	}
 	for name, want := range map[string]bool{"keep": true, "drop": false, "leaf": true, "hidden": false} {
 		if got := st.GetObject(id(name)) != nil; got != want {
@@ -788,14 +812,14 @@ data: {value: fixture}
 			if err != nil {
 				t.Fatal(err)
 			}
-			raw := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "demo", Namespace: "demo"}
+			raw := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "demo", Namespace: "demo"}
 			if _, ok := res.Index.Lookup(raw); !ok {
 				t.Error("projected release must remain indexed")
 			}
 			if st.GetObject(raw) != nil {
 				t.Errorf("graph-owned release promoted: %s", raw)
 			}
-			repos := st.ListAs[*manifest.HelmRepository](manifest.KindHelmRepository)
+			repos := st.ListAs[*manifest.HelmRepository](manifest.SourceDomain, manifest.KindHelmRepository)
 			if len(repos) != 1 || repos[0].Name != "demo" || repos[0].Namespace != "demo" {
 				t.Errorf("repositories = %+v, want only demo/demo", repos)
 			}
@@ -857,7 +881,7 @@ stringData: {HOST: fixture-value}
 				t.Error("preexisting immutable Secret replaced")
 			}
 			producer, ok := res.Producers.Producer(id)
-			if !ok || producer != (manifest.NamedResource{Kind: "ExternalSecret", Namespace: "secure", Name: "producer"}) {
+			if !ok || producer != (manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "secure", Name: "producer"}) {
 				t.Errorf("producer attribution = %v, %v", producer, ok)
 			}
 		})
@@ -889,12 +913,21 @@ metadata: {name: config, namespace: flux-system}
 data: {value: fixture}
 `)
 			cfg := discovery.Config{Path: dir, RepoRoot: dir, Store: store.New(), WipeSecrets: true}
+			foreignSource := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: sourceName}
+			foreignOwner := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner", Spec: map[string]any{"path": "./shared"}}
+			cfg.Store.AddObjects([]manifest.BaseManifest{foreignSource, foreignOwner})
 			if scenario == "self" {
 				cfg.SelfURLs = []string{"https://example.invalid/cluster.git"}
 			}
 			res, err := discovery.Run(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if cfg.Store.GetObject(foreignSource.Named()) != foreignSource || cfg.Store.GetArtifact(foreignSource.Named()) != nil {
+				t.Fatal("foreign source acquired the bootstrap alias")
+			}
+			if _, indexed := res.Index.Lookup(foreignOwner.Named()); indexed {
+				t.Fatal("foreign owner borrowed a real claim")
 			}
 			owners := ownersForTest(res.Index, "shared/cm.yaml")
 			if scenario == "external" {
@@ -908,7 +941,7 @@ data: {value: fixture}
 			if got, want := cfg.Store.GetObject(id) != nil, scenario == "external"; got != want {
 				t.Errorf("standalone promotion = %v, want %v", got, want)
 			}
-			src := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: sourceName}
+			src := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: sourceName}
 			if cfg.Store.GetObject(src) == nil {
 				t.Error("source must remain file-loaded")
 			}
@@ -920,14 +953,17 @@ data: {value: fixture}
 }
 
 func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
-	for _, ns := range []string{"apps", "other"} {
-		t.Run(ns, func(t *testing.T) {
+	for _, tc := range []struct{ namespace, apiVersion string }{
+		{"apps", "v1"}, {"other", "v1"}, {"apps", "foreign.example/v1"},
+	} {
+		t.Run(tc.namespace+"/"+tc.apiVersion, func(t *testing.T) {
+			ns := tc.namespace
 			root := t.TempDir()
 			for _, file := range []struct{ path, body string }{
 				{"flux/producer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: flux-system}\nspec: {path: ./producer}\n"},
 				{"flux/consumer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: flux-system}\nspec: {path: ./consumer}\n"},
 				{"producer/kustomization.yaml", "namespace: apps\nresources: [values.yaml]\n"},
-				{"producer/values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\ndata: {values.yaml: fixture}\n"},
+				{"producer/values.yaml", "apiVersion: " + tc.apiVersion + "\nkind: ConfigMap\nmetadata: {name: values}\ndata: {values.yaml: fixture}\n"},
 				{"consumer/kustomization.yaml", "namespace: " + ns + "\nresources: [hr.yaml]\n"},
 				{"consumer/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: consumer}\nspec:\n  chartRef: {kind: OCIRepository, name: chart, namespace: flux-system}\n  valuesFrom: [{kind: ConfigMap, name: values}]\n"},
 			} {
@@ -939,8 +975,8 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 				t.Fatal(err)
 			}
 			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
-			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: ns, Name: "consumer"}
-			if got := filter.ShouldReconcile(id); got != (ns == "apps") {
+			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: ns, Name: "consumer"}
+			if got := filter.ShouldReconcile(id); got != (ns == "apps" && tc.apiVersion == "v1") {
 				t.Fatalf("consumer %s selected=%t", id, got)
 			}
 		})
@@ -966,7 +1002,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 				t.Fatal(err)
 			}
 			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 			if got := filter.ShouldReconcile(id); got == optional {
 				t.Fatalf("optional=%t consumer selected=%t", optional, got)
 			}

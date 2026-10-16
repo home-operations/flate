@@ -36,7 +36,7 @@ func TestTemplate_DeterministicNow(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "chart-repo",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 
@@ -78,7 +78,7 @@ func TestTemplate_DeterministicRandom(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "chart-repo",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 
@@ -122,7 +122,7 @@ func TestTemplate_DeterministicShuffle(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "chart-repo",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 
@@ -160,7 +160,7 @@ func TestTemplate_DeterministicCerts(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{
 			Name: "mychart", RepoName: "chart-repo",
-			RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 		},
 	}
 

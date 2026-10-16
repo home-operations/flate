@@ -48,7 +48,7 @@ func (k *Kustomization) Suspended() bool { return k.Suspend }
 
 // Named identifies the Kustomization.
 func (k *Kustomization) Named() NamedResource {
-	return NamedResource{Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
+	return NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: k.Namespace, Name: k.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -171,7 +171,7 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 
 // SourceID resolves the authored source against the effective namespace.
 func (k *Kustomization) SourceID() NamedResource {
-	return Resolve(NamedResource{Kind: k.SourceRef.Kind, Namespace: k.SourceRef.Namespace, Name: k.SourceRef.Name}, "", k.Namespace)
+	return Resolve(NamedResource{Group: referenceGroup(k.SourceRef.Kind, k.SourceRef.APIVersion), Kind: k.SourceRef.Kind, Namespace: k.SourceRef.Namespace, Name: k.SourceRef.Name}, "", k.Namespace)
 }
 
 // IsFragment identifies patch fragments without a render path or source name.
@@ -190,7 +190,7 @@ func (k *Kustomization) references(yield func(Reference) bool) {
 	for i := range k.DependsOn {
 		dep := &k.DependsOn[i]
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Kind: KindKustomization, Namespace: dep.Namespace, Name: dep.Name}, "", k.Namespace),
+			NamedResource: Resolve(NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: dep.Namespace, Name: dep.Name}, "", k.Namespace),
 			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
 		}) {
 			return

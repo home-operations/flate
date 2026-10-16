@@ -110,8 +110,8 @@ func logNewCycleMessages(prev, next map[manifest.NamedResource]string) {
 // code that calls failDependsOnCycles after a direct store mutation
 // still observes the latest cycle state.
 func (o *Orchestrator) rebuildDependencyGraphFromStore() {
-	for _, kind := range reconcilableKinds {
-		for _, obj := range o.store.ListObjects(kind) {
+	for _, info := range reconcilableKinds {
+		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
 			id := obj.Named()
 			var buf [8]manifest.NamedResource
 			deps := sameKindDepTargets(obj, buf[:0])

@@ -85,7 +85,7 @@ spec:
 				if (err == nil) != (tc.producer && tc.fetchErr == nil) {
 					t.Fatalf("Render error=%v", err)
 				}
-				id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
+				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
 				if tc.fetchErr != nil {
 					o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
 				}

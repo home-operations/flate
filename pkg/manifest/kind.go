@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"iter"
+	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -101,33 +102,38 @@ const (
 	kindSecret
 )
 
-var kindTable = [...]kindEntry{
-	kindKustomization:    {KindInfo: KindInfo{FluxKustomizeDomain, KindKustomization, true, true, true, inDiscovery | inTest | inParent | inRefire | inStructural}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
-	kindHelmRelease:      {KindInfo: KindInfo{HelmReleaseDomain, KindHelmRelease, true, true, true, inTest | inParent | inSourceOnly | inTransientOutput}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) }},
-	kindGitRepository:    {KindInfo: KindInfo{SourceDomain, KindGitRepository, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
-	kindOCIRepository:    {KindInfo: KindInfo{SourceDomain, KindOCIRepository, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) }},
-	kindHelmRepository:   {KindInfo: KindInfo{SourceDomain, KindHelmRepository, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) }},
-	kindHelmChartSource:  {KindInfo: KindInfo{SourceDomain, KindHelmChart, true, true, true, inDiscovery | inReportHidden}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) }},
-	kindExternalArtifact: {KindInfo: KindInfo{SourceDomain, KindExternalArtifact, true, true, true, inDiscovery | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) }},
-	kindBucket:           {KindInfo: KindInfo{SourceDomain, KindBucket, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseBucket(d) }},
-	kindResourceSet:      {KindInfo: KindInfo{FluxOperatorDomain, KindResourceSet, true, true, false, inDiscovery | inParent}, decode: func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) }},
-	kindResourceSetInputProvider: {KindInfo: KindInfo{FluxOperatorDomain, KindResourceSetInputProvider, true, false, false, inDiscovery}, decode: func(d map[string]any) (BaseManifest, error) {
-		return parseResourceSetInputProvider(d)
-	}},
-	kindConfigMap: {KindInfo: KindInfo{"", KindConfigMap, true, false, false, inData}, decode: func(d map[string]any) (BaseManifest, error) {
-		return parseConfigMap(d)
-	}},
-	kindSecret: {KindInfo: KindInfo{"", KindSecret, true, false, false, inData}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
-}
+var (
+	kindTable [kindSecret + 1]kindEntry
+	kindIndex map[string]int
+)
 
-var kindIndex = func() map[string]int {
-	kinds := make(map[string]int, len(kindTable))
+// Decoders initialize after package variables because parsing reads this registry.
+func init() {
+	kindTable = [...]kindEntry{
+		kindKustomization:    {KindInfo: KindInfo{FluxKustomizeDomain, KindKustomization, true, true, true, inDiscovery | inTest | inParent | inRefire | inStructural}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
+		kindHelmRelease:      {KindInfo: KindInfo{HelmReleaseDomain, KindHelmRelease, true, true, true, inTest | inParent | inSourceOnly | inTransientOutput}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) }},
+		kindGitRepository:    {KindInfo: KindInfo{SourceDomain, KindGitRepository, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
+		kindOCIRepository:    {KindInfo: KindInfo{SourceDomain, KindOCIRepository, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) }},
+		kindHelmRepository:   {KindInfo: KindInfo{SourceDomain, KindHelmRepository, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) }},
+		kindHelmChartSource:  {KindInfo: KindInfo{SourceDomain, KindHelmChart, true, true, true, inDiscovery | inReportHidden}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) }},
+		kindExternalArtifact: {KindInfo: KindInfo{SourceDomain, KindExternalArtifact, true, true, true, inDiscovery | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) }},
+		kindBucket:           {KindInfo: KindInfo{SourceDomain, KindBucket, true, true, true, inDiscovery | inTest | inRefire}, decode: func(d map[string]any) (BaseManifest, error) { return parseBucket(d) }},
+		kindResourceSet:      {KindInfo: KindInfo{FluxOperatorDomain, KindResourceSet, true, true, false, inDiscovery | inParent}, decode: func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) }},
+		kindResourceSetInputProvider: {KindInfo: KindInfo{FluxOperatorDomain, KindResourceSetInputProvider, true, false, false, inDiscovery}, decode: func(d map[string]any) (BaseManifest, error) {
+			return parseResourceSetInputProvider(d)
+		}},
+		kindConfigMap: {KindInfo: KindInfo{"", KindConfigMap, true, false, false, inData}, decode: func(d map[string]any) (BaseManifest, error) {
+			return parseConfigMap(d)
+		}},
+		kindSecret: {KindInfo: KindInfo{"", KindSecret, true, false, false, inData}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
+	}
+
+	kindIndex = make(map[string]int, len(kindTable))
 	for i := range kindTable {
 		entry := &kindTable[i]
-		kinds[entry.Kind] = i
+		kindIndex[entry.Kind] = i
 	}
-	return kinds
-}()
+}
 
 // Kinds yields immutable registry values in a stable order.
 func Kinds() iter.Seq[KindInfo] {
@@ -151,13 +157,28 @@ func KindOf(obj BaseManifest) KindInfo {
 
 // KindInfo returns canonical registry facts for an identity, including absent objects.
 func (n NamedResource) KindInfo() KindInfo {
-	if i, ok := kindIndex[n.Kind]; ok {
+	if i, ok := kindIndex[n.Kind]; ok && kindTable[i].Group == n.Group {
 		return kindTable[i].KindInfo
 	}
-	return KindInfo{Kind: n.Kind}
+	return KindInfo{Group: n.Group, Kind: n.Kind}
 }
 
+// Projection stays allocation-free; document admission validates API versions.
 func apiGroup(apiVersion string) string {
-	gv, _ := schema.ParseGroupVersion(apiVersion)
-	return gv.Group
+	group, _, ok := strings.Cut(apiVersion, "/")
+	if !ok {
+		return ""
+	}
+	return group
+}
+
+func referenceGroup(kind, apiVersion string) string {
+	if apiVersion != "" {
+		gv, _ := schema.ParseGroupVersion(apiVersion)
+		return gv.Group
+	}
+	if i, ok := kindIndex[kind]; ok {
+		return kindTable[i].Group
+	}
+	return ""
 }

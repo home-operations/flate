@@ -40,7 +40,7 @@ func TestEncoder_TestNotesFooter(t *testing.T) {
 }
 
 func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
-	ok := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
+	ok := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
 	pass := TestReport{Cases: []Case{{ID: ok, Outcome: OutcomePassed}}, Passed: 1}
 	var pb bytes.Buffer
 	if err := (Encoder{Writer: &pb}).Test(pass, nil, nil, 1500*time.Millisecond); err != nil {
@@ -52,7 +52,7 @@ func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
 		t.Errorf("summary should show the elapsed clock:\n%s", out)
 	}
 
-	bad := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "bad"}
+	bad := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "bad"}
 	fail := TestReport{Cases: []Case{{ID: bad, Outcome: OutcomeFailed, Reason: "boom"}}, Failed: 1}
 	var fb bytes.Buffer
 	_ = (Encoder{Writer: &fb}).Test(fail, nil, nil, 0)
@@ -64,8 +64,8 @@ func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
 }
 
 func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
-	passed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "changed"}
-	skipped := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "untouched"}
+	passed := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "changed"}
+	skipped := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "untouched"}
 	rep := TestReport{
 		Cases:  []Case{{ID: passed, Outcome: OutcomePassed}, {ID: skipped, Outcome: OutcomeSkipped, Reason: "unchanged"}},
 		Passed: 1, Skipped: 1,
@@ -92,7 +92,7 @@ func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
 }
 
 func TestEncoder_TestFailedNeverHidden(t *testing.T) {
-	failed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "broken"}
+	failed := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "broken"}
 	rep := TestReport{Cases: []Case{{ID: failed, Outcome: OutcomeFailed, Reason: "boom"}}, Failed: 1}
 	var b bytes.Buffer
 	if err := (Encoder{Writer: &b}).Test(rep, nil, nil, 0); err != nil {
@@ -104,8 +104,8 @@ func TestEncoder_TestFailedNeverHidden(t *testing.T) {
 }
 
 func TestEncoder_TestColor(t *testing.T) {
-	pass := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
-	fail := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "bad"}
+	pass := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
+	fail := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "bad"}
 	rep := TestReport{
 		Cases:  []Case{{ID: fail, Outcome: OutcomeFailed, Reason: "boom"}, {ID: pass, Outcome: OutcomePassed}},
 		Passed: 1, Failed: 1,
@@ -128,7 +128,7 @@ func TestEncoder_TestColor(t *testing.T) {
 
 func TestEncoder_TestReturnsWriterError(t *testing.T) {
 	want := errors.New("write failed")
-	rep := TestReport{Cases: []Case{{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
+	rep := TestReport{Cases: []Case{{ID: manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
 
 	if err := (Encoder{Writer: errorWriter{want}}).Test(rep, nil, nil, 0); !errors.Is(err, want) {
 		t.Fatalf("Test error = %v, want %v", err, want)
@@ -136,8 +136,8 @@ func TestEncoder_TestReturnsWriterError(t *testing.T) {
 }
 
 func TestEncoder_TestMultilineColorAndNotes(t *testing.T) {
-	root := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "root"}
-	child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "child"}
+	root := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "root"}
+	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "child"}
 	r := TestReport{
 		Cases:   []Case{{ID: root, Outcome: OutcomeFailed, Reason: " first \n\t\n second\n third "}},
 		Blocked: []Case{{ID: child, Outcome: OutcomeBlocked, Reason: "blocked by ns/root"}},
@@ -149,9 +149,9 @@ func TestEncoder_TestMultilineColorAndNotes(t *testing.T) {
 	}{{name: "plain"}, {name: "color", color: true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			color := tc.color
-			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim(root.Kind, color) + "  ns/root  " + Dim("first", color) +
+			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim(kindLabel(root), color) + "  ns/root  " + Dim("first", color) +
 				"\n         " + Dim("second", color) + "\n         " + Dim("third", color) +
-				"\n  " + Dim(GlyphBlocked, color) + "  " + Dim("HelmRelease  ", color) + "  ns/child  " + Dim("blocked by ns/root", color) +
+				"\n  " + Dim(GlyphBlocked, color) + "  " + Dim("HelmRelease.helm.toolkit.fluxcd.io       ", color) + "  ns/child  " + Dim("blocked by ns/root", color) +
 				"\n\n  " + Warn("⚠ warnings (1)", color) + "\n    " + Warn("advisory (×2)", color) +
 				"\n\n  " + Dim("notes (3)", color) + "\n    " + Dim("repeated (×3)", color) +
 				"\n\n  " + Fail(GlyphFail, color) + " " + Pass("0 passed", color) + " · " + Fail("1 failed", color) +

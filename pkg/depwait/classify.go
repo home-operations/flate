@@ -1,6 +1,8 @@
 package depwait
 
 import (
+	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -52,7 +54,7 @@ func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel)
 		}
 		if state == depAbsent {
 			if level >= manifest.DrainCascade {
-				if w.AllowMissingCRDs && id.Kind == manifest.KindCustomResourceDefinition {
+				if w.AllowMissingCRDs && id.Group == apix.GroupName && id.Kind == manifest.KindCustomResourceDefinition {
 					return Classification{Kind: ClassReady}
 				}
 				return Classification{Kind: ClassFailed, Message: "dependency not found"}

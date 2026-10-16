@@ -12,11 +12,11 @@ import (
 func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
-	idA := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+	idA := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
+	idB := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
 
-	rs := manifest.NamedResource{Kind: manifest.KindResourceSet, Namespace: "ns", Name: "render-only"}
+	rs := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "render-only"}
 	var sawBOnA bool
 	var sawRS bool
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -53,7 +53,7 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
 
 	var leaked bool
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -70,7 +70,7 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	if leaked {
 		t.Error("kustomize.config build directive was emitted to the store (phantom Kustomization//)")
 	}
-	if s.GetObject(manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}) == nil {
+	if s.GetObject(manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}) == nil {
 		t.Error("real Flux Kustomization child was not stored")
 	}
 }
@@ -87,8 +87,8 @@ func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
 
-	parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
-	child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}
+	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
+	child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "real"}
 	docs := []map[string]any{fluxKustomizationDoc("parent", "parent"), fluxKustomizationDoc("real", "real")}
 
 	original := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace, Path: "./original"}

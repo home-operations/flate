@@ -18,7 +18,7 @@ import (
 
 // id builds a Kustomization-kind NodeID for tests.
 func id(name string) NodeID {
-	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
+	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
 }
 
 type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool)
@@ -74,10 +74,12 @@ func TestEdgeIdx_AddAndDelete(t *testing.T) {
 
 func TestScheduler_WakeOrder(t *testing.T) {
 	ordered := []NodeID{
-		{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "a"},
-		{Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"},
-		{Kind: manifest.KindHelmRelease, Namespace: "b", Name: "a"},
-		{Kind: manifest.KindKustomization, Namespace: "a", Name: "a"},
+		{Kind: manifest.KindHelmRelease, Namespace: "z", Name: "a"},
+		{Group: "example.test", Kind: manifest.KindHelmRelease, Namespace: "z", Name: "a"},
+		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "a", Name: "a"},
+		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"},
+		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "b", Name: "a"},
+		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "a", Name: "a"},
 	}
 	for _, path := range []string{"parked", "failed"} {
 		for _, tc := range []struct {
@@ -88,8 +90,8 @@ func TestScheduler_WakeOrder(t *testing.T) {
 			{name: "empty"},
 			{name: "singleton", order: ordered[:1], want: ordered[:1]},
 			{name: "multiple sorted", order: ordered, want: ordered},
-			{name: "multiple reversed", order: []NodeID{ordered[3], ordered[2], ordered[1], ordered[0]}, want: ordered},
-			{name: "multiple permuted", order: []NodeID{ordered[2], ordered[0], ordered[3], ordered[1]}, want: ordered},
+			{name: "multiple reversed", order: []NodeID{ordered[5], ordered[4], ordered[3], ordered[2], ordered[1], ordered[0]}, want: ordered},
+			{name: "multiple permuted", order: []NodeID{ordered[2], ordered[0], ordered[5], ordered[3], ordered[1], ordered[4]}, want: ordered},
 		} {
 			t.Run(path+"/"+tc.name, func(t *testing.T) {
 				for range 64 {
@@ -739,9 +741,12 @@ func TestParkThenArrivalWake(t *testing.T) {
 	// discovery) and wake the parked a. A gated "keepalive" node holds the pool
 	// non-idle so the scheduler cannot reach the fixpoint and drain a before x
 	// arrives — forcing the genuine park-then-wake path deterministically.
+	foreign := id("x")
+	foreign.Group = "example.test"
 	f := newFake(map[NodeID][]NodeID{
 		id("a"):         {id("x")},
-		id("x"):         nil, // x is a ready leaf once known
+		id("x"):         nil,
+		foreign:         nil,
 		id("keepalive"): nil,
 	})
 	gate := make(chan struct{})
@@ -752,10 +757,25 @@ func TestParkThenArrivalWake(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()
 
-	// Wait until a has actually parked (its first Dispatch ran and reported
-	// Blocked) before introducing x, so we exercise park-then-wake.
-	waitUntil(t, func() bool { return f.runCount(id("a")) >= 1 })
-	s.OnArrival(id("x"), true) // x appears (render-discovered) -> wakes a
+	waitUntil(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.nodes[id("a")].state == stateParked
+	})
+	s.OnArrival(foreign, true)
+	waitUntil(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.nodes[foreign] != nil && s.nodes[foreign].state == stateTerminal
+	})
+	s.OnStatusWake(foreign, true, false)
+	s.mu.Lock()
+	assert.Equal(t, s.nodes[id("a")].state, stateParked)
+	assert.Diff(t, s.nodes[id("a")].blockedOn, []NodeID{id("x")})
+	assert.Equal(t, s.nodes[id("x")], nil)
+	s.mu.Unlock()
+	assert.Equal(t, f.runCount(id("a")), 1)
+	s.OnArrival(id("x"), true)
 	waitUntil(t, func() bool { term, _ := f.state(id("a")); return term })
 	close(gate) // let keepalive finish so Run can reach the fixpoint
 	if err := <-done; err != nil {

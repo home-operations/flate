@@ -99,7 +99,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	var standaloneSecrets []manifest.NamedResource
 	if cfg.WipeSecrets {
 		for id := range l.Index.Files() {
-			if id.Kind == manifest.KindSecret && d.cfg.Store.GetObject(id) == nil {
+			if id.Group == "" && id.Kind == manifest.KindSecret && d.cfg.Store.GetObject(id) == nil {
 				standaloneSecrets = append(standaloneSecrets, id)
 			}
 		}
@@ -178,7 +178,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		if d.hasPins {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
-		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization)
+		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
 		added := 0
 		for _, ks := range kustomizations {
 			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
@@ -192,7 +192,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks, repoRoot)
 			ref := ks.SourceID()
-			if external && ref.Kind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
+			if external && ref.Group == manifest.SourceDomain && ref.Kind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
 				continue
 			}
 			target := filepath.Join(sourceRoot, manifest.NormalizeClaimBase(ks.Path))
@@ -228,7 +228,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedSources := make(map[manifest.NamedResource]struct{})
 	pinnedKS := make(map[manifest.NamedResource]struct{})
-	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 		ref := ks.SourceID()
 		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks, repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}
@@ -245,7 +245,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 		return
 	}
 	var aliases []string
-	for _, repo := range d.cfg.Store.ListAs[*manifest.GitRepository](manifest.KindGitRepository) {
+	for _, repo := range d.cfg.Store.ListAs[*manifest.GitRepository](manifest.SourceDomain, manifest.KindGitRepository) {
 		art, ok := d.cfg.Store.GetArtifact(repo.Named()).(*store.SourceArtifact)
 		if ok && art.InputAlias && art.LocalRoot == repoRoot {
 			aliases = append(aliases, art.LocalPath)

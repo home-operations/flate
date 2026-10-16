@@ -18,7 +18,7 @@ type HelmRepository struct {
 
 // Named identifies the repo.
 func (h *HelmRepository) Named() NamedResource {
-	return NamedResource{Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{Group: kindTable[kindHelmRepository].Group, Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.

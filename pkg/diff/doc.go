@@ -43,7 +43,7 @@
 //		orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir}, cfg)
 //	selected, selectedErr, _ := orchestrator.Select(
 //		[]orchestrator.Rendered{base, head}, runErr,
-//		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+//		[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
 //	if len(selected) == 0 {
 //		return selectedErr
 //	}

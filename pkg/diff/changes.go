@@ -29,7 +29,7 @@ type Change struct {
 	// resource — the pairing discriminator (so a Deployment from HR A is
 	// never matched against the same-named Deployment from HR B).
 	Parent Parent `json:"parent"`
-	// APIVersion is part of the raw resource identity, before normalization.
+	// APIVersion is the authored current version, or the original version for removals.
 	APIVersion string       `json:"apiVersion"`
 	Kind       string       `json:"kind"`
 	Namespace  string       `json:"namespace"`
@@ -48,8 +48,8 @@ type Change struct {
 	NewChart string `json:"newChart"`
 }
 
-// Changes pairs left against right by (parent, apiVersion, kind,
-// namespace, name), drops byte-identical resources, and returns the
+// Changes pairs left against right by canonical parent and resource identity,
+// drops byte-identical resources, and returns the
 // remaining differences as structured data. Each side is normalized
 // (opts.StripAttrs / opts.StripFields, ConfigMap binaryData redaction,
 // then the optional opts.Normalize hook) before the equality check, so
@@ -63,7 +63,7 @@ type Change struct {
 func Changes(left, right []Doc, opts Options) []Change {
 	// Pair the RAW docs so OldChart/NewChart can read helm.sh/chart
 	// before the strip removes it; normalize each side per-resource
-	// afterward. The pair key (apiVersion/kind/ns/name + parent) is
+	// afterward. The canonical parent and resource pair key is
 	// untouched by normalization, so raw and normalized pair identically.
 	paired := pair(left, right)
 	out := make([]Change, 0, len(paired))
@@ -77,9 +77,9 @@ func Changes(left, right []Doc, opts Options) []Change {
 		out = append(out, Change{
 			Parent:     p.parent,
 			APIVersion: p.apiVersion,
-			Kind:       p.kind,
-			Namespace:  p.namespace,
-			Name:       p.name,
+			Kind:       p.resource.Kind,
+			Namespace:  p.resource.Namespace,
+			Name:       p.resource.Name,
 			Status:     status,
 			Old:        old,
 			New:        nw,

@@ -13,7 +13,7 @@ import (
 )
 
 func selectedSnapshot(parent Parent, docs []Doc, unavailable store.StatusInfo) Snapshot {
-	id := manifest.NamedResource{Kind: parent.Kind, Namespace: parent.Namespace, Name: parent.Name}
+	id := parent.NamedResource
 	var obj manifest.BaseManifest = &manifest.HelmRelease{Name: parent.Name, Namespace: parent.Namespace}
 	if parent.Kind == manifest.KindKustomization {
 		ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}

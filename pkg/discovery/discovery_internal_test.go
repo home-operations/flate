@@ -115,7 +115,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		if err := d.loadManifests(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "child"}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "child"}
 		if r, ok := d.loader.Index.Lookup(id); !ok || r.File != "apps/child.yaml" || st.GetObject(id) == nil {
 			t.Fatalf("mounted child redirected by host symlink: %+v present=%t", r, ok)
 		}
@@ -146,7 +146,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 						input["missing"] = &fstest.MapFile{Data: []byte("content")}
 					}
 					st.AddObject(&manifest.GitRepository{Name: "source"})
-					st.SetArtifact(manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "source"}, &store.SourceArtifact{LocalPath: root, FS: input})
+					st.SetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Name: "source"}, &store.SourceArtifact{LocalPath: root, FS: input})
 				}
 				total := 0
 				err := d.loadAt(t.Context(), target, &total)

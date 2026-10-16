@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/google/go-cmp/cmp"
 
@@ -126,7 +128,7 @@ metadata: {name: issuer}
 					t.Fatalf("%s namespace = %q, want %q", name, ns, want)
 				}
 				identityNamespace := want
-				if st.GetObject(manifest.NamedResource{Kind: manifest.DocKind(doc), Namespace: identityNamespace, Name: name}) == nil {
+				if st.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: identityNamespace, Name: name}) == nil {
 					t.Fatalf("chart child %s/%s missing", identityNamespace, name)
 				}
 			}
@@ -150,8 +152,8 @@ metadata: {name: issuer}
 				t.Fatalf("stored release mutated (-want +got):\n%s", diff)
 			}
 			st.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"})
-			st.DeleteObject(manifest.NamedResource{Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"})
-			st.DeleteObject(manifest.NamedResource{Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"})
+			st.DeleteObject(manifest.NamedResource{Group: "nvidia.com", Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"})
+			st.DeleteObject(manifest.NamedResource{Group: "cert-manager.io", Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"})
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("repeat reconcile: %+v", info)
 			}
@@ -164,10 +166,10 @@ metadata: {name: issuer}
 			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"}) == nil {
 				t.Fatal("replay lost release namespace identity")
 			}
-			if st.GetObject(manifest.NamedResource{Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"}) == nil {
+			if st.GetObject(manifest.NamedResource{Group: "nvidia.com", Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"}) == nil {
 				t.Fatal("replay lost defaulted chart child")
 			}
-			if st.GetObject(manifest.NamedResource{Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"}) == nil {
+			if st.GetObject(manifest.NamedResource{Group: "cert-manager.io", Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"}) == nil {
 				t.Fatal("replay lost cluster issuer")
 			}
 			for _, ns := range []string{"", "wrong"} {
@@ -243,7 +245,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "podinfo", Namespace: "flux-system",
 		Chart: manifest.HelmChart{
-			Name: "podinfo", RepoKind: manifest.KindOCIRepository,
+			Name: "podinfo", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository,
 			RepoName: "podinfo", RepoNamespace: "flux-system",
 		},
 	}
@@ -372,7 +374,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				t.Run(fmt.Sprintf("suspended=%t", suspended), func(t *testing.T) {
 					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 					parents := map[manifest.NamedResource]manifest.NamedResource{}
-					id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "release", Namespace: "apps"}
+					id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "release", Namespace: "apps"}
 					if site.parent {
 						parents[id] = parent.Named()
 					}

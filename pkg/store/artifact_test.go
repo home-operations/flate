@@ -5,6 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -14,9 +15,13 @@ func (h *hookFS) Open(name string) (fs.File, error) { return h.open(name) }
 
 func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
 	events := 0
-	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
+	var ids []manifest.NamedResource
+	s.AddListener(EventArtifactUpdated, func(eventID manifest.NamedResource, _ any) {
+		events++
+		ids = append(ids, eventID)
+	}, false)
 	mk := func(key string) *SourceArtifact {
 		return &SourceArtifact{LocalPath: "label", Key: key, FS: &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}}
 	}
@@ -25,8 +30,14 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	if events != 1 {
 		t.Fatalf("equal Key re-fired the artifact event: %d", events)
 	}
+	foreign := id
+	foreign.Group = "example.test"
+	s.SetArtifact(foreign, mk("pin"))
+	assert.Equal(t, s.GetArtifact(id).(*SourceArtifact).Key, "pin")
+	assert.Equal(t, s.GetArtifact(foreign).(*SourceArtifact).Key, "pin")
+	assert.Diff(t, ids, []manifest.NamedResource{id, foreign})
 	s.SetArtifact(id, mk("other"))
-	if events != 2 {
+	if events != 3 {
 		t.Fatalf("changed Key did not fire: %d", events)
 	}
 	for _, text := range []string{"old", "new"} {
@@ -36,11 +47,13 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 			t.Fatalf("mutable source bytes = %q, %v; want %q", got, err, text)
 		}
 	}
+	assert.Equal(t, s.GetArtifact(foreign).(*SourceArtifact).Key, "pin")
+	assert.Diff(t, ids, []manifest.NamedResource{id, foreign, id, id, id})
 }
 
 func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 	s := New()
-	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
 	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin", FS: &hookFS{}})

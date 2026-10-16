@@ -123,7 +123,7 @@ spec:
 
 				for _, side := range []orchestrator.Rendered{base, head} {
 					children := 0
-					for _, obj := range side.Store().ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+					for _, obj := range side.Store().ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 						if obj.Name == "consumer-a" {
 							children++
 							assert.Equal(t, obj.Namespace, tc.namespace)
@@ -133,10 +133,10 @@ spec:
 					assert.Equal(t, children, 1)
 				}
 
-				consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer-a"}
+				consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer-a"}
 				for i, side := range []orchestrator.Rendered{base, head} {
 					if tc.namespace == "" {
-						missing := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "flux-system"}
+						missing := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Name: "flux-system"}
 						if side.Err == nil || !slices.Contains(side.Result.Blocked[consumer], missing) || configMapNames(side.Result)["cfg-a"] {
 							t.Fatalf("side %d bare child: error=%v blockers=%v manifests=%v", i, side.Err, side.Result.Blocked, side.Result.Manifests)
 						}
@@ -161,7 +161,7 @@ spec:
 						t.Fatalf("side %d lost effective consumer identity", i)
 					}
 					owner, emitted := rendered.Store().EmittedParent(consumer)
-					if !emitted || owner != (manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}) {
+					if !emitted || owner != (manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}) {
 						t.Fatalf("side %d consumer owner = %s, emitted=%t", i, owner, emitted)
 					}
 					_, ns := manifest.DocMetadata(obj.Contents)
@@ -176,7 +176,7 @@ spec:
 				}
 
 				selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
-					[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+					[]manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}, {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease}}, nil)
 				body, err := diff.Compare(
 					diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 					diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
@@ -222,7 +222,7 @@ func TestRenderTrees_StopsButStoreReadable(t *testing.T) {
 		t.Fatalf("RenderTrees: %v", err)
 	}
 	// Store still answers after the internal Stop.
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
+	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
 	if base.Store().GetObject(id) == nil {
 		t.Errorf("base Store unreadable after RenderTrees Stop: %s missing", id)
 	}
@@ -276,7 +276,7 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 		t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
 	}
 	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
-		[]manifest.NamedResource{{Kind: manifest.KindKustomization}, {Kind: manifest.KindHelmRelease}}, nil)
+		[]manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}, {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease}}, nil)
 	body, err := diff.Compare(
 		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},

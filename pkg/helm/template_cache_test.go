@@ -88,7 +88,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				render := func(identity store.SourceArtifact) (string, string, string, string) {
 					t.Helper()
 					identity.Kind, identity.LocalPath, identity.FS = manifest.KindOCIRepository, dir, os.DirFS(dir)
-					st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &identity)
+					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &identity)
 					out, err := cli.Template(t.Context(), hr, nil, opts)
 					if err != nil {
 						t.Fatal(err)
@@ -145,7 +145,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				}
 				assert.Diff(t, hr, original)
 				for _, revision := range []string{"6.14.0@" + next, "invalid"} {
-					st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: next, Revision: revision})
+					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: next, Revision: revision})
 					if _, err := cli.Template(t.Context(), hr, nil, opts); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 						t.Fatalf("invalid revision bypassed validation: %v", err)
 					}
@@ -185,7 +185,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 			if kind == manifest.KindHelmChart {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: kind, Name: "podinfo"}
 			}
-			st.SetArtifact(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
 			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)
@@ -448,7 +448,8 @@ func minimalHR() *manifest.HelmRelease {
 func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 	st, hr, dir := ociRenderFixture(t)
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-	st.SetArtifact(manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
+	st.SetArtifact(manifest.NamedResource{
+		Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
 	owner := newTestCache(t, "")
 	newClient := func() *Client {
@@ -521,7 +522,7 @@ type changingChartResolver struct {
 	calls     int
 }
 
-func (r *changingChartResolver) LocalSourceArtifact(_, _, _ string) *store.SourceArtifact {
+func (r *changingChartResolver) LocalSourceArtifact(manifest.NamedResource) *store.SourceArtifact {
 	artifact := r.artifacts[min(r.calls, len(r.artifacts)-1)]
 	r.calls++
 	return artifact

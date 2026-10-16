@@ -71,16 +71,16 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 	return selected, selectedErr, remainder
 }
 
-func validateRoots(roots []manifest.NamedResource) (map[string]bool, error) {
+func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]bool, error) {
 	if len(roots) == 0 {
 		return nil, fmt.Errorf("%w: selection requires requested kinds", manifest.ErrInput)
 	}
-	kinds := make(map[string]bool, len(roots))
+	kinds := make(map[manifest.NamedResource]bool, len(roots))
 	for _, root := range roots {
-		if root.Kind == "" || kinds[root.Kind] || root.Namespace != roots[0].Namespace || root.Name != roots[0].Name {
+		if root.Kind == "" || kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] || root.Namespace != roots[0].Namespace || root.Name != roots[0].Name {
 			return nil, fmt.Errorf("%w: selection kinds must be distinct with a common namespace and name", manifest.ErrInput)
 		}
-		kinds[root.Kind] = true
+		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
 	}
 	return kinds, nil
 }
@@ -93,7 +93,7 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 	}
 	s.result = &Result{Counts: make(map[string]int, len(roots))}
 	for _, root := range roots {
-		for _, obj := range s.run.store.ListObjects(root.Kind) {
+		for _, obj := range s.run.store.ListObjects(root.Group, root.Kind) {
 			id := obj.Named()
 			if comparison {
 				if ks, ok := obj.(*manifest.Kustomization); ok {
@@ -155,13 +155,13 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 	return manifest.ChartVersion(s.run.store.GetObject(src))
 }
 
-func (s *selectionSide) collectWarnings(name string, kinds map[string]bool, comparison bool) {
+func (s *selectionSide) collectWarnings(name string, kinds map[manifest.NamedResource]bool, comparison bool) {
 	for _, warning := range s.run.Result.Warnings {
 		if warning.Resource != (manifest.NamedResource{}) && !s.includes(warning.Resource.Namespace) {
 			continue
 		}
 		if comparison && warning.Category == manifest.WarnOmittedValues &&
-			(!kinds[warning.Resource.Kind] || (name != "" && warning.Resource.Name != name)) {
+			(!kinds[manifest.NamedResource{Group: warning.Resource.Group, Kind: warning.Resource.Kind}] || (name != "" && warning.Resource.Name != name)) {
 			continue
 		}
 		s.result.Warnings = append(s.result.Warnings, warning)

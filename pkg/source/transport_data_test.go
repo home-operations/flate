@@ -33,6 +33,11 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 			} else {
 				_, err = ResolveProxy(getter, "ns", "OCIRepository", "repo", ref)
 			}
+			if missing, ok := errors.AsType[*MissingSecretError](err); ok {
+				if missing.Owner.Group != manifest.SourceDomain || missing.Secret != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
+					t.Fatalf("credential identities = %+v", missing)
+				}
+			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing {
 				t.Fatalf("missing=%t, error=%v", tc.missing, err)
 			}

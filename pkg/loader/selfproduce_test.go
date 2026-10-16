@@ -140,7 +140,7 @@ spec:
 			if got := renderers(idx, generated); !slices.Contains(got, clusterApps.Named()) {
 				t.Errorf("generated ConfigMap %s owners=%v", generated, got)
 			}
-			consumer := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer"}
+			consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer"}
 			record, ok := idx.Lookup(consumer)
 			if !ok {
 				t.Fatalf("consumer %s not indexed: records=%+v", consumer, idx.Records)
@@ -378,13 +378,13 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 
 	l := loaderFixture(s, nil)
 	for _, name := range []string{"app-a", "shared"} {
-		id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
 	}
 	rendererFixture(t, l, dir, nil)
 	idx := l.Index
 
-	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	if got, ok := emissionParentForTest(idx, "apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
 		t.Errorf("EmissionParentByFile(app-a) = (%v, %v), want (cluster-apps, true)", got, ok)
 	}
@@ -608,7 +608,7 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 			idx := rendererFixture(t, loaderFixture(s, nil), root, producers)
 			slices.SortFunc(want, manifest.NamedResource.Compare)
 			for _, ns := range []string{namespace, "effective"} {
-				id := manifest.NamedResource{Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
+				id := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
 				got := declarationOwnersForTest(idx, id)
 				slices.SortFunc(got, manifest.NamedResource.Compare)
 				if !slices.Equal(got, want) {
@@ -621,11 +621,11 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 					t.Fatal("caller mutated index")
 				}
 			}
-			effective := manifest.NamedResource{Kind: "ExternalSecret", Namespace: "effective", Name: "producer"}
+			effective := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "effective", Name: "producer"}
 			if r := idx.Records[effective]; r.Authored.Namespace != namespace || r.Authored.Name != "producer" || r.File != "shared/producer.yaml" {
 				t.Fatalf("producer lost authored file proof: %+v", r)
 			}
-			if len(declarationOwnersForTest(idx, manifest.NamedResource{Kind: "ExternalSecret", Namespace: "foreign", Name: "producer"})) != 0 {
+			if len(declarationOwnersForTest(idx, manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "foreign", Name: "producer"})) != 0 {
 				t.Fatal("foreign namespace inherited declaration owners")
 			}
 			if got := renderers(idx, manifest.NamedResource{Kind: "ConfigMap", Namespace: "effective", Name: "values"}); len(got) != 0 {
@@ -653,7 +653,7 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 				}
 			}
 			for _, ns := range []string{namespace, "apps"} {
-				producer := manifest.NamedResource{Kind: "ObjectBucketClaim", Namespace: ns, Name: "bucket"}
+				producer := manifest.NamedResource{Group: "objectbucket.io", Kind: "ObjectBucketClaim", Namespace: ns, Name: "bucket"}
 				if got := declarationOwnersForTest(idx, producer); !slices.Equal(got, []manifest.NamedResource{ks.Named()}) {
 					t.Fatalf("repeated targets duplicate declaration owner: %v", got)
 				}
@@ -732,8 +732,8 @@ data: {value: fixture}
 			}
 			producers := &manifest.ProducerIndex{}
 			l.FinalizeIndex(root, producers)
-			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
-			child := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
+			owner := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
+			child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 			values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
 			if existing != nil && l.Store.GetObject(values) != existing {
 				t.Fatal("pre-existing data object was replaced")

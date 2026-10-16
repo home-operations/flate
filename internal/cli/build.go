@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"errors"
 	"slices"
 
@@ -103,13 +102,11 @@ func emissionDocs(mans []map[string]any, b *buildFlags) []map[string]any {
 	return docs
 }
 
-// compareDocs orders rendered docs by (kind, namespace, name).
+// compareDocs orders rendered docs by canonical resource identity.
 func compareDocs(a, b map[string]any) int {
 	an, ans := manifest.DocMetadata(a)
 	bn, bns := manifest.DocMetadata(b)
-	return cmp.Or(
-		cmp.Compare(manifest.DocKind(a), manifest.DocKind(b)),
-		cmp.Compare(ans, bns),
-		cmp.Compare(an, bn),
-	)
+	aid := (&manifest.RawObject{APIVersion: manifest.DocAPIVersion(a), Kind: manifest.DocKind(a), Namespace: ans, Name: an}).Named()
+	bid := (&manifest.RawObject{APIVersion: manifest.DocAPIVersion(b), Kind: manifest.DocKind(b), Namespace: bns, Name: bn}).Named()
+	return aid.Compare(bid)
 }

@@ -12,7 +12,7 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 	l.mountSources()
 	if l.scopes == nil || !l.scopes.complete {
 		l.ensureScopes()
-		for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.KindKustomization) {
+		for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 			l.scopes.ready[l.sourceState(ks.SourceID())] = struct{}{}
 		}
 		l.ApplyNamespaces(repoRoot)

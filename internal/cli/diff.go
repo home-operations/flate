@@ -58,7 +58,7 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and unavailable producer disclosures.",
 		Args:    positional,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.run(cmd, c, h, manifest.NamedResource{Kind: kind, Name: firstArg(args)})
+			return d.run(cmd, c, h, c.roots(firstArg(args), kind)[0])
 		},
 	}
 	bindCommon(cmd.Flags(), c, output.DiffFormats...)

@@ -222,19 +222,29 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 	}
 
 	flux := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
+		Name: foreign.Name, Namespace: foreign.Namespace,
 		BucketName: "b", Endpoint: "minio:9000",
 	}
 	st.AddObject(flux)
 	if !c.Owns(flux.Named()) {
 		t.Errorf("Owns(%s) = false for the Flux Bucket", flux.Named())
 	}
+	for _, group := range []string{"", "example.test"} {
+		id := flux.Named()
+		id.Group = group
+		if c.Owns(id) {
+			t.Errorf("Owns(%s) = true for an absent lookalike", id)
+		}
+	}
+	if c.Owns(foreign.Named()) {
+		t.Fatal("same-name Flux source admitted a foreign object")
+	}
 	// An id the store never saw stays ours — the vanished-object report is
 	// the controller's to write.
-	if !c.Owns(manifest.NamedResource{Kind: manifest.KindBucket, Namespace: "ns", Name: "gone"}) {
+	if !c.Owns(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "ns", Name: "gone"}) {
 		t.Errorf("Owns = false for an absent id of a registered kind")
 	}
-	if c.Owns(manifest.NamedResource{Kind: "Deployment", Namespace: "ns", Name: "app"}) {
+	if c.Owns(manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "ns", Name: "app"}) {
 		t.Errorf("Owns = true for a kind with no fetcher")
 	}
 }
@@ -294,7 +304,8 @@ func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) 
 	producers := &manifest.ProducerIndex{}
 	producers.Record(
 		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretRef},
-		manifest.NamedResource{Kind: "ExternalSecret", Namespace: "ns", Name: "ghcr-es"},
+		manifest.NamedResource{
+			Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "ghcr-es"},
 	)
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f},
@@ -399,7 +410,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secret.Name, detail)}
 			producers := &manifest.ProducerIndex{}
 			if tt.producer {
-				producers.Record(secret.Named(), manifest.NamedResource{Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
+				producers.Record(secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 			}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
@@ -513,7 +524,7 @@ func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	f := &fallbackFetcher{}
 	producers := &manifest.ProducerIndex{}
 	producers.Record(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
-		manifest.NamedResource{Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
+		manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{Producers: producers})
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}

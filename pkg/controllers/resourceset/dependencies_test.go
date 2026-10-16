@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -27,7 +29,7 @@ func TestCollectDeps_ScopeAndImmutability(t *testing.T) {
 		t.Run(tc.api+"/"+tc.kind+"/"+tc.namespace, func(t *testing.T) {
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{APIVersion: tc.api, Kind: tc.kind, Name: "dependency", Namespace: tc.namespace, Ready: true, ReadyExpr: "true"}}}
 			s.AddObject(rs)
-			want := []manifest.DependencyRef{{Kind: tc.kind, Name: "dependency", Namespace: tc.want, ReadyExpr: "true"}}
+			want := []manifest.DependencyRef{{Group: schema.FromAPIVersionAndKind(tc.api, tc.kind).Group, Kind: tc.kind, Name: "dependency", Namespace: tc.want, ReadyExpr: "true"}}
 			assert.Diff(t, c.collectDeps(rs), want)
 			assert.Equal(t, rs.DependsOn[0].Namespace, tc.namespace)
 			stored, ok := s.Get[*manifest.ResourceSet](rs.Named())
@@ -43,16 +45,22 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 	for _, hasParent := range []bool{false, true} {
 		t.Run(fmt.Sprint(hasParent), func(t *testing.T) {
 			c := New(store.New(), task.NewBounded(2), true)
-			parent := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+			parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 			calls := 0
 			c.Configure(Options{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { calls++; return parent, hasParent }})
 			dependency := &manifest.Kustomization{Name: "pending", Namespace: "apps"}
 			c.Store.AddObject(dependency)
 			c.Store.UpdateStatus(dependency.Named(), store.StatusPending, "working")
-			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{Kind: manifest.KindKustomization, Name: "pending"}}, InputsFrom: []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "named"}, {Kind: manifest.KindResourceSetInputProvider}}}
-			rs.InputsFrom = append(rs.InputsFrom, rs.InputsFrom[0])
-			want := []manifest.DependencyRef{{NamedResource: dependency.Named()}, {Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"}}
-			want = append(want, want[1])
+			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: "pending"}}, InputsFrom: []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "named"}, {Kind: manifest.KindResourceSetInputProvider}}}
+			rs.InputsFrom = append(rs.InputsFrom, rs.InputsFrom[0],
+				fluxopv1.InputProviderReference{APIVersion: "example.test/v1", Name: "named"},
+				fluxopv1.InputProviderReference{APIVersion: "v1", Name: "named"},
+				fluxopv1.InputProviderReference{Kind: manifest.KindResourceSet, Name: "named"})
+			want := []manifest.DependencyRef{{NamedResource: dependency.Named()}, {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"}}
+			want = append(want, want[1],
+				manifest.DependencyRef{Group: "example.test", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"},
+				manifest.DependencyRef{Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"},
+				manifest.DependencyRef{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "named"})
 			if hasParent {
 				want = append(want, manifest.DependencyRef{NamedResource: parent})
 			}

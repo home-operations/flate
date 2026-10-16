@@ -55,7 +55,7 @@ func BenchmarkBuildOwnership(b *testing.B) {
 // the unit cost the resolve BFS pays per kept entry.
 func BenchmarkTransitiveDeps(b *testing.B) {
 	s := store.New()
-	id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},

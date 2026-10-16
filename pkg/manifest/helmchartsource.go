@@ -32,7 +32,7 @@ type HelmChartSource struct {
 
 // Named identifies the chart resource.
 func (h *HelmChartSource) Named() NamedResource {
-	return NamedResource{Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
+	return NamedResource{Group: kindTable[kindHelmChartSource].Group, Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -64,8 +64,9 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 }
 
 func (h *HelmChartSource) references(yield func(Reference) bool) {
+	kind := cmp.Or(h.SourceRef.Kind, KindHelmRepository)
 	yield(Reference{
-		NamedResource: Resolve(NamedResource{Kind: cmp.Or(h.SourceRef.Kind, KindHelmRepository), Name: h.SourceRef.Name}, "", h.Namespace),
+		NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, h.SourceRef.APIVersion), Kind: kind, Name: h.SourceRef.Name}, "", h.Namespace),
 		Use:           "source", Content: h.SourceRef.Name != "",
 	})
 }

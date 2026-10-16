@@ -94,7 +94,7 @@ spec: {path: ./leaf}
 		{"parent fallback", "flux-system", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: child.Name}
+			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: child.Name}
 			if _, ok := s.Get[*manifest.Kustomization](id); ok != tc.want {
 				t.Errorf("stored identity %s present=%t, want %t", id, ok, tc.want)
 			}
@@ -138,7 +138,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 `, tc.authored, tc.authored)
 			check := func(ns string) {
 				for _, name := range []string{"gpu-operator", "explicit"} {
-					id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: ns, Name: name}
+					id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: ns, Name: name}
 					want := ns
 					if name == "explicit" {
 						want = "authored"
@@ -158,7 +158,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 						if staleNS == ns {
 							continue
 						}
-						stale := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: staleNS, Name: name}
+						stale := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: staleNS, Name: name}
 						_, indexed := l.Index.Lookup(stale)
 						if st.GetObject(stale) != nil || indexed {
 							t.Fatalf("retained stale %s", stale)
@@ -198,7 +198,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 					if version == 0 {
 						removedNS = ""
 					}
-					removed := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: removedNS, Name: "removed"}
+					removed := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: removedNS, Name: "removed"}
 					_, indexed := l.Index.Lookup(removed)
 					if (st.GetObject(removed) != nil) != (version == 0) || indexed != (version == 0) {
 						t.Fatalf("removed declaration: store=%t index=%t version=%d", st.GetObject(removed) != nil, indexed, version)
@@ -216,7 +216,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 				st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "removed", LocalRoot: root, LocalPath: local})
 				l.ApplyNamespaces(root)
 				for _, name := range []string{"gpu-operator", "explicit"} {
-					id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: name}
+					id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: name}
 					_, indexed := l.Index.Lookup(id)
 					if st.GetObject(id) != nil || indexed {
 						t.Fatalf("%s survived mount removal", id)

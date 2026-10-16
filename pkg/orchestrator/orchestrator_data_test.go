@@ -17,7 +17,7 @@ import (
 )
 
 func TestOrchestrator_ParentOf(t *testing.T) {
-	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "child", Namespace: "apps"}
+	id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "child", Namespace: "apps"}
 	structural, rendered := ksID("structural"), ksID("rendered")
 	for _, tc := range []struct {
 		name                       string
@@ -84,7 +84,7 @@ spec:
 			for _, id := range []manifest.NamedResource{
 				{Kind: "ConfigMap", Namespace: "apps", Name: "input"},
 				{Kind: "Secret", Namespace: "apps", Name: "generated"},
-				{Kind: "ExternalSecret", Namespace: "apps", Name: "declaration"}, ksID("a"), ksID("b"), ksID("c"),
+				{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration"}, ksID("a"), ksID("b"), ksID("c"),
 			} {
 				if !slices.Contains(got, id) {
 					t.Fatalf("known prerequisite missing: %s in %v", id, got)
@@ -118,7 +118,7 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "a"}
+			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "a"}
 			var fresh []manifest.NamedResource
 			for range 2 {
 				if _, err := o.Render(t.Context()); err != nil {
@@ -200,7 +200,7 @@ spec:
 				if _, err := o.Render(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
+				id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
 				before, _ := o.store.GetStatus(id)
 				if !store.IsSuspended(before) && !store.IsUnchanged(before) || o.store.GetArtifact(id) != nil {
 					t.Fatalf("consumer was rendered: %+v", before)
@@ -224,7 +224,7 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
+		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
 	parent, other, first, second := id("parent"), id("other"), id("a"), id("b")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
@@ -281,11 +281,17 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 	l.Index = indexForTest(map[manifest.NamedResource]string{input: "values/input.yaml", hr.Named(): "consumer.yaml"})
 	l.FinalizeIndex(root, nil)
 	o.index = l.Index
+	foreign := input
+	foreign.Group = "example.test"
+	foreignOwner := &manifest.Kustomization{Name: "foreign-owner", Namespace: "flux-system", Path: "./foreign"}
+	o.store.AddObject(foreignOwner)
+	o.index.Records[foreign] = manifest.DiscoveryRecord{File: "foreign/input.yaml", Owners: []manifest.NamedResource{foreignOwner.Named()}}
 	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), o.index, o.store)
 	assert.Diff(t, o.filter.ProducersFor(input), []manifest.NamedResource{owner.Named()})
 	want := []manifest.NamedResource{input, owner.Named()}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	assert.Diff(t, o.requiredDataDependencies(hr.Named()), want)
+	assert.Diff(t, o.filter.ProducersFor(foreign), []manifest.NamedResource{foreignOwner.Named()})
 }
 
 func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testing.T) {

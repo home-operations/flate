@@ -231,8 +231,8 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 func (o *Orchestrator) collectManifests(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource][]map[string]any {
 	skip := o.cfg.HelmOptions.SkipResourceKinds()
 	out := map[manifest.NamedResource][]map[string]any{}
-	for _, kind := range reconcilableKinds {
-		for _, obj := range o.store.ListObjects(kind) {
+	for _, info := range reconcilableKinds {
+		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
 			id := obj.Named()
 			var docs []map[string]any
 			// Take the rendered artifact unless this is a FAILED HelmRelease

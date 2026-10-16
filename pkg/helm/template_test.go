@@ -118,7 +118,7 @@ data:
 			hr := &manifest.HelmRelease{
 				Name: "demo", Namespace: "default", CRDsPolicy: tc.policy,
 				Chart: manifest.HelmChart{
-					Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoKind: manifest.KindGitRepository,
+					Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
 				},
 			}
 			opts := Options{SkipCRDs: tc.skip}

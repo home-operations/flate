@@ -34,7 +34,7 @@ type documentReader struct {
 func (r *documentReader) mountSources(s *store.Store) []string {
 	mounted := map[string]*store.SourceArtifact{}
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket, manifest.KindExternalArtifact} {
-		for _, obj := range s.ListObjects(kind) {
+		for _, obj := range s.ListObjects(manifest.SourceDomain, kind) {
 			art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
 			if ok && art.LocalPath != "" {
 				mounted[art.LocalPath] = art

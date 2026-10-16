@@ -78,7 +78,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			f := &oci.Fetcher{
 				Cache: cache, RegistryConfig: config,
 				Secrets: func(ns, name string) *manifest.Secret {
-					sec, _ := st.GetByName[*manifest.Secret](manifest.KindSecret, ns, name)
+					sec, _ := st.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name})
 					if sec == nil {
 						lookups <- struct{}{}
 						<-release

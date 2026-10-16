@@ -10,7 +10,7 @@ import (
 
 // resourceSetFingerprint produces a stable hash of the inputs that
 // determine resourceset.Render's output for rs: the RS spec PLUS the
-// resolved inputsFrom provider set (each RSIP's NamespacedName and its
+// resolved inputsFrom provider set (each RSIP's identity and its
 // ExportedInputs). Hashing the resolved inputs — not the rendered docs —
 // is what makes the fingerprint usable BEFORE the render for the dedup
 // short-circuit, while still distinguishing two renders that would
@@ -35,7 +35,7 @@ func resourceSetFingerprint(rs *manifest.ResourceSet, s *store.Store) string {
 // inputDigest pairs an RSIP identity with the digest of its exported
 // inputs.
 type inputDigest struct {
-	ID     string
+	ID     manifest.NamedResource
 	Inputs string
 }
 
@@ -52,9 +52,7 @@ func resolvedInputDigests(rs *manifest.ResourceSet, s *store.Store) []inputDiges
 			continue
 		}
 		ref := rs.InputsFrom[edge.Position]
-		// InputProviderReference is same-namespace by spec — resolve in the
-		// ResourceSet's own namespace, exactly as resourceset.Render does.
-		providers, err := resolve(ref, edge.Namespace)
+		providers, err := resolve(ref, edge.NamedResource)
 		if err != nil {
 			continue
 		}
@@ -64,7 +62,7 @@ func resolvedInputDigests(rs *manifest.ResourceSet, s *store.Store) []inputDiges
 				continue
 			}
 			out = append(out, inputDigest{
-				ID:     p.Named().String(),
+				ID:     p.Named(),
 				Inputs: manifest.Fingerprint(inputs),
 			})
 		}

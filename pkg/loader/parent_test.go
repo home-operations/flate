@@ -53,7 +53,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				ks.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pinned", Namespace: "flux-system"}
 			}
 			st.AddObject(ks)
-			child := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+			child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 			data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "data"}
 			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "generated"}
 			l := loaderFixture(st, map[manifest.NamedResource]string{child: prefix + "hr.yaml", data: prefix + "cm.yaml"})
@@ -110,23 +110,23 @@ func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest
 
 func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 	for _, tc := range []struct {
-		kind   string
-		parent bool
+		group, kind string
+		parent      bool
 	}{
-		{manifest.KindKustomization, true},
-		{manifest.KindHelmRelease, true},
-		{manifest.KindResourceSet, true},
-		{manifest.KindGitRepository, false},
-		{manifest.KindOCIRepository, false},
-		{manifest.KindHelmRepository, false},
-		{manifest.KindHelmChart, false},
-		{manifest.KindBucket, false},
-		{manifest.KindExternalArtifact, false},
-		{manifest.KindResourceSetInputProvider, false},
-		{manifest.KindConfigMap, false},
-		{manifest.KindSecret, false},
+		{manifest.FluxKustomizeDomain, manifest.KindKustomization, true},
+		{manifest.HelmReleaseDomain, manifest.KindHelmRelease, true},
+		{manifest.FluxOperatorDomain, manifest.KindResourceSet, true},
+		{manifest.SourceDomain, manifest.KindGitRepository, false},
+		{manifest.SourceDomain, manifest.KindOCIRepository, false},
+		{manifest.SourceDomain, manifest.KindHelmRepository, false},
+		{manifest.SourceDomain, manifest.KindHelmChart, false},
+		{manifest.SourceDomain, manifest.KindBucket, false},
+		{manifest.SourceDomain, manifest.KindExternalArtifact, false},
+		{manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider, false},
+		{"", manifest.KindConfigMap, false},
+		{"", manifest.KindSecret, false},
 	} {
-		kind, eligible := tc.kind, tc.parent
+		group, kind, eligible := tc.group, tc.kind, tc.parent
 		t.Run(kind, func(t *testing.T) {
 			s := store.New()
 			outer := &manifest.Kustomization{Name: "outer", Namespace: "flux-system", Path: "./apps"}
@@ -144,13 +144,13 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 			}
 			files := map[manifest.NamedResource]string{}
 			for _, tc := range cases {
-				files[manifest.NamedResource{Kind: kind, Namespace: tc.namespace, Name: tc.name}] = tc.file
+				files[manifest.NamedResource{Group: group, Kind: kind, Namespace: tc.namespace, Name: tc.name}] = tc.file
 			}
 			files[manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "team", Name: "data"}] = "apps/team/data.yaml"
 			parents := parentsForTest(t, loaderFixture(s, files), "", kind)
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
-					id := manifest.NamedResource{Kind: kind, Namespace: tc.namespace, Name: tc.name}
+					id := manifest.NamedResource{Group: group, Kind: kind, Namespace: tc.namespace, Name: tc.name}
 					want := tc.want
 					if !eligible {
 						want = manifest.NamedResource{}
@@ -212,7 +212,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	s.AddObject(&manifest.GitRepository{Name: "side-repo", Namespace: "flux-system"})
 	// home-kubernetes is aliased to the working tree (LocalPath == repoRoot).
 	s.SetArtifact(
-		manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"},
+		manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"},
 		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot, FS: fstest.MapFS{}},
 	)
 
@@ -529,7 +529,7 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 // returned as its own parent.
 func TestStrictParent_SkipsSelf(t *testing.T) {
 	prefixes := []manifest.KSClaim{
-		{ID: manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "self"}, Prefix: "apps/team-a/"},
+		{ID: manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "self"}, Prefix: "apps/team-a/"},
 	}
 	self := prefixes[0].ID
 	if _, ok := manifest.StrictParent(prefixes, "apps/team-a/ks.yaml", self, nil); ok {
@@ -627,7 +627,7 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 	s.AddObject(ks)
 
 	prefixes := Claims(s, "")
-	hr := manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "flux-instance"}
+	hr := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "flux-instance"}
 	parent, ok := manifest.StrictParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr, nil)
 	if !ok {
 		t.Fatalf("expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v", prefixes)

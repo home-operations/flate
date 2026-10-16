@@ -203,7 +203,7 @@ data:
 			if ctx.Err() != nil || len(res.Failed) != 0 {
 				t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
 			}
-			for _, id := range []manifest.NamedResource{ksID("apps"), {Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}} {
+			for _, id := range []manifest.NamedResource{ksID("apps"), {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}} {
 				info, ok := o.Store().GetStatus(id)
 				if !ok || info.Status != store.StatusReady {
 					t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
@@ -227,7 +227,7 @@ data:
 			if ns != "flux-system" {
 				t.Fatalf("release document namespace = %q", ns)
 			}
-			hrID := manifest.NamedResource{Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
+			hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
 			childBefore := manifest.DeepCopyMap(childDoc)
 			hrArt := o.store.GetArtifact(hrID).(*store.HelmReleaseArtifact)
 			retained := make([]map[string]any, len(hrArt.Manifests))
@@ -285,7 +285,7 @@ func ksYAML(name, path, dependsOn string) string {
 }
 
 func ksID(name string) manifest.NamedResource {
-	return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 }
 
 // TestDAG_RenderEmittedDependencyResolves is the KS-A2 scenario: a consumer
@@ -401,7 +401,25 @@ spec:
     << end >>
 `, i, i, i+1, i+1, i+1)
 			}
-			testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
+			for i, ref := range []string{"apiVersion: example.test/v1", "apiVersion: v1", "kind: ResourceSet"} {
+				fmt.Fprintf(&sets, `---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: foreign-%d, namespace: flux-system}
+spec:
+  inputsFrom:
+    - %s
+      selector: {matchLabels: {stage: "0"}}
+  resourcesTemplate: |
+    << if inputs >>
+    apiVersion: example.com/v1
+    kind: Widget
+    metadata: {name: forbidden-%d}
+    << end >>
+`, i, ref, i)
+			}
+			manifests := strings.Replace(sets.String(), "    - apiVersion: fluxcd.controlplane.io/v1\n      kind: ResourceSetInputProvider\n      selector:", "    - selector:", 1)
+			testutil.WriteFile(t, dir, "apps/sets.yaml", manifests)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			var previous []byte
@@ -415,12 +433,12 @@ spec:
 					t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
 				}
 				for i := range depth + 1 {
-					nid := manifest.NamedResource{Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: fmt.Sprintf("provider-%02d", i)}
+					nid := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: fmt.Sprintf("provider-%02d", i)}
 					if _, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid); !ok {
 						t.Fatalf("missing chain output %s", nid)
 					}
 				}
-				if count := len(o.Store().ListObjects(manifest.KindResourceSetInputProvider)); count != depth+1 {
+				if count := len(o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider)); count != depth+1 {
 					t.Fatalf("provider count=%d, want %d", count, depth+1)
 				}
 				proofs := 0

@@ -20,7 +20,7 @@ type filterFixture struct {
 func (f filterFixture) index() *manifest.DiscoveryIndex {
 	st := store.New()
 	if f.objects != nil {
-		for _, obj := range f.objects.ListObjects(manifest.KindKustomization) {
+		for _, obj := range f.objects.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 			if _, excluded := f.excluded[obj.Named()]; !excluded {
 				st.AddObject(obj)
 			}

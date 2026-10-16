@@ -39,7 +39,7 @@ func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
-		ids[i] = manifest.NamedResource{
+		ids[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
 			Kind: manifest.KindKustomization, Namespace: "ns",
 			Name: fmt.Sprintf("ks-%05d", i),
 		}
@@ -78,7 +78,7 @@ func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
 
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
-		ids[i] = manifest.NamedResource{
+		ids[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
 			Kind: manifest.KindKustomization, Namespace: "ns",
 			Name: fmt.Sprintf("ks-%05d", i),
 		}

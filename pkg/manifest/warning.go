@@ -8,7 +8,7 @@ import "cmp"
 //
 // It is distinct from a failure (which blocks a resource and lands in
 // Result.Failed) and from operational/diagnostic logs (submodule skips, cache
-// resets, best-effort loader parse errors) which stay as plain slog lines — a
+// resets) which stay as plain slog lines; a
 // Warning means "the render succeeded, but you probably want to look at this".
 //
 // Producers record Warnings on the Store; the orchestrator collects them into

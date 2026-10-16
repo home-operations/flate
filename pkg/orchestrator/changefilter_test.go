@@ -134,7 +134,7 @@ data:
 	if f == nil {
 		t.Fatal("expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter")
 	}
-	clusterApps := manifest.NamedResource{
+	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
 		Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps",
 	}
 	if !f.ShouldReconcile(clusterApps) {

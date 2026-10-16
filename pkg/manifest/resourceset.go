@@ -1,10 +1,13 @@
 package manifest
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
@@ -39,7 +42,7 @@ func (r *ResourceSet) Suspended() bool { return r.Suspend }
 
 // Named identifies the ResourceSet.
 func (r *ResourceSet) Named() NamedResource {
-	return NamedResource{Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}
+	return NamedResource{Group: kindTable[kindResourceSet].Group, Kind: KindResourceSet, Namespace: r.Namespace, Name: r.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -58,6 +61,28 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	var cr fluxopv1.ResourceSet
 	if err := decodeCR(doc, &cr, "ResourceSet", FluxOperatorDomain); err != nil {
 		return nil, err
+	}
+	for i, dep := range cr.Spec.DependsOn {
+		gv, err := schema.ParseGroupVersion(dep.APIVersion)
+		if err != nil || gv.Version == "" {
+			return nil, inputf("ResourceSet %w", field.Invalid(field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"), dep.APIVersion, "must have a valid version"))
+		}
+	}
+	spec, _ := doc["spec"].(map[string]any)
+	inputsFrom, _ := spec["inputsFrom"].([]any)
+	for i, ref := range cr.Spec.InputsFrom {
+		explicit := ref.APIVersion != ""
+		if i < len(inputsFrom) {
+			raw, _ := inputsFrom[i].(map[string]any)
+			_, explicit = raw["apiVersion"]
+		}
+		if !explicit {
+			continue
+		}
+		gv, err := schema.ParseGroupVersion(ref.APIVersion)
+		if err != nil || gv.Version == "" {
+			return nil, inputf("ResourceSet %w", field.Invalid(field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"), ref.APIVersion, "must have a valid version"))
+		}
 	}
 	return &ResourceSet{
 		Name:            cr.Name,
@@ -90,7 +115,7 @@ type ResourceSetInputProvider struct {
 
 // Named identifies the ResourceSetInputProvider.
 func (p *ResourceSetInputProvider) Named() NamedResource {
-	return NamedResource{Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
+	return NamedResource{Group: kindTable[kindResourceSetInputProvider].Group, Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -177,7 +202,8 @@ func (p *ResourceSetInputProvider) derivedID() string {
 
 func (r *ResourceSet) references(yield func(Reference) bool) {
 	for i, dep := range r.DependsOn {
-		id := Resolve(NamedResource{Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}, "", r.Namespace)
+		gv, _ := schema.ParseGroupVersion(dep.APIVersion)
+		id := Resolve(NamedResource{Group: gv.Group, Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}, "", r.Namespace)
 		if !isNamespaceScoped(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind}) {
 			id.Namespace = ""
 		}
@@ -189,8 +215,9 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 		}
 	}
 	for i, ref := range r.InputsFrom {
+		kind := cmp.Or(ref.Kind, KindResourceSetInputProvider)
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Kind: KindResourceSetInputProvider, Name: ref.Name}, "", r.Namespace),
+			NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name}, "", r.Namespace),
 			Use:           "inputsFrom", Position: i, Content: true,
 		}) {
 			return

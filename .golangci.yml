@@ -6,16 +6,191 @@ run:
 linters:
   default: standard
   enable:
+    - depguard
+    - forbidigo
     - gosec
     - intrange
     - misspell
     - modernize
+    - nolintlint
     - revive
     - unconvert
     - unparam
     - usestdlibvars
+    - usetesting
+  settings:
+    # The dependency flow from AGENTS.md "Layout": a package may import only the layers below it.
+    depguard:
+      rules:
+        tree-stdlib-only:
+          list-mode: strict
+          files: ["**/pkg/tree/**"]
+          allow: ["$gostd"]
+        leaf:
+          files:
+            - "**/pkg/manifest/**"
+            - "**/pkg/task/**"
+            - "**/pkg/source/safepath/**"
+            - "**/pkg/source/sourceignore/**"
+            - "**/pkg/source/ssrfguard/**"
+            - "**/internal/assert/**"
+          deny:
+            - pkg: github.com/home-operations/flate/pkg
+              desc: leaf packages import nothing from pkg/
+        store:
+          files: ["**/pkg/store/**"]
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/loader
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/pkg/values
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/pkg/depwait
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/pkg/change
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/pkg/source
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/pkg/kustomize
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/pkg/helm
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/pkg/discovery
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/pkg/baseline
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/pkg/resourceset
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/pkg/diff
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/pkg/controllers
+              desc: store is below the controllers
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: store is below the orchestrator
+        schedule:
+          # A leaf behind its Dispatcher seam: stdlib, manifest and task only.
+          list-mode: strict
+          files: ["**/pkg/schedule/**"]
+          allow:
+            - $gostd
+            - github.com/home-operations/flate/pkg/manifest
+            - github.com/home-operations/flate/pkg/task
+        middle:
+          files:
+            - "**/pkg/loader/**"
+            - "**/pkg/values/**"
+            - "**/pkg/depwait/**"
+            - "**/pkg/change/**"
+            - "**/pkg/source/**"
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/kustomize
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/pkg/helm
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/pkg/discovery
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/pkg/baseline
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/pkg/resourceset
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/pkg/diff
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/pkg/controllers
+              desc: below the controllers
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: below the orchestrator
+        render:
+          files:
+            - "**/pkg/kustomize/**"
+            - "**/pkg/helm/**"
+            - "**/pkg/discovery/**"
+            - "**/pkg/baseline/**"
+            - "**/pkg/resourceset/**"
+            - "**/pkg/diff/**"
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/controllers
+              desc: below the controllers
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: below the orchestrator
+        controllers-base:
+          files: ["**/pkg/controllers/base/**"]
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/controllers/helmrelease
+              desc: base is below the kind controllers
+            - pkg: github.com/home-operations/flate/pkg/controllers/kustomization
+              desc: base is below the kind controllers
+            - pkg: github.com/home-operations/flate/pkg/controllers/resourceset
+              desc: base is below the kind controllers
+            - pkg: github.com/home-operations/flate/pkg/controllers/source
+              desc: base is below the kind controllers
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: below the orchestrator
+        controllers:
+          files: ["**/pkg/controllers/**"]
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/orchestrator
+              desc: controllers are below the orchestrator
+        no-upward-to-cli:
+          files: ["**/pkg/**"]
+          deny:
+            - pkg: github.com/home-operations/flate/internal/cli
+              desc: pkg/ never imports internal/cli
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^context\.Background$
+          msg: context.Background belongs to internal/cli, or to documented shared work such as the remote fetch workers
+        - pattern: ^ioutil\.
+          msg: use the io and os packages
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: output goes through the CLI writer, logs through slog
+        - pattern: ^log\.(Print|Fatal|Panic)
+          msg: logging is log/slog only
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: true
   exclusions:
     rules:
+      # Tests cross layers for fixtures and live in external test packages; usetesting governs their contexts.
+      - path: _test\.go
+        linters:
+          - depguard
+          - forbidigo
+      # internal/cli owns context.Background and the process's stdout.
+      - path: ^(internal/cli|cmd)/
+        linters:
+          - forbidigo
+      # Documented shared work that outlives one caller's cancellation (AGENTS.md "Context"): the remote
+      # fetch workers and the cache-lifetime source-root admission.
+      - path: pkg/kustomize/(remotefetch|flux)\.go
+        text: context.Background
+        linters:
+          - forbidigo
       - path: _test\.go
         linters:
           - errcheck

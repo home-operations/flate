@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -578,23 +579,79 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	}
 }
 
-func TestFetchHTTPChart_NestedIndexExhaustion(t *testing.T) {
-	for _, attempts := range []int{1, 3} {
-		t.Run(fmt.Sprint(attempts), func(t *testing.T) {
-			var hits atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				hits.Add(1)
-				w.Header().Set("Content-Length", "20")
-				_, _ = io.WriteString(w, "partial")
-			}))
-			defer srv.Close()
-			f := newHTTPFetcher(t, httpRepo(srv.URL))
-			_, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
-			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
-			if !ok || !terminal.Attempted || hits.Load() != int32(attempts) || !errors.Is(err, io.ErrUnexpectedEOF) {
-				t.Fatalf("hits=%d, terminal=%+v, error=%v", hits.Load(), terminal, err)
-			}
-		})
+func TestFetchHTTPChart_TruncatedOutcomeReplay(t *testing.T) {
+	for _, target := range []string{"/index.yaml", "/app-template-1.0.0.tgz"} {
+		for _, attempts := range []int{1, 3} {
+			t.Run(fmt.Sprintf("%s/%d", strings.TrimPrefix(target, "/"), attempts), func(t *testing.T) {
+				var indexHits, chartHits atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if req.URL.Path == "/index.yaml" {
+						indexHits.Add(1)
+						if target != "/index.yaml" {
+							_, _ = io.WriteString(w, helmRepoIndex(""))
+							return
+						}
+					} else {
+						chartHits.Add(1)
+					}
+					w.Header().Set("Content-Length", "20")
+					_, _ = io.WriteString(w, "partial")
+				}))
+				defer srv.Close()
+				r := httpRepo(srv.URL)
+				lookup := func(_, _ string) *manifest.HelmRepository { return r }
+				root := t.TempDir()
+				c, err := sourcecache.New(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = c.Close() })
+				f, cleanup := New(nil, lookup, nil, Config{Cache: c})
+				t.Cleanup(cleanup)
+				hc := helmChart("repo", "app-template", "1.0.0")
+				retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
+				_, err = f.Fetch(t.Context(), hc, retry)
+				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+				if !ok || !terminal.Attempted || !errors.Is(err, io.ErrUnexpectedEOF) || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("initial terminal=%+v, error=%v", terminal, err)
+				}
+				if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != srv.URL+target || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
+					t.Errorf("initial transport=%+v, error=%v", transport, err)
+				}
+				wantIndex, wantChart := int32(attempts), int32(0)
+				if target != "/index.yaml" {
+					wantIndex, wantChart = 1, int32(attempts)
+				}
+				if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
+					t.Fatalf("initial requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
+				}
+				cleanup()
+				if err := c.Close(); err != nil {
+					t.Fatal(err)
+				}
+				warmCache, err := sourcecache.New(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = warmCache.Close() })
+				if warmCache == c {
+					t.Fatal("reopened cache reused the closed owner")
+				}
+				warm, cleanup := New(nil, lookup, nil, Config{Cache: warmCache})
+				t.Cleanup(cleanup)
+				_, err = warm.Fetch(t.Context(), hc, retry)
+				terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
+				if !ok || terminal.Attempted || !errors.Is(err, io.ErrUnexpectedEOF) || !errors.Is(err, manifest.ErrFlux) {
+					t.Errorf("replayed terminal=%+v, error=%v", terminal, err)
+				}
+				if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != "" || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
+					t.Errorf("replayed transport=%+v, error=%v", transport, err)
+				}
+				if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
+					t.Errorf("replayed requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
+				}
+			})
+		}
 	}
 }
 

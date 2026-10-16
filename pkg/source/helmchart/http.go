@@ -201,5 +201,8 @@ func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (o
 	}
 	h := digest.SHA256.Digester()
 	size, err := io.Copy(io.MultiWriter(w, h.Hash()), response.Body)
+	if err != nil {
+		err = &url.Error{Op: "Get", URL: target, Err: err}
+	}
 	return ocispec.Descriptor{Digest: h.Digest(), Size: size, MediaType: response.Header.Get("Content-Type")}, err
 }

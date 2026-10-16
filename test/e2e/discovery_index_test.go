@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"github.com/home-operations/flate/internal/testutil"
 	"path/filepath"
 	"strings"
@@ -199,21 +200,140 @@ spec:
 	}
 }
 
-func TestE2E_SourceRef_UnknownOCIArtifactRoot(t *testing.T) {
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, diagnostic, kind string
+		later                        bool
+	}{
+		{name: "subtree", path: "./apps/x"},
+		{name: "bucket_subtree", path: "./apps/x", kind: "Bucket"},
+		{name: "unsupported", path: "kubernetes/apps/x", kind: "ExternalArtifact", diagnostic: "ExternalArtifact"},
+		{name: "repository", path: "kubernetes/apps/x"},
+		{name: "unknown", path: "./absent", diagnostic: "unknown OCI artifact root"},
+		{name: "frozen", path: "./apps/x", diagnostic: "kustomization path is not a directory", later: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kind := tc.kind
+			if kind == "" {
+				kind = "OCIRepository"
+			}
+			root := t.TempDir()
+			repo := gitInit(t, root)
+			testutil.WriteFile(t, root, "kubernetes/clusters/c0/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: bootstrap, namespace: flux-system}
+spec: {path: %s, sourceRef: {kind: %s, name: flux-system}}
+`, tc.path, kind))
+			if tc.diagnostic == "" {
+				consumerPath := "./consumer"
+				if tc.name == "repository" {
+					consumerPath = "kubernetes/consumer"
+				}
+				testutil.WriteFile(t, root, "kubernetes/clusters/c0/consumer.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: flux-system}
 spec:
-  path: ./apps
-  sourceRef: {kind: OCIRepository, name: missing}
-`)
-	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
-	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: wrong-working-tree-output}\n")
-	for _, workers := range []string{"2", "8"} {
-		stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
-		if code != 1 || !strings.Contains(stderr, "unknown OCI artifact root") || !strings.Contains(stderr, "OCIRepository.source.toolkit.fluxcd.io/flux-system/missing") || strings.Contains(stdout, "wrong-working-tree-output") {
-			t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-		}
+  path: %s
+  sourceRef: {kind: %s, name: flux-system}
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: artifact-output}]}
+`, consumerPath, kind))
+				testutil.WriteFile(t, root, "kubernetes/consumer/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, root, "kubernetes/consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output, namespace: flux-system}\ndata: {value: '${K}'}\n")
+				testutil.WriteFile(t, root, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-sibling}\n")
+			}
+			resources := "resources: [cm.yaml]\n"
+			if tc.later {
+				resources = "resources: [cm.yaml, child.yaml]\n"
+				testutil.WriteFile(t, root, "kubernetes/apps/x/child.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system}
+spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
+`, kind))
+				testutil.WriteFile(t, root, "root-only/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, root, "root-only/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-root-output}\n")
+			}
+			testutil.WriteFile(t, root, "kubernetes/apps/x/kustomization.yaml", resources)
+			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: before}\n")
+			gitCommitAll(t, repo)
+			orig := copyTree(t, root)
+			origScan := filepath.Join(orig, "kubernetes/clusters/c0")
+			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: after}\n")
+			scan := filepath.Join(root, "kubernetes/clusters/c0")
+			var rendered string
+			cache := t.TempDir()
+			for _, workers := range []string{"2", "8"} {
+				for _, mode := range []string{"build", "test", "diff"} {
+					if tc.name == "unsupported" && mode != "diff" {
+						continue
+					}
+					args := []string{mode, "all", "--path", scan, "--concurrency", workers, "--cache-dir", cache, "--no-progress"}
+					if mode == "diff" {
+						args = append(args, "--path-orig", origScan)
+					}
+					stdout, stderr, code := runCLIBuffers(args...)
+					if tc.name == "unknown" && mode == "diff" {
+						if code != 0 || stdout != "" || !strings.Contains(stderr, "outside the local tree; not rendered") {
+							t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+						}
+						continue
+					}
+					if tc.diagnostic != "" {
+						if code != 1 || !strings.Contains(stdout+stderr, tc.diagnostic) {
+							t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
+						}
+						if tc.later && mode == "build" && !strings.Contains(stdout, "artifact-output") {
+							t.Fatalf("parent did not render: %s", stdout)
+						}
+						if strings.Contains(stdout, "unrelated-root-output") {
+							t.Fatal("frozen root moved")
+						}
+						continue
+					}
+					if code != 0 {
+						t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
+					}
+					switch mode {
+					case "build":
+						if !strings.Contains(stdout, "artifact-output") || !strings.Contains(stdout, "after") {
+							t.Fatalf("missing artifact bytes: %s", stdout)
+						}
+						if rendered != "" && rendered != stdout {
+							t.Fatal("render changed with concurrency/cache")
+						}
+						rendered = stdout
+					case "test":
+						if !strings.Contains(stdout+stderr, "3 passed") {
+							t.Fatalf("test did not evaluate content: %s %s", stdout, stderr)
+						}
+					case "diff":
+						if strings.Count(stdout, "- before\n") != 2 || strings.Count(stdout, "+ after\n") != 2 {
+							t.Fatalf("forward artifact/consumer values: %s", stdout)
+						}
+					}
+				}
+			}
+			if tc.diagnostic == "" {
+				args := []string{"build", "all", "--path", scan, "--path-orig", origScan, "--concurrency", "2", "--no-progress"}
+				stdout, stderr, code := runCLIBuffers(args...)
+				if code != 0 || !strings.Contains(stdout, "consumer-output") || !strings.Contains(stdout, "value: after") || strings.Contains(stdout, "unrelated-sibling") {
+					t.Fatalf("changed subtree exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				stdout, stderr, code = runCLIBuffers("diff", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", scan, "--concurrency", "2", "--no-progress")
+				if code != 0 {
+					t.Fatalf("reverse diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				if strings.Count(stdout, "- after\n") != 2 || strings.Count(stdout, "+ before\n") != 2 {
+					t.Fatalf("reverse artifact/consumer values: %s", stdout)
+				}
+				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-unrelated-sibling}\n")
+				clean := copyTree(t, orig)
+				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: another-unrelated-sibling}\n")
+				stdout, stderr, code = runCLIBuffers("build", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", filepath.Join(clean, "kubernetes/clusters/c0"), "--concurrency", "2", "--no-progress")
+				if code != 0 || strings.Contains(stdout, "consumer-output") || strings.Contains(stdout, "artifact-output") || strings.Contains(stdout, "unrelated-sibling") {
+					t.Fatalf("unrelated edit exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+			}
+
+		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	securejoin "github.com/cyphar/filepath-securejoin"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -53,6 +54,11 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 		}
 		if root != "" && root != repoRoot {
 			qualified = append(qualified, ks)
+			if origin := documents.localBase(root, repoRoot); origin != "." {
+				c := *ks
+				c.Path = filepath.ToSlash(filepath.Join(origin, base))
+				kss[i] = &c
+			}
 		}
 		if root != "" {
 			if k, _ := documents.read(filepath.Join(root, base)); k != nil && len(k.Components) != 0 {
@@ -121,10 +127,35 @@ func SourceView(s *store.Store, ks *manifest.Kustomization, repoRoot string) (ro
 		if art.LocalPath == repoRoot {
 			return repoRoot, false, false
 		}
-		if art.LocalRoot != "" && art.LocalRoot == repoRoot {
+		if art.LocalRoot != "" && (art.LocalRoot == repoRoot || art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)) {
 			// Derived input keys pin selected bootstrap bytes, never authored refs.
 			return art.LocalPath, art.Key != "" && !art.InputAlias, false
 		}
 	}
-	return repoRoot, false, s.GetObject(ref) != nil || ref.Group == manifest.SourceDomain && ref.Kind == manifest.KindOCIRepository
+	if s.GetObject(ref) != nil {
+		return repoRoot, false, true
+	}
+	obj, _ := ref.DecodeIdentity()
+	_, entry := obj.(interface {
+		BootstrapAlias(string) (manifest.BaseManifest, *manifest.GitRepository)
+	})
+	return repoRoot, false, entry
+}
+
+// Input aliases map source-relative readers and claims to their physical origin.
+func (r documentReader) localBase(root, repoRoot string) string {
+	if art := r.artifacts[root]; art != nil && art.InputAlias {
+		base, _ := filepath.Rel(repoRoot, r.localPath(root))
+		return filepath.ToSlash(base)
+	}
+	return "."
+}
+
+func (r documentReader) localPath(file string) string {
+	root := r.mountedRoot(file)
+	if art := r.artifacts[root]; art != nil && art.InputAlias {
+		rel, _ := filepath.Rel(root, file)
+		return filepath.Join(art.LocalRoot, rel)
+	}
+	return file
 }

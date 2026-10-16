@@ -53,6 +53,7 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 // Parse, open and decode errors carry their source path to the caller.
 func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
 	input, name := r.input(path)
+	path = r.localPath(path)
 	var f fs.File
 	var err error
 	if local, ok := input.(*gittree.FS); ok && r.regular {

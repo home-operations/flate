@@ -1,8 +1,11 @@
 package discovery_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -278,41 +282,99 @@ spec:
 	}
 }
 
-func TestRun_UnknownBootstrapOCIArtifactRoot(t *testing.T) {
+func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-
-	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "cluster.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+		for _, missing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/missing_%t", kind, missing), func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				p := "./apps/x"
+				if missing {
+					p = "./absent"
+				}
+				testutil.WriteFile(t, dir, "kubernetes/clusters/c0/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata:
-  name: cluster-apps
-  namespace: flux-system
+metadata: {name: parent, namespace: flux-system}
+spec: {path: %s, sourceRef: {kind: %s, name: flux-system}}
+`, p, kind))
+				if !missing {
+					testutil.WriteFile(t, dir, "kubernetes/clusters/c0/constraint.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: consumer, namespace: flux-system}
 spec:
-  path: ./apps
-  sourceRef:
-    kind: OCIRepository
-    name: flux-system
-    namespace: flux-system
-  interval: 1h
-`)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
-	testutil.WriteFile(t, dir, "apps/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: from-working-tree, namespace: flux-system}\nspec: {chart: {spec: {chart: fixture, sourceRef: {kind: HelmRepository, name: missing}}}}\n")
-
-	st := store.New()
-	res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(dir, "flux"), RepoRoot: dir, Store: st, WipeSecrets: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "flux-system"}
-	if st.GetObject(id) != nil || st.GetArtifact(id) != nil {
-		t.Fatal("unknown OCI source must wait without a working-tree alias")
-	}
-	if owners, _ := res.Index.OwnersOfFile("apps/kustomization.yaml"); len(owners) != 0 {
-		t.Fatalf("unknown OCI source claimed working-tree files: %v", owners)
-	}
-	if st.GetObject(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "from-working-tree"}) != nil {
-		t.Fatal("unknown OCI source loaded a HelmRelease from the working tree")
+  path: ./consumer
+  sourceRef: {kind: %s, name: flux-system}
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: payload}]}
+`, kind))
+				}
+				testutil.WriteFile(t, dir, "kubernetes/apps/x/kustomization.yaml", "resources: [cm.yaml, child.yaml]\n")
+				testutil.WriteFile(t, dir, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: flux-system}\ndata: {K: value}\n")
+				testutil.WriteFile(t, dir, "kubernetes/apps/x/child.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system}
+spec:
+  path: ./consumer
+  sourceRef: {kind: %s, name: flux-system}
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: payload}]}
+`, kind))
+				testutil.WriteFile(t, dir, "kubernetes/consumer/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, dir, "kubernetes/consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${K}'}\n")
+				testutil.WriteFile(t, dir, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n")
+				st := store.New()
+				res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(dir, "kubernetes/clusters/c0"), RepoRoot: dir, Store: st, WipeSecrets: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "flux-system", Name: "flux-system"}
+				parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
+				child := parent
+				child.Name = "child"
+				if missing {
+					if st.GetObject(source) != nil || st.GetArtifact(source) != nil {
+						t.Fatal("unresolved source aliased")
+					}
+					if owners, _ := res.Index.OwnersOfFile("kubernetes/apps/x/cm.yaml"); len(owners) != 0 {
+						t.Fatalf("unresolved source claimed files: %v", owners)
+					}
+					return
+				}
+				art, ok := st.GetArtifact(source).(*store.SourceArtifact)
+				if !ok || art.LocalRoot != filepath.Join(dir, "kubernetes") {
+					t.Fatalf("source = %+v", art)
+				}
+				if owners, _ := res.Index.OwnersOfFile("kubernetes/apps/x/cm.yaml"); !slices.Contains(owners, parent) {
+					t.Fatalf("subtree owners = %v", owners)
+				}
+				if owners, _ := res.Index.OwnersOfFile("apps/x/cm.yaml"); len(owners) != 0 {
+					t.Fatalf("unrelated sibling owners = %v", owners)
+				}
+				record, ok := res.Index.Lookup(child)
+				if !ok || record.Parent != parent {
+					t.Fatalf("child record = %+v", record)
+				}
+				payload := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "payload"}
+				if producers := res.Index.DataProducers(payload); !slices.Contains(producers, parent) {
+					t.Fatalf("subtree producers = %v", producers)
+				}
+				if readers := slices.Collect(res.Index.ReadersOfFile("kubernetes/apps/x/cm.yaml")); !slices.Contains(readers, parent) {
+					t.Fatalf("subtree readers = %v", readers)
+				}
+				if readers := slices.Collect(res.Index.ReadersOfFile("apps/x/cm.yaml")); len(readers) != 0 {
+					t.Fatalf("sibling readers = %v", readers)
+				}
+				for _, file := range []string{"kubernetes/apps/x/cm.yaml", "apps/x/cm.yaml"} {
+					selected := change.NewFilter(change.NewSet([]string{file}), res.Index, st).KeepNames()
+					consumer := child
+					consumer.Name = "consumer"
+					for _, id := range []manifest.NamedResource{parent, child, consumer} {
+						if got := slices.Contains(selected, id.String()); got != strings.HasPrefix(file, "kubernetes/") {
+							t.Fatalf("change %s selected %v; checking %s", file, selected, id)
+						}
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -526,13 +588,12 @@ func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 // SSH deploy keys; flate runs offline and can't materialize the
 // key, so the fetch fails on a placeholder credential.
 //
-// The alias in overrideSelfReferentialGitRepositories detects that
+// Entry resolution detects that
 // the URL matches the working tree's .git/config remote and
 // overrides the artifact with a working-tree alias so the
 // dependent KSes proceed against local files rather than the
 // failed-fetch source.
 func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 
 	repo, err := git.PlainInit(dir, false)
@@ -582,35 +643,76 @@ spec:
 	if _, err := wt.Add("."); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}}); err != nil {
+	committed, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
-		Path: dir, Store: st, WipeSecrets: true,
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
+	testutil.WriteFile(t, dir, "k8s/apps/kustomization.yaml", "resources: []\nnamePrefix: current-\n")
+	if _, err := wt.Add("."); err != nil {
+		t.Fatal(err)
 	}
-
-	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
-		Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes",
+	if _, err := wt.Commit("current", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}}); err != nil {
+		t.Fatal(err)
 	}
-	art := st.GetArtifact(id)
-	if art == nil {
-		t.Fatalf("expected URL-matched GitRepository to have a SourceArtifact")
-	}
-	src, ok := art.(*store.SourceArtifact)
-	if !ok {
-		t.Fatalf("expected SourceArtifact, got %T", art)
-	}
-	wantPrefix := "file://"
-	if !strings.HasPrefix(src.URL, wantPrefix) {
-		t.Errorf("expected file:// URL alias; got %q", src.URL)
-	}
-	info, ok := st.GetStatus(id)
-	if !ok || info.Status != store.StatusReady {
-		t.Errorf("expected URL-matched GitRepository to be Ready; got ok=%v info=%+v", ok, info)
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse_%t", reverse), func(t *testing.T) {
+			st := store.New()
+			pinned := &manifest.GitRepository{Name: "committed", Namespace: "flux-system", URL: "https://github.com/example/home-ops.git", Reference: &manifest.GitRepositoryRef{Commit: committed.String()}}
+			st.AddObject(pinned)
+			var objects []manifest.BaseManifest
+			want := []string{(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}).String()}
+			for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
+				source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "other", Name: "missing"}
+				want = append(want, source.String())
+				for _, name := range []string{"one", "two"} {
+					objects = append(objects, &manifest.Kustomization{Name: kind + name, Namespace: "other", Path: "./k8s/apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: source.Name}})
+				}
+			}
+			if reverse {
+				slices.Reverse(objects)
+			}
+			st.AddObjects(objects)
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			if _, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true}); err != nil {
+				t.Fatal(err)
+			}
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}
+			artifact, ok := st.GetArtifact(id).(*store.SourceArtifact)
+			if !ok || !artifact.InputAlias || !strings.HasPrefix(artifact.URL, "file://") {
+				t.Fatalf("matched source artifact = %+v", artifact)
+			}
+			if info, ok := st.GetStatus(id); !ok || info.Status != store.StatusReady {
+				t.Fatalf("matched source status = %+v, %t", info, ok)
+			}
+			if artifact, ok := st.GetArtifact(pinned.Named()).(*store.SourceArtifact); !ok || artifact.InputAlias || artifact.Key == "" || st.GetObject(pinned.Named()) != pinned {
+				t.Fatalf("committed source artifact = %+v", artifact)
+			}
+			slices.Sort(want)
+			warnings := 0
+			for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+				var entry struct {
+					Message string   `json:"msg"`
+					Count   int      `json:"count"`
+					IDs     []string `json:"ids"`
+				}
+				if err := json.Unmarshal([]byte(line), &entry); err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(entry.Message, "aliased multiple bootstrap sources") {
+					warnings++
+					if entry.Count != len(want) || !slices.Equal(entry.IDs, want) {
+						t.Fatalf("combined aliases = %v (%d), want %v", entry.IDs, entry.Count, want)
+					}
+				}
+			}
+			if warnings != 1 {
+				t.Fatalf("combined warning count = %d, logs=%s", warnings, logs.String())
+			}
+		})
 	}
 }
 
@@ -889,11 +991,18 @@ stringData: {HOST: fixture-value}
 }
 
 func TestRun_GraphOwnershipSourceClassification(t *testing.T) {
-	for _, scenario := range []string{"bootstrap", "self", "external"} {
+	for _, scenario := range []string{"bootstrap", "self", "self_unavailable", "external", "missing_oci", "missing_bucket", "declared_oci", "declared_bucket"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			sourceName := "flux-system"
-			if scenario != "bootstrap" {
+			kind := manifest.KindGitRepository
+			if strings.HasSuffix(scenario, "oci") {
+				kind = manifest.KindOCIRepository
+			} else if strings.HasSuffix(scenario, "bucket") {
+				kind = manifest.KindBucket
+			}
+			external := scenario == "external" || scenario == "self_unavailable" || strings.HasPrefix(scenario, "declared_")
+			if strings.HasPrefix(scenario, "self") || scenario == "external" {
 				sourceName = "source"
 				testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -901,23 +1010,56 @@ metadata: {name: source, namespace: flux-system}
 spec: {url: "https://example.invalid/cluster.git"}
 `)
 			}
-			testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+			testutil.WriteFile(t, dir, "flux/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: owner, namespace: flux-system}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: `+sourceName+`}}
+spec: {path: ./apps, sourceRef: {kind: %s, name: %s}}
+`, kind, sourceName))
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [cm.yaml, child.yaml, hr.yaml]\n")
+			testutil.WriteFile(t, dir, "apps/child.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system}
+spec: {path: ./apps/leaf, sourceRef: {kind: %s, name: %s}}
+`, kind, sourceName))
+			testutil.WriteFile(t, dir, "apps/leaf/kustomization.yaml", "resources: []\n")
+			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: release, namespace: flux-system}
+spec: {chartRef: {kind: OCIRepository, name: chart}}
 `)
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../shared/cm.yaml]\n")
-			testutil.WriteFile(t, dir, "shared/cm.yaml", `apiVersion: v1
+			testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: config, namespace: flux-system}
 data: {value: fixture}
 `)
-			cfg := discovery.Config{Path: dir, RepoRoot: dir, Store: store.New(), WipeSecrets: true}
-			foreignSource := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: sourceName}
+			cfg := discovery.Config{Path: filepath.Join(dir, "flux"), RepoRoot: dir, Store: store.New(), WipeSecrets: true}
+			var authored manifest.BaseManifest
+			if strings.HasPrefix(scenario, "declared_") {
+				spec := map[string]any{"url": "oci://registry.invalid/artifact", "ignore": "excluded/", "ref": map[string]any{"tag": "stable"}}
+				if kind == manifest.KindBucket {
+					spec = map[string]any{"endpoint": "minio.invalid", "bucketName": "actual-bucket", "prefix": "published/", "ignore": "excluded/"}
+				}
+				var err error
+				authored, _, _, err = manifest.ParseDoc(map[string]any{"apiVersion": manifest.SourceDomain + "/v1", "kind": kind, "metadata": map[string]any{"name": sourceName, "namespace": "flux-system"}, "spec": spec}, manifest.ParseDocOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.Store.AddObject(authored)
+			}
+			authoredContent := manifest.Fingerprint(authored)
+
+			foreignSource := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: kind, Namespace: "flux-system", Name: sourceName}
 			foreignOwner := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner", Spec: map[string]any{"path": "./shared"}}
 			cfg.Store.AddObjects([]manifest.BaseManifest{foreignSource, foreignOwner})
-			if scenario == "self" {
+			if strings.HasPrefix(scenario, "self") {
 				cfg.SelfURLs = []string{"https://example.invalid/cluster.git"}
+			}
+			if scenario == "self_unavailable" {
+				testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: source, namespace: flux-system}
+spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
+`)
 			}
 			res, err := discovery.Run(t.Context(), cfg)
 			if err != nil {
@@ -929,8 +1071,16 @@ data: {value: fixture}
 			if _, indexed := res.Index.Lookup(foreignOwner.Named()); indexed {
 				t.Fatal("foreign owner borrowed a real claim")
 			}
-			owners := ownersForTest(res.Index, "shared/cm.yaml")
-			if scenario == "external" {
+			child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
+			if cfg.Store.GetObject(child) == nil {
+				t.Fatal("entry path did not discover its child Kustomization")
+			}
+			release := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "release"}
+			if got := cfg.Store.GetObject(release) != nil; got != external {
+				t.Errorf("entry path HelmRelease promotion = %v, want %v", got, external)
+			}
+			owners := ownersForTest(res.Index, "apps/cm.yaml")
+			if external {
 				if len(owners) != 0 {
 					t.Errorf("external KS owns local file: %v", owners)
 				}
@@ -938,14 +1088,17 @@ data: {value: fixture}
 				t.Errorf("local graph owners = %v", owners)
 			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "config"}
-			if got, want := cfg.Store.GetObject(id) != nil, scenario == "external"; got != want {
+			if got, want := cfg.Store.GetObject(id) != nil, external; got != want {
 				t.Errorf("standalone promotion = %v, want %v", got, want)
 			}
-			src := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: sourceName}
+			src := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "flux-system", Name: sourceName}
 			if cfg.Store.GetObject(src) == nil {
 				t.Error("source must remain file-loaded")
 			}
-			if got, want := cfg.Store.GetArtifact(src) != nil, scenario != "external"; got != want {
+			if authored != nil && (cfg.Store.GetObject(src) != authored || manifest.Fingerprint(authored) != authoredContent) {
+				t.Fatal("declared source object or spec changed")
+			}
+			if got, want := cfg.Store.GetArtifact(src) != nil, !external; got != want {
 				t.Errorf("source alias = %v, want %v", got, want)
 			}
 		})

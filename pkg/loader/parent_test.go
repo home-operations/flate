@@ -234,6 +234,25 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 
 func TestSourceView_LocalRoot(t *testing.T) {
 	for _, tc := range []struct {
+		kind, group string
+		external    bool
+	}{
+		{manifest.KindGitRepository, manifest.SourceDomain, true},
+		{manifest.KindOCIRepository, manifest.SourceDomain, true},
+		{manifest.KindBucket, manifest.SourceDomain, true},
+		{manifest.KindHelmRepository, manifest.SourceDomain, false},
+		{manifest.KindExternalArtifact, manifest.SourceDomain, false},
+		{manifest.KindGitRepository, "wrong.group", false},
+	} {
+		t.Run("absent/"+tc.group+"/"+tc.kind, func(t *testing.T) {
+			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "entry"}}
+			root, pinned, external := SourceView(store.New(), ks, "/repo")
+			if root != "/repo" || pinned || external != tc.external {
+				t.Fatalf("absent source: %q, %t, %t", root, pinned, external)
+			}
+		})
+	}
+	for _, tc := range []struct {
 		name, repoRoot, localRoot string
 		external, unavailable     bool
 	}{

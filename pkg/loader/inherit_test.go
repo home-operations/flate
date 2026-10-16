@@ -2,6 +2,7 @@ package loader
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -144,6 +145,13 @@ spec:
 				l.Store.AddObject(&manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "file://" + root})
 				l.Store.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, LocalRoot: root, LocalPath: filepath.Join(filepath.Dir(root), ".flate-sources", "alias", id.Namespace, id.Name), InputAlias: true, FS: view})
 			}
+			if tc.name == "self_claim_transformer_fallback" {
+				for _, namespace := range []string{"flux-system", "myns"} {
+					source := &manifest.GitRepository{Name: "cluster", Namespace: namespace}
+					l.Store.AddObject(source)
+					l.Store.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+				}
+			}
 			if tc.pinned {
 				artifact := t.TempDir()
 				testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
@@ -162,6 +170,9 @@ spec:
 					if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "app"}); !ok {
 						t.Fatalf("unresolved source records before loading its path: %+v", l.Index.Records)
 					}
+					source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+					l.Store.AddObject(source)
+					l.Store.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 				}
 			}
 			if tc.pinned || tc.alias {
@@ -256,6 +267,90 @@ spec:
 			}
 		})
 	}
+
+	t.Run("subtree_availability", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "flux/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media, sourceRef: {kind: OCIRepository, name: source}}\n")
+		testutil.WriteFile(t, root, "kubernetes/apps/kustomization.yaml", "resources: [child.yaml, explicit.yaml]\n")
+		for _, name := range []string{"child", "explicit"} {
+			metadata := "name: " + name
+			if name == "explicit" {
+				metadata += ", namespace: control"
+			}
+			testutil.WriteFile(t, root, "kubernetes/apps/"+name+".yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {"+metadata+"}\nspec: {path: ./output, sourceRef: {kind: OCIRepository, name: source, namespace: flux-system}}\n")
+		}
+		st := store.New()
+		l := loaderFixture(st, nil)
+		l.SourceRoot = root
+		for _, dir := range []string{"flux", "kubernetes/apps"} {
+			if _, err := l.Load(t.Context(), filepath.Join(root, dir)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		owner, _ := st.Get[*manifest.Kustomization](manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"})
+		if owner == nil {
+			t.Fatal("parent missing")
+		}
+		l.ApplyNamespaces(root)
+		if _, _, external := SourceView(st, owner, root); !external {
+			t.Fatal("unavailable source borrowed bootstrap coordinates")
+		}
+		for _, id := range []manifest.NamedResource{
+			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "child"},
+			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "explicit", Namespace: "control"},
+		} {
+			if _, ok := l.Index.Lookup(id); !ok {
+				t.Fatalf("unavailable source changed raw identity %s", id)
+			}
+		}
+		input := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+		view, err := fs.Sub(input.FS, "kubernetes")
+		assert.NoError(t, err)
+		source, err := owner.SourceID().DecodeIdentity()
+		assert.NoError(t, err)
+		st.AddObject(source)
+		mount := filepath.Join(filepath.Dir(root), ".flate-sources", "subtree", "flux-system", "source")
+		st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalRoot: filepath.Join(root, "kubernetes"), LocalPath: mount, InputAlias: true, FS: view})
+		if got, _, external := SourceView(st, owner, root); external || got != mount {
+			t.Fatalf("available source = %s, external=%t", got, external)
+		}
+		if _, err := l.Load(t.Context(), filepath.Join(mount, "apps")); err != nil {
+			t.Fatal(err)
+		}
+		raw := map[string]manifest.DiscoveryRecord{}
+		for _, name := range []string{"child", "explicit"} {
+			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: name}
+			if name == "explicit" {
+				id.Namespace = "control"
+			}
+			record, ok := l.Index.Lookup(id)
+			file, err := filepath.Rel(root, filepath.Join(mount, "apps", name+".yaml"))
+			assert.NoError(t, err)
+			if !ok || record.File != filepath.ToSlash(file) || record.Authored != id {
+				t.Fatalf("raw %s record = %+v", id, record)
+			}
+			raw[name] = record
+		}
+		l.ApplyNamespaces(root)
+		for _, name := range []string{"child", "explicit"} {
+			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "media", Name: name}
+			record, ok := l.Index.Lookup(id)
+			if !ok || st.GetObject(id) == nil || record.File != raw[name].File || record.Path != filepath.Join(mount, "apps", name+".yaml") || record.Path != raw[name].Path {
+				t.Fatalf("projected %s record=%+v, raw=%+v", id, record, raw[name])
+			}
+		}
+		l.FinalizeIndex(root, nil)
+		for _, name := range []string{"child", "explicit"} {
+			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "media", Name: name}
+			record, ok := l.Index.Lookup(id)
+			if !ok || record.Parent != owner.Named() || record.File != "kubernetes/apps/"+name+".yaml" || record.Path != raw[name].Path {
+				t.Fatalf("finalized %s record=%+v", id, record)
+			}
+			if readers := slices.Collect(l.Index.ReadersOfFile(record.File)); !slices.Contains(readers, owner.Named()) {
+				t.Fatalf("subtree readers = %v", readers)
+			}
+		}
+	})
 
 	t.Run("stale_declaration", func(t *testing.T) {
 		root := t.TempDir()

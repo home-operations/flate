@@ -77,6 +77,9 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 		t.Fatal(err)
 	}
 	st.AddObject(ks)
+	source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID))
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
 	l.FinalizeIndex(dir, nil)
@@ -145,6 +148,9 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 					t.Fatal(err)
 				}
 				st.AddObject(ks)
+				source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
+				st.AddObject(source)
+				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID))
 				l.SourceRoot = dir
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)

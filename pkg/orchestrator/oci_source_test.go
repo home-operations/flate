@@ -56,7 +56,7 @@ func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
 kind: Kustomization
 metadata: {name: consumer, namespace: flux-system}
 spec:
-  path: ./
+  path: ./payload
   sourceRef: {kind: OCIRepository, name: app}
 `)
 				if tc.producer {
@@ -72,8 +72,8 @@ spec:
     spec: {url: oci://fixture.invalid/app, interval: 1h, ref: {tag: latest}}
 `)
 				}
-				testutil.WriteFile(t, artifact, "kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, artifact, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n")
+				testutil.WriteFile(t, artifact, "payload/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, artifact, "payload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n")
 				retry := sourcecache.RetryConfig{Attempts: workers}
 				o, err := New(t.Context(), Config{SourceRetry: retry, Path: root + "/flux", RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers})
 				if err != nil {

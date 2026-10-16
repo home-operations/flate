@@ -2052,3 +2052,80 @@ func TestResolve_NamespacePrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestNamedResource_DecodeIdentity(t *testing.T) {
+	for _, kind := range []string{KindGitRepository, KindOCIRepository, KindBucket} {
+		t.Run(kind, func(t *testing.T) {
+			id := NamedResource{Group: SourceDomain, Kind: kind, Namespace: "other", Name: "entry"}
+			obj, err := id.DecodeIdentity()
+			assert.NoError(t, err)
+			assert.Equal(t, obj.Named(), id)
+			assert.Equal(t, KindOf(obj).APIVersion(), sourcev1.GroupVersion.String())
+			switch kind {
+			case KindGitRepository:
+				if g, ok := obj.(*GitRepository); !ok || g.URL != "file://." || g.Provider != sourcev1.GitProviderGeneric {
+					t.Fatalf("decoded Git identity: %#v", obj)
+				}
+			case KindOCIRepository:
+				if o, ok := obj.(*OCIRepository); !ok || o.URL != "file://." || o.Provider != sourcev1.GenericOCIProvider {
+					t.Fatalf("decoded OCI identity: %#v", obj)
+				}
+			case KindBucket:
+				if b, ok := obj.(*Bucket); !ok || b.Endpoint != "file://." || b.BucketName != id.Name || b.Provider != sourcev1.BucketProviderGeneric {
+					t.Fatalf("decoded bucket identity: %#v", obj)
+				}
+			}
+			doc := map[string]any{"apiVersion": sourcev1.GroupVersion.String(), "kind": kind, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}}
+			_, _, _, err = ParseDoc(doc, defaultParseDocOptions())
+			if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+				t.Fatalf("authored missing spec: %v", err)
+			}
+		})
+	}
+	for _, id := range []NamedResource{
+		{Group: "wrong.group", Kind: KindGitRepository, Namespace: "other", Name: "entry"},
+		{Group: SourceDomain, Kind: "Unknown", Namespace: "other", Name: "entry"},
+		{Group: SourceDomain, Kind: KindBucket, Name: "entry"},
+		{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other"},
+		{Kind: KindConfigMap, Namespace: "other", Name: "entry"},
+	} {
+		if obj, err := id.DecodeIdentity(); obj != nil || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+			t.Fatalf("invalid identity %s: %v, %v", id, obj, err)
+		}
+	}
+}
+
+func TestBootstrapAlias_SourceKinds(t *testing.T) {
+	ignore := "excluded/"
+	ref := &GitRepositoryRef{Tag: "v1"}
+	git := &GitRepository{Name: "entry", Namespace: "other", URL: "https://fixture.invalid/repo", Reference: ref, Ignore: &ignore, SparseCheckout: []string{"apps"}, RecurseSubmodules: true}
+	oci := &OCIRepository{Name: "entry", Namespace: "other", URL: "oci://fixture.invalid/repo", Ignore: &ignore}
+	bucket := &Bucket{Name: "entry", Namespace: "other", Endpoint: "fixture.invalid", BucketName: "authored"}
+	for _, obj := range []interface {
+		BaseManifest
+		BootstrapAlias(string) (BaseManifest, *GitRepository)
+	}{git, oci, bucket} {
+		t.Run(obj.Named().Kind, func(t *testing.T) {
+			before := Fingerprint(obj)
+			alias, descriptor := obj.BootstrapAlias("/repo/subtree")
+			assert.Equal(t, alias.Named(), obj.Named())
+			if alias == obj || Fingerprint(obj) != before {
+				t.Fatal("alias mutated or retained receiver")
+			}
+			switch a := alias.(type) {
+			case *GitRepository:
+				if descriptor != git || a.URL != "file:///repo/subtree" || a.Reference != ref || a.Ignore != &ignore || !a.RecurseSubmodules || len(a.SparseCheckout) != 1 {
+					t.Fatalf("Git policy/view: %+v, %p", a, descriptor)
+				}
+			case *OCIRepository:
+				if descriptor != nil || a.URL != "file:///repo/subtree" || a.Ignore != &ignore {
+					t.Fatalf("OCI policy/view: %+v", a)
+				}
+			case *Bucket:
+				if descriptor != nil || a.Endpoint != "file:///repo/subtree" || a.BucketName != a.Name {
+					t.Fatalf("bucket policy/view: %+v", a)
+				}
+			}
+		})
+	}
+}

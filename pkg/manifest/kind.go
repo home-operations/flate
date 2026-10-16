@@ -163,6 +163,25 @@ func (n NamedResource) KindInfo() KindInfo {
 	return KindInfo{Group: n.Group, Kind: n.Kind}
 }
 
+// DecodeIdentity uses the registered decoder and canonical API version to create a typed identity.
+// Synthetic source fields satisfy strict decoders without relaxing authored validation.
+func (n NamedResource) DecodeIdentity() (BaseManifest, error) {
+	i, ok := kindIndex[n.Kind]
+	if !ok || kindTable[i].Group != n.Group || n.Name == "" || n.Namespace == "" {
+		return nil, inputf("invalid source identity %s", n)
+	}
+	entry := kindTable[i]
+	version := entry.APIVersion()
+	if version == "" {
+		return nil, inputf("no canonical API version for %s", n)
+	}
+	return entry.decode(map[string]any{
+		"apiVersion": version, "kind": n.Kind,
+		"metadata": map[string]any{"name": n.Name, "namespace": n.Namespace},
+		"spec":     map[string]any{"url": "file://.", "endpoint": "file://.", "bucketName": n.Name},
+	})
+}
+
 // Projection stays allocation-free; document admission validates API versions.
 func apiGroup(apiVersion string) string {
 	group, _, ok := strings.Cut(apiVersion, "/")

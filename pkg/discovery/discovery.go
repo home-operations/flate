@@ -81,10 +81,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// Discovery drivers and sources reach the Store immediately; other resources
 	// retain indexed evidence for render emission and exact promotion.
 	d := &discoverer{cfg: cfg, loader: l, aliasViews: make(map[string]fs.FS)}
-	repoRoot, err := d.seedBootstrapSource(ctx)
+	_, err := d.resolveEntrySources(ctx, false)
 	if err != nil {
 		return nil, err
 	}
+	repoRoot := cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).LocalPath
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
@@ -119,7 +120,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 type discoverer struct {
 	cfg             Config
 	loader          *loader.Loader
-	resolvedSources map[manifest.NamedResource]*manifest.GitRepository
+	resolvedSources map[manifest.NamedResource]entryResolution
 	remotes         map[string]struct{}
 	aliasViews      map[string]fs.FS
 	hasPins         bool
@@ -167,19 +168,17 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		object manifest.BaseManifest
 	}
 	ksExpanded := map[expansion]struct{}{}
-	var aliased []manifest.NamedResource
+	var pending []expansion
 	for {
 		l.ApplyNamespaces(repoRoot)
-		overridden, err := d.overrideSelfReferentialGitRepositories(ctx, repoRoot)
+		_, err := d.resolveEntrySources(ctx, false)
 		if err != nil {
 			return err
 		}
-		aliased = append(aliased, overridden...)
 		if d.hasPins {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
 		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-		added := 0
 		for _, ks := range kustomizations {
 			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
 			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
@@ -187,12 +186,18 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			ksExpanded[key] = struct{}{}
+			pending = append(pending, key)
+		}
+		added := 0
+		next := pending[:0]
+		for _, key := range pending {
+			ks := key.ks
 			if ks.IsFragment() {
 				continue
 			}
 			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks, repoRoot)
-			ref := ks.SourceID()
-			if external && ref.Group == manifest.SourceDomain && ref.Kind == manifest.KindOCIRepository && d.cfg.Store.GetObject(ref) == nil && d.cfg.Store.GetArtifact(ref) == nil {
+			if external && d.cfg.Store.GetObject(ks.SourceID()) == nil {
+				next = append(next, key)
 				continue
 			}
 			target := filepath.Join(sourceRoot, manifest.NormalizeClaimBase(ks.Path))
@@ -204,19 +209,19 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			}
 			added++
 		}
+		pending = next
 		if added == 0 {
-			missing, err := d.aliasMissingKustomizationSources(ctx, repoRoot)
+			missing, err := d.resolveEntrySources(ctx, true)
 			if err != nil {
 				return err
 			}
-			if len(missing) == 0 {
+			if missing == 0 {
 				break
 			}
-			aliased = append(aliased, missing...)
 		}
 	}
 	l.PreferExisting = false
-	warnIfMultipleBootstrapAliases(aliased, repoRoot)
+	d.warnBootstrapAliases(repoRoot)
 	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
 	return nil
 }
@@ -244,11 +249,11 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	if len(prefixes) == 0 {
 		return
 	}
-	var aliases []string
-	for _, repo := range d.cfg.Store.ListAs[*manifest.GitRepository](manifest.SourceDomain, manifest.KindGitRepository) {
-		art, ok := d.cfg.Store.GetArtifact(repo.Named()).(*store.SourceArtifact)
-		if ok && art.InputAlias && art.LocalRoot == repoRoot {
-			aliases = append(aliases, art.LocalPath)
+	var aliases []*store.SourceArtifact
+	for id := range d.resolvedSources {
+		art, ok := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
+		if ok && art.InputAlias {
+			aliases = append(aliases, art)
 		}
 	}
 	for id, record := range d.loader.Index.Files() {
@@ -261,9 +266,10 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 		}
 		if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
 			for _, root := range aliases {
-				if safepath.Contains(root, record.Path) {
-					rel, _ := filepath.Rel(root, record.Path)
-					file = filepath.ToSlash(rel)
+				if safepath.Contains(root.LocalPath, record.Path) {
+					rel, _ := filepath.Rel(root.LocalPath, record.Path)
+					file = filepath.ToSlash(filepath.Join(root.LocalRoot, rel))
+					file, _ = filepath.Rel(repoRoot, file)
 					break
 				}
 			}

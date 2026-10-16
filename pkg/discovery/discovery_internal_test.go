@@ -41,11 +41,11 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			artifact.FS = os.DirFS(artifact.LocalPath)
 			d := discoverer{
 				cfg: Config{Store: st}, loader: loader.New(st),
-				resolvedSources: map[manifest.NamedResource]*manifest.GitRepository{other.Named(): other},
+				resolvedSources: map[manifest.NamedResource]entryResolution{other.Named(): {object: other}},
 			}
 			d.loader.SourceRoot = root
 			if tc.resolved {
-				d.resolvedSources[repository.Named()] = repository
+				d.resolvedSources[repository.Named()] = entryResolution{object: repository}
 			}
 			for _, obj := range []manifest.BaseManifest{repository, other, ks, cm} {
 				st.AddObject(obj)

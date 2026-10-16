@@ -87,7 +87,9 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 					continue
 				}
 				v.prefix = filepath.ToSlash(prefix)
-				v.localAlias = !pinned
+				if !pinned {
+					v.localBase = l.documents.localBase(root, repoRoot)
+				}
 			}
 			l.visitScope(v)
 		}

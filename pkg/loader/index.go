@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"maps"
 	"path/filepath"
 	"slices"
 
@@ -34,6 +35,10 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 	// Resolve each directory's resource declarations once, even when it contains many Flux objects.
 	resources := map[string]map[string]struct{}{}
 	for id, r := range l.Index.Files() {
+		if origin := l.documents.localPath(r.Path); origin != r.Path {
+			rel, _ := filepath.Rel(repoRoot, origin)
+			r.File = filepath.ToSlash(rel)
+		}
 		if id.KindInfo().Includes("parent") {
 			r.Parent, _ = manifest.StrictParent(claims, r.File, id, own[id])
 		}
@@ -67,6 +72,14 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 	l.buildRenderers(repoRoot, producers)
 	l.fillOwners()
 	l.scopes = nil
+	for _, file := range slices.Sorted(maps.Keys(l.Index.Errors)) {
+		origin, _ := filepath.Rel(repoRoot, l.documents.localPath(filepath.Join(repoRoot, filepath.FromSlash(file))))
+		origin = filepath.ToSlash(origin)
+		if origin != file {
+			l.Index.Errors[origin] = l.Index.Errors[file]
+			delete(l.Index.Errors, file)
+		}
+	}
 	for id, r := range l.Index.Records {
 		slices.SortFunc(r.Renderers, manifest.NamedResource.Compare)
 		slices.SortFunc(r.DeclarationOwners, manifest.NamedResource.Compare)

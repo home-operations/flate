@@ -32,9 +32,9 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 				d.cfg.SelfURLs = []string{"git@github.com:Owner/Repo.git", "not-a-remote"}
 				want = "github.com/owner/repo"
 			}
-			got, err := d.seedBootstrapSource(t.Context())
+			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, got, wantRoot)
+			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).LocalPath, wantRoot)
 			assert.Diff(t, d.remotes, map[string]struct{}{want: {}})
 			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 			assert.Equal(t, artifact.LocalPath, wantRoot)
@@ -66,10 +66,10 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			case "lookup":
 				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
 			}
-			got, err := d.seedBootstrapSource(t.Context())
+			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, len(d.remotes), 0)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, got, root)
+			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).LocalPath, root)
 			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 			assert.Equal(t, artifact.Kind, manifest.KindGitRepository)
 			assert.Equal(t, artifact.URL, "file://"+root)

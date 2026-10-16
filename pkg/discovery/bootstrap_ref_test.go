@@ -226,11 +226,11 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			if tc.sparse {
 				repository.SparseCheckout = []string{"apps"}
 			}
-			st.AddObject(repository)
 			d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
-			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 				t.Fatal(err)
 			}
+			st.AddObject(repository)
 			var logs bytes.Buffer
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -238,10 +238,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			bootstrap := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 			side := bootstrap.LocalPath
 			d.cfg.Path = side
-			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			aliased, err := d.overrideSelfReferentialGitRepositories(t.Context(), side)
+			aliased, err := d.resolveEntrySources(t.Context(), false)
 			if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap || st.GetObject(repository.Named()) != repository {
 				t.Fatal("discovery replaced the bootstrap or authored source")
 			}
@@ -284,7 +281,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 						t.Fatalf("pinned HEAD content = %q, %v; want B", content, err)
 					}
 				}
-				if artifact.Revision != revision || (artifact.Key == "") != tc.head || artifact.LocalRoot != side || artifact.LocalPath == side || artifact.InputAlias != tc.head || d.hasPins == tc.head || (len(aliased) == 1) != tc.head {
+				if artifact.Revision != revision || (artifact.Key == "") != tc.head || artifact.LocalRoot != side || artifact.LocalPath == side || artifact.InputAlias != tc.head || d.hasPins == tc.head || (artifact.InputAlias) != tc.head {
 					t.Fatalf("pinned HEAD identity/classification = %+v, pins=%t aliases=%v", artifact, d.hasPins, aliased)
 				}
 				if !tc.head && artifact.URL != repository.URL {
@@ -337,11 +334,14 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, url string
-		local           bool
+		local, late     bool
 	}{
 		{name: "pinned-local", kind: manifest.KindGitRepository, url: "git://fixture.invalid/cluster", local: true},
 		{name: "external-git", kind: manifest.KindGitRepository, url: "git://fixture.invalid/other"},
 		{name: "external-oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster"},
+		{name: "late-pinned-local", kind: manifest.KindGitRepository, url: "git://fixture.invalid/cluster", local: true, late: true},
+		{name: "late-external-git", kind: manifest.KindGitRepository, url: "git://fixture.invalid/other", late: true},
+		{name: "late-external-oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster", late: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := discoveryRefFixture(t)
@@ -363,11 +363,40 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			d := discoverer{cfg: Config{
 				Path: root, RepoRoot: root, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			}}
-			if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+			if tc.late {
+				if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+					t.Fatal(err)
+				}
+				st.DeleteObject(id)
+				if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
+					t.Fatal(err)
+				}
+				if st.GetArtifact(id) == nil {
+					t.Fatal("missing source did not acquire a bootstrap alias")
+				}
+				ref := ""
+				if tc.kind == manifest.KindGitRepository {
+					ref = "\n  ref: {tag: v1.0.0}"
+				}
+				testutil.WriteFile(t, root, "authored/source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: cluster, namespace: flux-system}\nspec:\n  url: %q%s\n", tc.kind, tc.url, ref))
+				l := loader.New(st)
+				l.SourceRoot, l.PreferExisting = root, true
+				if _, err := l.Load(t.Context(), filepath.Join(root, "authored")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
+			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 				t.Fatal(err)
+			}
+			authored := st.GetObject(id)
+			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetObject(id) != authored {
+				t.Fatalf("authored source replaced: %v, %v", aliases, err)
+			}
+			if !tc.local && st.GetArtifact(id) != nil {
+				t.Fatal("external source acquired by aliasing")
 			}
 			if tc.local {
 				artifact := st.GetArtifact(id).(*store.SourceArtifact)
@@ -406,16 +435,17 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 				bootstrap.Key = "family"
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-			d := discoverer{cfg: Config{Store: st}}
+			d := discoverer{cfg: Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/repo"}}}
 			ids := []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "one", Name: "source"}, {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "two", Name: "alias"}}
 			for _, id := range ids {
 				if id == ids[1] {
-					repository := &manifest.GitRepository{Name: id.Name, Namespace: id.Namespace}
+					repository := &manifest.GitRepository{Name: id.Name, Namespace: id.Namespace, URL: "https://fixture.invalid/repo"}
 					repository.SparseCheckout = []string{}
 					st.AddObject(repository)
 				}
-				if ok, err := d.publishBootstrapAlias(t.Context(), id, root); err != nil || !ok {
-					t.Fatalf("publish alias = %t, %v", ok, err)
+				st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name}})
+				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
+					t.Fatalf("publish alias = %d, %v", count, err)
 				}
 			}
 			first := st.GetArtifact(ids[0]).(*store.SourceArtifact)
@@ -423,12 +453,16 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root || second.LocalRoot != root || !first.InputAlias || !second.InputAlias {
 				t.Fatalf("alias view/ownership = %+v, %+v", first, second)
 			}
-			for _, generation := range []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}} {
+			generations := []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}}
+			if !pinned {
+				generations = append(generations, generations[1])
+			}
+			for _, generation := range generations {
 				next := *bootstrap
 				next.Revision, next.Digest = generation.revision, generation.digest
-				next.FS = fstest.MapFS{"file": {Data: []byte("other")}}
+				next.FS = fstest.MapFS{"file": {Data: []byte("other" + first.Revision + first.Digest)}}
 				st.SetArtifact(manifest.BootstrapSourceID, &next)
-				if _, err := d.publishBootstrapAlias(t.Context(), ids[0], root); err != nil {
+				if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 					t.Fatal(err)
 				}
 				got := st.GetArtifact(ids[0]).(*store.SourceArtifact)
@@ -436,13 +470,56 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 					t.Fatalf("generation reused alias identity: %+v", got)
 				}
 				data, err := fs.ReadFile(got.FS, "file")
-				if err != nil || string(data) != "other" {
+				if err != nil || string(data) != "other"+first.Revision+first.Digest {
 					t.Fatalf("alias generation bytes = %q, %v", data, err)
 				}
 				first, bootstrap = got, &next
 			}
 		})
 	}
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+		t.Run("frozen_generation/"+kind, func(t *testing.T) {
+			root := t.TempDir()
+			st := store.New()
+			bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{
+				"kubernetes/clusters/c0/entry": {}, "kubernetes/apps/x/file": {Data: []byte("first")},
+			}}
+			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+			ks := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
+			st.AddObject(ks)
+			d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
+			if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
+				t.Fatalf("initial resolution = %d, %v", count, err)
+			}
+			for i, generation := range []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}, {"two", "bbb"}} {
+				previous := st.GetArtifact(ks.SourceID())
+				object := st.GetObject(ks.SourceID())
+				later := *ks
+				later.Name, later.Path = fmt.Sprintf("later-%d", i), "./root-only"
+				st.AddObject(&later)
+				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(ks.SourceID()) != previous || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+					t.Fatalf("reference-only resolution changed publication: %d, %v", count, err)
+				}
+				next := *bootstrap
+				next.Revision, next.Digest = generation.revision, generation.digest
+				want := fmt.Sprintf("generation-%d", i)
+				next.FS = fstest.MapFS{
+					"kubernetes/apps/x/file": {Data: []byte(want)}, "apps/x/file": {Data: []byte("wrong root")}, "root-only/file": {},
+				}
+				st.SetArtifact(manifest.BootstrapSourceID, &next)
+				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
+					t.Fatalf("generation resolution = %d, %v", count, err)
+				}
+				artifact := st.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+				data, err := fs.ReadFile(artifact.FS, "apps/x/file")
+				if err != nil || string(data) != want || artifact == previous || artifact.LocalRoot != filepath.Join(root, "kubernetes") || artifact.Revision != next.Revision || artifact.Digest != next.Digest || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID) != &next {
+					t.Fatalf("frozen generation artifact=%+v bytes=%q error=%v", artifact, data, err)
+				}
+				bootstrap = &next
+			}
+		})
+	}
+
 	root := t.TempDir()
 	st := store.New()
 	repository := &manifest.GitRepository{Name: "flux-system", Namespace: "flux-system"}
@@ -450,10 +527,10 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	repository.Reference = &manifest.GitRepositoryRef{Commit: "invalid"}
 	st.AddObject(repository)
 	d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
-	if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
+	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
 	artifact := st.GetArtifact(repository.Named()).(*store.SourceArtifact)
@@ -467,9 +544,9 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		alias := &manifest.GitRepository{Name: "alias", Namespace: "flux-system", URL: repository.URL}
 		alias.Ignore = new("excluded/\n")
 		st.AddObject(alias)
-		ok, err := d.publishBootstrapAlias(t.Context(), alias.Named(), root)
-		if err != nil || !ok {
-			t.Fatalf("alias: %t, %v", ok, err)
+		count, err := d.resolveEntrySources(t.Context(), true)
+		if err != nil || count != 1 {
+			t.Fatalf("alias: %d, %v", count, err)
 		}
 		art := st.GetArtifact(alias.Named()).(*store.SourceArtifact)
 		if art.Key != "" || !art.InputAlias || art.LocalRoot != root || art.LocalPath == root {
@@ -514,11 +591,60 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 				t.Fatalf("alias lost shaping: %v", err)
 			}
 		}
-		if _, err := d.publishBootstrapAlias(t.Context(), alias.Named(), root); err != nil {
+		if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 			t.Fatal(err)
 		}
 		if len(d.aliasViews) != 1 || st.GetObject(alias.Named()) != alias {
 			t.Fatal("alias refresh changed registry or authored object")
+		}
+	})
+
+	t.Run("OCI subtrees", func(t *testing.T) {
+		root := t.TempDir()
+		st := store.New()
+		input := fstest.MapFS{
+			"kubernetes/apps/file":     {Data: []byte("subtree")},
+			"kubernetes/.git/config":   {Data: []byte("metadata")},
+			"kubernetes/.sourceignore": {Data: []byte("excluded\n")},
+			"kubernetes/excluded":      {Data: []byte("excluded")},
+			"other/apps/file":          {Data: []byte("other")},
+		}
+		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input, Key: "pinned", Revision: "one"}
+		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+		d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes"), Store: st}}
+		for i, subtree := range []string{"kubernetes", "kubernetes", "other"} {
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: fmt.Sprintf("alias-%d", i)}
+			d.cfg.Path = filepath.Join(root, subtree)
+			st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name}})
+			if count, err := d.resolveEntrySources(t.Context(), true); count != 1 || err != nil {
+				t.Fatalf("alias: %d %v", count, err)
+			}
+			art := st.GetArtifact(id).(*store.SourceArtifact)
+			data, err := fs.ReadFile(art.FS, "apps/file")
+			want := "subtree"
+			if subtree == "other" {
+				want = "other"
+			}
+			if err != nil || string(data) != want || art.Key != "" || art.LocalRoot != filepath.Join(root, subtree) {
+				t.Fatalf("subtree artifact: %+v %q %v", art, data, err)
+			}
+			if subtree == "kubernetes" {
+				for _, name := range []string{".git/config", "excluded"} {
+					if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("source policy %s: %v", name, err)
+					}
+				}
+			}
+			wantViews := 1
+			if i == 2 {
+				wantViews = 2
+			}
+			if len(d.aliasViews) != wantViews {
+				t.Fatalf("views = %d", len(d.aliasViews))
+			}
+		}
+		if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+			t.Fatal("bootstrap changed")
 		}
 	})
 
@@ -574,10 +700,10 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		st := store.New()
 		st.AddObject(repository)
 		d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
-		if _, err := d.seedBootstrapSource(t.Context()); err != nil {
+		if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.overrideSelfReferentialGitRepositories(t.Context(), root); err != nil {
+		if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 			t.Fatal(err)
 		}
 		_, err := os.Stat(defaultRoot)

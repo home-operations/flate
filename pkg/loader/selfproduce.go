@@ -143,14 +143,18 @@ type graphVisit struct {
 	owner              manifest.NamedResource
 	document           *types.Kustomization
 	readable           bool
-	localAlias         bool
+	localBase          string
 }
 
 func (v graphVisit) localCoordinate() string {
-	if !v.localAlias {
+	if v.localBase == "" {
 		return ""
 	}
-	return strings.TrimPrefix(v.coordinate, v.prefix+"/")
+	local := strings.TrimPrefix(v.coordinate, v.prefix+"/")
+	if v.localBase == "." {
+		return local
+	}
+	return path.Join(v.localBase, local)
 }
 
 func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization) []string {
@@ -274,6 +278,7 @@ type selfProduceBuilder struct {
 }
 
 func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.BaseManifest) {
+	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
 	record := func(obj manifest.BaseManifest) {
 		info := manifest.KindOf(obj)
 		switch {
@@ -283,7 +288,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 				b.materializeSecret(s, v.namespace, v.fallback)
 			}
 		case info.Includes("structural"):
-			b.emittedFiles[v.coordinate] = appendUniqueProducer(b.emittedFiles[v.coordinate], v.owner)
+			b.emittedFiles[coordinate] = appendUniqueProducer(b.emittedFiles[coordinate], v.owner)
 		default:
 			raw, ok := obj.(*manifest.RawObject)
 			if !ok {
@@ -293,7 +298,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 				id := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
 				r := b.idx.Records[id]
 				if r.Authored == (manifest.NamedResource{}) {
-					r.Authored, r.Path, r.File = obj.Named(), v.file, v.coordinate
+					r.Authored, r.Path, r.File = obj.Named(), v.file, coordinate
 					b.idx.Records[id] = r
 				}
 			}

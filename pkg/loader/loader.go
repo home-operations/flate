@@ -433,7 +433,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath s
 			if ks.IsFragment() {
 				continue
 			}
-			if w.loader.skipExisting(obj.Named()) {
+			if !w.loader.acceptObject(obj.Named()) {
 				continue
 			}
 			w.loader.addObject(obj, abs)
@@ -618,12 +618,17 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 	return count, err
 }
 
-// skipExisting reports whether id should be left untouched because
-// PreferExisting is set and the Store already holds it — the
-// orchestrator's recursive spec.path discovery wants the initial scan's
-// data to win over downstream paths that may point into a different tree.
-func (l *Loader) skipExisting(id manifest.NamedResource) bool {
-	return l.PreferExisting && l.Store.GetObject(id) != nil
+// Authored input replaces synthetic aliases and their ready artifacts.
+func (l *Loader) acceptObject(id manifest.NamedResource) bool {
+	if !l.PreferExisting || l.Store.GetObject(id) == nil {
+		return true
+	}
+	artifact, _ := l.Store.GetArtifact(id).(*store.SourceArtifact)
+	if artifact == nil || !artifact.InputAlias || l.Index.Records[id].Path != "" {
+		return false
+	}
+	l.Store.DeleteObject(id)
+	return true
 }
 
 // Decode errors retain their file coordinate until scope attribution.
@@ -672,7 +677,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 			l.DisableChartDigestTracking = l.DisableChartDigestTracking || disablesChartDigestTracking(hr)
 		}
 		id := obj.Named()
-		if l.skipExisting(id) {
+		if !l.acceptObject(id) {
 			continue
 		}
 		if !info.Includes("discovery") {
@@ -715,7 +720,7 @@ func (l *Loader) recordDataFile(absPath string) error {
 			// producer-index use case is data-only.
 			continue
 		}
-		if l.skipExisting(id) {
+		if !l.acceptObject(id) {
 			continue
 		}
 		l.recordObject(obj, absPath)

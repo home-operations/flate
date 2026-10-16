@@ -44,6 +44,14 @@ func (g *GitRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindGitRepository].Group, Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
 }
 
+// BootstrapAlias returns a local copy and the borrowed immutable Git descriptor.
+// A non-nil descriptor selects repository-root policy and supplies ref/view inputs.
+func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
+	out := *g
+	out.URL = "file://" + root
+	return &out, g
+}
+
 // Content returns the source inputs that define the selected Git content.
 func (g *GitRepository) Content(ref GitRepositoryRef) any {
 	var auth []NamedResource
@@ -143,6 +151,13 @@ type OCILayerSelector = sourcev1.OCILayerSelector
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
+}
+
+// BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
+func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
+	out := *o
+	out.URL = "file://" + root
+	return &out, nil
 }
 
 // Content returns the source inputs that define the selected OCI content.

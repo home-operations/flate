@@ -1,66 +1,206 @@
 package discovery
 
 import (
+	"context"
+	"errors"
+	"io/fs"
+	"path/filepath"
+	"slices"
 	"testing"
+	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/home-operations/flate/pkg/store"
+
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// TestNewBootstrapAlias covers the per-kind branches that aliasing
-// supports plus the unsupported-kind branch that lets
-// publishBootstrapAlias silently skip non-aliasable sourceRefs.
-func TestNewBootstrapAlias(t *testing.T) {
+func TestResolveEntrySources_Identity(t *testing.T) {
 	t.Parallel()
-	const repoRoot = "/tmp/repo"
-	cases := []struct {
-		name    string
-		id      manifest.NamedResource
-		wantOK  bool
-		wantURL string
-		wantNS  string
+	for _, tc := range []struct {
+		kind, group, namespace, name string
+		want                         bool
 	}{
-		{
-			name:    "GitRepository → file:// alias",
-			id:      manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"},
-			wantOK:  true,
-			wantURL: "file:///tmp/repo",
-			wantNS:  "flux-system",
-		},
-		{
-			name: "OCIRepository → unsupported (must wait for its artifact)",
-			id:   manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "source"},
-		},
-		{
-			name:   "HelmRepository → unsupported (caller should skip)",
-			id:     manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "repo"},
-			wantOK: false,
-		},
-		{
-			name:   "Bucket → unsupported (caller should skip)",
-			id:     manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "flux-system", Name: "bucket"},
-			wantOK: false,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			obj, url, ok := newBootstrapAlias(tc.id, repoRoot)
-			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+		{manifest.KindGitRepository, manifest.SourceDomain, "flux-system", "source", true},
+		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", true},
+		{manifest.KindBucket, manifest.SourceDomain, "other", "source", true},
+		{manifest.KindHelmRepository, manifest.SourceDomain, "other", "source", false},
+		{manifest.KindExternalArtifact, manifest.SourceDomain, "other", "source", false},
+		{manifest.KindGitRepository, "wrong.group", "other", "source", false},
+		{manifest.KindGitRepository, manifest.SourceDomain, "", "source", false},
+		{manifest.KindGitRepository, manifest.SourceDomain, "other", "", false},
+	} {
+		t.Run(tc.kind+"/"+tc.group+"/"+tc.namespace+"/"+tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {Data: []byte("input")}}})
+			ks := &manifest.Kustomization{Name: "apps", Namespace: tc.namespace, SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: tc.name}}
+			st.AddObject(ks)
+			d := discoverer{cfg: Config{Path: root, Store: st}}
+			count, err := d.resolveEntrySources(t.Context(), true)
+			if err != nil || (count == 1) != tc.want {
+				t.Fatalf("resolution = %d, %v", count, err)
 			}
-			if !ok {
-				if obj != nil || url != "" {
-					t.Errorf("unsupported kind returned obj=%v url=%q; want zero values", obj, url)
-				}
-				return
-			}
-			if url != tc.wantURL {
-				t.Errorf("url = %q, want %q", url, tc.wantURL)
-			}
-			named := obj.Named()
-			if named != tc.id {
-				t.Errorf("obj.Named() = %v, want %v", named, tc.id)
+			if obj := st.GetObject(ks.SourceID()); tc.want && (obj == nil || obj.Named() != ks.SourceID()) {
+				t.Fatalf("identity = %v", obj)
 			}
 		})
 	}
+	t.Run("separate identities", func(t *testing.T) {
+		root := t.TempDir()
+		st := store.New()
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+			"kubernetes/clusters/c0/entry": {}, "kubernetes/apps/x/file": {},
+		}})
+		var ids []manifest.NamedResource
+		for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
+			for _, namespace := range []string{"one", "two"} {
+				for _, name := range []string{"source", "other"} {
+					id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: namespace, Name: name}
+					ids = append(ids, id)
+					st.AddObject(&manifest.Kustomization{Name: kind + name + namespace, Namespace: "consumer", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: name, Namespace: namespace}})
+				}
+			}
+		}
+		wrong := manifest.NamedResource{Group: "wrong.group", Kind: manifest.KindOCIRepository, Namespace: "one", Name: "source"}
+		st.AddObject(&manifest.Kustomization{Name: "wrong", Namespace: "consumer", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: wrong.Group + "/v1", Kind: wrong.Kind, Namespace: wrong.Namespace, Name: wrong.Name}})
+		d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
+		count, err := d.resolveEntrySources(t.Context(), true)
+		if err != nil || count != len(ids) {
+			t.Fatalf("resolution = %d, %v, want %d", count, err, len(ids))
+		}
+		for _, id := range ids {
+			artifact, ok := st.GetArtifact(id).(*store.SourceArtifact)
+			want := filepath.Join(root, "kubernetes")
+			if id.Kind == manifest.KindGitRepository {
+				want = root
+			}
+			if !ok || artifact.LocalRoot != want || st.GetObject(id).Named() != id {
+				t.Fatalf("%s artifact = %+v, want root %s", id, artifact, want)
+			}
+		}
+		if st.GetObject(wrong) != nil || st.GetArtifact(wrong) != nil {
+			t.Fatal("wrong-group identity collided with an entry source")
+		}
+	})
+}
+
+func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+		for _, tc := range []struct {
+			name, scan   string
+			paths, files []string
+			want         string
+		}{
+			{name: "subtree", paths: []string{"./apps/x"}, files: []string{"kubernetes/apps/x/file"}, want: "kubernetes"},
+			{name: "repository", paths: []string{"kubernetes/apps/x"}, files: []string{"kubernetes/apps/x/file"}, want: "."},
+			{name: "scan", paths: []string{"./apps/x"}, files: []string{"kubernetes/clusters/c0/apps/x/file"}, want: "kubernetes/clusters/c0"},
+			{name: "shallowest", paths: []string{"./apps/x"}, files: []string{"apps/x/file", "kubernetes/apps/x/file"}, want: "."},
+			{name: "shared constraint", paths: []string{"./apps/x", "./apps/y"}, files: []string{"apps/x/file", "kubernetes/apps/x/file", "kubernetes/apps/y/file"}, want: "kubernetes"},
+			{name: "incompatible", paths: []string{"./apps/x", "./root-only"}, files: []string{"kubernetes/apps/x/file", "root-only/file"}},
+			{name: "missing", paths: []string{"./absent"}, files: []string{"kubernetes/apps/x/file"}},
+			{name: "file", paths: []string{"./apps/x/file"}, files: []string{"kubernetes/apps/x/file"}},
+			{name: "empty", paths: []string{""}, files: []string{"file"}, want: "."},
+			{name: "dot", paths: []string{"."}, files: []string{"file"}, want: "."},
+			{name: "outside scan", scan: "../outside", paths: []string{"./apps/x"}, files: []string{"apps/x/file"}},
+			{name: "escaping", paths: []string{"./apps/../../outside"}, files: []string{"outside/file"}},
+			{name: "normalized", paths: []string{"./apps/../apps/x"}, files: []string{"kubernetes/apps/x/file"}, want: "kubernetes"},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				for _, reverse := range []bool{false, true} {
+					root := t.TempDir()
+					testutil.WriteFile(t, root, "absent/file", "checkout decoy")
+					input := fstest.MapFS{"kubernetes/clusters/c0/ks.yaml": {Data: []byte("scan")}}
+					for _, file := range tc.files {
+						input[file] = &fstest.MapFile{Data: []byte(file)}
+					}
+					st := store.New()
+					bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input}
+					st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+					paths := slices.Clone(tc.paths)
+					if reverse {
+						slices.Reverse(paths)
+					}
+					var source manifest.NamedResource
+					for i, p := range paths {
+						ks := &manifest.Kustomization{Name: string(rune('a' + i)), Namespace: "other", Path: p, SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
+						source = ks.SourceID()
+						st.AddObject(ks)
+					}
+					scan := "kubernetes/clusters/c0"
+					if tc.scan != "" {
+						scan = tc.scan
+					}
+					d := discoverer{cfg: Config{Path: filepath.Join(root, scan), Store: st}}
+					aliases, err := d.resolveEntrySources(t.Context(), true)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if tc.want == "" {
+						if aliases != 0 || st.GetObject(source) != nil || st.GetArtifact(source) != nil {
+							t.Fatalf("inconsistent source aliased: %v", aliases)
+						}
+						continue
+					}
+					art, ok := st.GetArtifact(source).(*store.SourceArtifact)
+					if !ok || aliases != 1 || st.GetObject(source) == nil {
+						t.Fatalf("missing alias: %v, %+v", aliases, art)
+					}
+					if art.LocalRoot != filepath.Join(root, tc.want) || art.Key != "" || !art.InputAlias {
+						t.Fatalf("alias coordinates: %+v", art)
+					}
+					for _, p := range paths {
+						name := filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(p)))
+						if info, err := fs.Stat(art.FS, name); err != nil || !info.IsDir() {
+							t.Fatalf("alias path %q: %v", name, err)
+						}
+					}
+					st.AddObject(&manifest.Kustomization{Name: "later", Namespace: "other", Path: "./root-only", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}})
+					if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source) != art {
+						t.Fatalf("published root changed: %v, %v", aliases, err)
+					}
+					if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+						t.Fatal("bootstrap replaced")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAliasMissingKustomizationSources_OCIReadErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		canceled bool
+		want     error
+	}{
+		{name: "permission", want: fs.ErrPermission},
+		{name: "canceled", canceled: true, want: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: deniedBootstrap{}})
+			st.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.canceled {
+				cancel()
+			}
+			d := discoverer{cfg: Config{Path: root, Store: st}}
+			if _, err := d.resolveEntrySources(ctx, true); !errors.Is(err, tc.want) {
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+type deniedBootstrap struct{}
+
+func (deniedBootstrap) Open(name string) (fs.File, error) {
+	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 }

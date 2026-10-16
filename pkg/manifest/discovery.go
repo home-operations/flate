@@ -7,20 +7,28 @@ import (
 	"strings"
 )
 
+// Production identifies one source-qualified contribution to a queried target.
+type Production struct {
+	Owner       NamedResource
+	Declaration NamedResource
+	Authored    NamedResource
+	Source      NamedResource
+	Path        string
+	File        string
+}
+
 // DiscoveryRecord contains static facts about one authored or projected identity.
 // Path is empty for generated or projected objects that have no raw resource file.
 // Slices are borrowed and MUST remain immutable after discovery publishes the index.
 type DiscoveryRecord struct {
-	Authored          NamedResource   // Proven raw identity; zero for generated records.
-	Path              string          // Absolute raw resource path; empty for generated or projected records.
-	File              string          // Diff coordinate; generator records use the declaration file.
-	Refs              []NamedResource // Authored chart/source references under the discovery identity.
-	Parent            NamedResource   // Strict structural parent, excluding peers with the same claimed path.
-	Renderers         []NamedResource // Kustomizations whose resource graph emits this data identity.
-	DeclarationOwners []NamedResource // Kustomizations whose resource graph contains this producer declaration.
-	Owners            []NamedResource // File-backed data owners, including raw empty-namespace owners.
-	Excluded          bool            // A raw Kustomization file is omitted by its directory's resources list.
-	Pinned            bool            // The Kustomization reads a committed local source artifact.
+	Authored    NamedResource   // Proven raw identity; zero for generated records.
+	Path        string          // Absolute raw resource path; empty for generated or projected records.
+	File        string          // Diff coordinate; generator records use the declaration file.
+	Refs        []NamedResource // Authored chart/source references under the discovery identity.
+	Parent      NamedResource   // Strict structural parent, excluding peers with the same claimed path.
+	Productions []Production    // Immutable source-qualified contributor evidence.
+	Excluded    bool            // A raw Kustomization file is omitted by its directory's resources list.
+	Pinned      bool            // The Kustomization reads a committed local source artifact.
 }
 
 // DiscoveryIndex owns immutable discovery records, canonical claims and graph readers.
@@ -110,26 +118,6 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[NamedResource] {
 			}
 		}
 	}
-}
-
-// DataProducers returns borrowed data renderers, falling back to file-backed owners.
-// The returned slice MUST remain immutable after discovery publishes the index.
-func (i *DiscoveryIndex) DataProducers(id NamedResource) []NamedResource {
-	if r, _ := i.Lookup(id); len(r.Renderers) > 0 {
-		return r.Renderers
-	}
-	return i.DataOwners(id)
-}
-
-// DataOwners returns file-backed data owners, retaining the asymmetric
-// empty-namespace bridge. Two unequal nonempty namespaces never match.
-func (i *DiscoveryIndex) DataOwners(id NamedResource) []NamedResource {
-	r, ok := i.Lookup(id)
-	if (!ok || len(r.Owners) == 0) && id.Namespace != "" {
-		id.Namespace = ""
-		r, _ = i.Lookup(id)
-	}
-	return r.Owners
 }
 
 func appendUnique(dst []NamedResource, id NamedResource) []NamedResource {

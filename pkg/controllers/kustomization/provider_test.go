@@ -71,7 +71,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			if got := values.UnreadableSubstituteSecrets(ks, c.substitutionProvider); len(got) != 0 {
 				t.Fatalf("readable supplied source reported unreadable: %v", got)
 			}
-			if got, _, err := values.NewStoreProvider(st).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
+			if got, _, err := values.NewStoreProvider(st, true).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
 				t.Fatal("ordinary provider used supplied values")
 			}
 		})

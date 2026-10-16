@@ -4,7 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"io"
+	"io/fs"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,6 +25,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -115,9 +121,9 @@ func TestReconcile_HappyPath(t *testing.T) {
 	if info.Message != "" {
 		t.Errorf("unexpected Ready message: %q", info.Message)
 	}
-	art, _ := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+	art, _ := s.GetArtifact(ks.Named()).(*store.Emission)
 	if art == nil {
-		t.Fatal("KustomizationArtifact not stored")
+		t.Fatal("Emission not stored")
 	}
 	if art.Fingerprint == "" {
 		t.Error("artifact missing fingerprint")
@@ -136,9 +142,6 @@ func TestReconcile_HappyPath(t *testing.T) {
 		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
 			t.Errorf("missing effective child %s/%s", want, name)
 		}
-	}
-	if filepath.Dir(art.Path) == "/" {
-		t.Errorf("unexpected artifact path: %q (root=%s)", art.Path, root)
 	}
 }
 
@@ -226,7 +229,7 @@ data: {greeting: '%s'}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
-			art, _ := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+			art, _ := s.GetArtifact(ks.Named()).(*store.Emission)
 			if art == nil || len(art.Manifests) != 1 {
 				t.Fatalf("expected one rendered manifest, got %+v", art)
 			}
@@ -259,8 +262,8 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
-	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
-	art := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+	firstFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
+	art := s.GetArtifact(ks.Named()).(*store.Emission)
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
 		before[i] = manifest.DeepCopyMap(doc)
@@ -277,7 +280,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	}
 	s.AddObject(stamped)
 	c.ReconcileNode(context.Background(), ks.Named(), 0)
-	secondFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
+	secondFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
 	}
@@ -381,7 +384,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
-	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
+	firstFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
 
 	var mu sync.Mutex
 	var sawPending bool
@@ -405,7 +408,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	c.ReconcileNode(context.Background(), ks.Named(), 0)
 
 	var secondFP string
-	if art, ok := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact); ok && art.Fingerprint != firstFP {
+	if art, ok := s.GetArtifact(ks.Named()).(*store.Emission); ok && art.Fingerprint != firstFP {
 		secondFP = art.Fingerprint
 	}
 
@@ -539,7 +542,7 @@ data: {greeting: hi}
 			}
 			ks := obj.(*manifest.Kustomization)
 			original := ks.Clone()
-			st.AddObject(ks)
+			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: ks, Doc: doc}}, Complete: true})
 			st.UpdateStatus(ks.Named(), store.StatusPending, "")
 			replacement := manifest.DeepCopyMap(doc)
 			spec := replacement["spec"].(map[string]any)
@@ -556,7 +559,7 @@ data: {greeting: hi}
 				if fired.Swap(true) {
 					return
 				}
-				c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
+				publishDocuments(c, parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace})
 				published.Store(true)
 			}, false)
 			t.Cleanup(unsub)
@@ -576,17 +579,18 @@ data: {greeting: hi}
 			if diff := cmp.Diff(original, ks); diff != "" {
 				t.Fatalf("original mutated (-want +got):\n%s", diff)
 			}
-			if owner, ok := st.EmittedParent(ks.Named()); !ok || owner != parent.Named() {
-				t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+			if owners := testutil.Owners(st.Productions(ks.Named(), nil)); !slices.Contains(owners, parent.Named()) {
+				t.Fatalf("missing independent contributor: %v", owners)
 			}
 			info, _ := st.GetStatus(ks.Named())
-			art, _ := st.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
+			art, _ := st.GetArtifact(ks.Named()).(*store.Emission)
 			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "refreshed", Name: "ks-refresh-output"}
 			if suspended {
 				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 					t.Errorf("status = %+v, want Ready/suspended", info)
 				}
-				if art != nil || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[ks.Named()]) != 0 {
+				_, inventory := st.GetEmission(ks.Named())
+				if art != nil || st.GetObject(output) != nil || len(inventory.Children) != 0 {
 					t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
 				}
 			} else if info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1 || st.GetObject(output) == nil {
@@ -611,5 +615,164 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 	}
 	if _, _, err := c.resolveSource(ks, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("unavailable content at fixpoint: %v", err)
+	}
+}
+
+type guardedSourceFS struct {
+	fs.FS
+	once   sync.Once
+	opened atomic.Int64
+	deny   atomic.Bool
+	onOpen func()
+}
+
+func (s *guardedSourceFS) Open(name string) (fs.File, error) {
+	s.opened.Add(1)
+	if s.deny.Load() {
+		return nil, fs.ErrPermission
+	}
+	s.once.Do(func() {
+		if s.onOpen != nil {
+			s.onOpen()
+		}
+	})
+	return s.FS.Open(name)
+}
+
+func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
+	for _, swapDuringRender := range []bool{false, true} {
+		t.Run(fmt.Sprint(swapDuringRender), func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [objects.yaml]\n")
+			testutil.WriteFile(t, root, "apps/objects.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: apps}\ndata: {value: original}\n---\napiVersion: v1\nkind: Secret\nmetadata: {name: exclusive, namespace: apps}\nstringData: {value: original}\n")
+			s := store.New()
+			sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+			location, err := gitrepo.Locate(t.Context(), root, "")
+			assert.NoError(t, err)
+			input, err := gittree.AdmitDirectory(t.Context(), location)
+			assert.NoError(t, err)
+			guard := &guardedSourceFS{FS: input.FS}
+			initial := *input
+			initial.Key, initial.FS, initial.Revision = "initial-pin", guard, "initial-pin"
+			next := initial
+			next.Key, next.FS = "different-pin", input.FS
+			s.AddObject(&manifest.GitRepository{Name: sourceID.Name, Namespace: sourceID.Namespace, URL: "file://" + root})
+			s.SetArtifact(sourceID, &initial)
+			s.UpdateStatus(sourceID, store.StatusReady, "")
+			docs, err := manifest.DecodeDocs(strings.NewReader("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: apps, namePrefix: 'first-', sourceRef: {kind: GitRepository, name: source, namespace: apps}}\n"))
+			assert.NoError(t, err)
+			obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			ks := obj.(*manifest.Kustomization)
+			s.AddObject(ks)
+			l := loader.New(s)
+			l.SourceRoot, l.Options.WipeSecrets = root, false
+			_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
+			assert.NoError(t, err)
+			l.FinalizeIndex(root)
+			shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
+			exclusive := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "exclusive"}
+			if len(slices.Collect(s.Productions(exclusive, l.Index))) == 0 {
+				t.Fatal("missing frozen coverage")
+			}
+			for _, id := range []manifest.NamedResource{shared, exclusive} {
+				for p := range s.Productions(id, l.Index) {
+					if p.Path != "" {
+						loader.Promote(s, id, p, loader.PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }})
+					}
+				}
+				if s.GetObject(id) == nil {
+					t.Fatalf("missing promoted seed %s", id)
+				}
+			}
+
+			q := &manifest.Kustomization{Name: "q", Namespace: "apps"}
+			s.AddObject(q)
+			s.RecordEmitted(q.Named(), &store.Emission{Children: []store.Child{{Obj: s.GetObject(shared)}}, Complete: true})
+			owner, err := sourcecache.New(t.Context(), t.TempDir())
+			assert.NoError(t, err)
+			t.Cleanup(func() { _ = owner.Close() })
+			trees := kustomize.NewTreeCache(owner, nil)
+			t.Cleanup(trees.Close)
+			c := New(s, task.NewBounded(2), trees, false)
+			c.Configure(Options{Index: l.Index}, sourcecache.RetryConfig{})
+			if swapDuringRender {
+				guard.once = sync.Once{}
+				guard.onOpen = func() { s.SetArtifact(sourceID, &next) }
+			} else {
+				s.SetArtifact(sourceID, &next)
+			}
+			if err := c.reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
+				t.Fatal(err)
+			}
+			if got := s.GetObject(exclusive) != nil; got == swapDuringRender {
+				t.Fatalf("retirement followed store source rather than rendered source: retained=%t", got)
+			}
+			if s.GetObject(shared) == nil {
+				t.Fatal("coverage retired Q support")
+			}
+			if !swapDuringRender {
+				s.SetArtifact(sourceID, &initial)
+				if err := c.reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
+					t.Fatal(err)
+				}
+				if s.GetObject(exclusive) != nil {
+					t.Fatal("matching source view did not retire its whole prediction")
+				}
+			}
+			_, empty := s.GetEmission(ks.Named())
+			empty.Children, empty.Manifests, empty.Fingerprint, empty.Complete = nil, nil, "", true
+			s.RecordEmitted(ks.Named(), &empty)
+			empty.Finish()
+			s.SetArtifact(sourceID, &initial)
+			probe := sourcecache.BlobKey{Content: "source-coverage-persistence-probe", PersistOnly: true}
+			probeReader, _, _, err := owner.Blob(t.Context(), probe, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, nil })
+			assert.NoError(t, err)
+			assert.NoError(t, probeReader.Close())
+			probeReader, _, _, probeErr := owner.Blob(t.Context(), probe, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+			persistent := probeErr == nil
+			if persistent {
+				assert.NoError(t, probeReader.Close())
+				guard.deny.Store(true)
+			} else {
+				t.Log("raw render persistence unavailable for this build identity")
+			}
+			before := guard.opened.Load()
+			if err := c.reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
+				t.Fatalf("raw cache hit: %v", err)
+			}
+			if persistent && guard.opened.Load() != before {
+				t.Fatal("expected immutable-source raw cache hit without input reads")
+			}
+			guard.deny.Store(false)
+			fresh := ks.Clone()
+			fresh.NamePrefix = "arbitrary-second-"
+			fresh.Contents["spec"].(map[string]any)["namePrefix"] = fresh.NamePrefix
+			s.AddObject(fresh)
+			if err := c.reconcile(t.Context(), fresh, manifest.DrainNone); err != nil {
+				t.Fatal(err)
+			}
+			old := shared
+			old.Name = "first-shared"
+			newID := shared
+			newID.Name = "arbitrary-second-shared"
+			if s.GetObject(old) != nil || s.GetObject(newID) == nil {
+				t.Fatal("repeated rename retained obsolete output")
+			}
+			failed := initial
+			failed.Key = "failed-pin"
+			failed.FS = &guardedSourceFS{FS: input.FS}
+			failed.FS.(*guardedSourceFS).deny.Store(true)
+			s.SetArtifact(sourceID, &failed)
+			if err := c.reconcile(t.Context(), fresh, manifest.DrainNone); err == nil || s.GetObject(newID) == nil {
+				t.Fatal("failed successor withdrew completed output")
+			}
+			_, empty = s.GetEmission(ks.Named())
+			empty.Children, empty.Manifests, empty.Complete = nil, nil, true
+			s.RecordEmitted(ks.Named(), &empty)
+			if s.GetObject(newID) != nil || s.GetObject(shared) == nil {
+				t.Fatal("complete empty did not retire only its contribution")
+			}
+		})
 	}
 }

@@ -176,7 +176,8 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		c := New(st, tasks)
 		f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 		c.Fetchers[manifest.KindGitRepository] = f
-		c.SetFilter(change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{}))
+		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
+		c.Configure(FetchOptions{Filter: filter}, sourcecache.RetryConfig{})
 		t.Cleanup(func() { c.Close(); tasks.BlockTillDone() })
 		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 		st.AddObject(repo)
@@ -351,16 +352,14 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
 			}
 			f := &fakeFetcher{err: fetchErr}
-			var producers *manifest.ProducerIndex
-			if !tt.plain {
-				producers = &manifest.ProducerIndex{}
-			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 			if tt.producer {
-				producers.Record(secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
+				addDeclaration(index, secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 			}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
-				FetchOptions{AllowMissingSecrets: tt.allowMissing, Producers: producers})
+				FetchOptions{AllowMissingSecrets: tt.allowMissing})
+			st.SetDiscoveryIndex(index)
 			if tt.present {
 				st.AddObject(secret)
 			}
@@ -481,11 +480,12 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	t.Parallel()
 	f := &fallbackFetcher{}
-	producers := &manifest.ProducerIndex{}
-	producers.Record(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	addDeclaration(index, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
 		manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{Producers: producers})
+		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{})
+	st.SetDiscoveryIndex(index)
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
 	st.AddObject(repo)
 
@@ -531,8 +531,10 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 // stay Ready across a no-op re-run.
 func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 	t.Parallel()
+
+	f := &fakeFetcher{}
 	c, st := newController(t, map[string]src.Fetcher{
-		manifest.KindHelmRepository: src.ExistenceFetcher{},
+		manifest.KindHelmRepository: f,
 	})
 	repo := &manifest.HelmRepository{
 		Name: "charts", Namespace: "flux-system",
@@ -556,9 +558,6 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 		}
 	}, false)
 
-	// Re-emit with a benign spec diff (Interval) and drive a second reconcile.
-	// ExistenceFetcher ignores the spec, so this re-run is a no-op fetch that
-	// must keep the source Ready without a transient Pending write.
 	reemit := &manifest.HelmRepository{
 		Name: "charts", Namespace: "flux-system",
 		URL: "https://charts.example", Type: "default",
@@ -566,6 +565,9 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 	}
 	st.AddObject(reemit)
 	controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0)
+	if f.calls != 2 {
+		t.Errorf("changed interval acquisitions = %d, want 2", f.calls)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()

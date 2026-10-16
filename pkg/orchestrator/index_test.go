@@ -1,6 +1,9 @@
 package orchestrator
 
-import "github.com/home-operations/flate/pkg/manifest"
+import (
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 func indexForTest(files map[manifest.NamedResource]string) *manifest.DiscoveryIndex {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
@@ -40,5 +43,5 @@ func setParentsForTest(o *Orchestrator, parents map[manifest.NamedResource]manif
 }
 func renderersForTest(index *manifest.DiscoveryIndex, id manifest.NamedResource) []manifest.NamedResource {
 	r, _ := index.Lookup(id)
-	return r.Renderers
+	return testutil.ProductionOwners(r)
 }

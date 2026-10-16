@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestRender_ScanAndPathWarnings(t *testing.T) {
@@ -311,6 +314,7 @@ spec:
     template:
       data:
         CLOUDFLARE_TUNNEL_ID: "{{ .id }}"
+        identity: "{{ .identity }}"
   dataFrom:
     - extract: {key: cloudflare}
 `)
@@ -325,6 +329,14 @@ spec:
 	res, err := o.Render(context.Background())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
+	}
+
+	repo := &manifest.GitRepository{Name: "ssh", Namespace: "flux-system"}
+	repo.URL = "ssh://git@example.test/cluster"
+	repo.SecretRef = &manifest.LocalObjectReference{Name: "cloudflared-secret"}
+	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+	if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.Detail != "missing 'identity' for SSH auth" {
+		t.Fatalf("producer-declared credential did not retain placeholder classification: %v", err)
 	}
 
 	// The ${CLOUDFLARE_TUNNEL_ID} resolved to its placeholder, not empty/literal.

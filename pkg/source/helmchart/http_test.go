@@ -61,29 +61,60 @@ func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets
 
 func TestFetchHTTPChart(t *testing.T) {
 	t.Parallel()
-	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, hits := startHelmRepo(t, chartBytes, chartDigest(chartBytes))
+
+	charts := map[string][]byte{
+		"app-template": buildChartTarGz(t, "app-template", "1.0.0"),
+		"other":        buildChartTarGz(t, "other", "1.0.0"),
+	}
+	var indexHits, chartHits atomic.Int32
+	var index strings.Builder
+	index.WriteString("apiVersion: v1\nentries:\n")
+	for _, name := range []string{"app-template", "other"} {
+		fmt.Fprintf(&index, "  %s:\n    - name: %s\n      version: 1.0.0\n      digest: %s\n      urls: [%s-1.0.0.tgz]\n", name, name, chartDigest(charts[name]), name)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			indexHits.Add(1)
+			_, _ = io.WriteString(w, index.String())
+			return
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "-1.0.0.tgz")
+		data, ok := charts[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		chartHits.Add(1)
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(srv.Close)
 	f := newHTTPFetcher(t, httpRepo(srv.URL))
+	for _, wave := range []string{"cold", "warm"} {
+		t.Run(wave, func(t *testing.T) {
+			t.Parallel()
 
-	art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	if art.Kind != manifest.KindHelmChart {
-		t.Errorf("art.Kind = %q, want HelmChart", art.Kind)
-	}
-	if art.Digest != chartDigest(chartBytes) {
-		t.Errorf("art.Digest = %q, want %q", art.Digest, chartDigest(chartBytes))
-	}
-	if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
-		t.Errorf("chart.tgz missing from artifact %s: %v", art.Key, err)
-	}
-
-	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("second Fetch: %v", err)
-	}
-	if *hits != 1 {
-		t.Errorf("chart downloaded %d times, want 1 (second fetch should reuse the cached chart)", *hits)
+			var consumers sync.WaitGroup
+			for name, data := range charts {
+				consumers.Go(func() {
+					art, err := f.Fetch(t.Context(), helmChart("repo", name, "1.0.0"), sourcecache.RetryConfig{})
+					if err != nil {
+						t.Errorf("Fetch %s: %v", name, err)
+						return
+					}
+					if art.Kind != manifest.KindHelmChart || art.Digest != chartDigest(data) {
+						t.Errorf("%s artifact = %+v", name, art)
+					}
+					if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
+						t.Errorf("%s chart.tgz: %v", name, err)
+					}
+				})
+			}
+			consumers.Wait()
+			t.Logf("index requests=%d chart requests=%d", indexHits.Load(), chartHits.Load())
+			if indexHits.Load() != 1 || chartHits.Load() != int32(len(charts)) {
+				t.Errorf("requests: index=%d charts=%d, want 1/%d", indexHits.Load(), chartHits.Load(), len(charts))
+			}
+		})
 	}
 }
 

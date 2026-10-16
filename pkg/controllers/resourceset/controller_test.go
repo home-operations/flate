@@ -3,8 +3,12 @@ package resourceset
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/controllers/base"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -13,7 +17,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -28,7 +31,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	s := store.New()
 	tasks := task.NewBounded(0)
 	c := New(s, tasks, true)
-	c.Configure(Options{})
+	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()
@@ -53,7 +56,7 @@ func staticRSIP(name, ns string, labels map[string]string, defaults map[string]s
 
 // findDoc reports whether the RS artifact carries a doc of the given kind
 // and metadata.name.
-func hasRenderedDoc(art *store.ResourceSetArtifact, kind, name string) bool {
+func hasRenderedDoc(art *store.Emission, kind, name string) bool {
 	if art == nil {
 		return false
 	}
@@ -106,7 +109,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
-	art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+	art, _ := s.GetArtifact(rs.Named()).(*store.Emission)
 	if !hasRenderedDoc(art, "Widget", "alice") {
 		t.Fatalf("expected rendered Widget/alice; artifact = %+v", art)
 	}
@@ -120,7 +123,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	s := store.New()
 	tasks := task.NewBounded(2)
 	c := New(s, tasks, true)
-	c.Configure(Options{})
+	c.Configure(base.Options{})
 	c.StartLifecycle()
 	defer c.Close()
 	rs := selectorFixture("acl", "blue")
@@ -131,7 +134,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("empty render status = %+v, want Ready", info)
 	}
-	if art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact); art == nil || len(art.Manifests) != 0 {
+	if art, _ := s.GetArtifact(rs.Named()).(*store.Emission); art == nil || len(art.Manifests) != 0 {
 		t.Fatalf("empty selection artifact = %+v", art)
 	}
 	for _, matches := range []bool{true, false} {
@@ -152,7 +155,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 			blocked = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
 		})
 		tasks.BlockTillDone()
-		art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+		art, _ := s.GetArtifact(rs.Named()).(*store.Emission)
 		info, _ := s.GetStatus(rs.Named())
 		if len(blocked) != 0 || tasks.Failures() != 0 || info.Status != store.StatusReady || hasRenderedDoc(art, "ConfigMap", "rsip") != matches {
 			t.Fatalf("membership=%v: blocked=%v status=%+v artifact=%+v", matches, blocked, info, art)
@@ -175,7 +178,7 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 	if content != nil {
 		t.Fatalf("invalid selector content=%v, want nil", content)
 	}
-	if _, handled, err := c.FingerprintDedup(rs.Named(), content, func([]map[string]any) {}); handled || err != nil {
+	if _, handled, err := c.FingerprintDedup(rs.Named(), content); handled || err != nil {
 		t.Fatalf("invalid selector fingerprint handled=%t error=%v, want miss", handled, err)
 	}
 	if _, err := resourceset.Render(rs, resolve); err == nil {
@@ -221,7 +224,7 @@ metadata: {name: bare}
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
 	}
-	art := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+	art := s.GetArtifact(rs.Named()).(*store.Emission)
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
 		before[i] = manifest.DeepCopyMap(doc)
@@ -268,7 +271,7 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("initial render: %+v", info)
 			}
-			artifact := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+			artifact := s.GetArtifact(rs.Named()).(*store.Emission)
 			if artifact.Fingerprint == "" {
 				t.Fatal("successful render lacks replay candidate")
 			}
@@ -381,10 +384,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			tasks := task.NewBounded(2)
 			c := New(st, tasks, true)
 			var deliveries atomic.Int64
-			c.Configure(Options{
-				ParentOf: st.EmittedParent,
-				RawSink:  func(_, _ manifest.NamedResource, _ map[string]any) { deliveries.Add(1) },
-			})
+			c.Configure(base.Options{})
 			c.StartLifecycle()
 			t.Cleanup(c.Close)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
@@ -401,7 +401,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 					"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: stale-output}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n"),
 				},
 			}
-			children, _ := c.Emit(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
+			children, _ := publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace})
 			if len(children) != 1 {
 				t.Fatalf("initial publication: %v", children)
 			}
@@ -427,7 +427,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				if fired.Swap(true) {
 					return
 				}
-				c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
+				publishDocuments(c, parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace})
 				published.Store(true)
 			}, false)
 			t.Cleanup(unsub)
@@ -447,20 +447,21 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			if diff := cmp.Diff(original, rs); diff != "" {
 				t.Fatalf("original mutated (-want +got):\n%s", diff)
 			}
-			if owner, ok := st.EmittedParent(rs.Named()); !ok || owner != parent.Named() {
-				t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+			if owners := testutil.Owners(st.Productions(rs.Named(), nil)); !slices.Contains(owners, parent.Named()) {
+				t.Fatalf("missing independent contributor: %v", owners)
 			}
 			info, _ := st.GetStatus(rs.Named())
-			art, _ := st.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+			art, _ := st.GetArtifact(rs.Named()).(*store.Emission)
 			child := testutil.KustomizationID("flux-system", "rs-refresh-child")
 			if suspended {
 				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 					t.Errorf("status = %+v, want Ready/suspended", info)
 				}
-				if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(st.EmittedChildrenByParent()[rs.Named()]) != 0 {
+				_, inventory := st.GetEmission(rs.Named())
+				if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(inventory.Children) != 0 {
 					t.Errorf("disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d", art, st.GetObject(child), deliveries.Load())
 				}
-			} else if info.Status != store.StatusReady || !hasRenderedDoc(art, "Widget", "rs-refresh-output") || st.GetObject(child) == nil || deliveries.Load() != 1 {
+			} else if info.Status != store.StatusReady || !hasRenderedDoc(art, "Widget", "rs-refresh-output") || st.GetObject(child) == nil {
 				t.Fatalf("active replacement output: status=%+v artifact=%+v child=%v raw deliveries=%d", info, art, st.GetObject(child), deliveries.Load())
 			}
 		})

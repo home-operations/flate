@@ -300,13 +300,13 @@ func TestFilter_PinnedOwnershipKeepsProducer(t *testing.T) {
 				cm.Named(),
 				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
 			} {
-				if got := f.ProducersFor(id); !slices.Equal(got, []manifest.NamedResource{producer.Named()}) {
-					t.Errorf("ProducersFor(%s) = %v, want [%s]", id, got, producer.Named())
+				if got := f.producersFor(id); !slices.Equal(got, []manifest.NamedResource{producer.Named()}) {
+					t.Errorf("production owners(%s) = %v, want [%s]", id, got, producer.Named())
 				}
 			}
 			foreign := cm.Named()
 			foreign.Group, foreign.Namespace = "foreign.example", "apps"
-			assert.Equal(t, len(f.ProducersFor(foreign)), 0)
+			assert.Equal(t, len(f.producersFor(foreign)), 0)
 			foreign = producer.Named()
 			foreign.Group = "foreign.example"
 			assert.Equal(t, f.ShouldReconcile(foreign), false)
@@ -348,8 +348,8 @@ func TestFilter_ArtifactProducerIgnoresCheckoutRootClaim(t *testing.T) {
 			return nil
 		},
 	}.index(), testutil.MapLister{root.Named(): root, pinned.Named(): pinned})
-	if got := f.ProducersFor(cm); !slices.Equal(got, []manifest.NamedResource{pinned.Named()}) {
-		t.Fatalf("ProducersFor(%s) = %v, want [%s]", cm, got, pinned.Named())
+	if got := f.producersFor(cm); !slices.Equal(got, []manifest.NamedResource{pinned.Named()}) {
+		t.Fatalf("production owners(%s) = %v, want [%s]", cm, got, pinned.Named())
 	}
 }
 
@@ -1291,7 +1291,7 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 	// Sanity: no infinite loop happened (we made it here). Also
 	// confirm self only appears once in the producer index — not as
 	// its own ancestor via enqueueAncestor.
-	prods := f.ProducersFor(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "self-settings"})
+	prods := f.producersFor(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "self-settings"})
 	if !slices.Contains(prods, self) {
 		t.Errorf("producers index should still contain self for cm-by-name lookup; got=%v", prods)
 	}
@@ -1301,7 +1301,7 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 // asymmetric producer-byName rule, mirroring
 // TestFilter_KeepByNameDoesNotLeakAcrossNamespaces. A producer KS
 // renders a CM in namespace ns1; an unrelated producer in ns2
-// renders a same-named CM in ns2. A ProducersFor lookup on
+// renders a same-named CM in ns2. A Productions query on
 // CM/ns1/shared MUST return only the ns1 producer — never the ns2
 // one. See #418.
 func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
@@ -1334,13 +1334,13 @@ func TestFilter_ProducerByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 		cmNS2ID: "p2/cm.yaml",
 	}, root: "", objects: testutil.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2}}.index(), testutil.MapLister{a: aObj, b: bObj, cmNS1ID: cmNS1, cmNS2ID: cmNS2})
 
-	gotNS1 := f.ProducersFor(cmNS1ID)
+	gotNS1 := f.producersFor(cmNS1ID)
 	if !slices.Equal(gotNS1, []manifest.NamedResource{a}) {
-		t.Errorf("ProducersFor(CM/ns1/shared) leaked across namespaces: got %v, want [%v]", gotNS1, a)
+		t.Errorf("production owners(CM/ns1/shared) leaked across namespaces: got %v, want [%v]", gotNS1, a)
 	}
-	gotNS2 := f.ProducersFor(cmNS2ID)
+	gotNS2 := f.producersFor(cmNS2ID)
 	if !slices.Equal(gotNS2, []manifest.NamedResource{b}) {
-		t.Errorf("ProducersFor(CM/ns2/shared) leaked across namespaces: got %v, want [%v]", gotNS2, b)
+		t.Errorf("production owners(CM/ns2/shared) leaked across namespaces: got %v, want [%v]", gotNS2, b)
 	}
 }
 
@@ -1372,7 +1372,7 @@ func TestFilter_SubstitutionGeneratorProducers(t *testing.T) {
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer.Named(): {File: "flux/consumer.yaml"},
 					producer.Named(): {File: "flux/producer.yaml"},
-					data:             {File: "data/kustomization.yaml", Renderers: []manifest.NamedResource{producer.Named()}},
+					data:             {File: "data/kustomization.yaml", Productions: testutil.ProductionEvidence([]manifest.NamedResource{producer.Named()})},
 				},
 				Claims: map[string][]manifest.NamedResource{"app/": {consumer.Named()}, "data/": {producer.Named()}},
 			}

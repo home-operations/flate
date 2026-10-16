@@ -2,6 +2,7 @@ package helmrelease
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -50,7 +51,7 @@ data:
 			if tc.waitValues {
 				st.UpdateStatus(src.Named(), store.StatusReady, "")
 			}
-			st.AddObject(&manifest.RawObject{
+			publishRawFixture(t, c, &manifest.RawObject{
 				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
 				Name: "app-creds", Namespace: "default",
 				Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
@@ -97,7 +98,7 @@ data:
 			if tc.fail {
 				return
 			}
-			art, ok := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			art, ok := st.GetArtifact(hr.Named()).(*store.Emission)
 			if !ok {
 				t.Fatal("HelmRelease artifact was not written")
 			}
@@ -135,4 +136,30 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	}
 	assert.Diff(t, failed.Failed, []manifest.NamedResource{chart.Named()})
 	assert.Equal(t, attempts, 1)
+}
+
+func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
+	for _, declarationFirst := range []bool{false, true} {
+		for _, materializer := range []string{"none", "pending", "actual"} {
+			t.Run(fmt.Sprintf("declarationFirst=%t/%s", declarationFirst, materializer), func(t *testing.T) {
+				c, s := newTestControllerWithOptions(t, ReconcileOptions{})
+				target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
+				owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "a"}
+				if !declarationFirst {
+					owner.Name = "z"
+				}
+				if materializer == "pending" {
+					s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: owner, Authored: target, Path: "source/values.yaml", File: "values.yaml"}}}}})
+				}
+				publishRawFixture(t, c, &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration", Spec: map[string]any{"target": map[string]any{"name": "values"}}})
+				if materializer == "actual" {
+					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"values.yaml": "real"}})
+				}
+				_, hasProducer, omit := c.shouldOmitValuesRef(target, nil, true)
+				if omit != (materializer == "none") || omit && !hasProducer {
+					t.Fatalf("mixed evidence omitted=%t producer=%t", omit, hasProducer)
+				}
+			})
+		}
+	}
 }

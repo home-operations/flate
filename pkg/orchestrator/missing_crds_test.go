@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -135,7 +136,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 	if !ok || info.Status != store.StatusReady {
 		t.Fatalf("ResourceSet status=%+v", info)
 	}
-	art, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
+	art, ok := o.store.GetArtifact(id).(*store.Emission)
 	if !ok || len(art.Manifests) != 2 {
 		t.Fatalf("ResourceSet artifact=%+v", art)
 	}
@@ -248,7 +249,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			s.UpdateStatus(rs.Named(), tc.status, "")
 		}
 		if tc.artifact {
-			s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{})
+			s.SetArtifact(rs.Named(), &store.Emission{})
 		}
 	}
 	o.warnMissingCRDs()
@@ -267,7 +268,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			}
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusReady, "")
-			st.SetArtifact(rs.Named(), &store.ResourceSetArtifact{})
+			st.SetArtifact(rs.Named(), &store.Emission{})
 			cfg := Config{AllowMissingCRDs: true}
 			switch state {
 			case "foreign object":
@@ -310,9 +311,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
 			parent := testutil.KustomizationID("flux-system", "parent")
 			s.UpdateStatus(parent, store.StatusReady, "")
-			opts := resourcesetctrl.Options{AllowMissingCRDs: true, ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }, RawSink: func(owner, parent manifest.NamedResource, doc map[string]any) {
-				o.rsRawSink.Record(owner, parent, resourceset.DedupKey(doc), doc)
-			}}
+			opts := base.Options{AllowMissingCRDs: true}
 			c := resourcesetctrl.New(s, tasks, true)
 			c.Configure(opts)
 			c.StartLifecycle()
@@ -368,24 +367,25 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				}
 			}
 			assert.Equal(t, info.Status, wantStatus)
-			if state == "dedup" || strings.HasPrefix(state, "filter") {
+			if state == "dedup" {
 				if s.GetArtifact(rs.Named()) != before {
 					t.Fatal("retained artifact changed")
 				}
 			}
 			o.warnMissingCRDs()
 			wantWarnings := 1
-			if state == "remove" || state == "filter remove" || state == "failed gate" {
+			if state == "remove" || strings.HasPrefix(state, "filter") || state == "failed gate" {
 				wantWarnings = 0
 			}
 			assert.Equal(t, len(s.Warnings()), wantWarnings)
 			if wantWarnings == 1 {
 				assert.Equal(t, s.Warnings()[0].Count, 1)
 			}
-			raw := o.rsRawSink.commit()[parent]
+			_, accepted := s.GetEmission(rs.Named())
+			raw := accepted.Manifests
 			wantNames := []string{"old"}
 			if state == "remove" || state == "add" {
-				wantNames = append(wantNames, "new")
+				wantNames = []string{"new"}
 			}
 			names := []string{}
 			for _, doc := range raw {
@@ -449,7 +449,7 @@ spec:
 		assert.Diff(t, res.Warnings, want)
 		for _, name := range []string{"a", "z"} {
 			id := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: name}
-			art, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
+			art, ok := o.store.GetArtifact(id).(*store.Emission)
 			if !ok || len(art.Manifests) != 1 {
 				t.Fatalf("%s artifact=%+v", id, art)
 			}

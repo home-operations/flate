@@ -224,9 +224,14 @@ spec:
 				if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) == nil {
 					t.Fatal("Kustomization inherited its own targetNamespace as its identity")
 				}
+				l.FinalizeIndex(root)
+				id.Namespace = "media"
+				if _, ok := l.Index.Lookup(id); ok {
+					t.Fatal("own coverage invented a second Kustomization identity")
+				}
 			}
 			if tc.pinned {
-				l.FinalizeIndex(root, nil)
+				l.FinalizeIndex(root)
 				r, _ := l.Index.Lookup(testutil.HelmReleaseID("apps", "app"))
 				readers := l.Index.Readers[r.File]
 				if len(readers) != 1 || readers[0] != (testutil.KustomizationID("flux-system", "pinned")) {
@@ -349,7 +354,7 @@ spec:
 				t.Fatalf("projected %s record=%+v, raw=%+v", id, record, raw[name])
 			}
 		}
-		l.FinalizeIndex(root, nil)
+		l.FinalizeIndex(root)
 		for _, name := range []string{"child", "explicit"} {
 			id := testutil.KustomizationID("media", name)
 			record, ok := l.Index.Lookup(id)
@@ -373,7 +378,7 @@ spec:
 			t.Fatal(err)
 		}
 		l.ApplyNamespaces(root)
-		l.FinalizeIndex(root, nil)
+		l.FinalizeIndex(root)
 		canonical := testutil.KustomizationID("immich", "immich-db")
 		ks, ok := l.Store.Get[*manifest.Kustomization](canonical)
 		if !ok || ks.TargetNamespace != "pg" {
@@ -475,4 +480,18 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 			}
 		})
 	}
+}
+
+func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
+	t.Parallel()
+
+	l := loaderFixture(store.New(), nil)
+	l.ensureScopes()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system"}
+	l.Store.AddObject(owner)
+	l.scopes.visits["child.yaml"] = []graphVisit{{
+		namespace: "inner", generated: true, owner: owner.Named(),
+	}}
+	r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.HelmReleaseID("authored", "child")}
+	assert.Diff(t, l.recordNamespaces(r, ""), []string{"authored"})
 }

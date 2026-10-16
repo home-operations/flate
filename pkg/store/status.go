@@ -228,6 +228,10 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 		sh.mu.Unlock()
 		return
 	}
+	if sh.hidden[id] {
+		sh.mu.Unlock()
+		return
+	}
 	newInfo, _ := updated.statusInfo()
 	dispatch := fireUnderLock(s, EventStatusUpdated, id, newInfo)
 	sh.mu.Unlock()
@@ -268,6 +272,9 @@ func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
+	if sh.hidden[id] {
+		return StatusInfo{}, false
+	}
 	return sh.conditions[id].statusInfo()
 }
 
@@ -277,6 +284,9 @@ func (s *Store) GetConditions(id manifest.NamedResource) []Condition {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
+	if sh.hidden[id] {
+		return nil
+	}
 	conds := sh.conditions[id].conditions
 	if len(conds) == 0 {
 		return nil
@@ -321,7 +331,7 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 	out := make(map[manifest.NamedResource]StatusInfo)
 	for _, sh := range s.shards {
 		for id, record := range sh.conditions {
-			if _, inStore := sh.objects[id]; !inStore {
+			if sh.objectLocked(id) == nil {
 				continue
 			}
 			if info, ok := record.statusInfo(); ok && info.Status == StatusFailed {

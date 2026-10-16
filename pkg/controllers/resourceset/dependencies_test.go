@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -51,8 +51,11 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			t.Parallel()
 			c := New(store.New(), task.NewBounded(2), true)
 			parent := testutil.KustomizationID("apps", "parent")
-			calls := 0
-			c.Configure(Options{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { calls++; return parent, hasParent }})
+			parents := map[manifest.NamedResource]manifest.NamedResource{}
+			if hasParent {
+				parents[manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "app", Namespace: "apps"}] = parent
+			}
+			c.Configure(base.Options{Index: parentIndexForTest(parents)})
 			dependency := &manifest.Kustomization{Name: "pending", Namespace: "apps"}
 			c.Store.AddObject(dependency)
 			c.Store.UpdateStatus(dependency.Named(), store.StatusPending, "working")
@@ -67,12 +70,22 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 				manifest.DependencyRef{Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"},
 				manifest.DependencyRef{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "named"})
 			if hasParent {
-				want = append(want, manifest.DependencyRef{NamedResource: parent})
+				c.Store.AddObject(rs)
+				for _, name := range []string{"z-parent", "a-parent"} {
+					owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
+					c.Store.AddObject(owner)
+					c.Store.RecordEmitted(owner.Named(), &store.Emission{Children: []store.Child{{Obj: rs, Productions: []manifest.Production{
+						{Owner: rs.Named(), File: "self.yaml"},
+						{Path: "file.yaml"},
+					}}}, Complete: true})
+				}
+				first, last := parent, parent
+				first.Name, last.Name = "a-parent", "z-parent"
+				want = append(want, manifest.DependencyRef{NamedResource: first}, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{NamedResource: last})
 			}
 			manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization}).Namespaced()
 			deps := c.collectDeps(rs)
 			assert.Diff(t, deps, want)
-			assert.Equal(t, calls, 1)
 			w := &depwait.Waiter{Store: c.Store}
 			assert.Equal(t, rs.DependsOn[0].Ready, false)
 			assert.Equal(t, w.Classify(deps[0], manifest.DrainNone).Kind, depwait.ClassBlocked)

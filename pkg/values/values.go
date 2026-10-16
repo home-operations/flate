@@ -33,13 +33,49 @@ type Provider interface {
 }
 
 // NewStoreProvider returns a Provider backed by the central Store.
-func NewStoreProvider(s *store.Store) Provider { return &storeProvider{s: s} }
+func NewStoreProvider(s *store.Store, wipeSecrets bool) Provider {
+	return &storeProvider{s: s, wipeSecrets: wipeSecrets}
+}
 
-type storeProvider struct{ s *store.Store }
+type storeProvider struct {
+	s           *store.Store
+	wipeSecrets bool
+}
 
 func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
 	data, _ := p.s.GetObject(id).(manifest.Data)
-	return data
+	if data != nil {
+		return data
+	}
+	if !p.wipeSecrets {
+		return nil
+	}
+	productions := slices.Collect(p.s.Productions(id, nil))
+	for _, production := range productions {
+		if production.Declaration == (manifest.NamedResource{}) && (production.Owner != (manifest.NamedResource{}) || production.Path != "") {
+			return nil
+		}
+	}
+	for _, production := range productions {
+		if production.Declaration == (manifest.NamedResource{}) {
+			continue
+		}
+		declaration := p.s.GetObject(production.Declaration)
+		if declaration == nil {
+			continue
+		}
+		for _, target := range manifest.ProducerTargets(declaration) {
+			if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
+				continue
+			}
+			values := make(map[string]any, len(target.DeclaredKeys))
+			for _, key := range target.DeclaredKeys {
+				values[key] = fmt.Sprintf(manifest.ValuePlaceholderTemplate, key)
+			}
+			return &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: values}
+		}
+	}
+	return nil
 }
 
 // DeepMergeInto merges override into dst using Helm's merge semantics.

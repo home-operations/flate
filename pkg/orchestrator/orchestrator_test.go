@@ -20,11 +20,13 @@ import (
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -32,7 +34,6 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // TestDetectOrphans drives the orphan-detection logic in isolation —
@@ -76,7 +77,7 @@ func TestDetectOrphans(t *testing.T) {
 	}
 	// Mark emittedChild as rendered by its parent — simulates the
 	// AddObject + RecordEmitted call cluster-apps's render would make.
-	o.store.RecordEmitted(parent.Named(), []manifest.NamedResource{emittedChild.Named()})
+	publishFixture(t, o.store, parent.Named(), []manifest.NamedResource{emittedChild.Named()})
 
 	failed := map[manifest.NamedResource]store.StatusInfo{
 		orphan.Named():       {Status: store.StatusFailed, Message: "TIMEZONE undefined"},
@@ -527,71 +528,55 @@ func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 	}
 }
 
-// TestRSRawSink_DeterministicCollisionWinner pins that when two distinct
-// ResourceSets emit the SAME object identity (the same DedupKey) with
-// DIFFERENT content, the global first-wins dedup winner is deterministic
-// — the ResourceSet that sorts first (rs-a) wins, independent of the
-// order in which the concurrent RS reconciles Record into the sink. The
-// sink now owns the deterministic commit-time dedup that the deleted
-// post-run errgroup pass used to perform serially in store order.
-func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
+func TestRS_EmissionGrouping(t *testing.T) {
 	t.Parallel()
-	parent := testutil.KustomizationID("flux-system", "apps")
-	ownerA := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
-	ownerB := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
-	mkDoc := func(owner string) map[string]any {
-		return map[string]any{
-			"apiVersion": "example.com/v1",
-			"kind":       "Widget",
-			"metadata":   map[string]any{"name": "shared", "namespace": "default"},
-			"spec":       map[string]any{"owner": owner},
-		}
-	}
-	docA, docB := mkDoc("a-wins"), mkDoc("b-loses")
-	other := mkDoc("other-group")
-	other["apiVersion"] = "other.example/v1"
-	version := mkDoc("version-loses")
-	version["apiVersion"] = "example.com/v2"
-	key := resourceset.DedupKey(docA) // same identity → same key for both
 
-	// Record in both orders across many iterations; rs-a (sorts first) must
-	// always win regardless of arrival order.
-	for iter := range 50 {
-		var sink rsRawSink
-		if iter%2 == 0 {
-			sink.Record(ownerB, parent, key, docB)
-			sink.Record(ownerA, parent, key, docA)
-		} else {
-			sink.Record(ownerA, parent, key, docA)
-			sink.Record(ownerB, parent, key, docB)
-		}
-		sink.Record(ownerB, parent, resourceset.DedupKey(version), version)
-		sink.Record(ownerB, parent, resourceset.DedupKey(other), other)
-		for _, incomplete := range []map[string]any{
-			{"apiVersion": "example.com/v1", "kind": "Widget"},
-			{"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "incomplete"}},
-		} {
-			sink.Record(ownerA, parent, resourceset.DedupKey(incomplete), incomplete)
-		}
-		out := sink.commit()
-		docs := out[parent]
-		if len(docs) != 2 {
-			t.Fatalf("iter %d: out[apps] = %d docs, want 2 (one winner per group)", iter, len(docs))
-		}
-		if manifest.DocAPIVersion(docs[1]) != "other.example/v1" {
-			t.Fatalf("foreign group lost: %v", docs)
-		}
-		spec, _ := docs[0]["spec"].(map[string]any)
-		if got := spec["owner"]; got != "a-wins" {
-			t.Fatalf("iter %d: collision winner owner = %v, want a-wins (sorted-first RS) — non-deterministic", iter, got)
-		}
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
+			t.Parallel()
+
+			s := store.New()
+			parent := testutil.KustomizationID("flux-system", "parent")
+			a := &manifest.ResourceSet{Name: "a", Namespace: "apps"}
+			b := &manifest.ResourceSet{Name: "b", Namespace: "apps"}
+			s.AddObject(a)
+			s.AddObject(b)
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a.Named(): {Parent: parent}, b.Named(): {Parent: parent}}}
+			o := &Orchestrator{store: s, index: index}
+			doc := map[string]any{"apiVersion": "example.com/v1", "kind": "Widget", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "spec": map[string]any{"value": "equal"}}
+			children, docs := base.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
+			ids := []manifest.NamedResource{a.Named(), b.Named()}
+			if reverse {
+				slices.Reverse(ids)
+			}
+			for _, id := range ids {
+				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
+			}
+			if got := o.collectManifests()[parent]; len(got) != 1 {
+				t.Fatalf("grouped output: %v", got)
+			}
+			second := manifest.DeepCopyMap(doc)
+			second["metadata"].(map[string]any)["name"] = "second"
+			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
+				entries, authoritative := base.ParseChildren(a.Named(), ordered, manifest.ParseDocOptions{})
+				s.RecordEmitted(a.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true})
+				if got := o.collectManifests()[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
+					t.Fatalf("authoritative document order lost: %v", got)
+				}
+			}
+			s.RecordEmitted(a.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
+
+			unequal := manifest.DeepCopyMap(doc)
+			unequal["spec"] = map[string]any{"value": "different"}
+			changed, changedDocs := base.ParseChildren(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
+			s.RecordEmitted(b.Named(), &store.Emission{Children: changed, Manifests: changedDocs, Complete: true})
+			if got := o.collectManifests()[parent]; len(got) != 1 || got[0]["spec"].(map[string]any)["value"] != "equal" {
+				t.Fatalf("grouped output lost the first producer document: %v", got)
+			}
+		})
 	}
 }
 
-// TestOrchestrator_Render exercises the embed-friendly Render() entry:
-// one call drives Bootstrap + Run + result collection, and returns a
-// structured Result keyed by NamedResource. Embedders previously had
-// to scrape o.Store().GetArtifact(id) per-kind after Run.
 func TestOrchestrator_Render(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
@@ -700,8 +685,8 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 	ksID := testutil.KustomizationID("flux-system", "apps")
-	if owner, ok := o.Store().EmittedParent(rsID); !ok || owner != ksID {
-		t.Errorf("ResourceSet owner = (%v, %v), want %s", owner, ok, ksID)
+	if owners := testutil.Owners(o.Store().Productions(rsID, nil)); !slices.Contains(owners, ksID) {
+		t.Fatalf("missing independent contributor: %v", owners)
 	}
 	mans := res.Manifests[ksID]
 	var found bool
@@ -1770,6 +1755,58 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
+	t.Parallel()
+
+	parent := testutil.KustomizationID("flux-system", "apps")
+	ownerA := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
+	ownerB := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
+	mkDoc := func(owner string) map[string]any {
+		return map[string]any{
+			"apiVersion": "example.com/v1",
+			"kind":       "Widget",
+			"metadata":   map[string]any{"name": "shared", "namespace": "default"},
+			"spec":       map[string]any{"owner": owner},
+		}
+	}
+	docA, docB := mkDoc("a-wins"), mkDoc("b-loses")
+	other := mkDoc("other-group")
+	other["apiVersion"] = "other.example/v1"
+	version := mkDoc("version-loses")
+	version["apiVersion"] = "example.com/v2"
+
+	for iter := range 50 {
+		s := store.New()
+		a := &manifest.ResourceSet{Name: ownerA.Name, Namespace: ownerA.Namespace}
+		b := &manifest.ResourceSet{Name: ownerB.Name, Namespace: ownerB.Namespace}
+		s.AddObjects([]manifest.BaseManifest{a, b})
+		o := &Orchestrator{store: s, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{ownerA: {Parent: parent}, ownerB: {Parent: parent}}}}
+		ids := []manifest.NamedResource{ownerA, ownerB}
+		if iter%2 == 0 {
+			slices.Reverse(ids)
+		}
+		for _, id := range ids {
+			input := []map[string]any{docB, version, other}
+			if id == ownerA {
+				input = []map[string]any{docA, {"apiVersion": "example.com/v1", "kind": "Widget"}, {"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "incomplete"}}}
+			}
+			children, authoritative := base.ParseChildren(id, input, manifest.ParseDocOptions{})
+			s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true})
+		}
+		docs := o.collectManifests()[parent]
+		if len(docs) != 2 {
+			t.Fatalf("iter %d: out[apps] = %d docs, want 2 (one winner per group)", iter, len(docs))
+		}
+		if manifest.DocAPIVersion(docs[1]) != "other.example/v1" {
+			t.Fatalf("foreign group lost: %v", docs)
+		}
+		spec, _ := docs[0]["spec"].(map[string]any)
+		if got := spec["owner"]; got != "a-wins" {
+			t.Fatalf("iter %d: collision winner owner = %v, want a-wins (sorted-first RS); nondeterministic", iter, got)
 		}
 	}
 }

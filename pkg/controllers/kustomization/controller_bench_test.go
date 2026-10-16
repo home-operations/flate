@@ -18,7 +18,7 @@ func BenchmarkCollectDeps(b *testing.B) {
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := New(st, nil, nil, false)
-	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st))
+	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)}, sourcecache.RetryConfig{})
 	b.ReportAllocs()
 	for b.Loop() {
 		c.collectDeps(ks)

@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/controllers/resourceset"
@@ -14,7 +15,7 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 		b.Run(mode, func(b *testing.B) {
 			s := store.New()
 			c := resourceset.New(s, task.NewBounded(2), true)
-			c.Configure(resourceset.Options{})
+			c.Configure(base.Options{})
 			c.StartLifecycle()
 			b.Cleanup(c.Close)
 			rs := &manifest.ResourceSet{Name: "bench", Namespace: "ns"}
@@ -29,7 +30,7 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 				case "dispatcher":
 					d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
 				case "observation_reads":
-					before, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+					before, _ := s.GetArtifact(rs.Named()).(*store.Emission)
 					if s.GetArtifact(rs.Named()) != before {
 						b.Fatal("artifact changed")
 					}

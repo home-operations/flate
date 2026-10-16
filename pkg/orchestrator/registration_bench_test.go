@@ -83,7 +83,7 @@ spec:
 				}
 				var actualRenders atomic.Int64
 				unsubRender := o.store.AddListener(store.EventArtifactUpdated, func(_ manifest.NamedResource, payload any) {
-					if _, ok := payload.(store.RenderedArtifact); ok {
+					if _, ok := payload.(*store.Emission); ok {
 						actualRenders.Add(1)
 					}
 				}, false)

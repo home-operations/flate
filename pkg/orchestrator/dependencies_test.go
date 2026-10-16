@@ -25,8 +25,8 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if o.hrc.Store != o.store || o.hrc.Tasks != o.tasks || o.hrc.Name() != "helmrelease" {
-				t.Fatal("HelmRelease base controller identity or wiring changed")
+			if o.hrc.Store != o.store || o.hrc.Tasks != o.tasks {
+				t.Fatal("HelmRelease base controller wiring changed")
 			}
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)

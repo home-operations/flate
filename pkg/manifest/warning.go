@@ -34,6 +34,9 @@ type Warning struct {
 
 // Warning category codes. Stable identifiers a consumer filters on.
 const (
+	// WarnConflictingProducers: unequal accepted contributions share an identity.
+	// Detail lists every contributor in deterministic settlement order.
+	WarnConflictingProducers = "ConflictingProducers"
 	// WarnMissingCRD: an absent CRD dependency was accepted for a final Ready
 	// ResourceSet with an artifact. Message names its distinct dependents.
 	WarnMissingCRD = "MissingCRD"

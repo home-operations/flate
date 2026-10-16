@@ -33,10 +33,10 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			}
 			c := base.New(st, nil, "test")
 			if mode == "filtered" {
-				c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}}}, st))
+				c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}}}, st)})
 			}
 			if mode == "preflight" {
-				c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle", true })
+				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
 			}
 			ran := false
 			blocked := c.DispatchNode(t.Context(), id, manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {

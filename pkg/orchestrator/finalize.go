@@ -35,7 +35,9 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		// A resource that any parent's render also emitted is by
 		// definition not orphaned — kustomize-controller saw it.
-		if _, emitted := o.store.EmittedParent(id); emitted {
+		if slices.ContainsFunc(slices.Collect(o.store.Productions(id, o.index)), func(p manifest.Production) bool {
+			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{})
+		}) {
 			continue
 		}
 		record, _ := o.index.Lookup(id)
@@ -95,7 +97,8 @@ func (o *Orchestrator) finalize() error {
 		}
 	}
 	failed := o.store.FailedResources()
-	ksCount, hrCount := o.cascadeParentFailures(failed)
+	ksCount := len(o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	hrCount := len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease))
 	// Final ownership includes every Kustomization present after the drain.
 	if len(failed) != 0 && prefixes == nil {
 		prefixes = loader.Claims(o.store, o.repoRoot)
@@ -139,7 +142,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if !ok || info.Status != store.StatusReady {
 			continue
 		}
-		if _, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact); !ok {
+		if _, ok := o.store.GetArtifact(id).(*store.Emission); !ok {
 			continue
 		}
 		for dep := range manifest.References(rs) {
@@ -174,71 +177,8 @@ func (o *Orchestrator) warnMissingCRDs() {
 	}
 }
 
-// cascadeParentFailures downgrades render-emitted children whose
-// ancestor (via Store.EmittedParent) ended up Failed. Closes a race
-// window where a parent KS's first reconcile sets Ready, emits
-// children, and then a later re-emission of that parent fails. Without
-// this cascade, dependents that already passed their parent gate stay
-// Ready in the final report even though the parent is Failed.
-//
-// Walks the parent ownership chain per child so a deep render tree (grand-
-// parent → parent → child) propagates failures all the way down in
-// one pass. Cycle-guard via a visited set keeps the walk bounded.
-func (o *Orchestrator) cascadeParentFailures(failed map[manifest.NamedResource]store.StatusInfo) (int, int) {
-	ancestorFailure := func(child manifest.NamedResource) (manifest.NamedResource, store.StatusInfo, bool) {
-		visited := map[manifest.NamedResource]struct{}{child: {}}
-		cur := child
-		for {
-			parent, ok := o.store.EmittedParent(cur)
-			if !ok {
-				return manifest.NamedResource{}, store.StatusInfo{}, false
-			}
-			if _, dup := visited[parent]; dup {
-				return manifest.NamedResource{}, store.StatusInfo{}, false
-			}
-			visited[parent] = struct{}{}
-			if info, isFailed := failed[parent]; isFailed {
-				return parent, info, true
-			}
-			cur = parent
-		}
-	}
-	cascade := func(child manifest.NamedResource) {
-		if _, alreadyFailed := failed[child]; alreadyFailed {
-			return
-		}
-		info, ok := o.store.GetStatus(child)
-		if !ok || info.Status != store.StatusReady {
-			return
-		}
-		parent, parentInfo, hasFailed := ancestorFailure(child)
-		if !hasFailed {
-			return
-		}
-		o.store.UpdateFailure(child, &manifest.DependencyFailedError{
-			Parent: child, Failed: []manifest.NamedResource{parent},
-			Reasons: map[manifest.NamedResource]string{parent: parentInfo.Message},
-		})
-		failed[child], _ = o.store.GetStatus(child)
-		slog.Debug("cascaded parent failure to child",
-			"child", child.String(),
-			"parent", parent.String(),
-			"reason", parentInfo.Message)
-	}
-	kss := o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	hrs := o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)
-	for _, ks := range kss {
-		cascade(ks.Named())
-	}
-	for _, hr := range hrs {
-		cascade(hr.Named())
-	}
-	return len(kss), len(hrs)
-}
-
 func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo, ksCount, hrCount int) {
-	// ksCount/hrCount are passed in from cascadeParentFailures, which
-	// already listed both kinds — no redundant re-scan here.
+	// Counts describe the final supported inventory.
 	slog.Debug("reconcile complete",
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,

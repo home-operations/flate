@@ -1,10 +1,12 @@
 package kustomization
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -24,8 +26,8 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id == rs {
 			sawRS = true
-			if got, ok := s.EmittedParent(rs); !ok || got != parent {
-				t.Errorf("ResourceSet owner at arrival = (%v, %v), want %s", got, ok, parent)
+			if owners := testutil.Owners(s.Productions(rs, nil)); !slices.Contains(owners, parent) {
+				t.Fatalf("missing independent contributor: %v", owners)
 			}
 		}
 		if id == idA {
@@ -33,11 +35,11 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 		}
 	}, false)
 
-	c.Emit(parent, []map[string]any{
+	publishDocuments(c, parent, []map[string]any{
 		{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "ResourceSet", "metadata": map[string]any{"name": rs.Name, "namespace": rs.Namespace}, "spec": map[string]any{}},
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
-	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace}, true)
+	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
 	if !sawRS {
 		t.Fatal("render-only ResourceSet was not published")
 	}
@@ -65,10 +67,10 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 		}
 	}, false)
 
-	c.Emit(parent, []map[string]any{
+	publishDocuments(c, parent, []map[string]any{
 		kustomizeConfigDoc(),                 // build directive — must be dropped
 		fluxKustomizationDoc("real", "real"), // real child — must be stored
-	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace}, true)
+	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
 
 	if leaked {
 		t.Error("kustomize.config build directive was emitted to the store (phantom Kustomization//)")
@@ -78,61 +80,28 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	}
 }
 
-// TestEmitRenderedChildren_DedupSkip_NoStoreWrites pins Part B of the
-// re-emission-churn fix: the fingerprint-dedup replay (publish=false)
-// must NOT re-AddObject the children — re-firing EventObjectAdded
-// re-submits already-settled children, the churn that transiently
-// un-Ready-s a parent KS and races quiescence ("parent ... not ready").
-// The idempotent provenance side-effect (Store.RecordEmitted) MUST still
-// fire so the parent index stays correct on every pass (#102). The
-// fresh-render path (publish=true) still publishes.
-func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
+func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 	t.Parallel()
+
 	s := store.New()
-	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
-
-	parent := testutil.KustomizationID("ns", "parent")
-	child := testutil.KustomizationID("ns", "real")
-	docs := []map[string]any{fluxKustomizationDoc("parent", "parent"), fluxKustomizationDoc("real", "real")}
-
-	original := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace, Path: "./original"}
-	s.AddObject(original)
-	var events int
-	s.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		events++
-	}, false)
-
-	// Dedup-skip replay: no events, store untouched, provenance recorded.
-	c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace}, false)
-	if events != 0 {
-		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no republish churn)", events)
+	c := New(s, nil, nil, false)
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	s.AddObject(parent)
+	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child"}}}
+	children, retained := base.ParseChildren(parent.Named(), docs, manifest.ParseDocOptions{})
+	next := &store.Emission{Children: children, Manifests: retained, Complete: true}
+	c.Emit(parent.Named(), next)
+	arrivals := 0
+	s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
+	c.Emit(parent.Named(), next)
+	if arrivals != 0 {
+		t.Fatalf("equal accepted replay fired %d arrivals", arrivals)
 	}
-	if s.GetObject(child) != nil {
-		t.Error("publish=false AddObject'd a leaf child; want the store left untouched")
-	}
-	if got := s.EmittedChildrenByParent()[parent]; len(got) != 1 || got[0] != child {
-		t.Errorf("publish=false provenance = %v; want [%v] (ownership must still be recorded)", got, child)
-	}
-
-	// Fresh render: events fire and the child lands in the store.
-	c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace}, true)
-	if events != 1 {
-		t.Errorf("publish=true fired %d EventObjectAdded; want 1 (the leaf published)", events)
-	}
-	if s.GetObject(child) == nil {
-		t.Error("publish=true did not store the leaf child")
-	}
-	if s.GetObject(parent) != original {
-		t.Error("self-emission overwrote the parent spec")
-	}
-	if _, ok := s.EmittedParent(parent); ok {
-		t.Error("self-emission created an ownership edge")
+	if s.GetObject(children[0].Obj.Named()) == nil {
+		t.Fatal("equal replay lost accepted child")
 	}
 }
 
-// kustomizeConfigDoc is the shape `kustomize build` emits when a
-// kustomization.yaml lists itself in resources: a kustomize.config.k8s.io
-// build directive (here with the helm-repos metadata seen in the wild).
 func kustomizeConfigDoc() map[string]any {
 	return map[string]any{
 		"apiVersion": "kustomize.config.k8s.io/v1beta1",

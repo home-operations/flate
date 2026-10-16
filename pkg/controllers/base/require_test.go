@@ -90,9 +90,9 @@ func TestRequireRefresh_CanonicalManifest(t *testing.T) {
 				want = fresh
 			}
 			c := base.New(st, nil, "test")
-			c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
+			c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "consumer.yaml"}},
-			}, st))
+			}, st)})
 			got, ok, err := c.RequireRefresh[*manifest.HelmRelease](t.Context(), obj.Named(), nil, manifest.DrainNone)
 			if (err != nil) != (mode == "suspended") || ok != found || got != want || obj.Values["value"] != "old" {
 				t.Fatalf("refresh = %v, %v, %v; want canonical %v, original=%v", got, ok, err, want, obj.Values)

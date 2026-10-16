@@ -89,6 +89,7 @@ type BaseManifest interface {
 	Named() NamedResource
 	Suspended() bool
 	kind() KindInfo
+	producerTargets() []ProducerTarget
 }
 
 // DependencyRef is a compact prerequisite identity and optional CEL gate.

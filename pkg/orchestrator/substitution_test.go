@@ -10,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -38,7 +40,9 @@ func writeSubstitutionCluster(t *testing.T, root, reference, expression string) 
 
 func newSubstitutionOrchestrator(t *testing.T, cfg Config) *Orchestrator {
 	t.Helper()
-	cfg.RepoRoot = cfg.Path
+	if cfg.RepoRoot == "" {
+		cfg.RepoRoot = cfg.Path
+	}
 	cfg.CacheDir = t.TempDir()
 	cfg.Concurrency = 4
 	cfg.WipeSecrets = true
@@ -190,7 +194,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 		if _, ok := filesForTest(o.index)[external]; ok {
 			t.Fatal("supplied object entered file/change index")
 		}
-		if _, ok := o.producers.Producer(external); ok || len(renderersForTest(o.index, external)) != 0 {
+		if declarations := testutil.Declarations(o.store.Productions(external, nil)); len(declarations) > 0 || len(renderersForTest(o.index, external)) != 0 {
 			t.Fatal("supplied object entered producer indexes")
 		}
 		stored, _ := o.store.Get[*manifest.Kustomization](id)
@@ -386,7 +390,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			}
 			if kind == "known Secret producer without declared keys" {
 				id := input.Object.Named()
-				if _, produced := o.producers.Producer(id); !produced || o.store.GetObject(id) != nil {
+				if declarations := testutil.Declarations(o.store.Productions(id, nil)); len(declarations) == 0 || o.store.GetObject(id) != nil {
 					t.Fatal("test requires a known producer without a synthesized Secret")
 				}
 			}
@@ -398,7 +402,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			}
 			if kind == "known Kustomization producer" {
 				producer := testutil.KustomizationID("apps", "producer")
-				if !o.filter.ShouldReconcile(producer) || !slices.Contains(o.filter.ProducersFor(input.Object.Named()), producer) {
+				if !o.filter.ShouldReconcile(producer) || !slices.Contains(testutil.Owners(o.store.Productions(input.Object.Named(), o.index)), producer) {
 					t.Fatal("known producer selection/edge lost")
 				}
 			}
@@ -529,7 +533,11 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}")
 	testutil.WriteFile(t, root, "flux.yaml", "null\n")
-	o := newSubstitutionOrchestrator(t, Config{Path: root, SubstituteFrom: []SubstitutionSource{suppliedSubstitution("external")}, StrictSubstitutions: true})
+	scan := filepath.Join(root, "bootstrap")
+	if err := os.MkdirAll(scan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o := newSubstitutionOrchestrator(t, Config{Path: scan, RepoRoot: root, SubstituteFrom: []SubstitutionSource{suppliedSubstitution("external")}, StrictSubstitutions: true})
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}

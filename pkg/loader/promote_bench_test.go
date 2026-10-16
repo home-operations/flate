@@ -15,7 +15,7 @@ func BenchmarkPromoteAvailable(b *testing.B) {
 	idx.Index.Records[cm.Named()] = manifest.DiscoveryRecord{Authored: cm.Named(), Path: "values.yaml"}
 	b.ReportAllocs()
 	for b.Loop() {
-		if !Promote(idx.Store, cm.Named(), idx.Index.Records[cm.Named()], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+		if !promoteForTest(idx.Store, cm.Named(), idx.Index.Records[cm.Named()], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 			b.Fatal("available ConfigMap was not found")
 		}
 	}

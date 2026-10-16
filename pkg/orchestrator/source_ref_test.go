@@ -55,7 +55,7 @@ func TestRun_DefaultGitCache(t *testing.T) {
 			}
 			for _, name := range []string{"first", "second"} {
 				id := testutil.KustomizationID("flux-system", name)
-				artifact, ok := o.Store().GetArtifact(id).(*store.KustomizationArtifact)
+				artifact, ok := o.Store().GetArtifact(id).(*store.Emission)
 				if !ok || len(artifact.Manifests) != 1 {
 					t.Fatalf("remote render %s = %v", name, artifact)
 				}

@@ -95,7 +95,7 @@ func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 			},
 		})
 	}
-	art := &KustomizationArtifact{Path: "./apps", Manifests: manifests}
+	art := &Emission{Manifests: manifests}
 	s.SetArtifact(id, art)
 
 	b.ReportAllocs()
@@ -128,12 +128,12 @@ func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
 			},
 		})
 	}
-	art := &KustomizationArtifact{Path: "./apps", Manifests: manifests}
+	art := &Emission{Manifests: manifests}
 	s.SetArtifact(id, art)
 	// Distinct-pointer twin with shared sub-slice — matches the
 	// re-emit shape where docs are decoded into fresh outer
 	// structs but their backing maps survive across reconciles.
-	twin := &KustomizationArtifact{Path: art.Path, Manifests: art.Manifests}
+	twin := &Emission{Manifests: art.Manifests}
 
 	b.ReportAllocs()
 	b.ResetTimer()

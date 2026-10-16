@@ -6,7 +6,6 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
-	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,11 +19,9 @@ func BenchmarkCollectDeps_Scope(b *testing.B) {
 				c := New(store.New(), task.NewBounded(2), true)
 				opts := base.Options{}
 				if hasParent {
-					opts.ParentOf = func(manifest.NamedResource) (manifest.NamedResource, bool) {
-						return testutil.KustomizationID("ns", "parent"), true
-					}
+					opts.Index = parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "app", Namespace: "ns"}: {Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "parent", Namespace: "ns"}})
 				}
-				c.Configure(Options{Options: opts})
+				c.Configure(opts)
 				rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: target.api, Kind: target.kind, Name: "dependency"}}}
 				manifest.KindOf(&manifest.RawObject{APIVersion: target.api, Kind: target.kind}).Namespaced()
 				for b.Loop() {

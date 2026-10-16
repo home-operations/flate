@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -28,7 +30,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // writeCluster lays out a two-app Flux cluster under dir: app-a renders
@@ -152,9 +153,9 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				if !ok {
 					t.Fatalf("side %d lost effective consumer identity", i)
 				}
-				owner, emitted := rendered.Store().EmittedParent(consumer)
-				if !emitted || owner != (testutil.KustomizationID("flux-system", "app-a")) {
-					t.Fatalf("side %d consumer owner = %s, emitted=%t", i, owner, emitted)
+				owners := testutil.Owners(rendered.Store().Productions(consumer, nil))
+				if !slices.Contains(owners, testutil.KustomizationID("flux-system", "app-a")) {
+					t.Fatalf("side %d owners=%v", i, owners)
 				}
 				_, ns := manifest.DocMetadata(obj.Contents)
 				assert.Equal(t, ns, "flux-system")

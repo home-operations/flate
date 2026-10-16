@@ -1,12 +1,15 @@
 package orchestrator
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -123,32 +126,46 @@ func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 // listener honest if it ever gets refactored.
 func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	t.Parallel()
-	idA := testutil.KustomizationID("ns", "a")
-	idB := testutil.KustomizationID("ns", "b")
 
-	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
-	// Bootstrap-time graph: just one acyclic KS. No cycles to break.
-	o.store.AddObject(makeKS("acyclic", "ns"))
-	o.failDependsOnCycles()
-
-	// Now simulate the render-emit: a parent KS adds two children
-	// whose dependsOn closes a loop. Bootstrap's pass missed these.
-	o.store.AddObject(makeKS("a", "ns", idB))
-	o.store.AddObject(makeKS("b", "ns", idA))
-	// Re-run the cycle detector (the post-Bootstrap listener fires
-	// this on every KS/HR add).
-	o.failDependsOnCycles()
-
-	a, _ := o.store.GetObject(idA).(*manifest.Kustomization)
-	b, _ := o.store.GetObject(idB).(*manifest.Kustomization)
-	if a == nil || b == nil {
-		t.Fatal("emitted children went missing")
-	}
-	for _, id := range []manifest.NamedResource{idA, idB} {
-		msg, ok := o.preflightFailure(id)
-		if !ok || !strings.Contains(msg, "dependency cycle detected") {
-			t.Fatalf("%s preflight failure = %q, %v", id, msg, ok)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "flux/parent.yaml", ksYAML("parent", "parent", ""))
+	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [trigger.yaml]\n")
+	testutil.WriteFile(t, root, "parent/trigger.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: trigger, namespace: ns}\n")
+	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	assert.NoError(t, err)
+	defer o.Stop()
+	assert.NoError(t, o.Bootstrap(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet}).Namespaced()
+	var injected atomic.Bool
+	o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		if id.Kind != manifest.KindConfigMap || id.Name != "trigger" || payload == nil || !injected.CompareAndSwap(false, true) {
+			return
 		}
+		defer cancel()
+		idA := testutil.KustomizationID("ns", "a")
+		idB := idA
+		idB.Name = "b"
+		o.store.AddObject(makeKS("a", "ns", idB))
+		o.store.AddObject(makeKS("b", "ns", idA))
+		for _, id := range []manifest.NamedResource{idA, idB} {
+			if msg, ok := o.preflightFailure(id); !ok || !strings.Contains(msg, "dependency cycle detected") {
+				t.Errorf("%s preflight failure = %q, %v", id, msg, ok)
+			}
+		}
+		for _, pair := range [][2]string{{"rs-a", "rs-b"}, {"rs-b", "rs-a"}} {
+			o.store.AddObject(&manifest.ResourceSet{Name: pair[0], Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: pair[1], Namespace: "ns"}}})
+		}
+		for _, name := range []string{"rs-a", "rs-b"} {
+			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: name}
+			if msg, ok := o.preflightFailure(id); ok {
+				t.Errorf("non-render %s admitted to cycle graph: %s", id, msg)
+			}
+		}
+	}, false)
+	if err := o.Run(ctx); err == nil || !injected.Load() {
+		t.Fatalf("render-emitted fixture: injected=%t error=%v", injected.Load(), err)
 	}
 }
 

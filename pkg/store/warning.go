@@ -39,14 +39,48 @@ func (s *Store) AddWarning(w manifest.Warning) {
 // Result.Warnings at finalize.
 func (s *Store) Warnings() []manifest.Warning {
 	s.warnMu.Lock()
-	defer s.warnMu.Unlock()
-	if len(s.warnOrder) == 0 {
-		return nil
-	}
-	out := make([]manifest.Warning, len(s.warnOrder))
+	out := slices.Clone(s.warnOrder)
 	for i, w := range s.warnOrder {
 		w.Detail = slices.Clone(w.Detail)
 		out[i] = w
+	}
+	s.warnMu.Unlock()
+	type contribution struct {
+		owner manifest.NamedResource
+		child Child
+	}
+	for _, sh := range s.shards {
+		byID := map[manifest.NamedResource][]contribution{}
+		sh.mu.RLock()
+		for id, members := range sh.members {
+			if sh.hidden[id] {
+				continue
+			}
+			for _, m := range members {
+				if !m.declaration && m.slot.visible.Load() {
+					child := m.slot.current.Load().entries[m.position].child
+					byID[id] = append(byID[id], contribution{m.slot.id, child})
+				}
+			}
+		}
+		sh.mu.RUnlock()
+		for id, contributions := range byID {
+			if len(contributions) < 2 || !slices.ContainsFunc(contributions[1:], func(c contribution) bool {
+				return !semanticEqual(contributions[0].child, c.child)
+			}) {
+				continue
+			}
+			slices.SortFunc(contributions, func(a, b contribution) int { return a.owner.Compare(b.owner) })
+			owners := make([]string, len(contributions))
+			for i, c := range contributions {
+				owners[i] = c.owner.String()
+			}
+			out = append(out, manifest.Warning{
+				Resource: id, Category: manifest.WarnConflictingProducers, Count: 1,
+				Message: "conflicting producers; using " + owners[len(owners)-1],
+				Detail:  owners,
+			})
+		}
 	}
 	slices.SortFunc(out, manifest.CompareWarning)
 	return out

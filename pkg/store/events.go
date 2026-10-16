@@ -89,6 +89,9 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 	pairs := s.snapshotForReplay(event)
 	s.unlockAll()
 	for _, p := range pairs {
+		if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, p.input) {
+			continue
+		}
 		safeInvoke(fn, p.id, p.payload)
 	}
 	return func() { set.remove(handle) }
@@ -98,6 +101,7 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 type idPayload struct {
 	id      manifest.NamedResource
 	payload any
+	input   Child
 }
 
 // snapshotForReplay captures the existing-state replay for event.
@@ -138,8 +142,22 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 	out := make([]idPayload, 0, total)
 	for _, sh := range shards {
 		for id, v := range pick(sh) {
+			if sh.hidden[id] {
+				continue
+			}
+			var input Child
+			if _, ok := any(v).(*Emission); ok {
+				input = sh.representativeLocked(id)
+			}
+			if eventObj, ok := any(v).(manifest.BaseManifest); ok {
+				obj := sh.objectLocked(eventObj.Named())
+				if obj == nil {
+					continue
+				}
+				v = any(obj).(V)
+			}
 			if payload, ok := conv(v); ok {
-				out = append(out, idPayload{id, payload})
+				out = append(out, idPayload{id: id, payload: payload, input: input})
 			}
 		}
 	}
@@ -240,4 +258,16 @@ func (l *listenerSet) remove(id int64) {
 		return
 	}
 	l.snapshot.Store(&listenerSnapshot{entries: slices.Delete(slices.Clone(entries), i, i+1)})
+}
+
+type eventDispatch struct {
+	id  manifest.NamedResource
+	run func()
+}
+
+func dispatchEvents(events []eventDispatch) {
+	slices.SortStableFunc(events, func(a, b eventDispatch) int { return a.id.Compare(b.id) })
+	for _, event := range events {
+		event.run()
+	}
 }

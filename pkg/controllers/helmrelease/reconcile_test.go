@@ -4,21 +4,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestReconcile_OCIChartDigestTracking(t *testing.T) {
@@ -112,7 +120,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("reconcile: %+v", info)
 			}
-			art := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			art := st.GetArtifact(hr.Named()).(*store.Emission)
 			retained := make([]map[string]any, len(art.Manifests))
 			if len(art.Manifests) != 8 {
 				t.Fatalf("chart documents = %d", len(art.Manifests))
@@ -187,7 +195,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("shared-prefix digest reconcile: %+v", info)
 			}
-			sameVersion := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			sameVersion := st.GetArtifact(hr.Named()).(*store.Emission)
 			if sameVersion.Fingerprint == art.Fingerprint {
 				t.Fatal("full digests sharing twelve characters reused controller fingerprint")
 			}
@@ -201,7 +209,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("changed digest reconcile: %+v", info)
 			}
-			updated := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			updated := st.GetArtifact(hr.Named()).(*store.Emission)
 			version = "6.15.0"
 			if !tc.disable {
 				version += "+abcdef123456"
@@ -218,7 +226,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("changed revision reconcile: %+v", info)
 			}
-			revised := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			revised := st.GetArtifact(hr.Named()).(*store.Emission)
 			if revised.Fingerprint == updated.Fingerprint {
 				t.Fatal("changed revision reused controller fingerprint")
 			}
@@ -330,13 +338,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	// Resolver returns the parent for the HR only — closes over
 	// captured state, the production shape (which combines a map +
 	// a Store render ownership lookup).
-	resolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
-		if id == hr.Named() {
-			return parent.Named(), true
-		}
-		return manifest.NamedResource{}, false
-	}
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{hr.Named(): parent.Named()})})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
@@ -428,9 +430,9 @@ data: {greeting: hi}
 					original := hr.Clone()
 					st.AddObject(hr)
 					st.UpdateStatus(id, store.StatusPending, "")
-					var retained *store.HelmReleaseArtifact
+					var retained *store.Emission
 					if site.retained {
-						retained = &store.HelmReleaseArtifact{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
+						retained = &store.Emission{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
 						st.SetArtifact(id, retained)
 					}
 					replacement := manifest.DeepCopyMap(doc)
@@ -458,7 +460,7 @@ data: {greeting: hi}
 							return
 						}
 						if site.parent {
-							c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""}, true)
+							publishDocuments(c, parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 						} else {
 							fresh := hr.Clone()
 							fresh.Suspend = suspended
@@ -488,22 +490,197 @@ data: {greeting: hi}
 						t.Fatalf("original mutated (-want +got):\n%s", diff)
 					}
 					if site.parent {
-						if owner, ok := st.EmittedParent(id); !ok || owner != parent.Named() {
-							t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+						if owners := testutil.Owners(st.Productions(id, nil)); !slices.Contains(owners, parent.Named()) {
+							t.Fatalf("missing independent contributor: %v", owners)
 						}
 					}
 					info, _ := st.GetStatus(id)
-					art, _ := st.GetArtifact(id).(*store.HelmReleaseArtifact)
+					art, _ := st.GetArtifact(id).(*store.Emission)
 					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hr-refresh-output"}
 					if suspended {
 						if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 							t.Errorf("status = %+v, want Ready/suspended", info)
 						}
-						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[id]) != 0 {
+						_, inventory := st.GetEmission(id)
+						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(inventory.Children) != 0 {
 							t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
 						}
 					} else if info.Status != store.StatusReady || art == nil || art == retained || renders.Load() != 1 || len(art.Manifests) != 1 || st.GetObject(output) == nil {
 						t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v", output, info, art)
+					}
+				})
+			}
+		})
+	}
+}
+
+type renderBarrierFS struct {
+	fs.FS
+	tasks   *task.Service
+	once    sync.Once
+	started chan struct{}
+	resume  <-chan struct{}
+}
+
+func (f *renderBarrierFS) Open(name string) (fs.File, error) {
+	if name == "Chart.yaml" {
+		f.once.Do(func() {
+			close(f.started)
+			f.tasks.YieldSlot(func() { <-f.resume })
+		})
+	}
+	return f.FS.Open(name)
+}
+
+func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
+	t.Parallel()
+
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			t.Parallel()
+
+			for _, rescue := range []bool{false, true} {
+				t.Run(fmt.Sprintf("rescue_%t", rescue), func(t *testing.T) {
+					t.Parallel()
+
+					st := store.New()
+					tasks := task.NewBounded(workers)
+					owner, err := sourcecache.New(t.Context(), "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = owner.Close() })
+					client, err := helm.NewClient(owner)
+					if err != nil {
+						t.Fatal(err)
+					}
+					client.SetSourceResolver(helm.NewStoreSourceResolver(st))
+					c := New(base.New(st, tasks, "helmrelease"), client, helm.Options{}, false)
+					c.Configure(ReconcileOptions{})
+					c.Start(t.Context())
+					started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					release := sync.OnceFunc(func() { close(resume) })
+					t.Cleanup(func() { release(); tasks.BlockTillDone(); c.Close() })
+					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+					if rescue {
+						parent.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}
+					}
+					st.AddObject(parent)
+					dir := t.TempDir()
+					testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
+					testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: binding}
+data:
+  output: {{ .Values.output | quote }}
+  required: {{ required "required value" .Values.required | quote }}
+`)
+					src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
+					st.AddObject(src)
+					source := &store.SourceArtifact{
+						Kind:      manifest.KindOCIRepository,
+						FS:        &renderBarrierFS{FS: os.DirFS(dir), tasks: tasks, started: started, resume: resume},
+						LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+						Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+					}
+					st.SetArtifact(src.Named(), source)
+					st.UpdateStatus(src.Named(), store.StatusReady, "")
+					required := "present"
+					if rescue {
+						required = ""
+					}
+					docA := map[string]any{
+						"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
+						"metadata": map[string]any{"name": "release", "namespace": "apps"},
+						"spec": map[string]any{
+							"chartRef": map[string]any{"kind": manifest.KindOCIRepository, "name": src.Name},
+							"values":   map[string]any{"output": "A", "required": required},
+						},
+					}
+					docB := manifest.DeepCopyMap(docA)
+					docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
+					publish := func(doc map[string]any) {
+						publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+					}
+					publish(docA)
+					st.UpdateStatus(parent.Named(), store.StatusReady, "")
+					id := testutil.HelmReleaseID("apps", "release")
+					hr, ok := st.Get[*manifest.HelmRelease](id)
+					if !ok {
+						t.Fatal("parent did not emit input A")
+					}
+					prepared, err := helm.Prepare(hr, client.Resolver().HelmChart, values.NewStoreProvider(st, false), client.ValuesCache())
+					if err != nil {
+						t.Fatal(err)
+					}
+					wantFingerprint := manifest.Fingerprint(prepared.Content(struct{ Digest, Revision string }{source.Digest, source.Revision}, nil))
+					var accepted atomic.Pointer[store.Emission]
+					unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
+						if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
+							accepted.Store(emission)
+						}
+					}, false)
+					t.Cleanup(unsubscribe)
+					tasks.Go(t.Context(), "parent", func(context.Context) {
+						defer release()
+						reached := false
+						tasks.YieldSlot(func() {
+							select {
+							case <-started:
+								reached = true
+							case <-rendered:
+							}
+						})
+						if !reached {
+							t.Error("render never reached chart filesystem")
+							return
+						}
+						publish(docB)
+					})
+					tasks.Go(t.Context(), "render", func(ctx context.Context) {
+						defer close(rendered)
+						if blocked := c.ReconcileNode(ctx, id, manifest.DrainNone); len(blocked) != 0 {
+							t.Errorf("blocked on %v", blocked)
+						}
+					})
+					tasks.BlockTillDone()
+					if tasks.Failures() != 0 {
+						t.Fatalf("task failures = %d", tasks.Failures())
+					}
+					emission := accepted.Load()
+					if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint != wantFingerprint {
+						t.Fatalf("accepted A emission = %+v; fingerprint want %s", emission, wantFingerprint)
+					}
+					if got := renderedConfigMapValue(emission.Manifests, "output"); got != "A" {
+						t.Fatalf("rendered output = %q, want A", got)
+					}
+					if rescue {
+						if got := renderedConfigMapValue(emission.Manifests, "required"); got != "..PLACEHOLDER_required.." {
+							t.Fatalf("rescued value = %q", got)
+						}
+						if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+							return w.Resource == id && w.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(w.Detail, "required")
+						}) {
+							t.Fatal("best-effort rescue warning missing")
+						}
+					}
+					current, ok := st.Get[*manifest.HelmRelease](id)
+					if !ok || current.Values["output"] != "B" {
+						t.Fatalf("current input is not B: %+v", current)
+					}
+					if st.GetArtifact(id) != nil {
+						t.Error("input B incorrectly accepts the output rendered from A")
+					}
+					publish(docA)
+					if st.GetArtifact(id) != emission {
+						t.Error("restoring exact input A did not expose the captured emission")
+					}
+					publish(docB)
+					if st.GetArtifact(id) != nil {
+						t.Error("restored input B incorrectly accepts A's emission")
+					}
+					if hr.Values["output"] != "A" || hr.Values["required"] != required {
+						t.Fatal("render mutated input A")
 					}
 				})
 			}

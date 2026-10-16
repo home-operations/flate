@@ -73,7 +73,7 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			admitForTest(st, root)
 			l.mountSources()
 			l.documents.read(filepath.Join(root, "apps/a"))
-			l.FinalizeIndex(root, nil)
+			l.FinalizeIndex(root)
 			obj := st.GetObject(id)
 			if tc.want == "" {
 				if obj != nil {
@@ -99,8 +99,8 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			if !tc.external && !tc.escape {
 				owners = []manifest.NamedResource{ks.Named()}
 			}
-			if got := l.Index.Records[id].Renderers; !slices.Equal(got, owners) {
-				t.Fatalf("Renderers = %v, want %v", got, owners)
+			if got := testutil.ProductionOwners(l.Index.Records[id]); !slices.Equal(got, owners) {
+				t.Fatalf("Production owners = %v, want %v", got, owners)
 			}
 			id.Name = "sibling"
 			if st.GetObject(id) == nil {

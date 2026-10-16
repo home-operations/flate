@@ -174,12 +174,12 @@ spec: {target: {name: values}}
 	}
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
 	producer := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "values"}
-	if got, ok := res.Producers.Producer(secret); !ok || got != producer {
-		t.Fatalf("producer not indexed before dependent arrival: %v, %t", got, ok)
+	if declarations := testutil.Declarations(st.Productions(secret, nil)); !slices.Equal(declarations, []manifest.NamedResource{producer}) {
+		t.Fatalf("declarations before arrival: %v", declarations)
 	}
 	foreignSecret := secret
 	foreignSecret.Group = "foreign.example"
-	if _, ok := res.Producers.Producer(foreignSecret); ok {
+	if declarations := testutil.Declarations(st.Productions(foreignSecret, nil)); len(declarations) > 0 {
 		t.Fatal("foreign secret borrowed the core producer")
 	}
 	if st.GetObject(foreign.Named()) != foreign {
@@ -285,7 +285,7 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 					t.Fatalf("child record = %+v", record)
 				}
 				payload := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "payload"}
-				if producers := res.Index.DataProducers(payload); !slices.Contains(producers, parent) {
+				if producers := testutil.Owners(st.Productions(payload, res.Index)); !slices.Contains(producers, parent) {
 					t.Fatalf("subtree producers = %v", producers)
 				}
 				if readers := slices.Collect(res.Index.ReadersOfFile("kubernetes/apps/x/cm.yaml")); !slices.Contains(readers, parent) {
@@ -801,7 +801,7 @@ stringData: {HOST: fixture-value}
 			if scenario == "preexisting" {
 				st.AddObject(preexisting)
 			}
-			res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
+			_, err := discovery.Run(t.Context(), discovery.Config{Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -819,9 +819,9 @@ stringData: {HOST: fixture-value}
 			if scenario == "preexisting" && secret != preexisting {
 				t.Error("preexisting immutable Secret replaced")
 			}
-			producer, ok := res.Producers.Producer(id)
-			if !ok || producer != (manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "secure", Name: "producer"}) {
-				t.Errorf("producer attribution = %v, %v", producer, ok)
+			declarations := testutil.Declarations(st.Productions(id, nil))
+			if !slices.Equal(declarations, []manifest.NamedResource{{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "secure", Name: "producer"}}) {
+				t.Fatalf("declarations=%v", declarations)
 			}
 		})
 	}

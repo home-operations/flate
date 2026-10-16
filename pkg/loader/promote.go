@@ -16,7 +16,7 @@ type PromoteOptions struct {
 // Promote materializes admitted objects from record.Path and reports whether id is available.
 // Authored proves which raw identity may be projected; absent evidence requires an exact id.
 // Existing objects take precedence over raw files.
-func Promote(st *store.Store, id manifest.NamedResource, record manifest.DiscoveryRecord, opts PromoteOptions) bool {
+func Promote(st *store.Store, id manifest.NamedResource, record manifest.Production, opts PromoteOptions) bool {
 	path := record.Path
 	if st == nil || path == "" {
 		return false

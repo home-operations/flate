@@ -81,13 +81,13 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				}
 			}
 			l.SourceRoot = root
-			l.FinalizeIndex(root, nil)
+			l.FinalizeIndex(root)
 			assert.Equal(t, l.Index.Records[child].Parent, ks.Named())
 			owners, _ := l.Index.OwnersOfFile(prefix + "hr.yaml")
 			assert.Diff(t, owners, []manifest.NamedResource{ks.Named()})
-			assert.Diff(t, l.Index.Records[data].Owners, []manifest.NamedResource{ks.Named()})
-			assert.Diff(t, l.Index.DataProducers(data), []manifest.NamedResource{ks.Named()})
-			assert.Diff(t, l.Index.Records[generated].Renderers, []manifest.NamedResource{ks.Named()})
+			assert.Diff(t, testutil.ProductionOwners(l.Index.Records[data]), []manifest.NamedResource{ks.Named()})
+			assert.Diff(t, testutil.Owners(l.Store.Productions(data, l.Index)), []manifest.NamedResource{ks.Named()})
+			assert.Diff(t, testutil.ProductionOwners(l.Index.Records[generated]), []manifest.NamedResource{ks.Named()})
 			sourceRoot, _, _ := SourceView(st, ks, root)
 			assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(sourceRoot, tc.base)), tc.base != "")
 			if tc.pinned {
@@ -100,7 +100,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 
 func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest.NamedResource]manifest.NamedResource {
 	t.Helper()
-	l.FinalizeIndex(repoRoot, nil)
+	l.FinalizeIndex(repoRoot)
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for id, r := range l.Index.Records {
 		if id.Kind == kind && r.Parent != (manifest.NamedResource{}) {

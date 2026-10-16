@@ -1,7 +1,7 @@
 // Package kustomization reconciles Flux Kustomizations: wait on
 // dependsOn / sourceRef / structural parent, resolve postBuild
 // substitutions, run the kustomize SDK, parse the result back into the
-// Store, and publish a KustomizationArtifact. Failures bubble up to
+// Store, and publish an Emission. Failures bubble up to
 // the orchestrator.
 package kustomization
 
@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -50,8 +49,6 @@ type Controller struct {
 // controller before StartLifecycle. base.Options holds the common reconcile config.
 type Options struct {
 	base.Options
-	// Index contains immutable data renderers discovered before reconciliation.
-	Index *manifest.DiscoveryIndex
 	// SubstituteFrom is the immutable bootstrap-approved postBuild source snapshot.
 	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 	// Substitute layers over referenced and inline postBuild values.
@@ -79,7 +76,7 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.substitutionSources = opts.SubstituteFrom
 	c.substitute = opts.Substitute
 	c.strictSubstitutions = opts.StrictSubstitutions
-	c.substitutionProvider = values.NewStoreProvider(c.Store)
+	c.substitutionProvider = values.NewStoreProvider(c.Store, c.WipeSecrets)
 	if len(opts.SubstituteFrom) > 0 {
 		c.substitutionProvider = &substitutionProvider{
 			sources: opts.SubstituteFrom, fallback: c.substitutionProvider,
@@ -138,12 +135,34 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
-	source, applyIgnore, err := c.resolveSource(ks, level)
-	if err != nil {
-		return err
+	var err error
+	var source *store.SourceArtifact
+	var applyIgnore bool
+	var attempt store.Emission
+	for {
+		var err error
+		source, applyIgnore, err = c.resolveSource(ks, level)
+		if err != nil {
+			return err
+		}
+		effective, captured := c.Store.GetEmission(id)
+		current, _ := effective.(*manifest.Kustomization)
+		sourceID := ks.SourceID()
+		if sourceID.Name == "" || sourceID.Kind == "" {
+			sourceID = manifest.BootstrapSourceID
+		}
+		if current == ks && c.Store.GetArtifact(sourceID) == source {
+			attempt = captured
+			break
+		}
+		captured.Finish()
+		if current == nil {
+			return nil
+		}
+		ks = current
 	}
+	defer attempt.Finish()
 
-	sourceRoot := source.LocalPath
 	c.SetPendingUnlessReady(id, "expanding substitutions")
 	// kustomize.Prepare clones ks and expands postBuild.substituteFrom —
 	// the same pre-render dance an embedder calling RenderFlux directly
@@ -151,7 +170,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// changes to the contract only land in one place. Mirrors helm.Prepare.
 	provider := c.substitutionProvider
 	if provider == nil {
-		provider = values.NewStoreProvider(c.Store)
+		provider = values.NewStoreProvider(c.Store, c.WipeSecrets)
 	}
 	ks, err = kustomize.Prepare(ks, provider, c.substitute)
 	if err != nil {
@@ -180,15 +199,8 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		return err
 	}
 
-	// Fingerprint dedup (kustomize.RenderFlux is the hot path): skip the
-	// re-render and replay the cached artifact's side-effects when the
-	// post-Prepare inputs are byte-identical to the cached artifact. The
-	// shared helper publishes nothing (publish=false) — see its doc for the
-	// churn/quiescence rationale (#657–#660). fp is reused for SetArtifact below.
 	sourceContent := struct{ Path, Key, Revision, Digest string }{source.LocalPath, source.Key, source.Revision, source.Digest}
-	fp, handled, err := c.FingerprintDedup(id, ks.Content(sourceContent), func(docs []map[string]any) {
-		c.Emit(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace}, false)
-	})
+	fp, handled, err := c.FingerprintDedup(id, ks.Content(sourceContent))
 	if handled {
 		return err
 	}
@@ -236,13 +248,9 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	_, docs = c.Emit(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace}, true)
-
-	c.Store.SetArtifact(id, &store.KustomizationArtifact{
-		Path:        filepath.Join(sourceRoot, ks.Path),
-		Manifests:   docs,
-		Fingerprint: fp,
-	})
+	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace})
+	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, data
+	c.Emit(id, &attempt)
 	return nil
 }
 
@@ -256,8 +264,16 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	var source manifest.DependencyRef
 	flushed := false
 	flush := func() {
-		if parent, ok := c.LookupParent(ks.Named()); ok {
-			deps = append(deps, manifest.DependencyRef{NamedResource: parent})
+		record, _ := c.index.Lookup(ks.Named())
+		start := len(deps)
+		for p := range c.Store.Productions(ks.Named(), c.index) {
+			if p.Path != "" || p.Owner == (manifest.NamedResource{}) || p.Owner == ks.Named() {
+				continue
+			}
+			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
+		}
+		if len(deps) == start && record.Parent != (manifest.NamedResource{}) && record.Parent != ks.Named() {
+			deps = append(deps, manifest.DependencyRef{NamedResource: record.Parent})
 		}
 		if source.Kind != "" && source.Name != "" {
 			deps = append(deps, source)
@@ -279,7 +295,17 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 			if ref.Optional || ref.Name == "" || c.substitutionSources[ref.NamedResource] != nil {
 				return true
 			}
-			producers := c.index.DataProducers(ref.NamedResource)
+			var producers []manifest.NamedResource
+			for p := range c.Store.Productions(ref.NamedResource, c.index) {
+				if p.Declaration != (manifest.NamedResource{}) && !slices.Contains(producers, p.Declaration) {
+					producers = append(producers, p.Declaration)
+				}
+				if p.Owner != (manifest.NamedResource{}) {
+					if !slices.Contains(producers, p.Owner) {
+						producers = append(producers, p.Owner)
+					}
+				}
+			}
 			if slices.Contains(producers, ks.Named()) {
 				return true
 			}

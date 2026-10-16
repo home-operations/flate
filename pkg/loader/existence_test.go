@@ -83,7 +83,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !Promote(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+	if !promoteForTest(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -99,7 +99,7 @@ data:
 func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got := Promote(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got := promoteForTest(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
@@ -110,7 +110,7 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 // Promote should fail gracefully (return false), not panic, so the
 // depwait surfaces "dependency not found" instead of crashing the
 // orchestrator.
-func TestPromote_FileRemovedBetweenRecordAndPromote(t *testing.T) {
+func TestPromote_FileRemovedBetweenRecordAndpromoteForTest(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
@@ -131,7 +131,7 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got := Promote(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got := promoteForTest(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -171,8 +171,8 @@ data:
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
-	if !Promote(l.Store, cmID, l.Index.Records[cmID], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
-		t.Fatalf("Promote(cm) should succeed")
+	if !promoteForTest(l.Store, cmID, l.Index.Records[cmID], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+		t.Fatalf("promoteForTest(cm) should succeed")
 	}
 	if st.GetObject(cmID) == nil {
 		t.Errorf("CM not in store after Promote")
@@ -220,7 +220,7 @@ stringData: {value: fixture}
 				id = secret
 			}
 			admit := func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }
-			if got := Promote(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: admit}); got == tc.secret {
+			if got := promoteForTest(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: admit}); got == tc.secret {
 				t.Errorf("Promote returned %v, want %v", got, !tc.secret)
 			}
 			if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
@@ -307,15 +307,15 @@ spec:
 				record.Authored = id
 				record.Authored.Namespace = tc.authored
 			}
-			if got := Promote(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != (tc.version != "") {
-				t.Fatalf("Promote(%s) = %v, want %v", id, got, tc.version != "")
+			if got := promoteForTest(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != (tc.version != "") {
+				t.Fatalf("promoteForTest(%s) = %v, want %v", id, got, tc.version != "")
 			}
 			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
 				t.Errorf("%s chart version = %s, want %s", id, got, tc.version)
 			}
 			foreign := id
 			foreign.Group = "foreign.example"
-			if Promote(st, foreign, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}) {
+			if promoteForTest(st, foreign, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}) {
 				t.Fatal("foreign promotion borrowed the real HelmRelease")
 			}
 			sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
@@ -366,7 +366,7 @@ func TestPromote_SourceView(t *testing.T) {
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml")}
 			record.Authored.Namespace = "authored"
-			if got := Promote(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != present {
+			if got := promoteForTest(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != present {
 				t.Fatalf("Promote = %v, want %v", got, present)
 			}
 			if present && st.GetObject(id).(*manifest.ConfigMap).Data["source"] != "committed" {

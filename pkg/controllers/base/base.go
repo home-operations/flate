@@ -29,32 +29,11 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// Controller is the embeddable lifecycle harness. Construct via New,
-// install reconcile-shaping config via SetFilter, then call StartLifecycle
-// before dispatch or listener registration.
-//
-// All four concrete controllers carry the same lifecycle shape:
-//   - a started gate so configuration during dispatch is a hard error
-//   - a filter for changed-only mode
-//   - an unsubscriber list cleared by Close
-//
-// Encoding it once means new pre-reconcile concerns (rate-limit,
-// retries, debug-mode toggle) drop into one place and propagate.
-//
-// The KS and HR controllers additionally share depwait configuration
-// (Existence) and a pre-reconcile preflight check (Preflight,
-// ParentOf). Configure these via SetDepwait / SetPreflight / SetParentOf
-// before dispatch so reconcile bodies can call Require, PreflightError,
-// and LookupParent without each controller duplicating the nil-check
-// boilerplate.
+// Controller owns shared reconciliation lifecycle, dependency gates and publication.
+// Configure MUST complete before StartLifecycle or dispatch.
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
-
-	// name is the controller's stable identity (e.g. "helmrelease",
-	// "kustomization", "resourceset", "source"), set once at New and never
-	// mutated. Read via Name().
-	name string
 
 	// log is name's logger, pre-bound at New with a controller=<name>
 	// attribute. Reconcile bodies and the shared base helpers log through it
@@ -81,30 +60,19 @@ type Controller struct {
 	unsubMu sync.Mutex
 	unsub   []store.Unsubscribe
 
-	// Shared KS/HR depwait and preflight state. Set via SetDepwait,
-	// SetPreflight, SetParentOf. The source controller leaves these nil;
-	// KS and HR configure them before dispatch via their Configure methods.
 	existence        depwait.ExistenceLookup
 	allowMissingCRDs bool
 	preflight        func(manifest.NamedResource) (string, bool)
-	parentOf         func(manifest.NamedResource) (manifest.NamedResource, bool)
 }
 
-// New constructs a base controller with the given stable name (its
-// controller-kind identity, surfaced in reconcile logs via Name()). Concrete
-// controllers call this from their own constructor and embed the result.
+// New constructs a controller with its stable identity for reconciliation logs.
 func New(s *store.Store, t *task.Service, name string) *Controller {
 	return &Controller{
 		Store: s,
 		Tasks: t,
-		name:  name,
 		log:   slog.Default().With(slog.String("controller", name)),
 	}
 }
-
-// Name returns the controller's stable identity (e.g. "helmrelease"). Set once
-// at New.
-func (c *Controller) Name() string { return c.name }
 
 // Logger returns the controller's slog logger, pre-bound with a
 // controller=<name> attribute. Reconcile bodies (and the emit helper, via the
@@ -121,35 +89,6 @@ func (c *Controller) requireNotStarted(method string) {
 	}
 }
 
-// SetFilter installs the change filter that gates reconciliation in
-// changed-only mode. Panics once StartLifecycle is called; the invariant is
-// that reconcile-shaping config is frozen once dispatch begins.
-func (c *Controller) SetFilter(f *change.Filter) {
-	c.requireNotStarted("SetFilter")
-	c.filter = f
-}
-
-// SetDepwait installs the depwait resolution wires.
-// Panics once StartLifecycle is called.
-func (c *Controller) SetDepwait(existence depwait.ExistenceLookup) {
-	c.requireNotStarted("SetDepwait")
-	c.existence = existence
-}
-
-// SetPreflight installs the pre-reconcile failure reporter.
-// Panics once StartLifecycle is called.
-func (c *Controller) SetPreflight(f func(manifest.NamedResource) (string, bool)) {
-	c.requireNotStarted("SetPreflight")
-	c.preflight = f
-}
-
-// SetParentOf installs the structural parent resolver.
-// Panics once StartLifecycle is called.
-func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedResource, bool)) {
-	c.requireNotStarted("SetParentOf")
-	c.parentOf = f
-}
-
 // Options is the post-bootstrap, reconcile-shaping config common to every
 // render controller (Kustomization, HelmRelease, ResourceSet). The
 // orchestrator wires it once before dispatch; the source controller is fetch-only
@@ -159,12 +98,8 @@ func (c *Controller) SetParentOf(f func(manifest.NamedResource) (manifest.NamedR
 type Options struct {
 	// Filter narrows reconciliation to changed resources in changed-only mode.
 	Filter *change.Filter
-	// ParentOf maps a resource to its structural-parent Kustomization so
-	// reconcile waits for the parent's Ready before rendering — any
-	// parent-render-time spec mutation (replacements injecting
-	// targetNamespace, postBuild substitutions, a re-emitted patched spec) is
-	// then observable. Nil disables parent enforcement.
-	ParentOf func(manifest.NamedResource) (manifest.NamedResource, bool)
+	// Index contains immutable source-qualified discovery evidence.
+	Index *manifest.DiscoveryIndex
 	// Existence is the file-existence lookup depwait uses to lazy-promote
 	// file-indexed deps and to distinguish a render-only dep still in flight
 	// from a typo'd one. See depwait.ExistenceLookup.
@@ -178,15 +113,13 @@ type Options struct {
 	PreflightFailure func(manifest.NamedResource) (string, bool)
 }
 
-// Configure applies the common reconcile-shaping config. A concrete controller
-// calls c.Controller.Configure(opts.Options) before assigning its own fields.
-// The setters are independent single-field writes, so their order is
-// immaterial; each panics once StartLifecycle is called.
+// Configure installs immutable setup before dispatch.
 func (c *Controller) Configure(opts Options) {
-	c.SetFilter(opts.Filter)
-	c.SetDepwait(opts.Existence)
-	c.SetPreflight(opts.PreflightFailure)
-	c.SetParentOf(opts.ParentOf)
+	c.requireNotStarted("Configure")
+	c.filter = opts.Filter
+	c.existence = opts.Existence
+	c.preflight = opts.PreflightFailure
+	c.Store.SetDiscoveryIndex(opts.Index)
 	c.allowMissingCRDs = opts.AllowMissingCRDs
 }
 
@@ -212,16 +145,6 @@ func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.B
 			}
 		}
 	}
-}
-
-// LookupParent reports the structural parent KS of id via the
-// configured resolver, or (zero, false) when no parent exists or no
-// resolver was configured.
-func (c *Controller) LookupParent(id manifest.NamedResource) (manifest.NamedResource, bool) {
-	if c.parentOf == nil {
-		return manifest.NamedResource{}, false
-	}
-	return c.parentOf(id)
 }
 
 // PreflightFailure reports the pre-reconcile failure for id if the
@@ -265,10 +188,9 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 	c.Store.UpdateStatus(id, store.StatusPending, msg)
 }
 
-// FingerprintDedup derives the replay key from content and returns it for artifact
-// publication. Nil or unmarshalable content MUST bypass replay. Matching artifacts
-// replay through emit without publishing children; preflight failures still win.
-func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any, emit func([]map[string]any)) (string, bool, error) {
+// FingerprintDedup derives the replay key from content and reuses accepted children.
+// Nil or unmarshalable content MUST bypass replay; preflight failures still win.
+func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, error) {
 	if content == nil {
 		return "", false, nil
 	}
@@ -276,31 +198,37 @@ func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any, em
 	if fp == "" {
 		return "", false, nil
 	}
-	existing, ok := c.Store.GetArtifact(id).(store.RenderedArtifact)
-	if !ok || existing.RenderedFingerprint() != fp {
+	current, _ := c.Store.GetArtifact(id).(*store.Emission)
+	if current != nil && current.Fingerprint == fp {
+		if err := c.PreflightError(id); err != nil {
+			return fp, true, err
+		}
+		for _, child := range current.Children {
+			c.KeepEmitted(id, child.Obj)
+		}
+		return fp, true, nil
+	}
+	_, attempt := c.Store.GetEmission(id)
+	defer attempt.Finish()
+	if attempt.Fingerprint != fp {
 		return fp, false, nil
 	}
 	if err := c.PreflightError(id); err != nil {
 		return fp, true, err
 	}
-	c.log.Debug("skipped re-render (fingerprint unchanged)", "id", id.String())
-	emit(existing.RenderedManifests())
+	for _, child := range attempt.Children {
+		c.KeepEmitted(id, child.Obj)
+	}
+	attempt.Complete = true
+	c.Store.RecordEmitted(id, &attempt)
 	return fp, true, nil
-}
-
-// IsFileIndexed reports whether id is tracked by the file-existence
-// index wired at Configure time. Returns false when no index is
-// configured (offline / unit-test paths), which degrades safely by
-// treating the resource as not-file-indexed.
-func (c *Controller) IsFileIndexed(id manifest.NamedResource) bool {
-	return c.existence != nil && c.existence.IsFileIndexed(id)
 }
 
 // KeepOrderingDep drops only known unchanged targets; unknown refs MUST remain
 // available for missing-dependency diagnosis.
 func (c *Controller) KeepOrderingDep(id manifest.NamedResource) bool {
 	return !c.filterActive() || c.filter.ShouldReconcile(id) ||
-		!c.IsFileIndexed(id) && c.Store.GetObject(id) == nil
+		(c.existence == nil || !c.existence.IsFileIndexed(id)) && c.Store.GetObject(id) == nil
 }
 
 // SourceSkipped converts a referenced source's soft skip into the caller's skip.

@@ -19,11 +19,9 @@ func BenchmarkCollectDeps_Scope(b *testing.B) {
 				c := New(store.New(), task.NewBounded(2), true)
 				opts := base.Options{}
 				if hasParent {
-					opts.ParentOf = func(manifest.NamedResource) (manifest.NamedResource, bool) {
-						return manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}, true
-					}
+					opts.Index = parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "app", Namespace: "ns"}: {Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "parent", Namespace: "ns"}})
 				}
-				c.Configure(Options{Options: opts})
+				c.Configure(opts)
 				rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: target.api, Kind: target.kind, Name: "dependency"}}}
 				for b.Loop() {
 					c.collectDeps(rs)

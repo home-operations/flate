@@ -313,15 +313,16 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) {
 	const secretRef = "ghcr-creds"
 	f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secretRef, "not found")}
-	producers := &manifest.ProducerIndex{}
-	producers.Record(
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	addDeclaration(index,
 		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretRef},
 		manifest.NamedResource{
 			Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "ghcr-es"},
 	)
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f},
-		FetchOptions{Producers: producers}) // no flag
+		FetchOptions{}) // no flag
+	st.SetDiscoveryIndex(index)
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
@@ -344,7 +345,7 @@ func TestController_MissingSecretNoProducerFailsWithoutFlag(t *testing.T) {
 	f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "ghcr-creds", "not found")}
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f},
-		FetchOptions{Producers: &manifest.ProducerIndex{}}) // no flag, empty index
+		FetchOptions{}) // no flag, empty index
 
 	repo := &manifest.OCIRepository{
 		Name: "r", Namespace: "ns",
@@ -420,13 +421,14 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 				detail = "missing username/password"
 			}
 			f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secret.Name, detail)}
-			producers := &manifest.ProducerIndex{}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 			if tt.producer {
-				producers.Record(secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
+				addDeclaration(index, secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 			}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
-				FetchOptions{AllowMissingSecrets: tt.allowMissing, Producers: producers})
+				FetchOptions{AllowMissingSecrets: tt.allowMissing})
+			st.SetDiscoveryIndex(index)
 			if tt.present {
 				st.AddObject(secret)
 			}
@@ -534,11 +536,12 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 
 func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	f := &fallbackFetcher{}
-	producers := &manifest.ProducerIndex{}
-	producers.Record(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	addDeclaration(index, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
 		manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{Producers: producers})
+		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{})
+	st.SetDiscoveryIndex(index)
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
 	st.AddObject(repo)
 

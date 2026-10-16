@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"github.com/home-operations/flate/internal/testutil"
 	"reflect"
 	"slices"
 	"strings"
@@ -519,9 +520,9 @@ func TestStore_SetArtifact(t *testing.T) {
 func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 	s := New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-	makeArt := func() *KustomizationArtifact {
-		return &KustomizationArtifact{
-			Path: "./apps",
+	makeArt := func() *Emission {
+		return &Emission{
+
 			Manifests: []map[string]any{
 				{
 					"apiVersion": "v1",
@@ -573,10 +574,10 @@ func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
 
-	s.SetArtifact(id, &KustomizationArtifact{Path: "./apps", Manifests: []map[string]any{
+	s.SetArtifact(id, &Emission{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-1"}},
 	}})
-	s.SetArtifact(id, &KustomizationArtifact{Path: "./apps", Manifests: []map[string]any{
+	s.SetArtifact(id, &Emission{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-2"}},
 	}})
 
@@ -906,7 +907,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 				s.AddListener(kind, func(id manifest.NamedResource, _ any) {
 					count, _ := events[kind].LoadOrStore(id, new(atomic.Int64))
 					count.(*atomic.Int64).Add(1)
-					if kind == EventObjectAdded && strings.HasSuffix(id.Name, "-0") && id.Group != "example.test" {
+					if kind == EventObjectAdded && strings.HasSuffix(id.Name, "-0") && !strings.HasPrefix(id.Name, "parent-") && id.Group != "example.test" {
 						arrived <- struct{}{}
 						<-release
 					}
@@ -929,9 +930,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						for _, obj := range objects {
 							id := obj.Named()
 							parent := id
-							parent.Name = "parent"
-							s.RecordEmitted(parent, []manifest.NamedResource{id})
-							s.AddObject(obj)
+							parent.Name = "parent-" + id.Name
+							s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
+							s.RecordEmitted(parent, &Emission{Children: []Child{{Obj: obj}}, Complete: true})
 							s.UpdateStatus(id, StatusReady, id.Group)
 							s.SetArtifact(id, &SourceArtifact{URL: id.Group})
 						}
@@ -943,9 +944,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							assert.Equal(t, status.Status, StatusReady)
 							assert.Equal(t, status.Message, id.Group)
 							assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
-							parent, ok := s.EmittedParent(id)
-							assert.Equal(t, ok, true)
-							assert.Equal(t, parent.Group, id.Group)
+							owners := testutil.Owners(s.Productions(id, nil))
+							assert.Equal(t, len(owners), 1)
+							assert.Equal(t, owners[0].Group, id.Group)
 							for kind := EventObjectAdded; int(kind) <= numEventKinds; kind++ {
 								count, ok := events[kind].Load(id)
 								if !ok || count.(*atomic.Int64).Load() != 1 {
@@ -957,7 +958,10 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							objects[0], objects[1] = objects[1], objects[0]
 						}
 						removed := objects[0].Named()
-						assert.Equal(t, s.DeleteObject(removed), true)
+						parent := removed
+						parent.Name = "parent-" + removed.Name
+						s.RecordEmitted(parent, &Emission{Complete: true})
+						s.DeleteObject(parent)
 						assert.Equal(t, s.GetObject(removed), nil)
 						assert.Equal(t, len(s.GetConditions(removed)), 0)
 						assert.Equal(t, s.GetArtifact(removed), nil)
@@ -968,7 +972,10 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						assert.Equal(t, status.Message, id.Group)
 						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
 						assert.Diff(t, s.GetConditions(id), []Condition{readyCondition(StatusReady, id.Group)})
-						assert.Equal(t, s.DeleteObject(id), true)
+						parent = id
+						parent.Name = "parent-" + id.Name
+						s.RecordEmitted(parent, &Emission{Complete: true})
+						s.DeleteObject(parent)
 					}
 				})
 			}
@@ -1022,7 +1029,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 				case 4:
 					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-w%d-i%d", w, i), Namespace: "ns"}
 					s.AddObject(hr)
-					s.SetArtifact(hr.Named(), &HelmReleaseArtifact{Manifests: nil, Fingerprint: "x"})
+					s.SetArtifact(hr.Named(), &Emission{Manifests: nil, Fingerprint: "x"})
 				}
 			}
 		})

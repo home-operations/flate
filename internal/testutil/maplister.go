@@ -1,6 +1,9 @@
 package testutil
 
-import "github.com/home-operations/flate/pkg/manifest"
+import (
+	"github.com/home-operations/flate/pkg/manifest"
+	"iter"
+)
 
 // MapLister is a test fixture that implements change.ObjectLister via a
 // plain map. Used by controller tests that need a minimal ObjectLister
@@ -24,3 +27,19 @@ func (m MapLister) ListObjects(group, kind string) []manifest.BaseManifest {
 // EmptyLister returns a MapLister with no entries — a minimal non-nil
 // ObjectLister for tests that only need to construct a change.Filter.
 func EmptyLister() MapLister { return MapLister{} }
+
+// Productions exposes frozen fixture evidence without runtime contributions.
+func (m MapLister) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) iter.Seq[manifest.Production] {
+	return func(yield func(manifest.Production) bool) {
+		r, _ := index.Lookup(id)
+		if len(r.Productions) == 0 && id.Namespace != "" {
+			id.Namespace = ""
+			r, _ = index.Lookup(id)
+		}
+		for _, p := range r.Productions {
+			if !yield(p) {
+				return
+			}
+		}
+	}
+}

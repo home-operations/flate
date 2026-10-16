@@ -18,13 +18,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerIndex) {
+func (l *Loader) buildProductions(repoRoot string) {
 	if repoRoot == "" {
 		return
 	}
 	b := &selfProduceBuilder{idx: l.Index,
-		emittedFiles: map[string][]manifest.NamedResource{}, producers: producers,
-		store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
+		emittedFiles: map[string][]manifest.NamedResource{},
+		store:        l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}}
 	var generators []generatorRecord
 	remaining := map[string]struct{}{}
@@ -34,7 +34,7 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		}
 	}
 	record := func(v graphVisit) {
-		if v.owner != (manifest.NamedResource{}) {
+		if v.owner != (manifest.NamedResource{}) && !v.generated {
 			b.idx.Readers[v.coordinate] = appendUniqueProducer(b.idx.Readers[v.coordinate], v.owner)
 			if local := v.localCoordinate(); local != "" {
 				b.idx.Readers[local] = appendUniqueProducer(b.idx.Readers[local], v.owner)
@@ -50,13 +50,13 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 			}
 			return
 		}
-		if v.owner != (manifest.NamedResource{}) && v.readable {
+		if v.readable {
 			b.recordProduced(v, l.documents.cache[v.file].objects)
 		}
 	}
 	for _, root := range l.scopes.roots {
 		for _, v := range l.scopes.walks[root.graphContext] {
-			v.owner = root.owner
+			v.owner, v.source = root.owner, root.source
 			record(v)
 		}
 	}
@@ -118,7 +118,16 @@ func (l *Loader) addGenerated(generators []generatorRecord) {
 			record.File = l.fileCoordinate(r.file)
 		}
 		if r.owner != (manifest.NamedResource{}) {
-			record.Renderers = appendUniqueProducer(record.Renderers, r.owner)
+			p := manifest.Production{Owner: r.owner, File: record.File}
+			if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
+				p.Source = ks.SourceID()
+				if p.Source.Name == "" || p.Source.Kind == "" {
+					p.Source = manifest.BootstrapSourceID
+				}
+			}
+			if !slices.Contains(record.Productions, p) {
+				record.Productions = append(record.Productions, p)
+			}
 		}
 		l.Index.Records[id] = record
 		obj, err := r.materialize(l.Options.WipeSecrets)
@@ -141,8 +150,10 @@ type graphVisit struct {
 	file               string
 	prefix, coordinate string
 	owner              manifest.NamedResource
+	source             manifest.NamedResource
 	document           *types.Kustomization
 	readable           bool
+	generated          bool
 	localAlias         bool
 }
 
@@ -215,6 +226,24 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 	}
 	d, file := w.documents.read(filepath.Join(v.root, v.dir))
 	if d == nil {
+		input, name := w.documents.input(filepath.Join(v.root, v.dir))
+		entries, _ := fs.ReadDir(input, name)
+		for _, entry := range entries {
+			child := v
+			child.generated = true
+			child.dir = path.Join(v.dir, entry.Name())
+			if entry.IsDir() {
+				if !w.walk(child, yield) {
+					return false
+				}
+			} else if ext := path.Ext(entry.Name()); ext == ".yaml" || ext == ".yml" {
+				child.file, child.coordinate, child.document = filepath.Join(v.root, child.dir), path.Join(v.prefix, child.dir), nil
+				child.readable = true
+				if !yield(child) {
+					return false
+				}
+			}
+		}
 		return true
 	}
 	v.namespace = cmp.Or(v.namespace, d.Namespace)
@@ -254,7 +283,7 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 			}
 			child.file, child.document = abs, nil
 			child.coordinate = path.Join(v.prefix, filepath.ToSlash(resolved))
-			_, child.readable = resolveDataPath(v.dir, ref)
+			_, child.readable = resolveDataPath(filepath.Join(v.root, v.dir), ref)
 			if !yield(child) {
 				return false
 			}
@@ -267,7 +296,6 @@ type selfProduceBuilder struct {
 	reader       documentReader
 	idx          *manifest.DiscoveryIndex
 	emittedFiles map[string][]manifest.NamedResource
-	producers    *manifest.ProducerIndex
 	store        *store.Store
 	secrets      map[manifest.NamedResource]*manifest.Secret
 	wipeSecrets  bool
@@ -275,29 +303,38 @@ type selfProduceBuilder struct {
 
 func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.BaseManifest) {
 	record := func(obj manifest.BaseManifest) {
+		id := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
+		if owner, _ := b.idx.Lookup(v.owner); v.owner == obj.Named() || owner.Authored == obj.Named() {
+			id = v.owner
+		}
+		r := b.idx.Records[id]
+		if r.Authored == (manifest.NamedResource{}) {
+			r.Authored, r.Path, r.File = obj.Named(), v.file, v.coordinate
+		}
+		p := manifest.Production{Owner: v.owner, Authored: obj.Named(), Path: v.file, File: v.coordinate, Source: v.source}
+		if ks, ok := b.store.Get[*manifest.Kustomization](v.owner); ok {
+			p.Source = ks.SourceID()
+			if p.Source.Name == "" || p.Source.Kind == "" {
+				p.Source = manifest.BootstrapSourceID
+			}
+		}
+		if !slices.Contains(r.Productions, p) {
+			r.Productions = append(r.Productions, p)
+		}
+		b.idx.Records[id] = r
+		if !v.generated {
+			b.recordProducer(obj, v.namespace, v.fallback, v.owner)
+		}
 		info := manifest.KindOf(obj)
 		switch {
 		case info.Includes("data"):
-			b.recordDataObject(obj, v.namespace, v.fallback, v.owner)
-			if s, ok := obj.(*manifest.Secret); ok {
+
+			if s, ok := obj.(*manifest.Secret); ok && !v.generated {
 				b.materializeSecret(s, v.namespace, v.fallback)
 			}
 		case info.Includes("structural"):
 			b.emittedFiles[v.coordinate] = appendUniqueProducer(b.emittedFiles[v.coordinate], v.owner)
-		default:
-			raw, ok := obj.(*manifest.RawObject)
-			if !ok {
-				return
-			}
-			if len(manifest.ProducerTargets(raw)) != 0 {
-				id := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
-				r := b.idx.Records[id]
-				if r.Authored == (manifest.NamedResource{}) {
-					r.Authored, r.Path, r.File = obj.Named(), v.file, v.coordinate
-					b.idx.Records[id] = r
-				}
-			}
-			b.recordProducer(raw, v.namespace, v.fallback, v.owner)
+
 		}
 	}
 	if objects != nil {
@@ -327,37 +364,47 @@ func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootN
 	}
 }
 
-// Rendered data uses graph namespace, then authored namespace, then consumer fallback.
-func (b *selfProduceBuilder) recordDataObject(obj manifest.BaseManifest, baseNS, rootNS string, ks manifest.NamedResource) {
-	id := manifest.Resolve(obj.Named(), baseNS, rootNS)
-	if id.Namespace == "" || ks == (manifest.NamedResource{}) {
-		return
-	}
-	r := b.idx.Records[id]
-	r.Renderers = appendUniqueProducer(r.Renderers, ks)
-	b.idx.Records[id] = r
-}
-
 // recordProducer records the target(s) a producer generates — the Secret an
 // ExternalSecret / SealedSecret materializes, or the Secret + ConfigMap an
 // ObjectBucketClaim's provisioner creates — each re-keyed under the producer's
 // effective namespace so it matches a consumer's same-namespace lookup.
 // Non-producer kinds are no-ops. Ownership is recorded before rendering.
-func (b *selfProduceBuilder) recordProducer(raw *manifest.RawObject, baseNS, rootNS string, ks manifest.NamedResource) {
-	for _, target := range manifest.ProducerTargets(raw) {
+func (b *selfProduceBuilder) recordProducer(raw manifest.BaseManifest, baseNS, rootNS string, ks manifest.NamedResource) {
+	projectedObject := raw.WithNamespace(manifest.Resolve(raw.Named(), baseNS, rootNS).Namespace)
+	for _, target := range manifest.ProducerTargets(projectedObject) {
 		target.NamedResource = manifest.Resolve(target.NamedResource, baseNS, rootNS)
 		if target.Namespace == "" {
 			continue
 		}
 		producer := raw.Named()
 		projected := manifest.Resolve(producer, baseNS, rootNS)
-		b.producers.Record(target.NamedResource, projected)
+		r := b.idx.Records[target.NamedResource]
+		p := manifest.Production{Owner: ks, Declaration: projected, Authored: producer, File: b.idx.Records[projected].File}
+		if owner, ok := b.store.Get[*manifest.Kustomization](ks); ok {
+			p.Source = owner.SourceID()
+			if p.Source.Name == "" || p.Source.Kind == "" {
+				p.Source = manifest.BootstrapSourceID
+			}
+		}
+		if !slices.Contains(r.Productions, p) {
+			r.Productions = append(r.Productions, p)
+		}
+		b.idx.Records[target.NamedResource] = r
 		for _, producer := range []manifest.NamedResource{producer, projected} {
 			if ks == (manifest.NamedResource{}) {
 				continue
 			}
 			r := b.idx.Records[producer]
-			r.DeclarationOwners = appendUniqueProducer(r.DeclarationOwners, ks)
+			p := manifest.Production{Owner: ks, Declaration: projected}
+			if owner, ok := b.store.Get[*manifest.Kustomization](ks); ok {
+				p.Source = owner.SourceID()
+				if p.Source.Name == "" || p.Source.Kind == "" {
+					p.Source = manifest.BootstrapSourceID
+				}
+			}
+			if !slices.Contains(r.Productions, p) {
+				r.Productions = append(r.Productions, p)
+			}
 			b.idx.Records[producer] = r
 		}
 		if len(target.DeclaredKeys) > 0 && target.Kind == manifest.KindSecret {

@@ -29,7 +29,7 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 			c := base.New(store.New(), nil, "test")
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil), func([]map[string]any) {}); fp == "" {
+				if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}
@@ -49,7 +49,7 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.ChartSource())
 		identity := struct{ Digest, Revision string }{source.Digest, source.Revision}
-		if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil), func([]map[string]any) {}); fp == "" {
+		if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
 	}
@@ -60,7 +60,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
-	c.SetFilter(change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st))
+	c.Configure(ReconcileOptions{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)})
 	b.ReportAllocs()
 	for b.Loop() {
 		c.collectDeps(hr)
@@ -85,7 +85,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()
 			for b.Loop() {
-				c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, tc.publish)
+				publishDocuments(b, c, parent, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""})
 			}
 		})
 	}

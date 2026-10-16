@@ -3,7 +3,7 @@ package helmrelease
 import (
 	"context"
 	"errors"
-	"github.com/home-operations/flate/pkg/controllers/base"
+	"fmt"
 	"os"
 	"slices"
 	"sync"
@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -85,11 +86,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 
 func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
 	t.Helper()
-	resolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
-		parent, ok := parentOf[id]
-		return parent, ok
-	}
-	return newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	return newTestControllerWithOptions(t, ReconcileOptions{Index: parentIndexForTest(parentOf)})
 }
 
 func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Controller, *store.Store) {
@@ -109,12 +106,6 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	// resolves source CRs (HelmRepository, OCIRepository, HelmChart)
 	// through the Store via the helm client's SourceResolver.
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
-	// Mirror the orchestrator, which always injects a producer index; an
-	// absent one is nil-safe but would silently record nothing, so the
-	// producer-index tests need a live instance.
-	if opts.Producers == nil {
-		opts.Producers = &manifest.ProducerIndex{}
-	}
 	c := New(st, ts, hc, helm.Options{}, false)
 	c.Configure(opts)
 	c.Start(context.Background())
@@ -179,6 +170,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		})
 	}
 
+	st.AddObject(hr)
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
 	if !repointed {
 		t.Fatal("materialize did not report a repoint for a HelmRepository-sourced chart")
@@ -206,8 +198,8 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		hc.SourceRef.Kind != manifest.KindHelmRepository || hc.SourceRef.Name != "truecharts" {
 		t.Errorf("synthetic HelmChart = %+v, want chart kromgo@3.0.0 sourceRef HelmRepository/truecharts", hc)
 	}
-	if owner, ok := st.EmittedParent(synID); ok {
-		t.Errorf("synthetic chart has render owner %v", owner)
+	if owners := testutil.Owners(st.Productions(synID, nil)); !slices.Contains(owners, hr.Named()) {
+		t.Fatalf("missing independent contributor: %v", owners)
 	}
 	if info, ok := st.GetStatus(synID); ok {
 		t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
@@ -221,95 +213,172 @@ func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID,
 }
 
 func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status store.Status
-	}{
-		{"ready", store.StatusReady},
-		{"failed", store.StatusFailed},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				c, st := newTestController(t, nil)
-				st.AddObject(&manifest.HelmRepository{
-					Name: "bitnami", Namespace: "flux-system", URL: "https://charts.example/bitnami",
-				})
-				consumers := []*manifest.HelmRelease{
-					{Name: "redis-a", Namespace: "apps"},
-					{Name: "redis-b", Namespace: "apps"},
-				}
-				chart := manifest.HelmChart{
-					RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
-					Name: "redis", Version: "1.0.0",
-				}
-				for _, hr := range consumers {
-					hr.Chart = chart
-					st.AddObject(hr)
-				}
-				first := *consumers[0]
-				c.materializeHelmChartSource(first.Named(), &first)
-				source := (first.ChartSource())
-				sourceStarted := make(chan struct{})
-				sourceRelease := make(chan struct{})
-				parked := make(chan manifest.NamedResource, len(consumers))
-				dispatch := chartSourceDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-					if id == source {
-						close(sourceStarted)
-						<-sourceRelease
-						if tc.status == store.StatusReady {
-							st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{}})
+	for _, workers := range []int{2, 4} {
+		for _, tc := range []struct {
+			name   string
+			status store.Status
+		}{
+			{"ready", store.StatusReady},
+			{"failed", store.StatusFailed},
+		} {
+			t.Run(fmt.Sprintf("%s/workers=%d", tc.name, workers), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					c, st := newTestController(t, nil)
+					tasks := task.NewBounded(workers)
+					c.Tasks = tasks
+					repository := &manifest.HelmRepository{Name: "bitnami", Namespace: "flux-system", URL: "https://charts.example/bitnami"}
+					st.AddObject(repository)
+					st.UpdateStatus(repository.Named(), store.StatusReady, "")
+					consumers := make([]*manifest.HelmRelease, 40)
+					for i := range consumers {
+						consumers[i] = &manifest.HelmRelease{Name: fmt.Sprintf("redis-%02d", i), Namespace: "apps"}
+					}
+					chart := manifest.HelmChart{
+						RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
+						Name: "redis", Version: "1.0.0",
+					}
+					for _, hr := range consumers {
+						hr.Chart = chart
+						st.AddObject(hr)
+					}
+					first := *consumers[0]
+					c.materializeHelmChartSource(first.Named(), &first)
+					source := (first.ChartSource())
+					sourceStarted := make(chan struct{})
+					sourceRelease := make(chan struct{})
+					parked := make(chan manifest.NamedResource, len(consumers))
+					dispatch := chartSourceDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+						if id == source {
+							close(sourceStarted)
+							tasks.YieldSlot(func() { <-sourceRelease })
+							if tc.status == store.StatusReady {
+								st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{
+									"Chart.yaml":              &fstest.MapFile{Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n")},
+									"templates/output.yaml":   &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n")},
+									"templates/authored.yaml": &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n")},
+								}})
+							}
+							st.UpdateStatus(id, tc.status, "source finished")
+							return schedule.OutcomeTerminal, nil, false
 						}
-						st.UpdateStatus(id, tc.status, "source finished")
+						hr := *st.GetObject(id).(*manifest.HelmRelease)
+						c.materializeHelmChartSource(id, &hr)
+						err := c.awaitChartSource(ctx, &hr, level)
+						if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+							parked <- id
+							return schedule.OutcomeBlocked, blocked.Deps, false
+						}
+						if err != nil {
+							st.UpdateStatus(id, store.StatusFailed, err.Error())
+							return schedule.OutcomeDependencyFailed, []schedule.NodeID{source}, false
+						}
+						st.UpdateStatus(id, store.StatusReady, "")
 						return schedule.OutcomeTerminal, nil, false
+					})
+					s := schedule.New(tasks, dispatch)
+					unsub := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+						if id == source {
+							s.OnArrival(id, true)
+						}
+					}, false)
+					defer unsub()
+					s.Seed([]schedule.NodeID{source})
+					done := make(chan error, 1)
+					go func() { done <- s.Run(t.Context()) }()
+					<-sourceStarted
+					for _, hr := range consumers {
+						s.OnArrival(hr.Named(), true)
 					}
-					hr := *st.GetObject(id).(*manifest.HelmRelease)
-					c.materializeHelmChartSource(id, &hr)
-					err := c.awaitChartSource(ctx, &hr, level)
-					if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
-						parked <- id
-						return schedule.OutcomeBlocked, blocked.Deps, false
+					second := *consumers[1]
+					c.materializeHelmChartSource(second.Named(), &second)
+					if (second.ChartSource()) != source {
+						t.Errorf("second source = %s, want shared %s", (second.ChartSource()), source)
 					}
-					if err != nil {
-						st.UpdateStatus(id, store.StatusFailed, err.Error())
-						return schedule.OutcomeDependencyFailed, []schedule.NodeID{source}, false
+					if info, ok := st.GetStatus(source); ok {
+						t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
 					}
-					st.UpdateStatus(id, store.StatusReady, "")
-					return schedule.OutcomeTerminal, nil, false
+					for range consumers {
+						<-parked
+					}
+					synctest.Wait()
+					if _, ok := st.GetObject(source).(*manifest.HelmChartSource); !ok {
+						t.Fatal("typed synthetic child unavailable while H is incomplete")
+					}
+					for _, hr := range consumers {
+						_, partial := st.GetEmission(hr.Named())
+						if len(partial.Children) != 1 || partial.Children[0].Doc != nil || len(partial.Manifests) != 0 {
+							t.Fatal("synthetic child lost incomplete inventory semantics")
+						}
+					}
+					close(sourceRelease)
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+					if info, ok := st.GetStatus(source); !ok || info.Status != tc.status || info.Message != "source finished" {
+						t.Errorf("source status = %+v (ok=%v), want preserved %v", info, ok, tc.status)
+					}
+					for _, hr := range consumers {
+						if tc.status == store.StatusReady {
+							for iteration := range 2 {
+								var arrivals int
+								stop := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
+								if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone); len(blocked) != 0 {
+									t.Fatal(blocked)
+								}
+								stop()
+								if iteration == 1 && arrivals != 0 {
+									t.Fatalf("equal H rerun replayed %d arrivals", arrivals)
+								}
+								if accepted := st.GetArtifact(hr.Named()).(*store.Emission); !accepted.Complete {
+									t.Fatal("H completion lost complete inventory")
+								}
+							}
+						} else {
+							st.UpdateFailure(hr.Named(), fmt.Errorf("%w: H failed after partial work", manifest.ErrInput))
+						}
+						_, retained := st.GetEmission(hr.Named())
+						found := false
+						for _, child := range retained.Children {
+							if child.Obj.Named() == source {
+								found = true
+								if child.Doc != nil {
+									t.Fatal("synthetic C gained a document")
+								}
+							}
+						}
+						wantDocs := 0
+						if tc.status == store.StatusReady {
+							wantDocs = 2
+						}
+						if !found || len(retained.Manifests) != wantDocs {
+							t.Fatal("actual H completion lost C or output")
+						}
+						authored := false
+						for _, doc := range retained.Manifests {
+							if manifest.DocKind(doc) == manifest.KindHelmChart {
+								name, namespace := manifest.DocMetadata(doc)
+								if name == source.Name {
+									t.Fatal("synthetic C leaked to output")
+								}
+								authored = true
+								if _, ok := st.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name}).(*manifest.HelmChartSource); !ok {
+									t.Fatal("authored C lost typed admission")
+								}
+							}
+						}
+						if authored != (tc.status == store.StatusReady) {
+							t.Fatal("authored C document was dropped")
+						}
+						if st.GetObject(source) == nil {
+							t.Fatal("synthetic C unavailable after H completes")
+						}
+						if info, ok := st.GetStatus(hr.Named()); !ok || info.Status != tc.status {
+							t.Errorf("consumer %s status = %+v (ok=%v), want %v", hr.Named(), info, ok, tc.status)
+						}
+					}
 				})
-				s := schedule.New(task.NewBounded(2), dispatch)
-				s.Seed([]schedule.NodeID{source})
-				done := make(chan error, 1)
-				go func() { done <- s.Run(t.Context()) }()
-				<-sourceStarted
-				for _, hr := range consumers {
-					s.OnArrival(hr.Named(), true)
-				}
-				second := *consumers[1]
-				c.materializeHelmChartSource(second.Named(), &second)
-				if (second.ChartSource()) != source {
-					t.Errorf("second source = %s, want shared %s", (second.ChartSource()), source)
-				}
-				if info, ok := st.GetStatus(source); ok {
-					t.Errorf("consumer wrote synthetic status = %+v, want no Ready condition", info)
-				}
-				for range consumers {
-					<-parked
-				}
-				synctest.Wait()
-				close(sourceRelease)
-				if err := <-done; err != nil {
-					t.Fatal(err)
-				}
-				if info, ok := st.GetStatus(source); !ok || info.Status != tc.status || info.Message != "source finished" {
-					t.Errorf("source status = %+v (ok=%v), want preserved %v", info, ok, tc.status)
-				}
-				for _, hr := range consumers {
-					if info, ok := st.GetStatus(hr.Named()); !ok || info.Status != tc.status {
-						t.Errorf("consumer %s status = %+v (ok=%v), want %v", hr.Named(), info, ok, tc.status)
-					}
-				}
 			})
-		})
+		}
 	}
 }
 
@@ -342,6 +411,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 	})
 
 	// Pass 2: now present — must repoint to the synthetic HelmChart.
+	st.AddObject(hr)
 	if _, repointed := c.materializeHelmChartSource(hr.Named(), hr); !repointed {
 		t.Fatal("did not repoint once the HelmRepository was present")
 	}
@@ -364,6 +434,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 			Name: "redis", Version: "1.0.0",
 		},
 	}
+	st.AddObject(hr)
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
 	if !repointed || got.Chart.RepoKind != manifest.KindHelmChart {
 		t.Fatalf("HTTP HelmRepository was not materialized: %+v (repointed=%v)", got.Chart, repointed)
@@ -390,6 +461,7 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 			Name: "redis", // Version omitted
 		},
 	}
+	st.AddObject(hr)
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
 	if !repointed || got.Chart.RepoKind != manifest.KindHelmChart {
 		t.Fatalf("empty-version HelmRepository chart not materialized: %+v (repointed=%v)", got.Chart, repointed)
@@ -455,7 +527,7 @@ data:
 		Namespace: "default",
 		Data:      map[string]any{"values.yaml": "kept: kept-value\n"},
 	})
-	st.AddObject(&manifest.RawObject{
+	publishRawFixture(t, c, &manifest.RawObject{
 		Kind:       "ExternalSecret",
 		APIVersion: "external-secrets.io/v1",
 		Name:       "app-creds",
@@ -489,7 +561,7 @@ data:
 	if store.IsSkipped(info) {
 		t.Fatalf("generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v", info)
 	}
-	art, ok := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+	art, ok := st.GetArtifact(hr.Named()).(*store.Emission)
 	if !ok {
 		t.Fatal("HelmRelease artifact was not written")
 	}
@@ -508,7 +580,10 @@ data:
 	hr.Labels = map[string]string{"owner": "re-emitted"}
 	st.AddObject(hr)
 	assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, store.StatusReady)
-	assert.Equal(t, st.GetArtifact(hr.Named()), store.Artifact(art))
+	latest, _ := st.GetArtifact(hr.Named()).(*store.Emission)
+	if latest == nil || latest.Fingerprint != art.Fingerprint {
+		t.Fatal("metadata-only update rendered different effective inputs")
+	}
 	assert.Diff(t, st.Warnings(), warnings)
 	hr = hr.Clone()
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
@@ -578,7 +653,7 @@ data:
 	})
 	// The in-repo ExternalSecret declaring the (absent) app-values Secret —
 	// AddObject fires the producer listener, seeding the shared index.
-	st.AddObject(&manifest.RawObject{
+	publishRawFixture(t, c, &manifest.RawObject{
 		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
 		Name: "app-creds", Namespace: "default",
 		Spec: map[string]any{"target": map[string]any{"name": "app-values"}},
@@ -601,7 +676,7 @@ data:
 	if info.Status != store.StatusReady || store.IsSkipped(info) {
 		t.Fatalf("status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)", info)
 	}
-	art, ok := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+	art, ok := st.GetArtifact(hr.Named()).(*store.Emission)
 	if !ok {
 		t.Fatal("HelmRelease artifact was not written")
 	}
@@ -759,310 +834,6 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 	return ""
 }
 
-func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
-	st := store.New()
-	ts := task.NewBounded(2)
-	owner, err := sourcecache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = owner.Close() })
-	hc, err := helm.NewClient(owner)
-	if err != nil {
-		t.Fatalf("helm.NewClient: %v", err)
-	}
-	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
-
-	// Build a minimal filter with a non-nil keep set (so Enabled() == true
-	// and AddEmitted is exercised). Use a parent HR in the keep set as a
-	// "primary" emitter — Filter.AddEmitted propagates keep when the emitter
-	// is primary.
-	parent := manifest.NamedResource{
-		Group:     manifest.HelmReleaseDomain,
-		Kind:      manifest.KindHelmRelease,
-		Namespace: "flux-system",
-		Name:      "tofu",
-	}
-	sourceFiles := map[manifest.NamedResource]string{
-		parent: "apps/tofu/helmrelease.yaml",
-	}
-	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: sourceFiles[parent]}}}, testutil.MapLister{})
-
-	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Filter: filter})
-	c.Start(context.Background())
-	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
-
-	// One source-kind doc (OCIRepository) and one non-source-kind (ConfigMap).
-	// Emit must extend keep and ownership for the source
-	// only, and route the ConfigMap through AddObject without either call.
-	ociDoc := map[string]any{
-		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
-		"kind":       "OCIRepository",
-		"metadata":   map[string]any{"name": "tofu-oci", "namespace": "flux-system"},
-		"spec":       map[string]any{"url": "oci://ghcr.io/tofu/tofu"},
-	}
-	cmDoc := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata":   map[string]any{"name": "tofu-config", "namespace": "flux-system"},
-		"data":       map[string]any{"key": "value"},
-	}
-
-	foreignDoc := manifest.DeepCopyMap(ociDoc)
-	foreignDoc["apiVersion"] = "example.test/v1"
-	foreignID := manifest.NamedResource{Group: "example.test", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
-	var arrivals int
-	st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		arrivals++
-		source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
-		if id == source && !filter.ShouldReconcile(source) {
-			t.Errorf("source was not kept before arrival of %s", id)
-		}
-		if got, ok := st.EmittedParent(foreignID); ok {
-			t.Errorf("foreign source acquired owner %s at arrival of %s", got, id)
-		}
-		if got, ok := st.EmittedParent(source); !ok || got != parent {
-			t.Errorf("source owner at arrival of %s = (%v, %v), want %s", id, got, ok, parent)
-		}
-	}, false)
-	c.Emit(parent, []map[string]any{cmDoc, ociDoc, foreignDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, true)
-	if arrivals != 3 {
-		t.Fatalf("arrivals = %d, want 3", arrivals)
-	}
-
-	// The OCIRepository must have been added to the store (AddObject path).
-	ociID := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindOCIRepository,
-		Namespace: "flux-system",
-		Name:      "tofu-oci",
-	}
-	if obj := st.GetObject(ociID); obj == nil {
-		t.Error("OCIRepository was not added to store via AddObject")
-	}
-
-	// keepEmitted: the OCIRepository child should now be in the filter's keep
-	// set because the parent HR was a primary emitter (its file changed).
-	if !filter.ShouldReconcile(ociID) {
-		t.Error("keepEmitted did not add OCIRepository to filter keep set")
-	}
-
-	if got, ok := st.EmittedParent(ociID); !ok || got != parent {
-		t.Errorf("source owner = (%v, %v), want (%v, true)", got, ok, parent)
-	}
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "tofu-config"}
-	if _, ok := st.EmittedParent(cmID); ok {
-		t.Error("ConfigMap must not receive HelmRelease render ownership")
-	}
-}
-
-// TestEmit_DedupReplay_NoStoreWrites pins the publish gate
-// (mirrors the KS TestEmitRenderedChildren_DedupSkip_NoStoreWrites): the
-// fingerprint-dedup replay (publish=false) must NOT re-AddObject the
-// chart-emitted source CRs — re-emit is a DeepEqual no-op anyway, and gating it
-// makes that explicit. The idempotent side-effects the replay exists for —
-// KeepEmitted (keep-set) + Store.RecordEmitted (provenance) — MUST still fire.
-func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
-	st := store.New()
-	ts := task.NewBounded(0)
-	owner, err := sourcecache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = owner.Close() })
-	hc, err := helm.NewClient(owner)
-	if err != nil {
-		t.Fatalf("helm.NewClient: %v", err)
-	}
-	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
-
-	parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
-	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "apps/tofu/helmrelease.yaml"}}}, testutil.MapLister{})
-	c := New(st, ts, hc, helm.Options{}, false)
-	c.Configure(ReconcileOptions{Filter: filter})
-	c.Start(context.Background())
-	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
-
-	ociDoc := map[string]any{
-		"apiVersion": "source.toolkit.fluxcd.io/v1beta2",
-		"kind":       "OCIRepository",
-		"metadata":   map[string]any{"name": "tofu-oci", "namespace": "flux-system"},
-		"spec":       map[string]any{"url": "oci://ghcr.io/tofu/tofu"},
-	}
-	ociID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "tofu-oci"}
-
-	var events int
-	st.AddListener(store.EventObjectAdded, func(_ manifest.NamedResource, _ any) { events++ }, false)
-
-	// Dedup replay: no AddObject, no event, store untouched — but the keep-set
-	// and provenance side-effects still fire.
-	c.Emit(parent, []map[string]any{ociDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, false)
-
-	if events != 0 {
-		t.Errorf("publish=false fired %d EventObjectAdded; want 0 (no source re-emit)", events)
-	}
-	if obj := st.GetObject(ociID); obj != nil {
-		t.Error("publish=false AddObject'd a source CR; want the store left untouched")
-	}
-	if got, ok := st.EmittedParent(ociID); !ok || got != parent {
-		t.Errorf("publish=false owner = (%v, %v), want (%v, true)", got, ok, parent)
-	}
-	if !filter.ShouldReconcile(ociID) {
-		t.Error("publish=false did not extend the keep set (KeepEmitted must still run)")
-	}
-
-	// Fresh render publishes: event fires and the source lands in the store.
-	c.Emit(parent, []map[string]any{ociDoc}, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""}, true)
-	if events != 1 {
-		t.Errorf("publish=true fired %d EventObjectAdded; want 1", events)
-	}
-	if obj := st.GetObject(ociID); obj == nil {
-		t.Error("publish=true did not store the source CR")
-	}
-}
-
-// TestRawProducerIndex_ExternalSecretWithExplicitTarget verifies that an
-// ExternalSecret with spec.target.name set is indexed under that explicit
-// target name, and that Producer returns the producer identity
-// for a matching Secret ref.
-func TestRawProducerIndex_ExternalSecretWithExplicitTarget(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	producer := &manifest.RawObject{
-		Kind:       "ExternalSecret",
-		APIVersion: "external-secrets.io/v1",
-		Name:       "app-creds",
-		Namespace:  "default",
-		Spec: map[string]any{
-			"target": map[string]any{"name": "app-values"},
-		},
-	}
-	st.AddObject(producer)
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "default",
-		Name:      "app-values",
-	}
-	got, ok := c.producers.Producer(target)
-	if !ok {
-		t.Fatal("Producer returned false; expected producer to be indexed")
-	}
-	if got.Kind != "ExternalSecret" || got.Namespace != "default" || got.Name != "app-creds" {
-		t.Errorf("Producer returned %v; want ExternalSecret/default/app-creds", got)
-	}
-}
-
-// TestRawProducerIndex_ExternalSecretFallsBackToOwnName verifies that an
-// ExternalSecret with no spec.target.name is indexed under its own .metadata.name.
-func TestRawProducerIndex_ExternalSecretFallsBackToOwnName(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	producer := &manifest.RawObject{
-		Kind:       "ExternalSecret",
-		APIVersion: "external-secrets.io/v1",
-		Name:       "my-secret",
-		Namespace:  "staging",
-		Spec:       map[string]any{},
-	}
-	st.AddObject(producer)
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "staging",
-		Name:      "my-secret",
-	}
-	got, ok := c.producers.Producer(target)
-	if !ok {
-		t.Fatal("Producer returned false; expected producer to be indexed via own name")
-	}
-	if got.Name != "my-secret" || got.Namespace != "staging" {
-		t.Errorf("Producer returned %v; want ExternalSecret/staging/my-secret", got)
-	}
-}
-
-// TestRawProducerIndex_SealedSecretWithTemplateMetadataName verifies that a
-// SealedSecret with spec.template.metadata.name is indexed under that name.
-func TestRawProducerIndex_SealedSecretWithTemplateMetadataName(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	producer := &manifest.RawObject{
-		Kind:       "SealedSecret",
-		APIVersion: "bitnami.com/v1alpha1",
-		Name:       "sealed-db",
-		Namespace:  "prod",
-		Spec: map[string]any{
-			"template": map[string]any{
-				"metadata": map[string]any{"name": "db-password"},
-			},
-		},
-	}
-	st.AddObject(producer)
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "prod",
-		Name:      "db-password",
-	}
-	got, ok := c.producers.Producer(target)
-	if !ok {
-		t.Fatal("Producer returned false for SealedSecret with template.metadata.name")
-	}
-	if got.Name != "sealed-db" || got.Namespace != "prod" {
-		t.Errorf("Producer returned %v; want SealedSecret/prod/sealed-db", got)
-	}
-}
-
-// TestRawProducerIndex_Missing verifies that Producer returns
-// false for a Secret that has no matching producer in the index.
-func TestRawProducerIndex_Missing(t *testing.T) {
-	c, _ := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "default",
-		Name:      "no-such-secret",
-	}
-	if _, ok := c.producers.Producer(target); ok {
-		t.Error("Producer returned true for a non-existent producer; want false")
-	}
-}
-
-// TestRawProducerIndex_NamespaceIsolation verifies that a producer in
-// namespace A does not match a query for the same name in namespace B.
-func TestRawProducerIndex_NamespaceIsolation(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	st.AddObject(&manifest.RawObject{
-		Kind:       "ExternalSecret",
-		APIVersion: "external-secrets.io/v1",
-		Name:       "svc-creds",
-		Namespace:  "team-a",
-		Spec:       map[string]any{},
-	})
-
-	// Same name, different namespace — must not match.
-	crossNS := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "team-b",
-		Name:      "svc-creds",
-	}
-	if _, ok := c.producers.Producer(crossNS); ok {
-		t.Error("Producer matched a producer from a different namespace; want false")
-	}
-
-	// Same namespace — must match.
-	sameNS := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "team-a",
-		Name:      "svc-creds",
-	}
-	if _, ok := c.producers.Producer(sameNS); !ok {
-		t.Error("Producer did not match producer in same namespace; want true")
-	}
-}
-
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
@@ -1147,18 +918,34 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 }
 
 func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }})
-	ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}
-	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported"}, {Kind: manifest.KindSecret, Name: "owned"}, {Kind: manifest.KindSecret, Name: "unreadable"}}}
-	st.AddObject(ks)
-	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), true)
-	c.substitutionSources = map[manifest.NamedResource]manifest.BaseManifest{
-		{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}:      &manifest.Secret{},
-		{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}: &manifest.Secret{},
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
+			c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+			readable := &manifest.Kustomization{Name: "a-readable", Namespace: "apps"}
+			unreadable := &manifest.Kustomization{Name: "z-unreadable", Namespace: "apps"}
+			unreadable.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported"}, {Kind: manifest.KindSecret, Name: "owned"}, {Kind: manifest.KindSecret, Name: "unreadable"}}}
+			st.AddObjects([]manifest.BaseManifest{readable, unreadable})
+			hr := &manifest.HelmRelease{Name: "app", Namespace: "apps"}
+			parents := []*manifest.Kustomization{readable, unreadable}
+			if reverse {
+				slices.Reverse(parents)
+			}
+			for _, parent := range parents {
+				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true})
+			}
+			if !c.parentReadsUnreadableSecret(hr.Named()) {
+				t.Fatal("later contributor's unreadable Secret was ignored")
+			}
+			c.substitutionSources = map[manifest.NamedResource]manifest.BaseManifest{
+				{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}:      &manifest.Secret{},
+				{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}: &manifest.Secret{},
+			}
+			if c.parentReadsUnreadableSecret(hr.Named()) {
+				t.Fatal("accepted substitutions were not excluded for each contributor")
+			}
+			assert.Equal(t, len(unreadable.PostBuild.SubstituteFrom), 3)
+		})
 	}
-	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), false)
-	assert.Equal(t, len(ks.PostBuild.SubstituteFrom), 3)
 }
 
 func TestController_ChartAndValuesPrerequisites(t *testing.T) {
@@ -1184,7 +971,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 			if group != "" {
 				apiVersion = group + "/v1"
 			}
-			st.AddObject(&manifest.RawObject{APIVersion: apiVersion, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace})
+			publishRawFixture(t, c, &manifest.RawObject{APIVersion: apiVersion, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace})
 			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{RepoGroup: group, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace}}
 			if err := c.awaitChartSource(t.Context(), foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 				t.Fatalf("foreign repository bypassed content gate: %v", err)
@@ -1226,6 +1013,6 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil, "test")
-	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content, func([]map[string]any) {})
+	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
 	return fp
 }

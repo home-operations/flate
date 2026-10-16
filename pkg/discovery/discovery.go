@@ -24,13 +24,6 @@ type Result struct {
 	RepoRoot string
 	// Index contains the immutable static discovery facts consumed by rendering.
 	Index *manifest.DiscoveryIndex
-	// Producers maps a target Secret to the in-repo ExternalSecret /
-	// SealedSecret that declares it, seeded by the same self-produce walk.
-	// The source + HR controllers consult it to skip a missing auth /
-	// valuesFrom Secret that has a declared producer, without
-	// --allow-missing-secrets. Augmented at render time by the HR
-	// controller's EventObjectAdded listener. See manifest.ProducerIndex.
-	Producers *manifest.ProducerIndex
 	// WipeSecrets reflects the loader's WipeSecrets setting. The
 	// orchestrator forwards it to lazy-promotion so SOPS Secrets
 	// stay wiped on demand the same way they were at file-load.
@@ -104,13 +97,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		}
 	}
-	producers := &manifest.ProducerIndex{}
-	l.FinalizeIndex(repoRoot, producers)
+	l.FinalizeIndex(repoRoot)
+	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(standaloneSecrets)
 	return &Result{
 		RepoRoot:                   repoRoot,
 		Index:                      l.Index,
-		Producers:                  producers,
 		WipeSecrets:                cfg.WipeSecrets,
 		DisableChartDigestTracking: l.DisableChartDigestTracking,
 	}, nil

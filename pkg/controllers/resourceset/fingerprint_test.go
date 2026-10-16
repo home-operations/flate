@@ -79,6 +79,6 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil, "test")
-	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content, func([]map[string]any) {})
+	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
 	return fp
 }

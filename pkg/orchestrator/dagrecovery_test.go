@@ -179,7 +179,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 			}
 			info, _ := o.store.GetStatus(consumer.Named())
 			assert.Equal(t, info.Status, store.StatusReady)
-			art, ok := o.store.GetArtifact(consumer.Named()).(*store.KustomizationArtifact)
+			art, ok := o.store.GetArtifact(consumer.Named()).(*store.Emission)
 			if !ok || len(art.Manifests) != 1 {
 				t.Fatalf("recovered output = %+v", art)
 			}

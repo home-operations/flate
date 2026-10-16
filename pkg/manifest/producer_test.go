@@ -88,31 +88,6 @@ func TestProducerTargets(t *testing.T) {
 	}
 }
 
-func TestProducerIndex(t *testing.T) {
-	target := NamedResource{Kind: KindSecret, Namespace: "default", Name: "app-values"}
-	producer := NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "default", Name: "app-creds"}
-
-	var idx ProducerIndex
-	if _, ok := idx.Producer(target); ok {
-		t.Error("empty index reported a producer")
-	}
-	idx.Record(target, producer)
-	got, ok := idx.Producer(target)
-	if !ok || got != producer {
-		t.Errorf("Producer = (%v, %v), want (%v, true)", got, ok, producer)
-	}
-	if _, ok := idx.Producer(NamedResource{Kind: KindSecret, Namespace: "other", Name: "app-values"}); ok {
-		t.Error("matched a target in a different namespace")
-	}
-
-	// Nil-safe: a nil index records nothing and finds nothing.
-	var nilIdx *ProducerIndex
-	nilIdx.Record(target, producer)
-	if _, ok := nilIdx.Producer(target); ok {
-		t.Error("nil index reported a producer")
-	}
-}
-
 func TestProducerTargets_ForeignAPIGroup(t *testing.T) {
 	for _, tc := range []struct{ kind, group string }{
 		{"ExternalSecret", "external-secrets.io"},
@@ -126,6 +101,14 @@ func TestProducerTargets_ForeignAPIGroup(t *testing.T) {
 					t.Errorf("foreign producer targets = %v, want none", got)
 				}
 			})
+		}
+	}
+}
+
+func TestProducerTargets_TypedManifests(t *testing.T) {
+	for _, obj := range []BaseManifest{&Kustomization{}, &HelmRelease{}, &HelmRepository{}, &HelmChartSource{}, &GitRepository{}, &OCIRepository{}, &ExternalArtifact{}, &Bucket{}, &ResourceSet{}, &ResourceSetInputProvider{}, &ConfigMap{}, &Secret{}} {
+		if got := ProducerTargets(obj); got != nil {
+			t.Fatalf("%T contributes cluster-only targets: %v", obj, got)
 		}
 	}
 }

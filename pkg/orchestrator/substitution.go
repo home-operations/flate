@@ -54,8 +54,12 @@ func (o *Orchestrator) freezeSubstitutions() {
 		source := inputs[id]
 		record, indexed := o.index.Lookup(id)
 		indexed = indexed && record.Path != ""
-		_, produced := o.producers.Producer(id)
-		if o.store.GetObject(id) != nil || indexed || produced || len(record.Renderers) > 0 {
+		produced := false
+		for range o.store.Productions(id, o.index) {
+			produced = true
+			break
+		}
+		if o.store.GetObject(id) != nil || indexed || produced {
 			slog.Warn("orchestrator: repository substitution source takes precedence",
 				"file", cmp.Or(source.Path, "SDK input"), "id", id.String())
 			continue

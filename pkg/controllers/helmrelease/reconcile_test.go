@@ -109,7 +109,7 @@ metadata: {name: issuer}
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("reconcile: %+v", info)
 			}
-			art := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			art := st.GetArtifact(hr.Named()).(*store.Emission)
 			retained := make([]map[string]any, len(art.Manifests))
 			if len(art.Manifests) != 8 {
 				t.Fatalf("chart documents = %d", len(art.Manifests))
@@ -184,7 +184,7 @@ metadata: {name: issuer}
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("shared-prefix digest reconcile: %+v", info)
 			}
-			sameVersion := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			sameVersion := st.GetArtifact(hr.Named()).(*store.Emission)
 			if sameVersion.Fingerprint == art.Fingerprint {
 				t.Fatal("full digests sharing twelve characters reused controller fingerprint")
 			}
@@ -198,7 +198,7 @@ metadata: {name: issuer}
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("changed digest reconcile: %+v", info)
 			}
-			updated := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			updated := st.GetArtifact(hr.Named()).(*store.Emission)
 			version = "6.15.0"
 			if !tc.disable {
 				version += "+abcdef123456"
@@ -215,7 +215,7 @@ metadata: {name: issuer}
 			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
 				t.Fatalf("changed revision reconcile: %+v", info)
 			}
-			revised := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+			revised := st.GetArtifact(hr.Named()).(*store.Emission)
 			if revised.Fingerprint == updated.Fingerprint {
 				t.Fatal("changed revision reused controller fingerprint")
 			}
@@ -323,13 +323,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	// Resolver returns the parent for the HR only — closes over
 	// captured state, the production shape (which combines a map +
 	// a Store render ownership lookup).
-	resolver := func(id manifest.NamedResource) (manifest.NamedResource, bool) {
-		if id == hr.Named() {
-			return parent.Named(), true
-		}
-		return manifest.NamedResource{}, false
-	}
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
+	c, st := newTestControllerWithOptions(t, ReconcileOptions{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{hr.Named(): parent.Named()})})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
 	info := dispatchToFixpoint(t, c, st, hr.Named())
@@ -417,9 +411,9 @@ data: {greeting: hi}
 					original := hr.Clone()
 					st.AddObject(hr)
 					st.UpdateStatus(id, store.StatusPending, "")
-					var retained *store.HelmReleaseArtifact
+					var retained *store.Emission
 					if site.retained {
-						retained = &store.HelmReleaseArtifact{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
+						retained = &store.Emission{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
 						st.SetArtifact(id, retained)
 					}
 					replacement := manifest.DeepCopyMap(doc)
@@ -447,7 +441,7 @@ data: {greeting: hi}
 							return
 						}
 						if site.parent {
-							c.Emit(parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""}, true)
+							publishDocuments(t, c, parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 						} else {
 							fresh := hr.Clone()
 							fresh.Suspend = suspended
@@ -477,18 +471,19 @@ data: {greeting: hi}
 						t.Fatalf("original mutated (-want +got):\n%s", diff)
 					}
 					if site.parent {
-						if owner, ok := st.EmittedParent(id); !ok || owner != parent.Named() {
-							t.Fatalf("replacement owner = %v, found=%t", owner, ok)
+						if owners := testutil.Owners(st.Productions(id, nil)); !slices.Contains(owners, parent.Named()) {
+							t.Fatalf("missing independent contributor: %v", owners)
 						}
 					}
 					info, _ := st.GetStatus(id)
-					art, _ := st.GetArtifact(id).(*store.HelmReleaseArtifact)
+					art, _ := st.GetArtifact(id).(*store.Emission)
 					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hr-refresh-output"}
 					if suspended {
 						if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 							t.Errorf("status = %+v, want Ready/suspended", info)
 						}
-						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(st.EmittedChildrenByParent()[id]) != 0 {
+						_, inventory := st.GetEmission(id)
+						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(inventory.Children) != 0 {
 							t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
 						}
 					} else if info.Status != store.StatusReady || art == nil || art == retained || renders.Load() != 1 || len(art.Manifests) != 1 || st.GetObject(output) == nil {

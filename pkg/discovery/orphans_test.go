@@ -79,7 +79,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.AddObject(ks)
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
-	l.FinalizeIndex(dir, nil)
+	l.FinalizeIndex(dir)
 	self := ks.Named()
 	st.DeleteObject(self)
 	child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
@@ -149,7 +149,7 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)
 				}
-				l.FinalizeIndex(dir, nil)
+				l.FinalizeIndex(dir)
 			}
 			if scenario == "failed" {
 				if err := os.Remove(filepath.Join(dir, "bundle.yaml")); err != nil {

@@ -284,9 +284,9 @@ func TestDispatchNode(t *testing.T) {
 	s := store.New()
 	ts := task.NewBounded(0)
 	c := base.New(s, ts, "test")
-	c.SetPreflight(func(id manifest.NamedResource) (string, bool) {
+	c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
 		return "synthetic cycle", id.Name == "preflightfail"
-	})
+	}})
 	c.StartLifecycle()
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
@@ -346,12 +346,12 @@ func TestDispatchNode(t *testing.T) {
 			id := tc.obj.Named()
 			c := base.New(st, nil, "test")
 			if tc.filtered {
-				c.SetFilter(change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
+				c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
-				}, st))
+				}, st)})
 			}
 			if tc.preflight {
-				c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle", true })
+				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
 			}
 			c.StartLifecycle()
 			ran := false
@@ -367,11 +367,6 @@ func TestDispatchNode(t *testing.T) {
 	}
 }
 
-// TestFingerprintDedup pins the shared dedup short-circuit: it skips (returns
-// handled=true) and replays the cached docs through emit only when a rendered
-// artifact with a matching non-empty fingerprint exists; otherwise it returns
-// handled=false so the caller renders. A preflight error surfaces as
-// (handled=true, err) without emitting.
 func TestFingerprintDedup(t *testing.T) {
 	s := store.New()
 	c := base.New(s, nil, "test")
@@ -379,34 +374,25 @@ func TestFingerprintDedup(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	docs := []map[string]any{{"kind": "ConfigMap"}}
-	var emitted int
-	emit := func([]map[string]any) { emitted++ }
-	fp, handled, err := c.FingerprintDedup(id, []string{"one"}, emit)
+	fp, handled, err := c.FingerprintDedup(id, []string{"one"})
 	if fp == "" || handled || err != nil {
 		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
 	}
-	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: fp})
-
-	// Fingerprint mismatch → render (not handled), no emit.
-	if _, handled, err := c.FingerprintDedup(id, "other", emit); handled || err != nil {
+	s.SetArtifact(id, &store.Emission{Manifests: docs, Fingerprint: fp})
+	if _, handled, err := c.FingerprintDedup(id, "other"); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
 	foreign := id
 	foreign.Group = "other.example"
-	if _, handled, err := c.FingerprintDedup(foreign, []string{"one"}, emit); handled || err != nil || emitted != 0 {
-		t.Fatalf("foreign group: handled=%v err=%v emitted=%d; want false,nil,0", handled, err, emitted)
+	if _, handled, err := c.FingerprintDedup(foreign, []string{"one"}); handled || err != nil {
+		t.Fatalf("foreign group: handled=%v err=%v; want false,nil", handled, err)
 	}
-	// Match → handled, emit replays the cached docs.
-	if got, handled, err := c.FingerprintDedup(id, []string{"one"}, emit); !handled || err != nil || got != fp {
-		t.Errorf("match: handled=%v err=%v; want true,nil", handled, err)
+	if got, handled, err := c.FingerprintDedup(id, []string{"one"}); !handled || err != nil || got != fp {
+		t.Errorf("match: key=%q handled=%v err=%v; want %q,true,nil", got, handled, err, fp)
 	}
-	// No artifact for the id → render (not handled).
 	none := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
-	if _, handled, _ := c.FingerprintDedup(none, []string{"one"}, emit); handled {
+	if _, handled, _ := c.FingerprintDedup(none, []string{"one"}); handled {
 		t.Error("no-artifact id: handled=true; want false")
-	}
-	if emitted != 1 {
-		t.Errorf("emit called %d times; want 1 (only on the match)", emitted)
 	}
 	for _, tc := range []struct {
 		name    string
@@ -415,37 +401,31 @@ func TestFingerprintDedup(t *testing.T) {
 		{"nil content", nil}, {"unmarshalable content", []any{make(chan int)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, handled, err := c.FingerprintDedup(id, tc.content, emit)
+			got, handled, err := c.FingerprintDedup(id, tc.content)
 			if got != "" || handled || err != nil {
 				t.Fatalf("invalid content key=%q, handled=%v, err=%v", got, handled, err)
 			}
 		})
 	}
-	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs})
-	if _, handled, _ := c.FingerprintDedup(id, []string{"one"}, emit); handled {
+	s.SetArtifact(id, &store.Emission{Manifests: docs})
+	if _, handled, _ := c.FingerprintDedup(id, []string{"one"}); handled {
 		t.Error("empty stored fingerprint replayed")
 	}
-	if fp, handled, err := c.FingerprintDedup(id, []any{make(chan int)}, emit); fp != "" || handled || err != nil {
+	if fp, handled, err := c.FingerprintDedup(id, []any{make(chan int)}); fp != "" || handled || err != nil {
 		t.Fatalf("invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
 	}
-
 }
 
-// TestFingerprintDedup_PreflightError: a match that coincides with a
-// mid-flight preflight failure returns (handled=true, err) and does not emit.
 func TestFingerprintDedup_PreflightError(t *testing.T) {
 	s := store.New()
 	c := base.New(s, nil, "test")
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
-	fp, _, _ := c.FingerprintDedup(id, []string{"one"}, func([]map[string]any) {})
-	s.SetArtifact(id, &store.KustomizationArtifact{Fingerprint: fp})
-	c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle detected", true })
-
-	_, handled, err := c.FingerprintDedup(id, []string{"one"}, func([]map[string]any) {
-		t.Error("emit must not run when a preflight error is surfaced")
-	})
+	fp, _, _ := c.FingerprintDedup(id, []string{"one"})
+	s.SetArtifact(id, &store.Emission{Fingerprint: fp})
+	c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }})
+	_, handled, err := c.FingerprintDedup(id, []string{"one"})
 	if !handled || err == nil {
 		t.Errorf("preflight error: handled=%v err=%v; want true, non-nil", handled, err)
 	}

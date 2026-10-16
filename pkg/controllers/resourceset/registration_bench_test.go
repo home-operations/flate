@@ -3,6 +3,7 @@ package resourceset
 import (
 	"context"
 	"fmt"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -28,7 +29,7 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 					s := store.New()
 					tasks := task.NewBounded(workers)
 					c := New(s, tasks, true)
-					c.Configure(Options{})
+					c.Configure(base.Options{})
 					c.StartLifecycle()
 					defer c.Close()
 					rs := selectorFixture("consumer", "blue")
@@ -110,7 +111,8 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				s := store.New()
 				tasks := task.NewBounded(workers)
 				var renders, dispatches atomic.Int64
-				c := renderCountingController(s, tasks, &renders)
+				c := New(s, tasks, true)
+				c.Configure(base.Options{})
 				c.StartLifecycle()
 				defer c.Close()
 				sets := [2]*manifest.ResourceSet{independentWriterFixture("u", "blue"), independentWriterFixture("v", "green")}
@@ -133,14 +135,15 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"revision": {Raw: []byte(fmt.Sprint(generation))}}}
 						s.AddObject(&fresh)
 					}
-					var artifacts [2]*store.ResourceSetArtifact
+					var artifacts [2]*store.Emission
 					var errs [2]error
 					for i, rs := range sets {
 						tasks.Go(b.Context(), "render", func(context.Context) {
-							fp, _, _ := c.FingerprintDedup(rs.Named(), resourceSetContent(rs, s), func([]map[string]any) {})
+							fp, _, _ := c.FingerprintDedup(rs.Named(), resourceSetContent(rs, s))
 							docs, err := resourceset.Render(rs, resourceset.StoreResolver(s))
+							renders.Add(1)
 							errs[i] = err
-							artifacts[i] = &store.ResourceSetArtifact{Manifests: docs, Fingerprint: fp}
+							artifacts[i] = &store.Emission{Manifests: docs, Fingerprint: fp}
 						})
 					}
 					tasks.BlockTillDone()
@@ -148,13 +151,13 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						if errs[i] != nil {
 							b.Fatal(errs[i])
 						}
-						c.emit(sets[i].Named(), artifacts[i].Manifests, true)
+						publishResourceSetDocuments(b, c, sets[i].Named(), artifacts[i].Manifests)
 						s.SetArtifact(sets[i].Named(), artifacts[i])
 						s.UpdateStatus(sets[i].Named(), store.StatusReady, "")
 					}
 					for range 32 {
 						for _, i := range commitOrder {
-							c.emit(sets[i].Named(), []map[string]any{manifest.DeepCopyMap(artifacts[i].Manifests[0])}, true)
+							publishResourceSetDocuments(b, c, sets[i].Named(), []map[string]any{manifest.DeepCopyMap(artifacts[i].Manifests[0])})
 							tasks.Go(b.Context(), "equal", func(ctx context.Context) {
 								dispatches.Add(1)
 								c.ReconcileNode(ctx, sets[i].Named(), manifest.DrainNone)
@@ -183,52 +186,39 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 	s := store.New()
 	tasks := task.NewBounded(2)
-	var renders, updates atomic.Int64
-	c := renderCountingController(s, tasks, &renders)
+	c := New(s, tasks, true)
+	c.Configure(base.Options{})
 	c.StartLifecycle()
 	defer c.Close()
 	rs := independentWriterFixture("u", "blue")
 	s.AddObject(rs)
 	s.AddObject(staticRSIP("selected", "ns", map[string]string{"color": "blue"}, nil))
-	unsub := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { updates.Add(1) }, false)
+	var updates atomic.Int64
+	unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
+		if id == rs.Named() {
+			updates.Add(1)
+		}
+	}, false)
 	defer unsub()
 	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
-		t.Fatalf("initial dispatch blocked on %v", blocked)
-	}
-	if renders.Load() != 1 {
-		t.Fatalf("initial renders=%d, want 1", renders.Load())
+		t.Fatal(blocked)
 	}
 	initial := s.GetArtifact(rs.Named())
-	docs, err := resourceset.Render(rs, resourceset.StoreResolver(s))
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.emit(rs.Named(), docs, true)
-	s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{Manifests: docs, Fingerprint: replayKey(resourceSetContent(rs, s))})
-	if renders.Load() != 2 || updates.Load() != 1 || s.GetArtifact(rs.Named()) != initial {
-		t.Fatalf("equal-output renders=%d artifact updates=%d, want renders=2 updates=1 and unchanged artifact", renders.Load(), updates.Load())
-	}
 	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
-		t.Fatalf("equal dispatch blocked on %v", blocked)
+		t.Fatal(blocked)
 	}
-	c.emit(rs.Named(), docs, false)
-	if renders.Load() != 2 || updates.Load() != 1 {
-		t.Fatalf("dedup renders=%d artifact updates=%d, want renders=2 updates=1", renders.Load(), updates.Load())
+	if updates.Load() != 1 || s.GetArtifact(rs.Named()) != initial {
+		t.Fatal("equal effective inputs replaced the accepted artifact")
 	}
-}
-
-func renderCountingController(s *store.Store, tasks *task.Service, renders *atomic.Int64) *Controller {
-	parent := &manifest.Kustomization{Name: "parent", Namespace: "ns"}
-	s.AddObject(parent)
-	s.UpdateStatus(parent.Named(), store.StatusReady, "")
-	c := New(s, tasks, true)
-	c.Configure(Options{
-		ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent.Named(), true },
-		// One raw marker per successful Render; equal publication replays only
-		// the provider document, while fresh equal-output renders reach RawSink.
-		RawSink: func(manifest.NamedResource, manifest.NamedResource, map[string]any) { renders.Add(1) },
-	})
-	return c
+	fresh := *rs
+	fresh.ResourcesTemplate += "\n"
+	s.AddObject(&fresh)
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+		t.Fatal(blocked)
+	}
+	if updates.Load() != 2 || s.GetArtifact(rs.Named()) == initial {
+		t.Fatal("new fingerprint with equal output did not replace the accepted artifact")
+	}
 }
 
 func independentWriterFixture(name, color string) *manifest.ResourceSet {

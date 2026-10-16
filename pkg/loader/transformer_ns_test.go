@@ -210,7 +210,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 				l.ApplyNamespaces(root)
 				check(ns)
 			}
-			l.FinalizeIndex(root, nil)
+			l.FinalizeIndex(root)
 			check(tc.namespaces[len(tc.namespaces)-1])
 			if tc.mounted {
 				st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "removed", LocalRoot: root, LocalPath: local})

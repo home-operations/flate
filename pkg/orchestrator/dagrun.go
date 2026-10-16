@@ -31,7 +31,7 @@ func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainL
 	case id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease:
 		blocked = o.hrc.ReconcileNode(ctx, id, drainLevel)
 	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
-		before, _ := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
+		before, _ := o.store.GetArtifact(id).(*store.Emission)
 		blocked = o.rsc.ReconcileNode(ctx, id, drainLevel)
 		if len(blocked) == 0 && before != nil && before.Fingerprint != "" && o.store.GetArtifact(id) == before {
 			info, ok := o.store.GetStatus(id)
@@ -84,10 +84,7 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 func (o *Orchestrator) runDAG(ctx context.Context) error {
 	sched := schedule.New(o.tasks, dagDispatcher{o})
 
-	// Start the controllers. This registers lifecycle state + the HR producer
-	// index (flush=true replay), but no dispatch listeners — the scheduler owns
-	// dispatch. No render runs here, so no children are emitted before the wake
-	// adapters below are registered.
+	// Wake adapters MUST be registered before any reconcile can publish output.
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
 	o.hrc.Start(ctx)
@@ -103,6 +100,9 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 }
 
 func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
+	if obj == nil {
+		return false
+	}
 	info := manifest.KindOf(obj)
 	return info.Runnable && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named()))
 }
@@ -119,6 +119,10 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 	//   scheduler state, so there is no store-lock ↔ sched.mu inversion.
 	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		obj, _ := payload.(manifest.BaseManifest)
+		if obj == nil {
+			sched.OnArrival(id, false)
+			return
+		}
 		sched.OnArrival(id, o.schedulable(obj))
 	}, false)
 	//   EventStatusUpdated: wake nodes parked on a dep that reached a terminal

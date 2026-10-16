@@ -20,7 +20,7 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 	for _, mode := range []string{"fixed", "produced", "absent", "repeated"} {
 		for _, workers := range []int{2, 16, runtime.NumCPU() * 4} {
 			b.Run(fmt.Sprintf("%s/workers=%d", mode, workers), func(b *testing.B) {
-				s, ids, versions := registrationFixture(mode)
+				s, ids, versions := registrationFixture(b, mode)
 				tasks := task.NewBounded(workers)
 				consumer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "consumer"}
 				s.AddObject(&manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace})
@@ -87,7 +87,7 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 	for _, workers := range []int{2, 16, runtime.NumCPU() * 4} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
-			s, ids, versions := registrationFixture("repeated")
+			s, ids, versions := registrationFixture(b, "repeated")
 			consumers := make([]manifest.NamedResource, registrationReads)
 			for i := range consumers {
 				consumers[i] = manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprintf("consumer-%05d", i)}
@@ -140,7 +140,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 	}
 }
 
-func registrationFixture(mode string) (*Store, []manifest.NamedResource, [2]*manifest.Secret) {
+func registrationFixture(b testing.TB, mode string) (*Store, []manifest.NamedResource, [2]*manifest.Secret) {
 	s := New()
 	ids := make([]manifest.NamedResource, registrationReads)
 	for i := range ids {
@@ -154,7 +154,7 @@ func registrationFixture(mode string) (*Store, []manifest.NamedResource, [2]*man
 		producer := &manifest.ResourceSet{Name: "producer", Namespace: "ns"}
 		s.AddObject(producer)
 		s.UpdateStatus(producer.Named(), StatusReady, "")
-		s.RecordEmitted(producer.Named(), ids)
+		recordForTest(b, s, producer.Named(), ids)
 	}
 	if mode != "absent" {
 		for _, id := range slices.Compact(slices.Clone(ids)) {

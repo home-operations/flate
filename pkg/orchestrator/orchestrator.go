@@ -28,6 +28,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 var reconcilableKinds = func() []manifest.KindInfo {
@@ -180,13 +181,6 @@ type Orchestrator struct {
 	// index is published once by Bootstrap and remains immutable during rendering.
 	index *manifest.DiscoveryIndex
 
-	// producers maps a target Secret to the in-repo ExternalSecret /
-	// SealedSecret declaring it (seeded at discovery, augmented at render).
-	// Injected into the source + HR controllers so a missing auth /
-	// valuesFrom Secret with a declared producer is skipped without
-	// --allow-missing-secrets. See manifest.ProducerIndex.
-	producers *manifest.ProducerIndex
-
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
 	// surfaced via Render() so embedders can distinguish orphan-skips
@@ -209,21 +203,6 @@ type Orchestrator struct {
 	// color DFS over every Kustomization / HelmRelease. Lives for the
 	// life of the orchestrator; populated lazily as objects are added.
 	depGraph *dependencyGraph
-
-	// rsExtensions holds non-Flux docs produced by ResourceSet renders,
-	// keyed by the owning structural-parent Kustomization. Populated
-	// in-DAG: the RS controller feeds each RawObject child into rsRawSink
-	// as it renders (so it sees RSIPs emitted via KS-controller kustomize
-	// substitution), and render() commits the sink into this map before
-	// the Result.Manifests merge so `flate build` surfaces what the RS
-	// would create in-cluster.
-	rsExtensions map[manifest.NamedResource][]map[string]any
-
-	// rsRawSink collects RS RawObject children + their grouping parent KS
-	// during the run, deduped deterministically at commit time. The RS
-	// controller writes to it via the Options.RawSink closure; render()
-	// commits it into rsExtensions.
-	rsRawSink rsRawSink
 
 	// bootstrapped records successful Bootstrap completion. Read by
 	// WithFetcher to refuse late fetcher swaps that would silently
@@ -436,7 +415,12 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
 		return record.Parent, true
 	}
-	return o.store.EmittedParent(id)
+	for p := range o.store.Productions(id, o.index) {
+		if p.Owner != (manifest.NamedResource{}) && p.Owner != id && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
+			return p.Owner, true
+		}
+	}
+	return manifest.NamedResource{}, false
 }
 
 // childrenByParent returns structural and rendered ownership, including children
@@ -444,7 +428,14 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 // and Render must have returned; do not call concurrently with either. Returned
 // maps and sorted, deduplicated slices are independent of orchestrator state.
 func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
-	children := o.store.EmittedChildrenByParent()
+	children := map[manifest.NamedResource][]manifest.NamedResource{}
+	for _, obj := range o.store.ListObjects("", "") {
+		for p := range o.store.Productions(obj.Named(), o.index) {
+			if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
+				children[p.Owner] = append(children[p.Owner], obj.Named())
+			}
+		}
+	}
 	if o.index != nil {
 		for child, record := range o.index.Records {
 			if parent := record.Parent; parent != (manifest.NamedResource{}) {
@@ -467,17 +458,16 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 	deps := map[manifest.NamedResource]struct{}{}
 	addOwners := func(id manifest.NamedResource) {
 		record, _ := o.index.Lookup(id)
-		for _, owner := range record.Renderers {
-			deps[owner] = struct{}{}
-		}
-		for _, owner := range record.DeclarationOwners {
-			deps[owner] = struct{}{}
+		for p := range o.store.Productions(id, o.index) {
+			if p.Owner != (manifest.NamedResource{}) {
+				deps[p.Owner] = struct{}{}
+			}
+			if p.Declaration != (manifest.NamedResource{}) {
+				deps[p.Declaration] = struct{}{}
+			}
 		}
 		if record.Parent != (manifest.NamedResource{}) {
 			deps[record.Parent] = struct{}{}
-		}
-		if parent, ok := o.store.EmittedParent(id); ok {
-			deps[parent] = struct{}{}
 		}
 		file := record.File
 		if file == "" {
@@ -495,13 +485,7 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 		}
 		deps[id] = struct{}{}
 		addOwners(id)
-		if producer, ok := o.producers.Producer(id); ok {
-			deps[producer] = struct{}{}
-			addOwners(producer)
-		}
-		for _, producer := range o.filter.ProducersFor(id) {
-			deps[producer] = struct{}{}
-		}
+
 	}
 	if obj := o.store.GetObject(consumer); obj != nil {
 		for ref := range manifest.References(obj) {
@@ -566,7 +550,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
-	o.producers = res.Producers
 
 	o.freezeSubstitutions()
 	o.failDependsOnCycles()
@@ -577,8 +560,9 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
 		o.hrc.Options.DisableChartDigestTracking = *requested
 	}
+	provider := values.NewStoreProvider(o.store, o.cfg.WipeSecrets)
 	secretGet := func(ns, name string) *manifest.Secret {
-		secret, _ := o.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name})
+		secret, _ := provider.Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name}).(*manifest.Secret)
 		return secret
 	}
 	resolver := helm.NewStoreSourceResolver(o.store)

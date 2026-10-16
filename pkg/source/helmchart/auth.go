@@ -45,15 +45,17 @@ func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, erro
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
 		if sec == nil {
-			return nil, source.MissingSecretErr("HelmRepository", r.Namespace, r.Name, r.SecretRef.Name, "not found")
+			return nil, source.MissingSecretErr(r.Named(), r.SecretRef.Name, "not found")
 		}
 		var err error
-		prepared.username, prepared.password, err = source.BasicAuthFromSecret(sec, "HelmRepository", r.Namespace, r.Name, r.SecretRef.Name)
+		prepared.username, prepared.password, err = source.BasicAuthFromSecret(sec, r.Named(), r.SecretRef.Name)
 		if err != nil {
 			return nil, err
 		}
 	}
-	tlsCfg, err := source.ResolveCertSecret(secrets, r.Namespace, "HelmRepository", helmID(r), r.CertSecretRef)
+	owner := r.Named()
+	owner.Name = helmID(r)
+	tlsCfg, err := source.ResolveCertSecret(secrets, owner, r.CertSecretRef)
 	if err != nil {
 		return nil, err
 	}

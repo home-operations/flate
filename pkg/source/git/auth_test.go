@@ -14,10 +14,31 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"golang.org/x/crypto/ssh"
 )
+
+func TestFetcher_ResolveTransport_MissingProxyOwner(t *testing.T) {
+	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
+	repo := &manifest.GitRepository{
+		Name: "repo", Namespace: "ns", URL: "https://host/repo",
+		ProxySecretRef: &manifest.LocalObjectReference{Name: "missing"},
+	}
+	_, err := f.resolveTransport(repo)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Fatalf("expected missing-secret error; got %v", err)
+	}
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok {
+		t.Fatalf("expected MissingSecretError; got %T", err)
+	}
+	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "ns/repo"})
+	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": GitRepository ns/ns/repo: secret ns/missing not found")
+}
 
 func TestFetcher_WipedCredentials(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(nil)

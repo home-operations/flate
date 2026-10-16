@@ -30,7 +30,7 @@ func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest,
 	repo := obj.(*manifest.OCIRepository)
 	secret, ok := f.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name})
 	if !ok {
-		return nil, source.MissingSecretErr(repo.Named().Kind, repo.Namespace, repo.Name, repo.CertSecretRef.Name, "not found")
+		return nil, source.MissingSecretErr(repo.Named(), repo.CertSecretRef.Name, "not found")
 	}
 	if got, _, _ := secret.Value("ca.crt"); got != "rendered-ca" {
 		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got)

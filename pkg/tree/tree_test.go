@@ -24,28 +24,28 @@ var (
 	_ fs.ReadLinkFS = (*tree.Tree)(nil)
 )
 
-func must(t testing.TB, err error) {
-	t.Helper()
+func must(tb testing.TB, err error) {
+	tb.Helper()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
-func build(t testing.TB, b *tree.Builder) *tree.Tree {
-	t.Helper()
+func build(tb testing.TB, b *tree.Builder) *tree.Tree {
+	tb.Helper()
 	tr, err := b.Build()
-	must(t, err)
+	must(tb, err)
 	return tr
 }
 
-func fixture(t testing.TB) *tree.Tree {
-	t.Helper()
+func fixture(tb testing.TB) *tree.Tree {
+	tb.Helper()
 	b := tree.NewBuilder(nil)
-	must(t, b.AddDir("empty", 0o750))
-	must(t, b.AddFile("dir/a +@日本.yaml", []byte("alpha"), 0o640))
-	must(t, b.AddFile("dir/z.yaml", []byte("zulu"), 0o755))
-	must(t, b.AddSymlink("alias", "dir/a +@日本.yaml"))
-	return build(t, b)
+	must(tb, b.AddDir("empty", 0o750))
+	must(tb, b.AddFile("dir/a +@日本.yaml", []byte("alpha"), 0o640))
+	must(tb, b.AddFile("dir/z.yaml", []byte("zulu"), 0o755))
+	must(tb, b.AddSymlink("alias", "dir/a +@日本.yaml"))
+	return build(tb, b)
 }
 
 func TestTree_FSContract(t *testing.T) {

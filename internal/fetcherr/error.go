@@ -58,13 +58,15 @@ func Classes(err error) StatusClass {
 	if response, ok := errors.AsType[*ResponseError](err); ok {
 		classes = Classify(response.StatusCode)
 	}
-	switch wrapped := err.(type) {
-	case interface{ Unwrap() []error }:
+	if wrapped, ok := errors.AsType[interface {
+		error
+		Unwrap() []error
+	}](err); ok && errors.Is(wrapped, err) {
 		for _, child := range wrapped.Unwrap() {
 			classes |= Classes(child)
 		}
-	case interface{ Unwrap() error }:
-		classes |= Classes(wrapped.Unwrap())
+	} else if child := errors.Unwrap(err); child != nil {
+		classes |= Classes(child)
 	}
 	return classes
 }

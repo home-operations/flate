@@ -267,7 +267,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 		t.Fatalf("RenderFlux: %v", err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(src, "kustomization.yaml")) //nolint:gosec // src is t.TempDir
+	got, err := os.ReadFile(filepath.Join(src, "kustomization.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

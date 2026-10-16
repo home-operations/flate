@@ -21,10 +21,10 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			parent := Parent{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "a"}
-			left := cmDoc(parent, "x", "ns", "old", "")
+			left := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
 			left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
 			parent.Group, parent.Name = tt.parentGroup, tt.parentName
-			right := cmDoc(parent, "x", "ns", "new", "")
+			right := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 			right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", tt.apiVersion
 			l, r := []Doc{left}, []Doc{right}
 			if got := pair(l, r); len(got) != tt.pairs {
@@ -73,8 +73,8 @@ func TestPair_PathIsPresentation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rightParent := leftParent
 			rightParent.Path = tt.path
-			left := []Doc{cmDoc(leftParent, "shared", "apps", "old", "")}
-			right := []Doc{cmDoc(rightParent, "shared", "apps", "old", "")}
+			left := []Doc{cmDoc(leftParent, manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
+			right := []Doc{cmDoc(rightParent, manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
 			if got := Changes(left, right, Options{}); len(got) != 0 {
 				t.Fatalf("path-only move produced changes: %+v", got)
 			}
@@ -127,11 +127,11 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 			t.Cleanup(func() { slog.SetDefault(previous) })
 
-			first := cmDoc(parent, "shared", "ns", "shadowed", "")
-			last := cmDoc(parent, "shared", "ns", "retained", "")
+			first := cmDoc(parent, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "shadowed", "")
+			last := cmDoc(parent, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "retained", "")
 			last.Parent.Path = "new/apps"
 			last.Manifest["apiVersion"] = "v2"
-			other := cmDoc(parent, "shared", "ns", "other-side", "")
+			other := cmDoc(parent, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "other-side", "")
 			left, right := []Doc{first, last}, []Doc{other}
 			if side == "right" {
 				left, right = right, left

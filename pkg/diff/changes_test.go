@@ -7,10 +7,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func cmDoc(parent Parent, name, ns, dataVal, chart string) Doc {
-	meta := map[string]any{"name": name}
-	if ns != "" {
-		meta["namespace"] = ns
+func cmDoc(parent Parent, id manifest.NamedResource, dataVal, chart string) Doc {
+	meta := map[string]any{"name": id.Name}
+	if id.Namespace != "" {
+		meta["namespace"] = id.Namespace
 	}
 	if chart != "" {
 		meta["labels"] = map[string]any{"helm.sh/chart": chart}
@@ -30,14 +30,14 @@ func cmDoc(parent Parent, name, ns, dataVal, chart string) Doc {
 func TestChanges_Classification(t *testing.T) {
 	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
 	left := []Doc{
-		cmDoc(p, "keep", "ns", "same", ""),
-		cmDoc(p, "edit", "ns", "old", ""),
-		cmDoc(p, "gone", "ns", "x", ""),
+		cmDoc(p, manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
+		cmDoc(p, manifest.NamedResource{Name: "edit", Namespace: "ns"}, "old", ""),
+		cmDoc(p, manifest.NamedResource{Name: "gone", Namespace: "ns"}, "x", ""),
 	}
 	right := []Doc{
-		cmDoc(p, "keep", "ns", "same", ""),
-		cmDoc(p, "edit", "ns", "new", ""),
-		cmDoc(p, "fresh", "ns", "y", ""),
+		cmDoc(p, manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
+		cmDoc(p, manifest.NamedResource{Name: "edit", Namespace: "ns"}, "new", ""),
+		cmDoc(p, manifest.NamedResource{Name: "fresh", Namespace: "ns"}, "y", ""),
 	}
 
 	got := map[string]ChangeStatus{}
@@ -55,8 +55,8 @@ func TestChanges_Classification(t *testing.T) {
 // reported — the diff stays churn-free.
 func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
-	left := []Doc{cmDoc(p, "x", "ns", "same", "app-1.0.0")}
-	right := []Doc{cmDoc(p, "x", "ns", "same", "app-2.0.0")}
+	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
+	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
 	if got := Changes(left, right, Options{StripAttrs: DefaultStripAttrs}); len(got) != 0 {
 		t.Fatalf("a change only in a stripped attr should be dropped; got %+v", got)
 	}
@@ -66,8 +66,8 @@ func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 // helm.sh/chart from the pre-strip manifest while Old/New are stripped.
 func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
-	left := []Doc{cmDoc(p, "x", "ns", "old", "app-1.0.0")}
-	right := []Doc{cmDoc(p, "x", "ns", "new", "app-2.0.0")}
+	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "app-1.0.0")}
+	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "app-2.0.0")}
 
 	got := Changes(left, right, Options{StripAttrs: DefaultStripAttrs})
 	if len(got) != 1 {
@@ -125,9 +125,9 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 func TestChanges_Sorted(t *testing.T) {
 	pa := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "a"}
 	pb := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "b"}
-	left := []Doc{cmDoc(pb, "z", "ns", "1", ""), cmDoc(pa, "y", "ns", "1", "")}
-	right := []Doc{cmDoc(pb, "z", "ns", "2", ""), cmDoc(pa, "y", "ns", "2", "")}
-	foreign := cmDoc(pa, "y", "ns", "3", "")
+	left := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", "")}
+	right := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "2", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "2", "")}
+	foreign := cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "3", "")
 	foreign.Manifest["apiVersion"] = "example.test/v1"
 	left = append(left, foreign)
 	got := Changes(left, right, Options{})
@@ -139,7 +139,7 @@ func TestChanges_Sorted(t *testing.T) {
 
 func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
-	left := []Doc{cmDoc(p, "shared", "ns", "shadowed", ""), cmDoc(p, "shared", "ns", "retained", "")}
+	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "shadowed", ""), cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "retained", "")}
 	for _, tt := range []struct {
 		name string
 		last string
@@ -149,7 +149,7 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 		{name: "retained change", last: "changed", want: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			right := []Doc{cmDoc(p, "shared", "ns", "changed-shadowed", ""), cmDoc(p, "shared", "ns", tt.last, "")}
+			right := []Doc{cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "changed-shadowed", ""), cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, tt.last, "")}
 			got := Changes(left, right, Options{})
 			if len(got) != tt.want {
 				t.Fatalf("expected %d changes, got %+v", tt.want, got)

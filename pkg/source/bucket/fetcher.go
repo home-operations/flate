@@ -40,8 +40,7 @@ type Fetcher struct {
 // Fetch implements source.TypedFetcher[*manifest.Bucket].
 func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
-		return nil, source.ErrUnsupportedProvider("Bucket",
-			b.Namespace, b.Name, b.Provider, sourcev1.BucketProviderGeneric,
+		return nil, source.ErrUnsupportedProvider(b.Named(), b.Provider, sourcev1.BucketProviderGeneric,
 			"S3-compatible")
 	}
 

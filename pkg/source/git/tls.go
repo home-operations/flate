@@ -39,7 +39,7 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository, sec *manifest.Secret)
 	caFile, _, _ := sec.Value("caFile")
 	ca = cmp.Or(ca, caFile)
 	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
-		return opts, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "TLS material unavailable")
+		return opts, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "TLS material unavailable")
 	}
 	if crt == "" && key == "" && ca == "" {
 		return opts, nil

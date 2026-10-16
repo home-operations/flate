@@ -32,6 +32,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		{manifest.KindGitRepository, manifest.SourceDomain, "other", "", false},
 	} {
 		t.Run(tc.kind+"/"+tc.group+"/"+tc.namespace+"/"+tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {Data: []byte("input")}}})
@@ -48,6 +49,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		})
 	}
 	t.Run("separate identities", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		st := store.New()
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
@@ -182,6 +184,7 @@ func TestAliasMissingKustomizationSources_OCIReadErrors(t *testing.T) {
 		{name: "canceled", canceled: true, want: context.Canceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: deniedBootstrap{}})

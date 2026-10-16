@@ -41,7 +41,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		}
 		cv, err := idx.Get(chartName, version)
 		if err != nil {
-			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s not found in %s: %v", manifest.ErrObjectNotFound, chartName, version, r.URL, err)
+			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s not found in %s: %w", manifest.ErrObjectNotFound, chartName, version, r.URL, err)
 		}
 		if len(cv.URLs) == 0 {
 			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs", manifest.ErrObjectNotFound, chartName, version, r.URL)

@@ -7,6 +7,7 @@ linters:
   default: standard
   enable:
     - depguard
+    - errorlint
     - forbidigo
     - gosec
     - intrange
@@ -14,11 +15,17 @@ linters:
     - modernize
     - nolintlint
     - revive
+    - thelper
+    - tparallel
     - unconvert
     - unparam
     - usestdlibvars
     - usetesting
   settings:
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
     # The dependency flow from AGENTS.md "Layout": a package may import only the layers below it.
     depguard:
       rules:
@@ -148,6 +155,8 @@ linters:
           msg: logging is log/slog only
     revive:
       rules:
+        - name: argument-limit
+          arguments: [4]
         - name: blank-imports
         - name: context-as-argument
         - name: context-keys-type
@@ -174,7 +183,7 @@ linters:
     nolintlint:
       require-explanation: true
       require-specific: true
-      allow-unused: true
+      allow-unused: false
   exclusions:
     rules:
       # Tests cross layers for fixtures and live in external test packages; usetesting governs their contexts.

@@ -7,21 +7,23 @@ import (
 	"testing/fstest"
 )
 
-// recordAgainst replays a build's reads against disk into a fresh readSet — the
-// recorder side, mirroring what the instrumented overlay does during a render.
-func recordAgainst(root string, lower fs.FS, files, dirs, probed []string) readSetSnapshot {
+type reads struct {
+	files, dirs, probed []string
+}
+
+func recordAgainst(root string, lower fs.FS, read reads) readSetSnapshot {
 	rs := newReadSet(root)
-	for _, rel := range files {
+	for _, rel := range read.files {
 		abs := filepath.Join(root, rel)
 		b, err := fs.ReadFile(lower, rel)
 		rs.recordFile(abs, b, err)
 	}
-	for _, rel := range dirs {
+	for _, rel := range read.dirs {
 		abs := filepath.Join(root, rel)
 		e, _ := fs.ReadDir(lower, rel)
 		rs.recordDir(abs, entryNames(e))
 	}
-	for _, rel := range probed {
+	for _, rel := range read.probed {
 		abs := filepath.Join(root, rel)
 		info, err := fs.Stat(lower, rel)
 		rs.recordNode(abs, diskKind(err == nil, err == nil && info.IsDir()))
@@ -40,11 +42,11 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	}
 	// A build that read the kustomization + a.yaml, listed the dir, and probed a
 	// (missing) optional component.
-	snap := recordAgainst(root, base(),
-		[]string{"kustomization.yaml", "a.yaml"},
-		[]string{"."},
-		[]string{"comp"},
-	)
+	snap := recordAgainst(root, base(), reads{
+		files:  []string{"kustomization.yaml", "a.yaml"},
+		dirs:   []string{"."},
+		probed: []string{"comp"},
+	})
 
 	t.Run("unchanged tree is a hit", func(t *testing.T) {
 		if !snap.stillValidFS(base()) {
@@ -101,7 +103,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 		{name: "directory to absent", before: fstest.MapFS{"comp/child": {}}, after: fstest.MapFS{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			snap := recordAgainst(root, tc.before, nil, nil, []string{"comp"})
+			snap := recordAgainst(root, tc.before, reads{probed: []string{"comp"}})
 			if !snap.stillValidFS(tc.before) || snap.stillValidFS(tc.after) {
 				t.Fatal("probed node transition did not invalidate")
 			}

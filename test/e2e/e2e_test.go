@@ -905,32 +905,37 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 
 func mustExtractLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
-	return mustFindLine(t, haystack, needle, "status", func(line string) bool {
-		return strings.Contains(line, "✓") || strings.Contains(line, "✗")
+	return mustFindLine(t, haystack, needle, lineMatcher{
+		kind: "status",
+		match: func(line string) bool {
+			return strings.Contains(line, "✓") || strings.Contains(line, "✗")
+		},
 	})
 }
 
-// mustExtractSkipLine returns the SKIPPED status line containing needle,
-// failing the test if no such line exists. Companion to mustExtractLine
-// for the changed-only path where mustExtractLine's PASSED/FAILED filter
-// wouldn't match a skipped resource.
 func mustExtractSkipLine(t *testing.T, haystack, needle string) string {
 	t.Helper()
-	return mustFindLine(t, haystack, needle, "skipped", func(line string) bool {
-		return strings.Contains(line, "‒")
+	return mustFindLine(t, haystack, needle, lineMatcher{
+		kind: "skipped",
+		match: func(line string) bool {
+			return strings.Contains(line, "‒")
+		},
 	})
 }
 
-// mustFindLine returns the first line containing needle that also
-// satisfies match, failing the test with a kind-tagged message otherwise.
-func mustFindLine(t *testing.T, haystack, needle, kind string, match func(string) bool) string {
+type lineMatcher struct {
+	kind  string
+	match func(string) bool
+}
+
+func mustFindLine(t *testing.T, haystack, needle string, matcher lineMatcher) string {
 	t.Helper()
 	for line := range strings.SplitSeq(haystack, "\n") {
-		if strings.Contains(line, needle) && match(line) {
+		if strings.Contains(line, needle) && matcher.match(line) {
 			return line
 		}
 	}
-	t.Fatalf("%s line for %q not found in:\n%s", kind, needle, haystack)
+	t.Fatalf("%s line for %q not found in:\n%s", matcher.kind, needle, haystack)
 	return ""
 }
 
@@ -1018,7 +1023,7 @@ data:
 // asserts). path is always inside a t.TempDir() in callers.
 func mutateFile(t *testing.T, path, oldStr, newStr string) {
 	t.Helper()
-	body, err := os.ReadFile(path) //nolint:gosec // path is inside a t.TempDir()
+	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1026,7 +1031,7 @@ func mutateFile(t *testing.T, path, oldStr, newStr string) {
 	if mutated == string(body) {
 		t.Fatalf("sentinel %q not found in %s", oldStr, path)
 	}
-	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil { //nolint:gosec // path is inside a t.TempDir()
+	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1045,11 +1050,11 @@ func copyTree(t *testing.T, src string) string {
 		if d.IsDir() {
 			return os.MkdirAll(out, 0o750)
 		}
-		data, err := os.ReadFile(p) //nolint:gosec // p is supplied by filepath.WalkDir over a known root
+		data, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(out, data, 0o600) //nolint:gosec // dst is t.TempDir()
+		return os.WriteFile(out, data, 0o600)
 	})
 	if err != nil {
 		t.Fatal(err)

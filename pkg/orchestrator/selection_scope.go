@@ -355,19 +355,18 @@ func nonResourceErrors(err error) error {
 	if _, ok := errors.AsType[*FailuresError](err); !ok {
 		return err
 	}
-	switch e := err.(type) {
-	case interface{ Unwrap() []error }:
+	if e, ok := errors.AsType[interface {
+		error
+		Unwrap() []error
+	}](err); ok {
 		children := e.Unwrap()
 		projected := make([]error, 0, len(children))
 		for _, child := range children {
 			projected = append(projected, nonResourceErrors(child))
 		}
 		return errors.Join(projected...)
-	case interface{ Unwrap() error }:
-		return nonResourceErrors(e.Unwrap())
-	default:
-		return nil
 	}
+	return nonResourceErrors(errors.Unwrap(err))
 }
 
 func selectionError(sides []selectionSide, runErr error) (error, error) {
@@ -384,7 +383,8 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 		if err == nil {
 			return nil, nil
 		}
-		if tree, ok := err.(*treeErrors); ok {
+		// A descendant tree MUST NOT absorb its ancestor's joined siblings.
+		if tree, ok := errors.AsType[*treeErrors](err); ok && errors.Is(tree, err) {
 			projectedTree = true
 			orig, current := nonResourceErrors(tree.base), nonResourceErrors(tree.head)
 			return joinSelectedErrors(
@@ -396,8 +396,13 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 			remainder := nonResourceErrors(err)
 			return remainder, remainder
 		}
-		switch e := err.(type) {
-		case interface{ Unwrap() []error }:
+		if child := errors.Unwrap(err); child != nil {
+			return project(child)
+		}
+		if e, ok := errors.AsType[interface {
+			error
+			Unwrap() []error
+		}](err); ok {
 			children := e.Unwrap()
 			out := make([]error, 0, len(children))
 			remainders := make([]error, 0, len(children))
@@ -407,8 +412,6 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 				remainders = append(remainders, remainder)
 			}
 			return errors.Join(out...), errors.Join(remainders...)
-		case interface{ Unwrap() error }:
-			return project(e.Unwrap())
 		}
 		return err, err
 	}

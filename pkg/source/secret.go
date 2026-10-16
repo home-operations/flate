@@ -42,37 +42,36 @@ func (e *MissingSecretError) Error() string {
 func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
 
 // MissingSecretErr builds a *MissingSecretError for a source-group owner.
-// The owner and secret share the namespace ns (a SecretRef is same-namespace).
-func MissingSecretErr(kind, ns, name, secretRef, reason string) error {
+func MissingSecretErr(owner manifest.NamedResource, secretRef, reason string) error {
+	owner.Group = manifest.SourceDomain
 	return &MissingSecretError{
-		Owner: manifest.NamedResource{
-			Group: manifest.SourceDomain, Kind: kind, Namespace: ns, Name: name},
-		Secret: manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: secretRef},
+		Owner:  owner,
+		Secret: manifest.NamedResource{Kind: manifest.KindSecret, Namespace: owner.Namespace, Name: secretRef},
 		Detail: reason,
 	}
 }
 
 // An unwired getter is configuration failure; missing material retains the
 // source and Secret identities for the existing whole-source skip policy.
-func resolveSecretRef(secrets SecretGetter, ns, ownerKind, ownerID, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
+func resolveSecretRef(secrets SecretGetter, owner manifest.NamedResource, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
 	if secrets == nil {
 		return nil, fmt.Errorf("%s %s references %s but no source.SecretGetter is wired",
-			ownerKind, ownerID, field)
+			owner.Kind, owner.Name, field)
 	}
-	sec := secrets(ns, ref.Name)
+	sec := secrets(owner.Namespace, ref.Name)
 	if sec == nil {
-		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "not found")
+		return nil, MissingSecretErr(owner, ref.Name, "not found")
 	}
 	return sec, nil
 }
 
 // BasicAuthFromSecret reports absent, undecodable or wiped credentials through
 // MissingSecretError. Placeholder tokens must never become credentials.
-func BasicAuthFromSecret(sec *manifest.Secret, ownerKind, ns, name, secretRef string) (username, password string, err error) {
+func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.NamedResource, secretRef string) (username, password string, err error) {
 	username, _, _ = sec.Value("username")
 	password, _, _ = sec.Value("password")
 	if username == "" || password == "" || manifest.HasValuePlaceholder(username) || manifest.HasValuePlaceholder(password) {
-		return "", "", MissingSecretErr(ownerKind, ns, name, secretRef, "missing username/password")
+		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
 	}
 	return username, password, nil
 }

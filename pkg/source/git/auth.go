@@ -24,7 +24,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret
 		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", gitID(repo))
 	}
 	if sec == nil {
-		return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found")
+		return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found")
 	}
 	endpoint, err := transport.NewEndpoint(repo.URL)
 	if err != nil {
@@ -36,7 +36,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret
 			// Empty covers both missing-key and PLACEHOLDER-wiped values
 			// (the ExternalSecret case). Same sentinel so
 			// --allow-missing-secrets covers both shapes.
-			return nil, source.MissingSecretErr("GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing 'identity' for SSH auth")
+			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing 'identity' for SSH auth")
 		}
 		password, _, _ := sec.Value("password")
 		auth, err := gitssh.NewPublicKeys(cmp.Or(endpoint.User, "git"), []byte(identity), password)
@@ -63,7 +63,7 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret
 	if token, _, _ := sec.Value("bearerToken"); token != "" && !manifest.HasValuePlaceholder(token) {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
-	username, password, err := source.BasicAuthFromSecret(sec, "GitRepository", repo.Namespace, repo.Name, repo.SecretRef.Name)
+	username, password, err := source.BasicAuthFromSecret(sec, repo.Named(), repo.SecretRef.Name)
 	if err != nil {
 		return nil, err
 	}

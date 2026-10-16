@@ -11,29 +11,29 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// Equal fails t (non-fatally) when got != want, reporting both.
-func Equal[T comparable](t testing.TB, got, want T) {
-	t.Helper()
+// Equal fails tb (non-fatally) when got != want, reporting both.
+func Equal[T comparable](tb testing.TB, got, want T) {
+	tb.Helper()
 	if got != want {
-		t.Errorf("got %v, want %v", got, want)
+		tb.Errorf("got %v, want %v", got, want)
 	}
 }
 
-// Diff fails t (non-fatally) with a structural diff when got != want.
+// Diff fails tb (non-fatally) with a structural diff when got != want.
 // Uses go-cmp; intended for maps, slices, and structs with exported
 // fields (cmp panics on unexported fields without options) — keep
 // manual comparison for types with unexported state.
-func Diff(t testing.TB, got, want any) {
-	t.Helper()
+func Diff(tb testing.TB, got, want any) {
+	tb.Helper()
 	if d := cmp.Diff(want, got); d != "" {
-		t.Errorf("mismatch (-want +got):\n%s", d)
+		tb.Errorf("mismatch (-want +got):\n%s", d)
 	}
 }
 
 // NoError stops the test when an operation fails.
-func NoError(t testing.TB, err error) {
-	t.Helper()
+func NoError(tb testing.TB, err error) {
+	tb.Helper()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }

@@ -59,8 +59,9 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 	if err != nil {
 		return nil, nil, err
 	}
-	proxy, err := source.ResolveProxy(f.Secrets, repo.Namespace, "OCIRepository",
-		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	owner := repo.Named()
+	owner.Name = repo.Namespace + "/" + repo.Name
+	proxy, err := source.ResolveProxy(f.Secrets, owner, repo.ProxySecretRef)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -101,8 +102,9 @@ func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) 
 	if repo.CertSecretRef == nil && !repo.Insecure {
 		return nil, nil
 	}
-	cfg, err := source.ResolveCertSecret(f.Secrets, repo.Namespace, "OCIRepository",
-		repo.Namespace+"/"+repo.Name, repo.CertSecretRef)
+	owner := repo.Named()
+	owner.Name = repo.Namespace + "/" + repo.Name
+	cfg, err := source.ResolveCertSecret(f.Secrets, owner, repo.CertSecretRef)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +112,7 @@ func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) 
 		cfg = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	if repo.Insecure {
-		cfg.InsecureSkipVerify = true //nolint:gosec // honoring user-declared spec.insecure
+		cfg.InsecureSkipVerify = true
 	}
 	return cfg, nil
 }
@@ -128,14 +130,14 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "not found"), retry)
+		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found"), retry)
 	}
 	configJSON, _, err := sec.Value(dockerConfigJSONKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, ociID(repo), err)
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr("OCIRepository", repo.Namespace, repo.Name, repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), retry)
+		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), retry)
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {

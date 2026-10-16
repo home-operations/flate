@@ -186,7 +186,7 @@ func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
 	if err1 == nil || err2 == nil {
 		t.Fatal("expected compile error on both calls")
 	}
-	if err1 != err2 {
+	if !errors.Is(err1, err2) {
 		t.Errorf("compile error not memoized: %p vs %p", err1, err2)
 	}
 }

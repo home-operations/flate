@@ -15,14 +15,14 @@ import (
 	"testing"
 )
 
-func ociRenderFixture(t testing.TB) (*store.Store, *manifest.HelmRelease, string) {
-	t.Helper()
-	dir := t.TempDir()
-	writeChartFiles(t, dir, "podinfo", "6.15.0")
-	testutil.WriteFile(t, dir, "values.yaml", "marker: default\n")
-	testutil.WriteFile(t, dir, "prod.yaml", "marker: original\n")
-	testutil.WriteFile(t, dir, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n")
-	testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+func ociRenderFixture(tb testing.TB) (*store.Store, *manifest.HelmRelease, string) {
+	tb.Helper()
+	dir := tb.TempDir()
+	writeChartFiles(tb, dir, "podinfo", "6.15.0")
+	testutil.WriteFile(tb, dir, "values.yaml", "marker: default\n")
+	testutil.WriteFile(tb, dir, "prod.yaml", "marker: original\n")
+	testutil.WriteFile(tb, dir, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n")
+	testutil.WriteFile(tb, dir, "templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}
@@ -45,23 +45,23 @@ data:
 	return st, hr, dir
 }
 
-func newTestCache(t testing.TB, root string) *cache.Cache {
-	t.Helper()
-	owner, err := cache.New(t.Context(), root)
+func newTestCache(tb testing.TB, root string) *cache.Cache {
+	tb.Helper()
+	owner, err := cache.New(tb.Context(), root)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if err := owner.Close(); err != nil {
-			t.Error(err)
+			tb.Error(err)
 		}
 	})
 	return owner
 }
 
-func acquireChartFS(t testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
-	t.Helper()
-	acquired, _, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{Content: t.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
+	tb.Helper()
+	acquired, _, _, err := owner.Acquire(tb.Context(), cache.ArchiveKey{Content: tb.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		tw := tar.NewWriter(w)
 		err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil || entry.IsDir() {
@@ -80,7 +80,7 @@ func acquireChartFS(t testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 		return ocispec.Descriptor{}, errors.Join(err, tw.Close())
 	})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return acquired
 }

@@ -35,8 +35,8 @@ var demoRawSpec = map[string]any{
 	"spec":       map[string]any{"path": "./"},
 }
 
-func renderPersistenceEligible(t testing.TB) bool {
-	t.Helper()
+func renderPersistenceEligible(tb testing.TB) bool {
+	tb.Helper()
 	info, ok := debug.ReadBuildInfo()
 	eligible := false
 	if ok {
@@ -66,45 +66,45 @@ func renderPersistenceEligible(t testing.TB) bool {
 	return eligible
 }
 
-func readTestRenderFrame(t testing.TB, cache *TreeCache, key string) (readSetSnapshot, []byte, bool) {
-	t.Helper()
-	r, _, _, err := cache.owner.Blob(t.Context(), sourcecache.BlobKey{Content: key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSnapshot, []byte, bool) {
+	tb.Helper()
+	r, _, _, err := cache.owner.Blob(tb.Context(), sourcecache.BlobKey{Content: key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if errors.Is(err, errdef.ErrNotFound) {
 		return readSetSnapshot{}, nil, false
 	}
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	raw, err := io.ReadAll(r)
 	if err := errors.Join(err, r.Close()); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	snap, out, err := decodeFrame(raw)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return snap, out, true
 }
 
-func publishTestFrame(t testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
-	t.Helper()
-	r, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
+	tb.Helper()
+	r, _, _, err := owner.Blob(tb.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(raw)
 		return ocispec.Descriptor{}, err
 	})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := r.Close(); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
-func testRenderFrame(t testing.TB, snap readSetSnapshot, output []byte) []byte {
-	t.Helper()
+func testRenderFrame(tb testing.TB, snap readSetSnapshot, output []byte) []byte {
+	tb.Helper()
 	frame, err := encodeFrame(snap, output)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return frame
 }

@@ -41,24 +41,24 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 	}
 }
 
-func newTestCache(t testing.TB, root string) *cache.Cache {
-	t.Helper()
-	owner, err := cache.New(t.Context(), root)
+func newTestCache(tb testing.TB, root string) *cache.Cache {
+	tb.Helper()
+	owner, err := cache.New(tb.Context(), root)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if err := owner.Close(); err != nil {
-			t.Error(err)
+			tb.Error(err)
 		}
 	})
 	return owner
 }
 
-func newTestTreeCache(t testing.TB, root string) *TreeCache {
-	t.Helper()
-	c := NewTreeCache(newTestCache(t, root), nil)
-	t.Cleanup(c.Close)
+func newTestTreeCache(tb testing.TB, root string) *TreeCache {
+	tb.Helper()
+	c := NewTreeCache(newTestCache(tb, root), nil)
+	tb.Cleanup(c.Close)
 	return c
 }
 

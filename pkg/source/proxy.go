@@ -34,11 +34,11 @@ func (p *ProxyConfig) URL() (*url.URL, error) {
 
 // ResolveProxy reads the configured proxy address and optional credentials.
 // Missing or wiped material returns MissingSecretError; a nil ref selects environment policy.
-func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *manifest.LocalObjectReference) (*ProxyConfig, error) {
+func ResolveProxy(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*ProxyConfig, error) {
 	if ref == nil {
 		return nil, nil
 	}
-	sec, err := resolveSecretRef(secrets, ns, ownerKind, ownerID, "proxySecretRef", ref)
+	sec, err := resolveSecretRef(secrets, owner, "proxySecretRef", ref)
 	if err != nil {
 		return nil, err
 	}
@@ -47,18 +47,18 @@ func ResolveProxy(secrets SecretGetter, ns, ownerKind, ownerID string, ref *mani
 	for i, key := range []string{"address", "username", "password"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, fmt.Errorf("proxy secret %s/%s: %w", ns, ref.Name, err)
+			return nil, fmt.Errorf("proxy secret %s/%s: %w", owner.Namespace, ref.Name, err)
 		}
 		if manifest.HasValuePlaceholder(value) {
-			return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "proxy material unavailable")
+			return nil, MissingSecretErr(owner, ref.Name, "proxy material unavailable")
 		}
 		material[i] = value
 	}
 	if material[0] == "" {
 		if material[1] != "" || material[2] != "" {
-			return nil, fmt.Errorf("%w: proxy secret %s/%s missing required 'address' key", manifest.ErrInput, ns, ref.Name)
+			return nil, fmt.Errorf("%w: proxy secret %s/%s missing required 'address' key", manifest.ErrInput, owner.Namespace, ref.Name)
 		}
-		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "missing required 'address' key")
+		return nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
 	}
 	return &ProxyConfig{Address: material[0], Username: material[1], Password: material[2]}, nil
 }

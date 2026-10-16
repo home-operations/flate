@@ -368,12 +368,12 @@ func namespaceOrphanSourceNamespace(scenario, namespace string) string {
 }
 
 func namespaceOrphanFixture(t *testing.T, scenario string) (string, string, []string) {
+	t.Helper()
 	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
 		t.Setenv(name, "")
 	}
 	t.Setenv("NO_PROXY", "*")
 	t.Setenv("no_proxy", "*")
-	t.Helper()
 	root, cache := t.TempDir(), t.TempDir()
 	gitInit(t, root)
 	namespaces := []string{"demo"}

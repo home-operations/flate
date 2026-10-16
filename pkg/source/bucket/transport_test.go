@@ -18,6 +18,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -109,16 +110,30 @@ func TestFetcher_ResolveTransport_AllKeysMissing(t *testing.T) {
 }
 
 func TestFetcher_ResolveTransport_SecretNotFound(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret { return nil },
-	}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
-	}
-	_, err := f.resolveTransport(b)
-	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {
-		t.Errorf("expected secret-not-found error; got %v", err)
+	for _, tc := range []struct {
+		name        string
+		proxy, cert *manifest.LocalObjectReference
+	}{
+		{name: "proxy", proxy: &manifest.LocalObjectReference{Name: "missing"}},
+		{name: "cert", cert: &manifest.LocalObjectReference{Name: "missing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
+			b := &manifest.Bucket{
+				Name: "b", Namespace: "ns", ProxySecretRef: tc.proxy, CertSecretRef: tc.cert,
+			}
+			_, err := f.resolveTransport(b)
+			if !errors.Is(err, manifest.ErrMissingSecret) {
+				t.Fatalf("expected missing-secret error; got %v", err)
+			}
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok {
+				t.Fatalf("expected MissingSecretError; got %T", err)
+			}
+			assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "ns", Name: "ns/b"})
+			assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+			assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": Bucket ns/ns/b: secret ns/missing not found")
+		})
 	}
 }
 

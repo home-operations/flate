@@ -57,6 +57,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 		check    func(*testing.T, error)
 	}{
 		{"real nested fmt transport", connReset(), syscall.ECONNRESET, func(t *testing.T, err error) {
+			t.Helper()
 			if u, ok := errors.AsType[*url.Error](err); !ok || u.Op != "Head" || u.URL != "" {
 				t.Fatalf("URL wrapper: %+v", u)
 			}
@@ -73,12 +74,14 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 		{"transport EOF", &url.Error{Op: "Get", Err: fmt.Errorf("read: %w", io.ErrUnexpectedEOF)}, io.ErrUnexpectedEOF, nil},
 		{"net EOF", &net.OpError{Op: "read", Err: io.ErrUnexpectedEOF}, io.ErrUnexpectedEOF, nil},
 		{"DNS", &net.DNSError{Err: "fixture-secret", Name: "fixture-secret", Server: "fixture-secret", IsTimeout: true, IsTemporary: true, IsNotFound: true, UnwrapErr: os.ErrDeadlineExceeded}, os.ErrDeadlineExceeded, func(t *testing.T, err error) {
+			t.Helper()
 			if d, ok := errors.AsType[*net.DNSError](err); !ok || !d.Timeout() || !d.IsTemporary || !d.IsNotFound || d.Name != "" || d.Server != "" {
 				t.Fatalf("DNS wrapper: %+v", d)
 			}
 		}},
 		{"DNS without inner cause", &net.DNSError{IsTimeout: true}, nil, nil},
 		{"ORAS response", &fetcherr.ResponseError{StatusCode: 503, Op: http.MethodGet, Message: "fixture-secret", Err: &errcode.ErrorResponse{Method: http.MethodGet, URL: &url.URL{Host: "fixture-secret"}, StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}, {Code: errcode.ErrorCodeManifestUnknown}}}}, nil, func(t *testing.T, err error) {
+			t.Helper()
 			r, ok := errors.AsType[*errcode.ErrorResponse](err)
 			if !ok || r.StatusCode != http.StatusServiceUnavailable || r.URL != nil || r.Method != http.MethodGet || len(r.Errors) != 2 || r.Errors[0].Code != errcode.ErrorCodeBlobUnknown || r.Errors[0].Message != "" || r.Errors[0].Detail != nil {
 				t.Fatalf("response wrapper: %+v", r)
@@ -88,6 +91,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 		{"neutral response", &fetcherr.ResponseError{StatusCode: 599, Op: http.MethodHead, Message: "fixture-secret"}, nil, nil},
 		{"neutral redacted operation", &fetcherr.ResponseError{StatusCode: 500, Op: "fixture-secret", Message: "fixture-secret"}, nil, nil},
 		{"ORAS code value", &fetcherr.ResponseError{StatusCode: 503, Err: errcode.Error{Code: errcode.ErrorCodeManifestUnknown, Message: "fixture-secret"}}, nil, func(t *testing.T, err error) {
+			t.Helper()
 			if _, ok := errors.AsType[errcode.Error](err); !ok {
 				t.Fatal("value code identity lost")
 			}
@@ -96,6 +100,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 			}
 		}},
 		{"ORAS code pointer", &fetcherr.ResponseError{StatusCode: 503, Err: &errcode.Error{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}}, nil, func(t *testing.T, err error) {
+			t.Helper()
 			if code, ok := errors.AsType[*errcode.Error](err); !ok || code.Code != errcode.ErrorCodeBlobUnknown || code.Message != "" || code.Detail != nil {
 				t.Fatalf("pointer code identity: %+v", code)
 			}
@@ -146,7 +151,9 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 			if !ok || bytes.Contains(config, []byte("fixture-secret")) || bytes.Contains(data, []byte("fixture-secret")) || strings.Contains(replay.Error(), "fixture-secret") {
 				t.Fatal("persisted diagnostics contain fixture secret")
 			}
-			if terminal, _ := errors.AsType[*TerminalError](live); !terminal.Attempted || terminal.Err.(*producerError).error != tc.cause {
+			terminal, _ := errors.AsType[*TerminalError](live)
+			producer, ok := errors.AsType[*producerError](terminal.Err)
+			if !terminal.Attempted || !ok || !errors.Is(producer.error, tc.cause) {
 				t.Fatal("live cause changed")
 			}
 		})

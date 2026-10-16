@@ -3,7 +3,6 @@ package base_test
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,7 +21,7 @@ func TestRunWithStatusOutcome_Success(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 		func(_ context.Context, obj *manifest.HelmRelease) error {
 			if obj.Name != "app" {
 				t.Errorf("re-read got %q, want app", obj.Name)
@@ -42,7 +41,7 @@ func TestRunWithStatusOutcome_Failure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			return errors.New("render failed")
 		},
@@ -69,7 +68,7 @@ func TestRunWithStatusOutcome_Panic(t *testing.T) {
 	var rec any
 	func() {
 		defer func() { rec = recover() }()
-		base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
+		base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 			func(_ context.Context, _ *manifest.HelmRelease) error {
 				panic("kaboom")
 			},
@@ -91,7 +90,7 @@ func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 	s := store.New()
 	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
 	called := false
-	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			called = true
 			return nil
@@ -115,7 +114,7 @@ func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusReady, message)
 
-			base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
+			base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 				func(_ context.Context, _ *manifest.HelmRelease) error { return nil },
 			)
 			got, _ := s.GetStatus(id)
@@ -135,7 +134,7 @@ func TestRunWithStatusOutcome_PreservesExternalFailure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatusOutcome(t.Context(), s, id, slog.Default(),
+	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 		func(_ context.Context, _ *manifest.HelmRelease) error {
 			s.UpdateStatus(id, store.StatusFailed, "dependency cycle detected")
 			return nil

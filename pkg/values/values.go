@@ -175,7 +175,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		if values, err = updateHelmReleaseValues(ref, found, values, cache, share); err != nil {
+		if values, err = cache.updateHelmReleaseValues(ref, found, values, share); err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}
@@ -291,7 +291,7 @@ func (e *missingValueRefError) Unwrap() error {
 //     DeepMergeInto over a DeepCopyMap of the canonical, so the
 //     accumulator is FULLY OWNED and the in-place strvals write that a
 //     TargetPath ref performs can't reach (and corrupt) the shared cache.
-func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, cache *Cache, share bool) (map[string]any, error) {
+func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, share bool) (map[string]any, error) {
 	if ref.TargetPath != "" {
 		// Only reached when share==false (the caller sets share false the
 		// moment any ref carries a TargetPath), so `values` is owned and
@@ -304,7 +304,7 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 		return values, err
 	}
 
-	parsed, ok := cache.lookup(found)
+	parsed, ok := c.lookup(found)
 	if !ok {
 		if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
 			// Wiped Secret values surface here as the literal placeholder
@@ -321,7 +321,7 @@ func updateHelmReleaseValues(ref manifest.ValuesReference, found string, values 
 			return values, nil
 		}
 		// Cache the parsed tree (canonical, never mutated) before merging.
-		cache.put(found, parsed)
+		c.put(found, parsed)
 	}
 	if share {
 		// Folds parsed into the owned accumulator in place: non-colliding

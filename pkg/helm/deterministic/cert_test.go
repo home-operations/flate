@@ -6,8 +6,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"math/big"
 	"testing"
 	"time"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func mustParseCert(t *testing.T, pemStr string) *x509.Certificate {
@@ -49,24 +52,11 @@ func genCAFn(t *testing.T, fm map[string]any) func(string, int) (certificate, er
 	return fn
 }
 
-// TestCertFuncs_DeterministicAndValid pins the cert tier: a CA and a leaf signed
-// by it render byte-identically for a given seed, are valid ed25519 x509 with the
-// fixedTime window, and the leaf verifies against the CA — so caBundle/tls.crt
-// stop churning while staying internally consistent.
 func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 	fm := Funcs(SeedFor("rel", "ns"))
 	ca, err := genCAFn(t, fm)("my-ca", 365)
 	if err != nil {
 		t.Fatalf("genCA: %v", err)
-	}
-
-	genSigned, ok := fm["genSignedCert"].(func(string, []any, []any, int, certificate) (certificate, error))
-	if !ok {
-		t.Fatalf("genSignedCert override has unexpected type %T", fm["genSignedCert"])
-	}
-	leaf, err := genSigned("leaf.example.com", []any{"10.0.0.1"}, []any{"leaf.example.com"}, 365, ca)
-	if err != nil {
-		t.Fatalf("genSignedCert: %v", err)
 	}
 
 	caCert := mustParseCert(t, ca.Cert)
@@ -83,17 +73,8 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 		t.Errorf("CA NotAfter = %v, want %v", caCert.NotAfter, want)
 	}
 
-	// Chain consistency: the leaf must be signed by the CA in caBundle.
-	leafCert := mustParseCert(t, leaf.Cert)
-	if err := leafCert.CheckSignatureFrom(caCert); err != nil {
-		t.Errorf("leaf is not signed by the generated CA: %v", err)
-	}
-
-	// Keys round-trip as ed25519.
 	mustParseEd25519Key(t, ca.Key)
-	mustParseEd25519Key(t, leaf.Key)
 
-	// Same seed → byte-identical CA; different seed → different.
 	again, err := genCAFn(t, Funcs(SeedFor("rel", "ns")))("my-ca", 365)
 	if err != nil {
 		t.Fatalf("genCA again: %v", err)
@@ -108,13 +89,99 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 	if other.Cert == ca.Cert {
 		t.Error("different seeds produced an identical CA")
 	}
+
+	for _, tt := range []struct {
+		name string
+		cfg  certConfig
+	}{
+		{
+			name: "genSelfSignedCert",
+			cfg: certConfig{
+				cn: "self.example.com", ips: []any{"10.0.0.7", "2001:db8::7"},
+				alternateDNS: []any{"self-alt.example.com", "self-other.example.com"}, days: 17,
+			},
+		},
+		{
+			name: "genSignedCert",
+			cfg: certConfig{
+				cn: "leaf.example.com", ips: []any{"192.0.2.9", "2001:db8::9"},
+				alternateDNS: []any{"leaf-alt.example.com", "leaf-other.example.com"}, days: 29,
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			seed := SeedFor(tt.name, "ns")
+			expectedStream := newStream(seed)
+			pub, priv, err := ed25519.GenerateKey(expectedStream)
+			assert.NoError(t, err)
+			serial, err := rand.Int(expectedStream, new(big.Int).Lsh(big.NewInt(1), 128))
+			assert.NoError(t, err)
+			var gotNext, wantNext [32]byte
+			_, err = expectedStream.Read(wantNext[:])
+			assert.NoError(t, err)
+
+			s := newStream(seed)
+			fm := certFuncs(s)
+			cfg := tt.cfg
+			var got, want certificate
+			if tt.name == "genSignedCert" {
+				got, err = fm[tt.name].(func(string, []any, []any, int, certificate) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, ca)
+				assert.NoError(t, err)
+				want, err = genSignedCert(newStream(seed), cfg, ca)
+			} else {
+				got, err = fm[tt.name].(func(string, []any, []any, int) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days)
+				assert.NoError(t, err)
+				want, err = genSelfSignedCert(newStream(seed), cfg)
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, got, want)
+			_, err = s.Read(gotNext[:])
+			assert.NoError(t, err)
+			assert.Equal(t, gotNext, wantNext)
+
+			for _, key := range []string{"not a PEM key", ca.Key} {
+				withKeyStream := newStream(seed)
+				withKey := certFuncs(withKeyStream)[tt.name+"WithKey"]
+				if tt.name == "genSignedCert" {
+					got, err = withKey.(func(string, []any, []any, int, certificate, string) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, ca, key)
+				} else {
+					got, err = withKey.(func(string, []any, []any, int, string) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, key)
+				}
+				assert.NoError(t, err)
+				assert.Equal(t, got, want)
+				_, err = withKeyStream.Read(gotNext[:])
+				assert.NoError(t, err)
+				assert.Equal(t, gotNext, wantNext)
+			}
+
+			cert := mustParseCert(t, got.Cert)
+			assert.Equal(t, cert.Subject.CommonName, cfg.cn)
+			ips, dns := []any{}, []any{}
+			for _, ip := range cert.IPAddresses {
+				ips = append(ips, ip.String())
+			}
+			for _, name := range cert.DNSNames {
+				dns = append(dns, name)
+			}
+			assert.Diff(t, ips, cfg.ips)
+			assert.Diff(t, dns, cfg.alternateDNS)
+			assert.Equal(t, cert.NotBefore, fixedTime)
+			assert.Equal(t, cert.NotAfter, fixedTime.Add(24*time.Hour*time.Duration(cfg.days)))
+			assert.Equal(t, cert.SignatureAlgorithm, x509.PureEd25519)
+			if tt.name == "genSignedCert" {
+				assert.NoError(t, cert.CheckSignatureFrom(caCert))
+			} else {
+				assert.NoError(t, cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature))
+			}
+
+			assert.Diff(t, mustParseEd25519Key(t, got.Key), priv)
+			assert.Diff(t, cert.PublicKey, pub)
+			assert.Equal(t, cert.SerialNumber.Cmp(serial), 0)
+		})
+	}
 }
 
-// TestGenSignedCert_RejectsNonEd25519CA pins the WithKey/parseCA boundary: a CA
-// whose key is not ed25519 (everything this package generates is) is rejected
-// with a clear error rather than producing a nondeterministic signature.
 func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
-	// A valid ed25519 CA cert, but paired with an RSA key.
 	fm := Funcs(SeedFor("rel", "ns"))
 	ca, err := genCAFn(t, fm)("my-ca", 365)
 	if err != nil {
@@ -131,8 +198,23 @@ func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
 	ca.Key = string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 
 	genSigned := fm["genSignedCert"].(func(string, []any, []any, int, certificate) (certificate, error))
-	if _, err := genSigned("leaf", nil, nil, 365, ca); err == nil {
-		t.Error("genSignedCert accepted a non-ed25519 CA key; want an error")
+	for _, tt := range []struct {
+		name string
+		ca   certificate
+		ips  []any
+		want string
+	}{
+		{name: "non-ed25519 key", ca: ca, want: "CA key is *rsa.PrivateKey, want ed25519"},
+		{name: "non-ed25519 key before invalid IP", ca: ca, ips: []any{"invalid ip"}, want: "CA key is *rsa.PrivateKey, want ed25519"},
+		{name: "invalid certificate before invalid IP", ca: certificate{Cert: "not PEM"}, ips: []any{"invalid ip"}, want: "unable to decode CA certificate PEM"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := genSigned("leaf", tt.ips, nil, 365, tt.ca)
+			if err == nil {
+				t.Fatal("genSignedCert accepted an invalid CA")
+			}
+			assert.Equal(t, err.Error(), tt.want)
+		})
 	}
 }
 

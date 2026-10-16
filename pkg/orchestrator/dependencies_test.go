@@ -12,13 +12,21 @@ import (
 
 func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 	var generatedName string
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+	for _, tc := range []struct {
+		workers     int
+		wipeSecrets bool
+	}{{2, false}, {2, true}, {4, false}, {4, true}} {
+		t.Run(fmt.Sprintf("workers_%d/wipe_%t", tc.workers, tc.wipeSecrets), func(t *testing.T) {
 			dir := t.TempDir()
 			testutil.WriteGeneratedValuesCluster(t, dir)
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers})
+			const cipher = "ENC[AES256_GCM,data:fixture,type:str]"
+			testutil.WriteFile(t, dir, "charts/app/templates/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n")
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: tc.wipeSecrets, Concurrency: tc.workers})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if o.hrc.Store != o.store || o.hrc.Tasks != o.tasks || o.hrc.Name() != "helmrelease" {
+				t.Fatal("HelmRelease base controller identity or wiring changed")
 			}
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
@@ -56,6 +64,18 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 				rendered, ok := o.store.Get[*manifest.ConfigMap](renderedID)
 				if !ok || rendered.Data["greeting"] != "hello" || rendered.Data["replicas"] != "2" {
 					t.Fatalf("effective chart values differ: %+v", rendered)
+				}
+				secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: id.Namespace, Name: name + "-secret"}
+				secret, ok := o.store.Get[*manifest.Secret](secretID)
+				if !ok {
+					t.Fatalf("emitted Secret missing: %s", secretID)
+				}
+				want := cipher
+				if tc.wipeSecrets {
+					want = "..PLACEHOLDER_token.."
+				}
+				if value, _, err := secret.Value("token"); err != nil || value != want {
+					t.Fatalf("emitted Secret token = %q, want %q: %v", value, want, err)
 				}
 				if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady {
 					t.Fatalf("HR status=%+v", info)

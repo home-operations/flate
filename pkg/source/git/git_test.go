@@ -842,15 +842,15 @@ func mustInitRepo(t *testing.T, dir string) {
 	}
 }
 
-func newGitCache(t testing.TB, root string) *sourcecache.Cache {
-	t.Helper()
-	c, err := sourcecache.New(t.Context(), root)
+func newGitCache(tb testing.TB, root string) *sourcecache.Cache {
+	tb.Helper()
+	c, err := sourcecache.New(tb.Context(), root)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if err := c.Close(); err != nil {
-			t.Error(err)
+			tb.Error(err)
 		}
 	})
 	return c

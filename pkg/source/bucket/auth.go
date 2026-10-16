@@ -23,16 +23,15 @@ import (
 // rather than the TLS layer, mirroring Flux's source-controller
 // behavior.
 func (f *Fetcher) resolveTransport(b *manifest.Bucket) (*http.Transport, error) {
-	ownerID := b.Namespace + "/" + b.Name
-	proxy, err := source.ResolveProxy(f.Secrets, b.Namespace, "Bucket",
-		ownerID, b.ProxySecretRef)
+	owner := b.Named()
+	owner.Name = b.Namespace + "/" + b.Name
+	proxy, err := source.ResolveProxy(f.Secrets, owner, b.ProxySecretRef)
 	if err != nil {
 		return nil, err
 	}
 	var tlsCfg *tls.Config
 	if b.CertSecretRef != nil {
-		tlsCfg, err = source.ResolveCertSecret(f.Secrets, b.Namespace, "Bucket",
-			ownerID, b.CertSecretRef)
+		tlsCfg, err = source.ResolveCertSecret(f.Secrets, owner, b.CertSecretRef)
 		if err != nil {
 			return nil, err
 		}
@@ -51,7 +50,7 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 	}
 	sec := f.Secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
-		return nil, source.MissingSecretErr("Bucket", b.Namespace, b.Name, b.SecretRef.Name, "not found")
+		return nil, source.MissingSecretErr(b.Named(), b.SecretRef.Name, "not found")
 	}
 	access, _, _ := sec.Value("accesskey")
 	secret, _, _ := sec.Value("secretkey")
@@ -59,7 +58,7 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 		// Empty covers both missing-key and PLACEHOLDER-wiped values
 		// (the ExternalSecret case). Same sentinel so
 		// --allow-missing-secrets covers both shapes.
-		return nil, source.MissingSecretErr("Bucket", b.Namespace, b.Name, b.SecretRef.Name, "missing accesskey/secretkey")
+		return nil, source.MissingSecretErr(b.Named(), b.SecretRef.Name, "missing accesskey/secretkey")
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
 }

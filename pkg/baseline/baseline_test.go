@@ -115,7 +115,9 @@ func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
 	}
 	branchName := head.Name().Short()
 	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", branchName), mainCommit)
-	configureBranch(t, repo, branchName, "origin", "refs/heads/"+branchName)
+	configureBranch(t, repo, &config.Branch{
+		Name: branchName, Remote: "origin", Merge: head.Name(),
+	})
 
 	// Move forward on the local branch.
 	writeAndCommit(t, dir, "a.yaml", "diverged")
@@ -266,7 +268,9 @@ func TestAutoResolve_Ladder(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				configureBranch(t, repo, head.Name().Short(), "origin", "refs/heads/upstream")
+				configureBranch(t, repo, &config.Branch{
+					Name: head.Name().Short(), Remote: "origin", Merge: plumbing.NewBranchReferenceName("upstream"),
+				})
 			}
 
 			res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
@@ -431,7 +435,7 @@ func TestAutoResolve_PreservesExecutableBit(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(dir, "run.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil { //nolint:gosec // test fixture
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	wt, err := r.Worktree()
@@ -583,7 +587,7 @@ func setSymRef(t *testing.T, repo *git.Repository, name, target plumbing.Referen
 	}
 }
 
-func configureBranch(t *testing.T, repo *git.Repository, branch, remote, merge string) {
+func configureBranch(t *testing.T, repo *git.Repository, branch *config.Branch) {
 	t.Helper()
 	cfg, err := repo.Config()
 	if err != nil {
@@ -592,11 +596,7 @@ func configureBranch(t *testing.T, repo *git.Repository, branch, remote, merge s
 	if cfg.Branches == nil {
 		cfg.Branches = map[string]*config.Branch{}
 	}
-	cfg.Branches[branch] = &config.Branch{
-		Name:   branch,
-		Remote: remote,
-		Merge:  plumbing.ReferenceName(merge),
-	}
+	cfg.Branches[branch.Name] = branch
 	if err := repo.SetConfig(cfg); err != nil {
 		t.Fatal(err)
 	}

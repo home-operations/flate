@@ -469,12 +469,12 @@ func recoverPanic(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
 // marking Failed so the scheduler can park and re-run the node.
 func RunWithStatusOutcome[T manifest.BaseManifest](
 	ctx context.Context,
-	s *store.Store,
+	c *Controller,
 	id manifest.NamedResource,
-	log *slog.Logger,
 	fn func(context.Context, T) error,
 ) []manifest.NamedResource {
-	defer recoverPanic(s, id, log)
+	s := c.Store
+	defer recoverPanic(s, id, c.log)
 	obj, ok := s.Get[T](id)
 	if !ok {
 		// Object deleted (or wrong type) between discovery/enqueue and run.
@@ -540,7 +540,7 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	obj, ok := c.Store.Get[T](id)
 	if !ok {
 		// Vanished — RunWithStatusOutcome's vanished branch records a terminal status.
-		return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
+		return RunWithStatusOutcome[T](ctx, c, id, reconcile)
 	}
 	if c.preGate(obj) {
 		return nil
@@ -556,5 +556,5 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	if prior.IsDependencyFailure() {
 		c.Store.UpdateStatus(id, store.StatusPending, "")
 	}
-	return RunWithStatusOutcome[T](ctx, c.Store, id, c.log, reconcile)
+	return RunWithStatusOutcome[T](ctx, c, id, reconcile)
 }

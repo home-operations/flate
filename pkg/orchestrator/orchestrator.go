@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
@@ -390,7 +391,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 		tasks:    ts,
 		src:      srcCtrl,
 		ksc:      kustomization.New(st, ts, trees, cfg.WipeSecrets),
-		hrc:      helmrelease.New(st, ts, client, cfg.HelmOptions, cfg.WipeSecrets),
+		hrc:      helmrelease.New(base.New(st, ts, "helmrelease"), client, cfg.HelmOptions, cfg.WipeSecrets),
 		rsc:      resourcesetctrl.New(st, ts, cfg.WipeSecrets),
 		depGraph: newDependencyGraph(),
 	}

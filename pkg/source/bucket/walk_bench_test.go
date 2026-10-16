@@ -22,8 +22,8 @@ type bucketWorkload struct {
 	pace     time.Duration
 }
 
-func benchmarkBucket(b testing.TB, s bucketWorkload) *minio.Client {
-	b.Helper()
+func benchmarkBucket(tb testing.TB, s bucketWorkload) *minio.Client {
+	tb.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("list-type") != "" {
 			_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
@@ -39,7 +39,7 @@ func benchmarkBucket(b testing.TB, s bucketWorkload) *minio.Client {
 		if value := r.Header.Get("Range"); value != "" {
 			var start, end int
 			if _, err := fmt.Sscanf(value, "bytes=%d-%d", &start, &end); err != nil {
-				b.Error(err)
+				tb.Error(err)
 				return
 			}
 			size = end - start + 1
@@ -63,10 +63,10 @@ func benchmarkBucket(b testing.TB, s bucketWorkload) *minio.Client {
 			}
 		}
 	}))
-	b.Cleanup(srv.Close)
+	tb.Cleanup(srv.Close)
 	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
 	if err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	return client
 }

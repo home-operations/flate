@@ -115,7 +115,11 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	if opts.Producers == nil {
 		opts.Producers = &manifest.ProducerIndex{}
 	}
-	c := New(st, ts, hc, helm.Options{}, false)
+	controller := base.New(st, ts, "helmrelease")
+	c := New(controller, hc, helm.Options{}, false)
+	if c.Controller != controller {
+		t.Fatal("constructor replaced the supplied base controller")
+	}
 	c.Configure(opts)
 	c.Start(context.Background())
 	t.Cleanup(func() {
@@ -788,7 +792,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	}
 	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: sourceFiles[parent]}}}, testutil.MapLister{})
 
-	c := New(st, ts, hc, helm.Options{}, false)
+	c := New(base.New(st, ts, "helmrelease"), hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
@@ -879,7 +883,7 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 
 	parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
 	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "apps/tofu/helmrelease.yaml"}}}, testutil.MapLister{})
-	c := New(st, ts, hc, helm.Options{}, false)
+	c := New(base.New(st, ts, "helmrelease"), hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{Filter: filter})
 	c.Start(context.Background())
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })

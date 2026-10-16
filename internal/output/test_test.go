@@ -124,6 +124,12 @@ func TestEncoder_TestColor(t *testing.T) {
 	if strings.Contains(plain.String(), "\x1b") {
 		t.Errorf("plain output leaked an escape code: %q", plain.String())
 	}
+	if !strings.Contains(colored.String(), "\n\n  "+Fail(GlyphFail, true)+" ") {
+		t.Errorf("colored verdict lost its painted glyph: %q", colored.String())
+	}
+	if !strings.Contains(plain.String(), "\n\n  "+GlyphFail+" ") {
+		t.Errorf("plain verdict lost its glyph framing: %q", plain.String())
+	}
 }
 
 func TestEncoder_TestReturnsWriterError(t *testing.T) {

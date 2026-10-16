@@ -18,11 +18,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func localSource(t testing.TB, root string) *store.SourceArtifact {
-	t.Helper()
-	input, err := source.NewLocalFS(t.Context(), root)
+func localSource(tb testing.TB, root string) *store.SourceArtifact {
+	tb.Helper()
+	input, err := source.NewLocalFS(tb.Context(), root)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return &store.SourceArtifact{LocalPath: root, FS: input}
 }

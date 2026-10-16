@@ -1154,7 +1154,7 @@ brokenPointer: [ unclosed
 				if _, err := l.Load(t.Context(), filepath.Dir(dir)); err != nil {
 					t.Fatal(err)
 				}
-				if got := l.Index.Errors["app/blackbox-exporter.yaml"]; got != first {
+				if got := l.Index.Errors["app/blackbox-exporter.yaml"]; !errors.Is(got, first) {
 					t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
 				}
 			})

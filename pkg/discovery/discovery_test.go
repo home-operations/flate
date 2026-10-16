@@ -110,8 +110,10 @@ func TestRun_NamespaceIndependentOfDiscoveryDepth(t *testing.T) {
 		{"non_matching_ref", "https://example.invalid/x.git", "  ref: {branch: main}\n"},
 	} {
 		t.Run(repo.name, func(t *testing.T) {
+			t.Parallel()
 			for _, placement := range []string{"deep", "clusters"} {
 				t.Run(placement, func(t *testing.T) {
+					t.Parallel()
 					root := t.TempDir()
 					if _, err := git.PlainInit(root, false); err != nil {
 						t.Fatal(err)
@@ -562,6 +564,7 @@ func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 	t.Parallel()
 	for _, layout := range []string{"absent", "empty git directory"} {
 		t.Run(layout, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			if layout == "empty git directory" {
 				if err := os.Mkdir(filepath.Join(dir, ".git"), 0o750); err != nil {

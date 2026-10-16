@@ -499,34 +499,34 @@ func localSource(ref manifest.GitRepositoryRef) *manifest.GitRepository {
 	return repo
 }
 
-func localFixture(t testing.TB) (string, *git.Repository, plumbing.Hash, plumbing.Hash) {
-	t.Helper()
-	root := t.TempDir()
+func localFixture(tb testing.TB) (string, *git.Repository, plumbing.Hash, plumbing.Hash) {
+	tb.Helper()
+	root := tb.TempDir()
 	repo, err := git.PlainInit(root, false)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	wt, err := repo.Worktree()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	var hashes [2]plumbing.Hash
 	for i, value := range []string{"A", "B"} {
-		testutil.WriteFile(t, root, "value.txt", value)
-		testutil.WriteFile(t, root, "extra.txt", "extra")
+		testutil.WriteFile(tb, root, "value.txt", value)
+		testutil.WriteFile(tb, root, "extra.txt", "extra")
 		if _, err := wt.Add("."); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 		hashes[i], err = wt.Commit(value, &git.CommitOptions{
 			Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
 		})
 		if err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName([]string{"v1.0.0", "v2.0.0"}[i]), hashes[i])); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
-	testutil.WriteFile(t, root, "value.txt", "dirty")
+	testutil.WriteFile(tb, root, "value.txt", "dirty")
 	return root, repo, hashes[0], hashes[1]
 }

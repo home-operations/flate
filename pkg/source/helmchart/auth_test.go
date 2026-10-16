@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -61,11 +62,9 @@ func TestHelmRepoTransport_CertSecretYieldsGuardedTransport(t *testing.T) {
 	}
 }
 
-// TestHelmRepoTransport_MissingSecretIsSoftSkippable: an absent certSecretRef
-// Secret surfaces the shared missing-secret sentinel (so --allow-missing-secrets
-// covers it), matching git/OCI/bucket via source.ResolveCertSecret.
 func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	r := httpRepo("https://charts.example")
+	r.Name, r.Namespace = "charts", "ns"
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	secret := &manifest.Secret{StringData: map[string]any{"ca.crt": testutil.SelfSignedCA(t)}}
 	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
@@ -79,6 +78,13 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("missing certSecretRef Secret must be the ErrMissingSecret sentinel; got %v", err)
 	}
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok {
+		t.Fatalf("expected MissingSecretError; got %T", err)
+	}
+	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "ns", Name: "HelmRepository ns/charts"})
+	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
+	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": HelmRepository ns/HelmRepository ns/charts: secret ns/tls not found")
 	if prepared != nil {
 		t.Error("repository should be nil on error")
 	}

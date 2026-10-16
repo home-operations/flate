@@ -142,7 +142,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 }
 
 func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
-	left := selectedSnapshot(ksParent, []Doc{cmDoc(ksParent, "config", "apps", "old", "")}, store.StatusInfo{})
+	left := selectedSnapshot(ksParent, []Doc{cmDoc(ksParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "")}, store.StatusInfo{})
 	moved := ksParent
 	moved.Path = "other/apps"
 	right := selectedSnapshot(moved, nil, store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
@@ -215,8 +215,8 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 }
 
 func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
-	left := []Doc{cmDoc(hrParent, "config", "apps", "old", "chart-1")}
-	right := []Doc{cmDoc(hrParent, "config", "apps", "new", "chart-2")}
+	left := []Doc{cmDoc(hrParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "chart-1")}
+	right := []Doc{cmDoc(hrParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "chart-2")}
 	selected := []Snapshot{selectedSnapshot(hrParent, left, store.StatusInfo{}), selectedSnapshot(hrParent, right, store.StatusInfo{})}
 	before := manifest.DeepCopyMap(left[0].Manifest)
 	opts := Options{Format: FormatJSON, StripAttrs: DefaultStripAttrs, StripFields: DefaultStripFields,

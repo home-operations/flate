@@ -752,11 +752,11 @@ func copyTree(t *testing.T, src, dst string) {
 		if info.IsDir() {
 			return os.MkdirAll(target, 0o750)
 		}
-		data, err := os.ReadFile(p) //nolint:gosec // p is inside t.TempDir
+		data, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o600) //nolint:gosec // target is inside t.TempDir
+		return os.WriteFile(target, data, 0o600)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -793,6 +793,36 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 // helm-template flags must be available consistently.
 func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 	cmd := New("test")
+	for _, tc := range []struct {
+		path, use, short string
+		aliases          []string
+		maxArgs          int
+	}{
+		{path: "build", use: "build", short: "Render Flux objects to YAML (defaults to all)"},
+		{path: "build all", use: "all", short: "Render all Kustomization and HelmRelease objects"},
+		{path: "build ks", use: "ks [name]", short: "Render Kustomizations", aliases: []string{"kustomization", "kustomizations"}, maxArgs: 1},
+		{path: "build hr", use: "hr [name]", short: "Render HelmReleases", aliases: []string{"helmrelease", "helmreleases"}, maxArgs: 1},
+		{path: "test", use: "test", short: "Report Kustomization + HelmRelease reconcile status (defaults to all)"},
+		{path: "test all", use: "all", short: "Validate every Kustomization, HelmRelease, and Flux source CR"},
+		{path: "test ks", use: "ks [name]", short: "Validate Kustomizations", aliases: []string{"kustomization", "kustomizations"}, maxArgs: 1},
+		{path: "test hr", use: "hr [name]", short: "Validate HelmReleases", aliases: []string{"helmrelease", "helmreleases"}, maxArgs: 1},
+	} {
+		sub, _, err := cmd.Find(strings.Fields(tc.path))
+		assert.NoError(t, err)
+		assert.Equal(t, sub.Use, tc.use)
+		assert.Equal(t, sub.Short, tc.short)
+		assert.Diff(t, sub.Aliases, tc.aliases)
+		if sub.Args == nil {
+			t.Fatalf("%s: missing argument validator", tc.path)
+		}
+		assert.NoError(t, sub.Args(sub, nil))
+		if err := sub.Args(sub, []string{"one"}); (err == nil) != (tc.maxArgs == 1) {
+			t.Errorf("%s: argument limit %d rejected/accepted one name: %v", tc.path, tc.maxArgs, err)
+		}
+		if err := sub.Args(sub, []string{"one", "two"}); err == nil {
+			t.Errorf("%s: accepted two names", tc.path)
+		}
+	}
 	for _, argv := range [][]string{
 		{"build", "ks"},
 		{"build", "hr"},

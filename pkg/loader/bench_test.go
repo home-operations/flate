@@ -19,7 +19,7 @@ import (
 // kustomization.yaml glue that wires them together.
 func BenchmarkLoad_LargeRepo(b *testing.B) {
 	dir := b.TempDir()
-	synthLargeRepo(b, dir, 200, 100, 50)
+	synthLargeRepo(b, dir)
 
 	b.ReportAllocs()
 	for b.Loop() {
@@ -234,13 +234,13 @@ func BenchmarkIgnoreMatches(b *testing.B) {
 	}
 }
 
-// synthLargeRepo writes nKS Kustomizations, nHR HelmReleases, and nSrc
-// source CRs spread across an apps/ tree under root. Each KS gets its
-// own kustomization.yaml so the loader walks the resource graph; HRs
-// and sources are added as referenced resources.
-func synthLargeRepo(b *testing.B, root string, nKS, nHR, nSrc int) {
+func synthLargeRepo(b *testing.B, root string) {
 	b.Helper()
-	// Top-level kustomization with one resource entry per app dir.
+	const (
+		nKS  = 200
+		nHR  = 100
+		nSrc = 50
+	)
 	var topResources strings.Builder
 	for i := range nKS {
 		fmt.Fprintf(&topResources, "  - ./apps/app-%d\n", i)
@@ -250,9 +250,6 @@ func synthLargeRepo(b *testing.B, root string, nKS, nHR, nSrc int) {
 
 	for i := range nKS {
 		base := fmt.Sprintf("apps/app-%d", i)
-		// Per-app kustomization includes the Flux KS plus optionally
-		// an HR and a source. Spread HRs and sources across the first
-		// N apps so the loader has a mix of kinds.
 		var resources strings.Builder
 		resources.WriteString("  - ./ks.yaml\n")
 		if i < nHR {

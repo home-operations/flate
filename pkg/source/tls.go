@@ -12,11 +12,11 @@ import (
 // ResolveCertSecret builds TLS from the configured Secret's client pair or CA.
 // Missing or wiped material returns MissingSecretError; malformed real material
 // remains a failure. A nil ref leaves TLS unconfigured.
-func ResolveCertSecret(secrets SecretGetter, ns, ownerKind, ownerID string, ref *manifest.LocalObjectReference) (*tls.Config, error) {
+func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*tls.Config, error) {
 	if ref == nil {
 		return nil, nil
 	}
-	sec, err := resolveSecretRef(secrets, ns, ownerKind, ownerID, "certSecretRef", ref)
+	sec, err := resolveSecretRef(secrets, owner, "certSecretRef", ref)
 	if err != nil {
 		return nil, err
 	}
@@ -25,20 +25,20 @@ func ResolveCertSecret(secrets SecretGetter, ns, ownerKind, ownerID string, ref 
 	for i, key := range []string{"tls.crt", "tls.key", "ca.crt"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, fmt.Errorf("cert secret %s/%s: %w", ns, ref.Name, err)
+			return nil, fmt.Errorf("cert secret %s/%s: %w", owner.Namespace, ref.Name, err)
 		}
 		if manifest.HasValuePlaceholder(value) {
-			return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "TLS material unavailable")
+			return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
 		}
 		material[i] = value
 	}
 	if material[0] == "" && material[1] == "" && material[2] == "" {
-		return nil, MissingSecretErr(ownerKind, ns, ownerID, ref.Name, "TLS material unavailable")
+		return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
 	}
 	cfg, err := BuildTLSConfig(material[0], material[1], material[2])
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w",
-			ownerKind, ownerID, ns, ref.Name, err)
+			owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
 	}
 	return cfg, nil
 }

@@ -24,7 +24,7 @@ func newRemoteBaseFetcher(t *testing.T) *Fetcher {
 
 func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {
 	t.Helper()
-	got, err := fs.ReadFile(input, file) //nolint:gosec // dir is the test cache slot
+	got, err := fs.ReadFile(input, file)
 	if err != nil {
 		t.Fatalf("read materialized %s: %v", file, err)
 	}

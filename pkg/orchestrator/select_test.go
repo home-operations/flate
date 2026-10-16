@@ -246,13 +246,57 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				t.Fatalf("snapshot attribution changed: %v", err)
 			}
 			for _, cause := range []error{context.Canceled, closeErr} {
-				want := cause == context.Canceled && (tc.orig != nil || tc.current != nil) || cause == closeErr && tc.shared != nil
+				want := errors.Is(cause, context.Canceled) && (tc.orig != nil || tc.current != nil) || errors.Is(cause, closeErr) && tc.shared != nil
 				if errors.Is(err, cause) != want || errors.Is(remainder, cause) != want {
 					t.Fatalf("error identity lost: selected=%v remainder=%v", err, remainder)
 				}
 			}
 			if _, ok := errors.AsType[*FailuresError](remainder); ok {
 				t.Fatalf("resource failures entered remainder: %v", remainder)
+			}
+		})
+	}
+	for _, reversed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("nested tree reversed=%t", reversed), func(t *testing.T) {
+			teardownA, teardownB := errors.New("teardown A"), errors.New("teardown B")
+			baseFailure := &FailuresError{Message: "raw base failure"}
+			runs := []Rendered{failed, selectedRun(&Result{})}
+			runs[0].Err, runs[1].Err = baseFailure, context.Canceled
+			nested := fmt.Errorf("outer: %w", joinTreeErrors(baseFailure, context.Canceled))
+			children := []error{teardownA, nested, teardownB}
+			if reversed {
+				slices.Reverse(children)
+			}
+			selected, err, remainder := Select(runs, errors.Join(children...), []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}}, nil)
+			want := "both snapshots had reconcile failures\norig snapshot: reconcile completed with 1 failure(s):\n  " + ksID("failed").String() + ": resource failed\ncurrent snapshot: context canceled"
+			wantRemainder := "current snapshot: context canceled"
+			if reversed {
+				want = "teardown B\n" + want + "\nteardown A"
+				wantRemainder = "teardown B\n" + wantRemainder + "\nteardown A"
+			} else {
+				want = "teardown A\n" + want + "\nteardown B"
+				wantRemainder = "teardown A\n" + wantRemainder + "\nteardown B"
+			}
+			if len(selected) != 2 || err == nil || remainder == nil {
+				t.Fatalf("lost nested projection: selected=%v err=%v remainder=%v", selected, err, remainder)
+			}
+			assert.Equal(t, err.Error(), want)
+			assert.Equal(t, remainder.Error(), wantRemainder)
+			for _, got := range []error{err, remainder} {
+				for _, cause := range []error{teardownA, teardownB, context.Canceled} {
+					if !errors.Is(got, cause) {
+						t.Fatalf("lost nested cause %v: %v", cause, got)
+					}
+				}
+				if errors.Is(got, baseFailure) {
+					t.Fatalf("raw base failure entered projection: %v", got)
+				}
+			}
+			if _, ok := errors.AsType[*FailuresError](err); !ok {
+				t.Fatal("selected failure identity lost")
+			}
+			if _, ok := errors.AsType[*FailuresError](remainder); ok {
+				t.Fatal("resource failure entered remainder")
 			}
 		})
 	}
@@ -427,7 +471,7 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 		}
 	}
 	initErr := errors.New("initialization failed")
-	if selected, err, _ := Select([]Rendered{{Err: initErr}}, initErr, valid, nil); len(selected) != 0 || err != initErr {
+	if selected, err, _ := Select([]Rendered{{Err: initErr}}, initErr, valid, nil); len(selected) != 0 || !errors.Is(err, initErr) {
 		t.Fatalf("initialization error changed: %+v %v", selected, err)
 	}
 	if _, err, _ := Select([]Rendered{{}}, nil, valid, nil); !errors.Is(err, manifest.ErrInput) {

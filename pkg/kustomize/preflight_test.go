@@ -180,7 +180,7 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		t.Fatalf("RenderFlux: %v", err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(src, "child", "kustomization.yaml")) //nolint:gosec // src is t.TempDir
+	got, err := os.ReadFile(filepath.Join(src, "child", "kustomization.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

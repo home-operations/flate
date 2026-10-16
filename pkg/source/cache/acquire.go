@@ -217,7 +217,8 @@ func (c *Cache) attempt(ctx context.Context, key acquireKey, policy Policy, e *e
 	}
 	result, err := c.fill(ctx, key)
 	if err != nil {
-		if _, ok := err.(*producerError); !ok {
+		// A joined cleanup failure MUST retain cache failure attribution.
+		if producer, ok := errors.AsType[*producerError](err); !ok || !errors.Is(producer, err) {
 			err = &CacheError{err}
 		} else if _, terminal := errors.AsType[*TerminalError](err); !terminal && retryable(err) && policy.Retry.Attempts <= 1 {
 			err = &TerminalError{Err: err, Attempted: true}

@@ -34,8 +34,7 @@ type Fetcher struct {
 // Credentials, TLS and proxy policy are resolved before acquisition.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
-		return nil, source.ErrUnsupportedProvider("OCIRepository",
-			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
+		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GenericOCIProvider,
 			"SecretRef or --registry-config credentials")
 	}
 	prepared := *f

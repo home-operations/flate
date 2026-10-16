@@ -50,9 +50,9 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		"gotk-components.yaml": "kind: ConfigMap\n",
 	})
 	configBytes := []byte(`{"created":"2026-01-01T00:00:00Z"}`)
-	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
-		"application/vnd.cncf.flux.config.v1+json",
-		"application/vnd.cncf.flux.content.v1.tar+gzip",
+	manifestBytes := mustManifestJSON(t,
+		manifestBlob{data: configBytes, mediaType: "application/vnd.cncf.flux.config.v1+json"},
+		manifestBlob{data: layerBytes, mediaType: "application/vnd.cncf.flux.content.v1.tar+gzip"},
 	)
 
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
@@ -77,7 +77,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	}
 
 	// Observable proof that the layer made it to disk and got extracted.
-	got, err := fs.ReadFile(art.FS, "gotk-components.yaml") //nolint:gosec // inside t.TempDir-rooted slot
+	got, err := fs.ReadFile(art.FS, "gotk-components.yaml")
 	if err != nil {
 		t.Fatalf("expected extracted gotk-components.yaml under %s: %v\nslot contents: %v",
 			art.Key, err, art.FS)
@@ -111,9 +111,9 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 		"kustomization.yaml":        "resources:\n- blobs/should-survive.yaml\n",
 	})
 	configBytes := []byte(`{}`)
-	manifestBytes := mustManifestJSON(t, configBytes, layerBytes,
-		"application/vnd.cncf.flux.config.v1+json",
-		"application/vnd.cncf.flux.content.v1.tar+gzip",
+	manifestBytes := mustManifestJSON(t,
+		manifestBlob{data: configBytes, mediaType: "application/vnd.cncf.flux.config.v1+json"},
+		manifestBlob{data: layerBytes, mediaType: "application/vnd.cncf.flux.content.v1.tar+gzip"},
 	)
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
@@ -133,7 +133,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 
 	// User's blobs/should-survive.yaml must be intact, not wiped by
 	// the OCI layout cleanup.
-	got, err := fs.ReadFile(art.FS, "blobs/should-survive.yaml") //nolint:gosec // inside t.TempDir-rooted slot
+	got, err := fs.ReadFile(art.FS, "blobs/should-survive.yaml")
 	if err != nil {
 		t.Fatalf("user's blobs/should-survive.yaml was wiped by cleanup: %v", err)
 	}
@@ -439,9 +439,9 @@ func newFakeOCIArtifact(t *testing.T, files map[string]string) fakeOCIArtifact {
 	t.Helper()
 	layer := mustTarGz(t, files)
 	config := []byte(`{}`)
-	manifest := mustManifestJSON(t, config, layer,
-		"application/vnd.cncf.flux.config.v1+json",
-		"application/vnd.cncf.flux.content.v1.tar+gzip",
+	manifest := mustManifestJSON(t,
+		manifestBlob{data: config, mediaType: "application/vnd.cncf.flux.config.v1+json"},
+		manifestBlob{data: layer, mediaType: "application/vnd.cncf.flux.content.v1.tar+gzip"},
 	)
 	return fakeOCIArtifact{
 		manifest:       manifest,
@@ -500,23 +500,25 @@ func startMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*http
 	return srv, setArtifact
 }
 
-// mustManifestJSON builds an OCI image manifest pointing at the given
-// config + single layer with no title annotations — the shape that
-// surfaces the regression this test covers.
-func mustManifestJSON(t *testing.T, configBytes, layerBytes []byte, configMT, layerMT string) []byte {
+type manifestBlob struct {
+	data      []byte
+	mediaType string
+}
+
+func mustManifestJSON(t *testing.T, config, layer manifestBlob) []byte {
 	t.Helper()
 	m := ocispec.Manifest{
 		SchemaVersion: 2,
 		MediaType:     ocispec.MediaTypeImageManifest,
 		Config: ocispec.Descriptor{
-			MediaType: configMT,
-			Digest:    digest.Digest(sha256Digest(configBytes)),
-			Size:      int64(len(configBytes)),
+			MediaType: config.mediaType,
+			Digest:    digest.Digest(sha256Digest(config.data)),
+			Size:      int64(len(config.data)),
 		},
 		Layers: []ocispec.Descriptor{{
-			MediaType: layerMT,
-			Digest:    digest.Digest(sha256Digest(layerBytes)),
-			Size:      int64(len(layerBytes)),
+			MediaType: layer.mediaType,
+			Digest:    digest.Digest(sha256Digest(layer.data)),
+			Size:      int64(len(layer.data)),
 		}},
 	}
 	b, err := json.Marshal(m)
@@ -542,7 +544,7 @@ func mustURL(t *testing.T, raw string) *url.URL {
 
 func mustReadFile(t *testing.T, input fs.FS, path string) string {
 	t.Helper()
-	b, err := fs.ReadFile(input, path) //nolint:gosec // test-owned path
+	b, err := fs.ReadFile(input, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,8 +651,10 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 						payload = honest.layer[:len(honest.layer)-4]
 					}
 					broken.layerDigest = sha256Digest(payload)
-					broken.manifest = mustManifestJSON(t, honest.config, payload,
-						"application/vnd.cncf.flux.config.v1+json", "application/vnd.cncf.flux.content.v1.tar+gzip")
+					broken.manifest = mustManifestJSON(t,
+						manifestBlob{data: honest.config, mediaType: "application/vnd.cncf.flux.config.v1+json"},
+						manifestBlob{data: payload, mediaType: "application/vnd.cncf.flux.content.v1.tar+gzip"},
+					)
 					broken.manifestDigest = sha256Digest(broken.manifest)
 				} else if len(payload) != len(honest.layer) {
 					t.Fatal("fixture lengths differ")
@@ -880,13 +884,13 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 					t.Fatalf("lost response facts: neutral=%+v response=%+v error=%v", neutral, response, err)
 				}
 				if original == nil {
-					if neutral.Err != response {
+					if !errors.Is(response, neutral.Err) {
 						t.Fatalf("original ORAS response changed: %v", err)
 					}
 				} else if !errors.Is(err, original) {
 					t.Fatalf("original body failure changed: %v", err)
 				}
-				if operation == "neutral body" && neutral != original {
+				if operation == "neutral body" && !errors.Is(original, neutral) {
 					t.Fatalf("neutral body failure wrapped twice: %v", err)
 				}
 				if !tc.replay {

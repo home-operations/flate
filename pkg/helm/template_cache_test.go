@@ -26,8 +26,8 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
-func renderPersistenceEligible(t testing.TB) bool {
-	t.Helper()
+func renderPersistenceEligible(tb testing.TB) bool {
+	tb.Helper()
 	info, ok := debug.ReadBuildInfo()
 	eligible := false
 	if ok {

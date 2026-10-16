@@ -23,6 +23,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -36,6 +37,43 @@ func ociRepo(name string, set func(s *sourcev1.OCIRepositorySpec)) *manifest.OCI
 		set(&r.OCIRepositorySpec)
 	}
 	return r
+}
+
+func TestFetcher_ResolveConfig_MissingProxyOwner(t *testing.T) {
+	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
+	repo := &manifest.OCIRepository{
+		Name: "repo", Namespace: "ns", URL: "oci://registry.example/team/app",
+		ProxySecretRef: &manifest.LocalObjectReference{Name: "missing"},
+	}
+	_, _, err := f.newRepoClient(t.Context(), repo, nil)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Fatalf("expected missing-secret error; got %v", err)
+	}
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok {
+		t.Fatalf("expected MissingSecretError; got %T", err)
+	}
+	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "ns/repo"})
+	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/ns/repo: secret ns/missing not found")
+}
+
+func TestFetcher_ResolveTLS_MissingSecretOwner(t *testing.T) {
+	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
+	repo := &manifest.OCIRepository{
+		Name: "repo", Namespace: "ns", CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
+	}
+	_, err := f.resolveTLS(repo)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Fatalf("expected missing-secret error; got %v", err)
+	}
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok {
+		t.Fatalf("expected MissingSecretError; got %T", err)
+	}
+	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "ns/repo"})
+	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/ns/repo: secret ns/missing not found")
 }
 
 func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
@@ -402,7 +440,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
 				}
-				if tt.wantErr == manifest.ErrMissingSecret && tt.config != covering {
+				if errors.Is(tt.wantErr, manifest.ErrMissingSecret) && tt.config != covering {
 					if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.RetryWithRegistryConfig != nil {
 						t.Fatalf("err = %v, want missing Secret without registry retry", err)
 					}

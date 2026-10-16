@@ -100,7 +100,7 @@ func (r TestReport) verdict(color bool, elapsed time.Duration) string {
 	if r.AnyFailed() {
 		glyph, paint = GlyphFail, Fail
 	}
-	return Verdict(color, glyph, paint, elapsed,
+	return Verdict(color, paint(glyph, color), elapsed,
 		Count{N: r.Passed, Label: "passed", Paint: Pass},
 		Count{N: r.Skipped, Label: "skipped", Paint: Dim},
 		Count{N: r.Failed, Label: "failed", Paint: Fail},

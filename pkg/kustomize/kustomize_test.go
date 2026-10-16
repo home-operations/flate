@@ -69,7 +69,7 @@ func TestSubstitute_MissingVarExpandsToEmpty(t *testing.T) {
 // which broke common patterns in home-ops repos (e.g. ${RUNNER_TOKEN}
 // in a container's command).
 func TestSubstitute_DollarEscape(t *testing.T) {
-	cases := map[string]string{ //nolint:gosec // "TOKEN" / "DOMAIN" in literal templates are placeholder identifiers, not credentials
+	cases := map[string]string{
 		`--token "$${RUNNER_TOKEN}"`:         `--token "${RUNNER_TOKEN}"`,
 		`url: https://$${DOMAIN}/path`:       `url: https://${DOMAIN}/path`,
 		`mixed $${ESCAPED} and ${UNESCAPED}`: `mixed ${ESCAPED} and HERE`,

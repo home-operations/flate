@@ -25,8 +25,8 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-func delayedBucket(b testing.TB) (*minio.Client, *atomic.Int32) {
-	b.Helper()
+func delayedBucket(tb testing.TB) (*minio.Client, *atomic.Int32) {
+	tb.Helper()
 	var active, peak atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("list-type") != "" {
@@ -56,10 +56,10 @@ func delayedBucket(b testing.TB) (*minio.Client, *atomic.Int32) {
 		w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
 		_, _ = io.WriteString(w, "x")
 	}))
-	b.Cleanup(srv.Close)
+	tb.Cleanup(srv.Close)
 	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
 	if err != nil {
-		b.Fatal(err)
+		tb.Fatal(err)
 	}
 	return client, &peak
 }
@@ -397,6 +397,7 @@ func TestWalkBucket_Ranges(t *testing.T) {
 	const part = 8 << 20
 	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server"} {
 		run := func(t *testing.T) {
+			t.Helper()
 			copyCtx, cancelCopy := context.WithCancel(t.Context())
 			defer cancelCopy()
 			var gets atomic.Int32

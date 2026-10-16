@@ -46,6 +46,7 @@ func benchmarkReaders(b *testing.B, run func(*testing.B, fs.FS)) {
 
 func BenchmarkTree_ReadFile(b *testing.B) {
 	benchmarkReaders(b, func(b *testing.B, fsys fs.FS) {
+		b.Helper()
 		b.SetBytes(894)
 		for b.Loop() {
 			_, err := fs.ReadFile(fsys, "dir-0000/file-0000.yaml")
@@ -58,6 +59,7 @@ func BenchmarkTree_ReadFile(b *testing.B) {
 
 func BenchmarkTree_ReadDir(b *testing.B) {
 	benchmarkReaders(b, func(b *testing.B, fsys fs.FS) {
+		b.Helper()
 		for b.Loop() {
 			_, err := fs.ReadDir(fsys, "dir-0000")
 			if err != nil {
@@ -69,6 +71,7 @@ func BenchmarkTree_ReadDir(b *testing.B) {
 
 func BenchmarkTree_WalkDir(b *testing.B) {
 	benchmarkReaders(b, func(b *testing.B, fsys fs.FS) {
+		b.Helper()
 		fn := func(_ string, _ fs.DirEntry, err error) error { return err }
 		for b.Loop() {
 			if err := fs.WalkDir(fsys, ".", fn); err != nil {
@@ -80,6 +83,7 @@ func BenchmarkTree_WalkDir(b *testing.B) {
 
 func BenchmarkTree_Stat(b *testing.B) {
 	benchmarkReaders(b, func(b *testing.B, fsys fs.FS) {
+		b.Helper()
 		for b.Loop() {
 			_, err := fs.Stat(fsys, "dir-0000/file-0000.yaml")
 			if err != nil {
@@ -115,6 +119,7 @@ func BenchmarkOverlay_GeneratedFile(b *testing.B) {
 
 func BenchmarkTree_SharedReaders(b *testing.B) {
 	benchmarkReaders(b, func(b *testing.B, fsys fs.FS) {
+		b.Helper()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				_, err := fs.ReadFile(fsys, "dir-0000/file-0000.yaml")

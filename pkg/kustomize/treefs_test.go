@@ -28,16 +28,16 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-func memoryTree(t testing.TB, files map[string]string) *tree.Tree {
-	t.Helper()
+func memoryTree(tb testing.TB, files map[string]string) *tree.Tree {
+	tb.Helper()
 	b := tree.NewBuilder(nil)
 	for name, content := range files {
 		if err := b.AddFile(name, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
 	lower, err := b.Build()
-	assert.NoError(t, err)
+	assert.NoError(tb, err)
 	return lower
 }
 

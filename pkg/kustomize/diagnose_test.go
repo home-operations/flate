@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
@@ -23,15 +24,12 @@ func fluxKS() map[string]any {
 	}
 }
 
-// cmChild writes apps/<name>/{kustomization.yaml,cm.yaml} producing a ConfigMap
-// named cmName in namespace ns — so two children sharing (cmName, ns) clash only
-// once a parent accumulates them, mirroring the real cluster-apps case.
-func cmChild(t *testing.T, root, name, ns, cmName string) {
+func cmChild(t *testing.T, root, name string, id manifest.NamedResource) {
 	t.Helper()
 	dir := "apps/" + name
-	testutil.WriteFile(t, root, dir+"/kustomization.yaml", "namespace: "+ns+"\nresources:\n- cm.yaml\n")
+	testutil.WriteFile(t, root, dir+"/kustomization.yaml", "namespace: "+id.Namespace+"\nresources:\n- cm.yaml\n")
 	testutil.WriteFile(t, root, dir+"/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+cmName+"}\ndata: {k: v}\n")
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+id.Name+"}\ndata: {k: v}\n")
 }
 
 // TestRenderFlux_DuplicateID_NamesProducers is the repro: two children emit the
@@ -39,8 +37,8 @@ func cmChild(t *testing.T, root, name, ns, cmName string) {
 // now names BOTH producing paths (sorted) instead of just the one kustomize hit.
 func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
 	root := t.TempDir()
-	cmChild(t, root, "a", "shared", "dup")
-	cmChild(t, root, "b", "shared", "dup")
+	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "dup"})
+	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
 	// No apps/kustomization.yaml → RenderFlux synthesizes one over a + b.
 
 	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
@@ -67,8 +65,8 @@ func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
 // without ever running the diagnostic.
 func TestRenderFlux_DistinctIDs_NoDiagnostic(t *testing.T) {
 	root := t.TempDir()
-	cmChild(t, root, "a", "shared", "a-cm")
-	cmChild(t, root, "b", "shared", "b-cm")
+	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "a-cm"})
+	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "b-cm"})
 
 	out, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err != nil {
@@ -97,8 +95,8 @@ func TestRenderFlux_NonDuplicateError_Unannotated(t *testing.T) {
 func TestRenderFlux_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
-	cmChild(t, root, "b", "shared", "dup")
-	cmChild(t, root, "c", "shared", "dup")
+	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
+	cmChild(t, root, "c", manifest.NamedResource{Namespace: "shared", Name: "dup"})
 	_, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected a build failure")

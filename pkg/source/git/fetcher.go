@@ -46,8 +46,7 @@ type Fetcher struct {
 // Fetch publishes an immutable source view only after acquisition succeeds.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
-		return nil, source.ErrUnsupportedProvider("GitRepository",
-			repo.Namespace, repo.Name, repo.Provider, sourcev1.GitProviderGeneric,
+		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GitProviderGeneric,
 			"SecretRef-based credentials")
 	}
 	request, err := f.resolveTransport(repo)
@@ -79,8 +78,9 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (gitAcquisition
 			return f.Secrets(ns, name)
 		}
 	}
-	proxy, err := source.ResolveProxy(secrets, repo.Namespace, "GitRepository",
-		repo.Namespace+"/"+repo.Name, repo.ProxySecretRef)
+	owner := repo.Named()
+	owner.Name = repo.Namespace + "/" + repo.Name
+	proxy, err := source.ResolveProxy(secrets, owner, repo.ProxySecretRef)
 	if err != nil {
 		return gitAcquisition{}, err
 	}

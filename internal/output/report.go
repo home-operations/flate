@@ -151,7 +151,7 @@ func (m Model) verdictBlock(color bool) string {
 	if failed == 0 && m.Blocked == 0 {
 		return ""
 	}
-	return Verdict(color, GlyphFail, Fail, 0,
+	return Verdict(color, Fail(GlyphFail, color), 0,
 		Count{N: failed, Label: "failed", Paint: Fail},
 		Count{N: m.Blocked, Label: "blocked", Paint: Dim},
 	)
@@ -198,18 +198,18 @@ type Count struct {
 	Paint func(string, bool) string
 }
 
-// Verdict renders a one-line run summary: the lead glyph, then each count as
-// "<N> <Label>" joined by " · ", then a dim elapsed clock (omitted when zero).
+// Verdict renders a one-line run summary from an already painted glyph, counts
+// joined by " · ", and a dim elapsed clock (omitted when zero).
 // The first count always shows (even at zero, e.g. "0 passed"); later counts
 // show only when non-zero. Returns "" when given no counts. Shared by the
 // build/diff failure report and the `flate test` roster so both speak one
 // verdict grammar.
-func Verdict(color bool, glyph string, paintGlyph func(string, bool) string, elapsed time.Duration, counts ...Count) string {
+func Verdict(color bool, glyph string, elapsed time.Duration, counts ...Count) string {
 	if len(counts) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("  " + paintGlyph(glyph, color))
+	b.WriteString("  " + glyph)
 	for i, c := range counts {
 		if i > 0 && c.N == 0 {
 			continue

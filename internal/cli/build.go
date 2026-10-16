@@ -24,57 +24,64 @@ func bindBuildFlags(fs *pflag.FlagSet, b *buildFlags) {
 
 func newBuildCmd() *cobra.Command {
 	kinds := []string{manifest.KindKustomization, manifest.KindHelmRelease}
-	cmd := buildCmd("build", nil, "Render Flux objects to YAML (defaults to all)", cobra.NoArgs, kinds...)
+	cmd := buildCmd(&cobra.Command{
+		Use:   "build",
+		Short: "Render Flux objects to YAML (defaults to all)",
+		Args:  cobra.NoArgs,
+	}, kinds...)
 	cmd.AddCommand(
-		buildCmd("ks [name]", []string{"kustomization", "kustomizations"},
-			"Render Kustomizations", cobra.MaximumNArgs(1),
-			manifest.KindKustomization),
-		buildCmd("hr [name]", []string{"helmrelease", "helmreleases"},
-			"Render HelmReleases", cobra.MaximumNArgs(1),
-			manifest.KindHelmRelease),
-		buildCmd("all", nil,
-			"Render all Kustomization and HelmRelease objects", cobra.NoArgs, kinds...),
+		buildCmd(&cobra.Command{
+			Use:     "ks [name]",
+			Aliases: []string{"kustomization", "kustomizations"},
+			Short:   "Render Kustomizations",
+			Args:    cobra.MaximumNArgs(1),
+		}, manifest.KindKustomization),
+		buildCmd(&cobra.Command{
+			Use:     "hr [name]",
+			Aliases: []string{"helmrelease", "helmreleases"},
+			Short:   "Render HelmReleases",
+			Args:    cobra.MaximumNArgs(1),
+		}, manifest.KindHelmRelease),
+		buildCmd(&cobra.Command{
+			Use:   "all",
+			Short: "Render all Kustomization and HelmRelease objects",
+			Args:  cobra.NoArgs,
+		}, kinds...),
 	)
 	return cmd
 }
 
-func buildCmd(use string, aliases []string, short string, args cobra.PositionalArgs, kinds ...string) *cobra.Command {
+func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	b := &buildFlags{}
-	cmd := &cobra.Command{
-		Use:     use,
-		Aliases: aliases,
-		Short:   short,
-		Args:    args,
-		RunE: func(cmd *cobra.Command, argv []string) error {
-			if !cmd.Flags().Changed("skip-kinds") {
-				c.skipKinds = slices.DeleteFunc(c.skipKinds, func(kind string) bool {
-					return slices.Contains(b.onlyKinds, kind)
-				})
-			}
-			stopProfile, err := startProfile()
-			if err != nil {
-				return err
-			}
-			defer stopProfile()
-			name := firstArg(argv)
-			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
-			selected, runErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr, c.roots(name, kinds...), nil)
-			if len(selected) == 0 {
-				return runErr
-			}
-			res = selected[0]
-			var emitErr error
-			if name != "" && res.Counts[kinds[0]] == 0 {
-				emitErr = noNamedError(kinds[0], name)
-			} else {
-				emitErr = (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Documents(collectRendered(res, b))
-			}
-			return reportFailures(cmd.ErrOrStderr(), failureModel(res), name != "", reportErrors{
-				selected: errors.Join(emitErr, runErr), remainder: errors.Join(emitErr, remainder),
+	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
+		if !cmd.Flags().Changed("skip-kinds") {
+			c.skipKinds = slices.DeleteFunc(c.skipKinds, func(kind string) bool {
+				return slices.Contains(b.onlyKinds, kind)
 			})
-		},
+		}
+		stopProfile, err := startProfile()
+		if err != nil {
+			return err
+		}
+		defer stopProfile()
+		name := firstArg(argv)
+		o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+		selected, runErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr, c.roots(name, kinds...), nil)
+		if len(selected) == 0 {
+			return runErr
+		}
+		res = selected[0]
+		var emitErr error
+		if name != "" && res.Counts[kinds[0]] == 0 {
+			emitErr = noNamedError(kinds[0], name)
+		} else {
+			emitErr = (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Documents(collectRendered(res, b))
+		}
+		return reportFailures(cmd.ErrOrStderr(), failureModel(res), name != "", reportErrors{
+			selected: errors.Join(emitErr, runErr), remainder: errors.Join(emitErr, remainder),
+		})
 	}
 	bindCommon(cmd.Flags(), c, output.FormatYAML, output.FormatJSON)
 	bindHelmFlags(cmd.Flags(), h)

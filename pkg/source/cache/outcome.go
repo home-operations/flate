@@ -173,7 +173,7 @@ var outcomeCodecs = map[string]outcomeCodec{
 		e := &errcode.ErrorResponse{StatusCode: n.Status, Method: n.Op}
 		if children[0] != nil {
 			var ok bool
-			e.Errors, ok = children[0].(errcode.Errors)
+			e.Errors, ok = children[0].(errcode.Errors) //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 			if !ok {
 				return nil, false
 			}
@@ -183,7 +183,7 @@ var outcomeCodecs = map[string]outcomeCodec{
 	"codes": {maxChildren: outcomeNodeLimit, require: outcomeStatus, build: func(_ outcomeCause, children []error) (error, bool) {
 		codes := make(errcode.Errors, 0, len(children))
 		for _, child := range children {
-			code, ok := child.(errcode.Error)
+			code, ok := child.(errcode.Error) //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 			if !ok {
 				return nil, false
 			}
@@ -217,9 +217,9 @@ func (c *outcomeCodecState) kind(n outcomeCause, children int, context outcomeCo
 }
 
 func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int) (outcomeCause, bool) {
-	if e, ok := err.(*TerminalError); ok && (e == nil || !e.Attempted) ||
-		err == manifest.ErrInput || err == manifest.ErrObjectNotFound ||
-		err == manifest.ErrMissingSecret || err == manifest.ErrSourceSkipped {
+	if e, ok := err.(*TerminalError); ok && (e == nil || !e.Attempted) || //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+		err == manifest.ErrInput || err == manifest.ErrObjectNotFound || //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+		err == manifest.ErrMissingSecret || err == manifest.ErrSourceSkipped { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 		return outcomeCause{}, false
 	}
 	n, children, ok := outcomeNode(err)
@@ -269,7 +269,7 @@ func (c *outcomeCodecState) decode(n outcomeCause, context outcomeContext, depth
 func outcomeNode(err error) (outcomeCause, []error, bool) {
 	var n outcomeCause
 	var children []error
-	switch e := err.(type) {
+	switch e := err.(type) { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 	case *TerminalError:
 		n.Kind, children = "terminal", []error{e.Err}
 	case *producerError:
@@ -312,7 +312,7 @@ func outcomeNode(err error) (outcomeCause, []error, bool) {
 		n.Kind, n.Code = "code-pointer", e.Code
 	default:
 		for kind, codec := range outcomeCodecs {
-			if codec.sentinel != nil && err == codec.sentinel {
+			if codec.sentinel != nil && err == codec.sentinel { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
 				return outcomeCause{Kind: kind}, nil, true
 			}
 		}

@@ -168,9 +168,9 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 	}
 }
 
-func writeChartFiles(t testing.TB, root, name, version string) {
-	t.Helper()
-	testutil.WriteFile(t, root, "Chart.yaml",
+func writeChartFiles(tb testing.TB, root, name, version string) {
+	tb.Helper()
+	testutil.WriteFile(tb, root, "Chart.yaml",
 		"apiVersion: v2\nname: "+name+"\nversion: "+version+"\n")
-	testutil.WriteFile(t, root, "templates/_helpers.tpl", "")
+	testutil.WriteFile(tb, root, "templates/_helpers.tpl", "")
 }

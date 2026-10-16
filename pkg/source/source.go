@@ -101,9 +101,9 @@ func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ sour
 //
 // hint is a short parenthetical that names what the supported provider
 // expects (e.g. "SecretRef-based credentials" or "S3-compatible").
-func ErrUnsupportedProvider(kind, namespace, name, got, want, hint string) error {
+func ErrUnsupportedProvider(owner manifest.NamedResource, got, want, hint string) error {
 	return fmt.Errorf("%s provider %q is not implemented; flate currently supports only %q (%s)",
-		QualifiedName(kind, namespace, name), got, want, hint)
+		QualifiedName(owner.Kind, owner.Namespace, owner.Name), got, want, hint)
 }
 
 // QualifiedName is the canonical "<Kind> <namespace>/<name>" identifier the

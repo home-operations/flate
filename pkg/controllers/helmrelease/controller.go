@@ -18,7 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -74,9 +73,9 @@ type ReconcileOptions struct {
 }
 
 // New constructs a HelmRelease controller.
-func New(s *store.Store, t *task.Service, h *helm.Client, opts helm.Options, wipeSecrets bool) *Controller {
+func New(controller *base.Controller, h *helm.Client, opts helm.Options, wipeSecrets bool) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t, "helmrelease"),
+		Controller:  controller,
 		Helm:        h,
 		Options:     opts,
 		WipeSecrets: wipeSecrets,

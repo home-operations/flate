@@ -388,7 +388,7 @@ func (t *view) WalkRaw(name string, fn fs.WalkDirFunc) error {
 	} else {
 		err = t.walk(name, n, fn)
 	}
-	if err == fs.SkipDir || err == fs.SkipAll {
+	if errors.Is(err, fs.SkipDir) || errors.Is(err, fs.SkipAll) {
 		return nil
 	}
 	return err
@@ -396,7 +396,7 @@ func (t *view) WalkRaw(name string, fn fs.WalkDirFunc) error {
 
 func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 	if err := fn(name, n, nil); err != nil || !n.IsDir() {
-		if err == fs.SkipDir && n.IsDir() {
+		if errors.Is(err, fs.SkipDir) && n.IsDir() {
 			return nil
 		}
 		return err
@@ -426,7 +426,7 @@ func (t *view) walk(name string, n *node, fn fs.WalkDirFunc) error {
 			}
 		}
 		if err := t.walk(p, child, fn); err != nil {
-			if err == fs.SkipDir {
+			if errors.Is(err, fs.SkipDir) {
 				break
 			}
 			return err

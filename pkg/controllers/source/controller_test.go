@@ -312,7 +312,7 @@ func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
 // the Secret identity the index lookup needs.
 func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) {
 	const secretRef = "ghcr-creds"
-	f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secretRef, "not found")}
+	f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, secretRef, "not found")}
 	producers := &manifest.ProducerIndex{}
 	producers.Record(
 		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretRef},
@@ -341,7 +341,7 @@ func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) 
 // Fail-loud safety: without the flag, a missing auth Secret with NO declared
 // producer still fails — producer inference must not swallow a genuine error.
 func TestController_MissingSecretNoProducerFailsWithoutFlag(t *testing.T) {
-	f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "ghcr-creds", "not found")}
+	f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ghcr-creds", "not found")}
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f},
 		FetchOptions{Producers: &manifest.ProducerIndex{}}) // no flag, empty index
@@ -367,7 +367,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "ca", "not found")}
+			f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ca", "not found")}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
 				FetchOptions{AllowMissingSecrets: tt.allowMissing})
@@ -419,7 +419,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.present {
 				detail = "missing username/password"
 			}
-			f := &fakeFetcher{err: src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", secret.Name, detail)}
+			f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, secret.Name, detail)}
 			producers := &manifest.ProducerIndex{}
 			if tt.producer {
 				producers.Record(secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
@@ -468,7 +468,7 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retr
 	if f.rendered {
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
-	missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.KindOCIRepository, "ns", "r", "ghcr-creds", "not found"))
+	missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ghcr-creds", "not found"))
 	missing.RegistryConfig = "/registry/config.json"
 	missing.RetryWithRegistryConfig = func(_ context.Context, configPath string) (*store.SourceArtifact, error) {
 		f.fallbackCalls++

@@ -76,7 +76,7 @@ func ociRevision(ref manifest.OCIRepositoryRef, digest string) string {
 }
 
 // Mirrors source-controller's getTagBySemver (ocirepository_controller.go).
-func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, filterPattern, mediaType string) (string, error) {
+func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, ref manifest.OCIRepositoryRef, mediaType string) (string, error) {
 	var collected []string
 	if err := repoClient.Tags(ctx, "", func(batch []string) error {
 		collected = append(collected, batch...)
@@ -84,7 +84,7 @@ func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, 
 	}); err != nil {
 		return "", fmt.Errorf("list tags: %w", orasError(err))
 	}
-	return pickSemverTag(collected, expr, filterPattern, mediaType)
+	return pickSemverTag(collected, ref.SemVer, ref.SemverFilter, mediaType)
 }
 
 // pickSemverTag preserves the first registry tag among equal semver versions.

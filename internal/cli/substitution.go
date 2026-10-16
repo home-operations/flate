@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,7 +47,7 @@ func substitutionEnv(flag, input string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s pair %d: invalid CSV", manifest.ErrInput, key, len(pairs)+1)
 	}
-	if _, err := r.Read(); err != io.EOF {
+	if _, err := r.Read(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("%w: %s pair %d: expected one CSV record", manifest.ErrInput, key, len(pairs)+1)
 	}
 	for i, pair := range pairs {
@@ -80,7 +81,7 @@ func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
 		for ordinal := 1; ; ordinal++ {
 			var doc map[string]any
 			err := decoder.Decode(&doc)
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			// Decoder diagnostics can contain scalar values from Secret input.

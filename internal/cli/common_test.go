@@ -72,6 +72,7 @@ func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 		{
 			name: "env",
 			via: func(t *testing.T, root string) []string {
+				t.Helper()
 				t.Setenv("FLATE_CACHE_DIR", root)
 				return nil
 			},

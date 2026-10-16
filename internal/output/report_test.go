@@ -123,20 +123,20 @@ func TestVerdict(t *testing.T) {
 	pass := func(s string, _ bool) string { return s }
 	c := func(n int, label string) Count { return Count{N: n, Label: label, Paint: pass} }
 
-	if got := Verdict(false, "✓", pass, 0); got != "" {
+	if got := Verdict(false, pass("✓", false), 0); got != "" {
 		t.Errorf("no counts = %q, want empty", got)
 	}
-	if got := Verdict(false, "✓", pass, 0, c(0, "passed")); got != "  ✓ 0 passed" {
+	if got := Verdict(false, pass("✓", false), 0, c(0, "passed")); got != "  ✓ 0 passed" {
 		t.Errorf("lead-at-zero = %q", got)
 	}
-	if got := Verdict(false, "✓", pass, 0,
+	if got := Verdict(false, pass("✓", false), 0,
 		c(2, "passed"), c(0, "skipped"), c(3, "failed")); got != "  ✓ 2 passed · 3 failed" {
 		t.Errorf("zero non-lead dropped = %q", got)
 	}
-	if got := Verdict(false, "✗", pass, 0, c(2, "failed"), c(1, "blocked")); got != "  ✗ 2 failed · 1 blocked" {
+	if got := Verdict(false, pass("✗", false), 0, c(2, "failed"), c(1, "blocked")); got != "  ✗ 2 failed · 1 blocked" {
 		t.Errorf("distinct blocked count = %q", got)
 	}
-	if got := Verdict(false, "✗", pass, 1500*time.Millisecond, c(1, "failed")); got != "  ✗ 1 failed   1.5s" {
+	if got := Verdict(false, pass("✗", false), 1500*time.Millisecond, c(1, "failed")); got != "  ✗ 1 failed   1.5s" {
 		t.Errorf("elapsed = %q", got)
 	}
 }

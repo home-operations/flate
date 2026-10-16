@@ -72,7 +72,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy) (*en
 		if _, ok := errors.AsType[*TerminalError](err); ok {
 			return nil, "", err
 		}
-		if _, ok := err.(*producerError); !ok || !retryable(err) {
+		if _, ok := errors.AsType[*producerError](err); !ok || !retryable(err) {
 			return nil, "", err
 		}
 		delay := policy.Retry.backoff(attempt - 1)

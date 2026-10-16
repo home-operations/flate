@@ -572,6 +572,7 @@ spec:
 // clusterPath bug; the explicit anchor is what fixes it.
 func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 	writeCluster := func(t *testing.T, dir string) {
+		t.Helper()
 		testutil.WriteFile(t, dir, "kubernetes/flux/cluster/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: cluster-apps, namespace: flux-system}
@@ -1743,7 +1744,7 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			} else {
 				cfg.PathOrig = ""
 			}
-			if got := o.Bootstrap(t.Context()); got != firstErr {
+			if got := o.Bootstrap(t.Context()); !errors.Is(got, firstErr) {
 				t.Fatalf("terminal Bootstrap error changed: first=%v next=%v", firstErr, got)
 			}
 			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees || o.bootstrapped {
@@ -2106,7 +2107,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 				cleanupErr := errors.New("backing close failed")
 				o.stopErr = cleanupErr
 				t.Cleanup(func() {
-					if got := o.Stop(); got != cleanupErr {
+					if got := o.Stop(); !errors.Is(got, cleanupErr) {
 						t.Errorf("cached Stop error = %v", got)
 					}
 				})
@@ -2146,10 +2147,10 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 						cancel()
 					}
 					err = o.Bootstrap(ctx)
-					if next := o.Bootstrap(t.Context()); next != err {
+					if next := o.Bootstrap(t.Context()); !errors.Is(next, err) {
 						t.Fatalf("Bootstrap lost terminal error identity: %v", next)
 					}
-					if _, next := o.Render(t.Context()); next != err {
+					if _, next := o.Render(t.Context()); !errors.Is(next, err) {
 						t.Fatalf("Render changed Bootstrap error: %v", next)
 					}
 					cause := manifest.ErrInput
@@ -2173,7 +2174,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					} else {
 						result, err = o.Render(ctx)
 						next, nextErr := o.Render(t.Context())
-						if result == nil || len(result.Manifests) == 0 || next != result || nextErr != err {
+						if result == nil || len(result.Manifests) == 0 || next != result || !errors.Is(nextErr, err) {
 							t.Fatalf("Render lost cached partial result/error: %v %v", result, err)
 						}
 					}
@@ -2194,7 +2195,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					go func() { stops <- o.Stop() }()
 				}
 				for range workers {
-					if got := <-stops; got != cleanupErr {
+					if got := <-stops; !errors.Is(got, cleanupErr) {
 						t.Fatalf("Stop changed cached error: %v", got)
 					}
 				}

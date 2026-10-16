@@ -448,7 +448,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		for _, want := range []error{fs.ErrPermission, fs.ErrInvalid} {
 			_, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admissionErrorFS{err: want}})
 			assert.Equal(t, errors.Is(err, want), true)
-			assert.Equal(t, strings.HasPrefix(err.Error(), "sourceignore load: "), want == fs.ErrPermission)
+			assert.Equal(t, strings.HasPrefix(err.Error(), "sourceignore load: "), errors.Is(want, fs.ErrPermission))
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()

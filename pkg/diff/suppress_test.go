@@ -17,7 +17,7 @@ var (
 func hrDocs(n int) []Doc {
 	out := make([]Doc, 0, n)
 	for i := range n {
-		out = append(out, cmDoc(hrParent, "cm-"+string(rune('a'+i)), "monitoring", "v", ""))
+		out = append(out, cmDoc(hrParent, manifest.NamedResource{Name: "cm-" + string(rune('a'+i)), Namespace: "monitoring"}, "v", ""))
 	}
 	return out
 }
@@ -56,8 +56,8 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 func TestRenderDocs_SuppressionHeader(t *testing.T) {
 	parent := ksParent
 	parent.Path = "apps/<path>"
-	l := []Doc{cmDoc(parent, "keep", "apps", "old", ""), cmDoc(parent, "other", "apps", "before", "")}
-	r := []Doc{cmDoc(parent, "keep", "apps", "new", ""), cmDoc(parent, "other", "apps", "after", "")}
+	l := []Doc{cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "old", ""), cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "before", "")}
+	r := []Doc{cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "new", ""), cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "after", "")}
 	suppressed := []Suppression{
 		{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "chart not ready"},
 		{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "suspended on orig"},

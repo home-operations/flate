@@ -98,7 +98,7 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 	if ref.Digest != "" || ref.SemVer == "" {
 		return ref, nil
 	}
-	tag, err := resolveOCISemver(ctx, client, ref.SemVer, ref.SemverFilter, layerMediaType(repo.LayerSelector))
+	tag, err := resolveOCISemver(ctx, client, ref, layerMediaType(repo.LayerSelector))
 	if err != nil {
 		return ref, fmt.Errorf("semver: %w", err)
 	}

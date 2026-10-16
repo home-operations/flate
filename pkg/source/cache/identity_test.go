@@ -3,8 +3,6 @@ package cache
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -13,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 )
@@ -26,8 +25,7 @@ func TestBuildIdentity_Stable(t *testing.T) {
 		},
 	}
 	original := info.String()
-	digest := sha256.Sum256([]byte(original))
-	want := hex.EncodeToString(digest[:])
+	want := manifest.Fingerprint(original)
 	for range 2 {
 		assert.Equal(t, buildIdentity(info), want)
 	}
@@ -120,7 +118,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	}
 	processIdentity = ""
 	c = newCache(t, root)
-	index := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
+	index := filepath.Join(c.root.Name(), indexPath())
 	before, err := os.ReadFile(index)
 	if err != nil {
 		t.Fatal(err)

@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -128,6 +129,16 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		}
 	})
 
+	identities := make(map[string]string)
+	memory := newCache(t, "")
+	for _, payload := range []string{"first", ""} {
+		r, _, _, err := memory.Blob(t.Context(), BlobKey{Content: "blob-completed"}, Policy{}, producer([]byte(payload), ocispec.Descriptor{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		identities[payload] = AcquisitionIdentity(FileFS("chart.tgz", r))
+		assert.NoError(t, r.Close())
+	}
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
 			root := ""
@@ -152,6 +163,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				}
 				view := FileFS("chart.tgz", r)
 				pin := AcquisitionIdentity(view)
+				assert.Equal(t, pin, identities[payload])
 				if pin == "" || pin == AcquisitionIdentity(FileFS("other.tgz", r)) || AcquisitionIdentity(struct{ fs.FS }{view}) != "" {
 					t.Fatal("blob identity lost generation, filename or confinement")
 				}
@@ -169,7 +181,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				}
 				if backing == "disk" {
 					e, _ := c.entries.Load(id)
-					raw, err := os.ReadFile(filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest)))
+					raw, err := os.ReadFile(filepath.Join(c.root.Name(), blobPath(e.(*entry).stored.Digest)))
 					if err != nil || string(raw) != payload {
 						t.Fatalf("plain completed payload=%q: %v", raw, err)
 					}
@@ -312,7 +324,7 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 						if len(tags) != 0 {
 							t.Fatalf("transient output published tags: %v", tags)
 						}
-						if err := fs.WalkDir(os.DirFS(c.layout.OCI()), ".", func(path string, entry fs.DirEntry, err error) error {
+						if err := fs.WalkDir(os.DirFS(filepath.Join(c.root.Name(), ociDir)), ".", func(path string, entry fs.DirEntry, err error) error {
 							if err != nil {
 								return err
 							}
@@ -387,7 +399,7 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 		t.Fatal("failed Close retained the backing reader")
 	}
 	e, _ := c.entries.Load(id)
-	if err := os.Remove(filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest))); err != nil {
+	if err := os.Remove(filepath.Join(c.root.Name(), blobPath(e.(*entry).stored.Digest))); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

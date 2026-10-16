@@ -13,7 +13,6 @@ import (
 	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
@@ -21,6 +20,7 @@ import (
 
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/tree"
 )
@@ -448,17 +448,6 @@ func findMappingValue(node *yaml.Node, key string) *yaml.Node {
 	return found
 }
 
-// httpStatusError exposes the response status to the acquisition retry policy.
-type httpStatusError struct {
-	Code int
-}
-
-func (e *httpStatusError) Unwrap() error { return &errcode.ErrorResponse{StatusCode: e.Code} }
-
-func (e *httpStatusError) Error() string {
-	return fmt.Sprintf("HTTP %d", e.Code)
-}
-
 // httpGetURL preserves per-attempt bounds beneath FetchRemote's shared acquisition.
 func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) (result ocispec.Descriptor, resultErr error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
@@ -473,11 +462,9 @@ func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) 
 	}
 	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return ocispec.Descriptor{}, &httpStatusError{Code: resp.StatusCode}
+		return ocispec.Descriptor{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
 	}
-	// Cap with LimitReader +1 so we can detect overflow precisely: read up to
-	// remoteFetchMaxBytes+1, and if we actually got MaxBytes+1 bytes the body
-	// is larger than the cap and we fail fast instead of OOMing.
+	// The extra byte detects overflow without buffering an unbounded response.
 	size, err := io.Copy(w, io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
 	if err != nil {
 		return ocispec.Descriptor{}, err

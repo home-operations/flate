@@ -75,16 +75,14 @@ func ociRevision(ref manifest.OCIRepositoryRef, digest string) string {
 	return tag
 }
 
-// resolveOCISemver lists the remote tags, applies an optional regex
-// filter, then returns the highest tag matching the semver constraint.
-// Mirrors source-controller's `getTagBySemver` (ocirepository_controller.go).
+// Mirrors source-controller's getTagBySemver (ocirepository_controller.go).
 func resolveOCISemver(ctx context.Context, repoClient *remote.Repository, expr, filterPattern, mediaType string) (string, error) {
 	var collected []string
 	if err := repoClient.Tags(ctx, "", func(batch []string) error {
 		collected = append(collected, batch...)
 		return nil
 	}); err != nil {
-		return "", fmt.Errorf("list tags: %w", err)
+		return "", fmt.Errorf("list tags: %w", orasError(err))
 	}
 	return pickSemverTag(collected, expr, filterPattern, mediaType)
 }

@@ -34,6 +34,7 @@ linters:
             - "**/pkg/source/sourceignore/**"
             - "**/pkg/source/ssrfguard/**"
             - "**/internal/assert/**"
+            - "**/internal/fetcherr/**"
           deny:
             - pkg: github.com/home-operations/flate/pkg
               desc: leaf packages import nothing from pkg/

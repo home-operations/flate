@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/minio/minio-go/v7"
 )
@@ -157,88 +158,113 @@ func TestWalkBucket_ChunkBound(t *testing.T) {
 }
 
 func TestWalkBucket_Faults(t *testing.T) {
-	for _, failure := range []string{"missing", "server", "hostile", "short", "long", "hang"} {
-		t.Run(failure, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Query().Get("list-type") != "" {
-					_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
-					for i := range 16 {
-						key := fmt.Sprintf("file%02d", i)
-						if failure == "hostile" && i == 3 {
-							key = "../escape"
-						}
-						_, _ = fmt.Fprintf(w, "<Contents><Key>%s</Key><Size>4</Size><ETag>\"x\"</ETag></Contents>", key)
+	for _, route := range []string{"list", "object"} {
+		for _, tc := range []struct {
+			name   string
+			status int
+		}{
+			{"missing", http.StatusNotFound},
+			{"server", http.StatusInternalServerError},
+			{"forbidden", http.StatusForbidden},
+			{"bad_request", http.StatusBadRequest},
+			{"unauthorized", http.StatusUnauthorized},
+			{"limited", http.StatusTooManyRequests},
+			{"client_boundary", 499},
+			{"server_boundary", 599},
+			{"terminal", 600},
+			{"hostile", 0}, {"short", 0}, {"long", 0}, {"hang", 0},
+		} {
+			if route == "list" && tc.status == 0 {
+				continue
+			}
+			t.Run(route+"/"+tc.name, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					listing := r.URL.Query().Get("list-type") != ""
+					if tc.status != 0 && (listing && route == "list" || !listing && strings.HasSuffix(r.URL.Path, "file05")) {
+						w.Header().Set("Content-Type", "application/xml")
+						w.WriteHeader(tc.status)
+						_, _ = io.WriteString(w, `<Error><Code>Fault</Code><Message>bucket status failure</Message></Error>`)
+						return
 					}
-					_, _ = fmt.Fprint(w, "</ListBucketResult>")
+					if listing {
+						_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
+						for i := range 16 {
+							key := fmt.Sprintf("file%02d", i)
+							if tc.name == "hostile" && i == 3 {
+								key = "../escape"
+							}
+							_, _ = fmt.Fprintf(w, "<Contents><Key>%s</Key><Size>4</Size><ETag>\"x\"</ETag></Contents>", key)
+						}
+						_, _ = fmt.Fprint(w, "</ListBucketResult>")
+						return
+					}
+					w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
+					w.Header().Set("ETag", "\"x\"")
+					if strings.HasSuffix(r.URL.Path, "file05") {
+						switch tc.name {
+						case "long":
+							w.Header().Set("Content-Length", "5")
+							_, _ = io.WriteString(w, "abcde")
+							return
+						case "hang":
+							<-r.Context().Done()
+							return
+						case "short":
+							w.Header().Set("Content-Length", "4")
+							_, _ = io.WriteString(w, "ab")
+							return
+						}
+					}
+					w.Header().Set("Content-Length", "4")
+					_, _ = io.WriteString(w, "abcd")
+				}))
+				defer srv.Close()
+				client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				defer cancel()
+				_, err = walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
+				if err == nil {
+					t.Fatal("fault accepted")
+				}
+				if tc.name != "hang" && errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("fault timed out: %v", err)
+				}
+				if tc.status != 0 {
+					response, ok := errors.AsType[*fetcherr.ResponseError](err)
+					if !ok || response.StatusCode != tc.status || response.Op != http.MethodGet || err.Error() != "bucket status failure" {
+						t.Fatalf("HTTP fault: %v, response=%+v, want GET status %d", err, response, tc.status)
+					}
+					if tc.name == "forbidden" || tc.name == "missing" {
+						cause, ok := errors.AsType[minio.ErrorResponse](err)
+						if !ok || cause.StatusCode != tc.status || cause.Message != "bucket status failure" || !errors.Is(response.Err, cause) || err.Error() != cause.Error() {
+							t.Fatalf("terminal MinIO cause: %v, response=%+v, cause=%+v", err, response, cause)
+						}
+					}
 					return
 				}
-				w.Header().Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
-				w.Header().Set("ETag", "\"x\"")
-				if strings.HasSuffix(r.URL.Path, "file05") {
-					switch failure {
-					case "server":
-						http.Error(w, "failure", http.StatusInternalServerError)
-						return
-					case "long":
-						w.Header().Set("Content-Length", "5")
-						_, _ = io.WriteString(w, "abcde")
-						return
-					case "missing":
-						http.NotFound(w, r)
-						return
-					case "hang":
-						<-r.Context().Done()
-						return
-					case "short":
-						w.Header().Set("Content-Length", "4")
-						_, _ = io.WriteString(w, "ab")
-						return
+				switch tc.name {
+				case "hostile":
+					if !errors.Is(err, fs.ErrInvalid) {
+						t.Fatalf("path fault: %v", err)
+					}
+				case "short":
+					if !errors.Is(err, io.ErrUnexpectedEOF) {
+						t.Fatalf("short body: %v", err)
+					}
+				case "long":
+					if err.Error() != `bucket object "file05" exceeds chunk size` {
+						t.Fatalf("long body: %v", err)
+					}
+				case "hang":
+					if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("deadline identity: %v", err)
 					}
 				}
-				w.Header().Set("Content-Length", "4")
-				_, _ = io.WriteString(w, "abcd")
-			}))
-			defer srv.Close()
-			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-			defer cancel()
-			_, err = walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
-			if err == nil {
-				t.Fatal("fault accepted")
-			}
-			if failure != "hang" && errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("fault timed out: %v", err)
-			}
-			switch failure {
-			case "missing", "server":
-				want := http.StatusNotFound
-				if failure == "server" {
-					want = http.StatusInternalServerError
-				}
-				if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != want {
-					t.Fatalf("HTTP fault: %v, want status %d", err, want)
-				}
-			case "hostile":
-				if !errors.Is(err, fs.ErrInvalid) {
-					t.Fatalf("path fault: %v", err)
-				}
-			case "short":
-				if !errors.Is(err, io.ErrUnexpectedEOF) {
-					t.Fatalf("short body: %v", err)
-				}
-			case "long":
-				if err.Error() != `bucket object "file05" exceeds chunk size` {
-					t.Fatalf("long body: %v", err)
-				}
-			case "hang":
-				if !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatalf("deadline identity: %v", err)
-				}
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -369,7 +395,7 @@ func (w *cancelArchiveWriter) Write(p []byte) (int, error) {
 
 func TestWalkBucket_Ranges(t *testing.T) {
 	const part = 8 << 20
-	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered"} {
+	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server"} {
 		run := func(t *testing.T) {
 			copyCtx, cancelCopy := context.WithCancel(t.Context())
 			defer cancelCopy()
@@ -379,6 +405,11 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			completeLater := sync.OnceFunc(func() { close(later) })
 			sizes := []int64{0, 2*part + 17, 2*part + 17}
 			fault := 0
+			probeStatus := map[string]int{
+				"probe_forbidden": http.StatusForbidden,
+				"probe_limited":   http.StatusTooManyRequests,
+				"probe_server":    http.StatusServiceUnavailable,
+			}[behavior]
 			switch behavior {
 			case "ignore_changed":
 				fault = http.StatusPreconditionFailed
@@ -406,6 +437,15 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				gets.Add(1)
 				if got := r.Header.Get("If-Match"); got != `"v1"` {
 					t.Errorf("If-Match=%q, want listed ETag", got)
+				}
+				if probeStatus != 0 {
+					if got := r.Header.Get("Range"); got != "bytes=0-0" {
+						t.Errorf("probe Range=%q, want bytes=0-0", got)
+					}
+					w.Header().Set("Content-Type", "application/xml")
+					w.WriteHeader(probeStatus)
+					_, _ = io.WriteString(w, `<Error><Code>Fault</Code><Message>range probe failure</Message></Error>`)
+					return
 				}
 				i, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/data/prefix/file"))
 				if fault != 0 && i == 1 {
@@ -513,9 +553,27 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				archive = &cancelArchiveWriter{cancel: cancelCopy}
 			}
 			desc, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Prefix: "prefix/"}, archive)
+			if probeStatus != 0 {
+				response, ok := errors.AsType[*fetcherr.ResponseError](err)
+				if !ok || response.StatusCode != probeStatus || response.Op != http.MethodGet || err.Error() != "range probe failure" || gets.Load() != 1 {
+					t.Fatalf("probe failure: %v, response=%+v, requests=%d", err, response, gets.Load())
+				}
+				if behavior == "probe_forbidden" {
+					cause, ok := errors.AsType[minio.ErrorResponse](err)
+					if !ok || cause.StatusCode != probeStatus || !errors.Is(response.Err, cause) || err.Error() != cause.Error() {
+						t.Fatalf("probe MinIO cause: %v, response=%+v, cause=%+v", err, response, cause)
+					}
+				}
+				return
+			}
 			if fault != 0 {
-				if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != fault {
+				if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != fault || response.Op != http.MethodGet {
 					t.Fatalf("streamed sibling failure: %v, want status %d", err, fault)
+				}
+				if behavior != "ignore_server" {
+					if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != fault {
+						t.Fatalf("streamed sibling MinIO cause: %v, want status %d", err, fault)
+					}
 				}
 				return
 			}
@@ -532,6 +590,9 @@ func TestWalkBucket_Ranges(t *testing.T) {
 						t.Fatalf("context identity: %v", err)
 					}
 				case "changed":
+					if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != http.StatusPreconditionFailed || response.Op != http.MethodGet {
+						t.Fatalf("ETag mismatch status: %v", err)
+					}
 					if response, ok := errors.AsType[minio.ErrorResponse](err); !ok || response.StatusCode != http.StatusPreconditionFailed {
 						t.Fatalf("ETag mismatch: %v", err)
 					}

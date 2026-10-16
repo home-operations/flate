@@ -17,6 +17,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/google/uuid"
+	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -37,96 +38,102 @@ type GitGeneration struct {
 	id       string
 }
 
-type gitRequest struct {
-	key     GitKey
-	produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)
+type gitProducer struct {
+	key   GitKey
+	fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)
+}
+
+func (p gitProducer) identity() string {
+	return manifest.Fingerprint(acquisitionContent{Git: p.key})
 }
 
 // Git acquires a private generation through the common freshness and publication path.
 // Its acquisition identity is empty on failure.
 func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, string, error) {
-	e, id, err := c.acquire(ctx, acquireKey{git: &gitRequest{key, produce}}, policy, nil)
+	e, id, err := c.acquire(ctx, acquireKey{producer: gitProducer{key: key, fetch: produce}}, policy)
 	if err != nil {
 		return nil, "", err
 	}
 	return e.git, id, nil
 }
 
-func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (generation *GitGeneration, descriptor ocispec.Descriptor, resultErr error) {
+func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 	g := &GitGeneration{id: uuid.NewString()}
-	complete := false
+	e := &entry{git: g}
 	if c.store == nil {
 		g.Backing = memfs.New()
-		if request.key.RecurseSubmodules {
+		if p.key.RecurseSubmodules {
 			g.Worktree = memfs.New()
 		}
 	} else {
-		defer func() {
-			if !complete {
-				if cleanup := c.root.RemoveAll(generationPath(g.id)); cleanup != nil {
-					generation = nil
-					resultErr = errors.Join(resultErr, cleanup)
-				}
+		staged.discard = func() error {
+			if e.stored.Digest == "" {
+				return c.root.RemoveAll(generationPath(g.id))
 			}
-		}()
-		g.Backing = osfs.New(c.layout.GitObjects(g.id))
-		if err := c.root.MkdirAll(gitObjectsPath(g.id), 0o750); err != nil {
-			return nil, ocispec.Descriptor{}, err
+			return nil
 		}
-		if request.key.RecurseSubmodules {
-			g.Worktree = osfs.New(c.layout.GitWorktree(g.id))
+		g.Backing = osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(g.id)))
+		if err := c.root.MkdirAll(gitObjectsPath(g.id), 0o750); err != nil {
+			return nil, err
+		}
+		if p.key.RecurseSubmodules {
+			g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(g.id)))
 			if err := c.root.MkdirAll(gitWorktreePath(g.id), 0o750); err != nil {
-				return nil, ocispec.Descriptor{}, err
+				return nil, err
 			}
 		}
 	}
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 	if err := ctx.Err(); err != nil {
-		return nil, ocispec.Descriptor{}, errors.Join(err, storer.Close())
+		return nil, errors.Join(err, storer.Close())
 	}
-	hash, err := request.produce(ctx, storer, g.Worktree)
+	hash, err := p.fetch(ctx, storer, g.Worktree)
 	closeErr := storer.Close()
 	if err != nil {
 		if closeErr != nil {
-			return nil, ocispec.Descriptor{}, errors.Join(err, closeErr)
+			return nil, errors.Join(err, closeErr)
 		}
-		return nil, ocispec.Descriptor{}, &producerError{err}
+		return nil, &producerError{err}
 	}
 	if err := errors.Join(closeErr, ctx.Err()); err != nil {
-		return nil, ocispec.Descriptor{}, err
+		return nil, err
 	}
-	complete = true
 	g.Commit = hash
-	return g, ocispec.Descriptor{Annotations: map[string]string{
-		prefix + "revision": hash.String(), prefix + "git-ref": request.key.Ref, prefix + "git-generation": g.id,
-	}}, nil
+	e.descriptor = ocispec.Descriptor{Annotations: map[string]string{
+		prefix + "revision": hash.String(), prefix + "git-ref": p.key.Ref, prefix + "git-generation": g.id,
+	}}
+	if _, err := io.WriteString(staged.writer, g.id); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
-func (c *Cache) restoreGit(desc ocispec.Descriptor, key GitKey) (*GitGeneration, error) {
+func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descriptor, e *entry) error {
+	if e.git != nil {
+		return nil
+	}
+	resolved := e.resolved
+	e.resolved = time.Time{}
 	a := desc.Annotations
 	id, revision := a[prefix+"git-generation"], a[prefix+"revision"]
 	parsed, err := uuid.Parse(id)
-	if err != nil || parsed.String() != id || !plumbing.IsHash(revision) || a[prefix+"git-ref"] != key.Ref {
-		return nil, nil
+	if err != nil || parsed.String() != id || !plumbing.IsHash(revision) || a[prefix+"git-ref"] != p.key.Ref {
+		return nil
 	}
-	g := &GitGeneration{id: id, Commit: plumbing.NewHash(revision), Backing: osfs.New(c.layout.GitObjects(id))}
-	_, err = time.Parse(time.RFC3339Nano, a[prefix+"resolved-at"])
-	if err != nil {
-		return nil, nil
-	}
-	if _, err := c.root.Stat(filepath.Join(gitObjectsPath(id), "objects")); err != nil {
+	g := &GitGeneration{id: id, Commit: plumbing.NewHash(revision), Backing: osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(id)))}
+	if _, err := c.root.Stat(gitObjectDataPath(id)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
+			return nil
 		}
-		return nil, err
+		return err
 	}
-	if key.RecurseSubmodules {
-		g.Worktree = osfs.New(c.layout.GitWorktree(id))
+	if p.key.RecurseSubmodules {
+		g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(id)))
 		if _, err := c.root.Stat(gitWorktreePath(id)); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, nil
+				return nil
 			}
-			return nil, err
+			return err
 		}
 	}
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
@@ -136,10 +143,11 @@ func (c *Cache) restoreGit(desc ocispec.Descriptor, key GitKey) (*GitGeneration,
 	}
 	closeErr := storer.Close()
 	if errors.Is(err, plumbing.ErrObjectNotFound) || errors.Is(err, io.EOF) {
-		return nil, closeErr
+		return closeErr
 	}
 	if err := errors.Join(err, closeErr); err != nil {
-		return nil, err
+		return err
 	}
-	return g, nil
+	e.git, e.resolved = g, resolved
+	return nil
 }

@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"io"
 	"io/fs"
 	"math"
@@ -20,7 +17,11 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 )
 
@@ -81,41 +82,52 @@ func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 	}
 }
 
-// TestIsHTTPClientError confirms only definitive 4xx responses are treated as
-// permanent (cacheable) errors; everything else is transient.
 func TestIsHTTPClientError(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
 		want bool
 	}{
-		{"400", &httpStatusError{Code: 400}, true},
-		{"404", &httpStatusError{Code: 404}, true},
-		{"418", &httpStatusError{Code: 418}, true},
-		{"499", &httpStatusError{Code: 499}, true},
-		{"429 transient", &httpStatusError{Code: 429}, false},
-		{"500 transient", &httpStatusError{Code: 500}, false},
-		{"200 never-client-error", &httpStatusError{Code: 200}, false},
-		{"wrapped 404", fmt.Errorf("preflight: %w", &httpStatusError{Code: 404}), true},
-		{"wrapped 500", fmt.Errorf("preflight: %w", &httpStatusError{Code: 500}), false},
+		{"400", &fetcherr.ResponseError{StatusCode: 400}, true},
+		{"401", &fetcherr.ResponseError{StatusCode: 401}, true},
+		{"403", &fetcherr.ResponseError{StatusCode: 403}, true},
+		{"404", &fetcherr.ResponseError{StatusCode: 404}, true},
+		{"418", &fetcherr.ResponseError{StatusCode: 418}, true},
+		{"499", &fetcherr.ResponseError{StatusCode: 499}, true},
+		{"429 transient", &fetcherr.ResponseError{StatusCode: 429}, false},
+		{"500 transient", &fetcherr.ResponseError{StatusCode: 500}, false},
+		{"599 transient", &fetcherr.ResponseError{StatusCode: 599}, false},
+		{"600 terminal", &fetcherr.ResponseError{StatusCode: 600}, false},
+		{"client after transient", errors.Join(&fetcherr.ResponseError{StatusCode: 503}, fmt.Errorf("edge: %w", &fetcherr.ResponseError{StatusCode: 404})), true},
+		{"client before transient", errors.Join(&fetcherr.ResponseError{StatusCode: 404}, &fetcherr.ResponseError{StatusCode: 503}), true},
+		{"200 never-client-error", &fetcherr.ResponseError{StatusCode: 200}, false},
+		{"wrapped 404", fmt.Errorf("preflight: %w", &fetcherr.ResponseError{StatusCode: 404}), true},
+		{"wrapped 500", fmt.Errorf("preflight: %w", &fetcherr.ResponseError{StatusCode: 500}), false},
 		{"transport error", fmt.Errorf("connection refused"), false},
 		{"deadline", fmt.Errorf("context deadline exceeded"), false},
 		{"nil", nil, false},
 	}
 	for _, tc := range cases {
-		if got := isHTTPClientError(tc.err); got != tc.want {
+		if got := fetcherr.Classes(tc.err)&fetcherr.Client != 0; got != tc.want {
 			t.Errorf("isHTTPClientError(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
 
 func TestFetchRemote_RetryTransientCacheClientError(t *testing.T) {
-	for _, status := range []int{http.StatusServiceUnavailable, http.StatusTooManyRequests, http.StatusNotFound} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		client bool
+		retry  bool
+	}{
+		{400, true, false}, {401, true, false}, {403, true, false}, {404, true, false},
+		{429, false, true}, {499, true, false}, {500, false, true}, {599, false, true}, {600, false, false},
+	} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			var hits atomic.Int64
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if hits.Add(1) == 1 {
-					w.WriteHeader(status)
+					w.WriteHeader(tc.status)
 					return
 				}
 				_, _ = w.Write([]byte("retried"))
@@ -124,15 +136,19 @@ func TestFetchRemote_RetryTransientCacheClientError(t *testing.T) {
 			cache := newTestTreeCache(t, "")
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 			body, err := cache.FetchRemote(t.Context(), srv.URL, retry)
-			if status == http.StatusNotFound {
-				_, err = cache.FetchRemote(t.Context(), srv.URL, retry)
+			if !tc.retry {
+				status, ok := errors.AsType[*fetcherr.ResponseError](err)
+				if !ok || status.StatusCode != tc.status || status.Op != http.MethodGet || hits.Load() != 1 {
+					t.Fatalf("initial status=%+v err=%v hits=%d", status, err, hits.Load())
+				}
+				body, err = cache.FetchRemote(t.Context(), srv.URL, retry)
 			}
-			if status == http.StatusNotFound {
-				if !isHTTPClientError(err) || hits.Load() != 1 {
+			if tc.client {
+				if fetcherr.Classes(err)&fetcherr.Client == 0 || hits.Load() != 1 {
 					t.Fatalf("4xx cache: err=%v, hits=%d", err, hits.Load())
 				}
 			} else if err != nil || string(body) != "retried" || hits.Load() != 2 {
-				t.Fatalf("transient retry: body=%q, err=%v, hits=%d", body, err, hits.Load())
+				t.Fatalf("retry or next fetch: body=%q, err=%v, hits=%d", body, err, hits.Load())
 			}
 		})
 	}

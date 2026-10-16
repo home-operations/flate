@@ -29,6 +29,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -579,82 +580,119 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	}
 }
 
-func TestFetchHTTPChart_TruncatedOutcomeReplay(t *testing.T) {
-	for _, target := range []string{"/index.yaml", "/app-template-1.0.0.tgz"} {
-		for _, attempts := range []int{1, 3} {
-			t.Run(fmt.Sprintf("%s/%d", strings.TrimPrefix(target, "/"), attempts), func(t *testing.T) {
-				var indexHits, chartHits atomic.Int32
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					if req.URL.Path == "/index.yaml" {
-						indexHits.Add(1)
-						if target != "/index.yaml" {
-							_, _ = io.WriteString(w, helmRepoIndex(""))
-							return
-						}
-					} else {
-						chartHits.Add(1)
-					}
-					w.Header().Set("Content-Length", "20")
-					_, _ = io.WriteString(w, "partial")
-				}))
-				defer srv.Close()
-				r := httpRepo(srv.URL)
-				lookup := func(_, _ string) *manifest.HelmRepository { return r }
-				root := t.TempDir()
-				c, err := sourcecache.New(t.Context(), root)
-				if err != nil {
-					t.Fatal(err)
+func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
+	for _, status := range []int{200, 201, 204, 299, 300, 400, 401, 403, 404, 429, 499, 500, 599, 600} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			r := &httpRepository{HelmRepository: httpRepo("https://charts.invalid"), client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Body: io.NopCloser(strings.NewReader("content"))}, nil
+			})}}
+			var body bytes.Buffer
+			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body)
+			if status == http.StatusOK {
+				if err != nil || body.String() != "content" {
+					t.Fatalf("successful response: body=%q error=%v", body.String(), err)
 				}
-				t.Cleanup(func() { _ = c.Close() })
-				f, cleanup := New(nil, lookup, nil, Config{Cache: c})
-				t.Cleanup(cleanup)
-				hc := helmChart("repo", "app-template", "1.0.0")
-				retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-				_, err = f.Fetch(t.Context(), hc, retry)
-				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
-				if !ok || !terminal.Attempted || !errors.Is(err, io.ErrUnexpectedEOF) || !errors.Is(err, manifest.ErrFlux) {
-					t.Fatalf("initial terminal=%+v, error=%v", terminal, err)
-				}
-				if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != srv.URL+target || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
-					t.Errorf("initial transport=%+v, error=%v", transport, err)
-				}
-				wantIndex, wantChart := int32(attempts), int32(0)
-				if target != "/index.yaml" {
-					wantIndex, wantChart = 1, int32(attempts)
-				}
-				if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
-					t.Fatalf("initial requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
-				}
-				cleanup()
-				if err := c.Close(); err != nil {
-					t.Fatal(err)
-				}
-				warmCache, err := sourcecache.New(t.Context(), root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = warmCache.Close() })
-				if warmCache == c {
-					t.Fatal("reopened cache reused the closed owner")
-				}
-				warm, cleanup := New(nil, lookup, nil, Config{Cache: warmCache})
-				t.Cleanup(cleanup)
-				_, err = warm.Fetch(t.Context(), hc, retry)
-				terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
-				if !ok || terminal.Attempted || !errors.Is(err, io.ErrUnexpectedEOF) || !errors.Is(err, manifest.ErrFlux) {
-					t.Errorf("replayed terminal=%+v, error=%v", terminal, err)
-				}
-				if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != "" || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
-					t.Errorf("replayed transport=%+v, error=%v", transport, err)
-				}
-				if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
-					t.Errorf("replayed requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
-				}
-			})
-		}
+				return
+			}
+			response, ok := errors.AsType[*fetcherr.ResponseError](err)
+			want := fmt.Sprintf("failed to fetch https://charts.invalid/chart.tgz : %d %s", status, http.StatusText(status))
+			if !ok || response.StatusCode != status || response.Op != http.MethodGet || err.Error() != want || body.Len() != 0 {
+				t.Fatalf("response=%+v body=%q error=%v want=%q", response, body.String(), err, want)
+			}
+		})
 	}
 }
 
+func TestFetchHTTPChart_TruncatedOutcomeReplay(t *testing.T) {
+	for _, status := range []int{0, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		for _, target := range []string{"/index.yaml", "/app-template-1.0.0.tgz"} {
+			for _, attempts := range []int{1, 3} {
+				t.Run(fmt.Sprintf("%s/%d/status-%d", strings.TrimPrefix(target, "/"), attempts, status), func(t *testing.T) {
+					var indexHits, chartHits atomic.Int32
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+						if req.URL.Path == "/index.yaml" {
+							indexHits.Add(1)
+							if target != "/index.yaml" {
+								_, _ = io.WriteString(w, helmRepoIndex(""))
+								return
+							}
+						} else {
+							chartHits.Add(1)
+						}
+						if status != 0 {
+							w.WriteHeader(status)
+							return
+						}
+						w.Header().Set("Content-Length", "20")
+						_, _ = io.WriteString(w, "partial")
+					}))
+					defer srv.Close()
+					r := httpRepo(srv.URL)
+					lookup := func(_, _ string) *manifest.HelmRepository { return r }
+					root := t.TempDir()
+					c, err := sourcecache.New(t.Context(), root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = c.Close() })
+					f, cleanup := New(nil, lookup, nil, Config{Cache: c})
+					t.Cleanup(cleanup)
+					hc := helmChart("repo", "app-template", "1.0.0")
+					retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
+					_, err = f.Fetch(t.Context(), hc, retry)
+					terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+					if !ok || !terminal.Attempted || !errors.Is(err, manifest.ErrFlux) {
+						t.Fatalf("initial terminal=%+v, error=%v", terminal, err)
+					}
+					if status == 0 {
+						if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != srv.URL+target || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
+							t.Errorf("initial transport=%+v, error=%v", transport, err)
+						}
+					} else if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != status || response.Op != http.MethodGet || !strings.Contains(response.Error(), srv.URL+target) {
+						t.Errorf("initial response=%+v, error=%v", response, err)
+					}
+					wantIndex, wantChart := int32(attempts), int32(0)
+					if target != "/index.yaml" {
+						wantIndex, wantChart = 1, int32(attempts)
+					}
+					if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
+						t.Fatalf("initial requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
+					}
+					cleanup()
+					if err := c.Close(); err != nil {
+						t.Fatal(err)
+					}
+					warmCache, err := sourcecache.New(t.Context(), root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = warmCache.Close() })
+					if warmCache == c {
+						t.Fatal("reopened cache reused the closed owner")
+					}
+					warm, cleanup := New(nil, lookup, nil, Config{Cache: warmCache})
+					t.Cleanup(cleanup)
+					_, err = warm.Fetch(t.Context(), hc, retry)
+					terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
+					if !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) {
+						t.Errorf("replayed terminal=%+v, error=%v", terminal, err)
+					}
+					if status == 0 {
+						if transport, ok := errors.AsType[*url.Error](err); !ok || transport.Op != "Get" || transport.URL != "" || !errors.Is(transport.Err, io.ErrUnexpectedEOF) {
+							t.Errorf("replayed transport=%+v, error=%v", transport, err)
+						}
+					} else if response, ok := errors.AsType[*fetcherr.ResponseError](err); !ok || response.StatusCode != status || response.Op != http.MethodGet || strings.Contains(response.Error(), srv.URL) {
+						t.Errorf("replayed response=%+v, error=%v", response, err)
+					}
+					if indexHits.Load() != wantIndex || chartHits.Load() != wantChart {
+						t.Errorf("replayed requests: index=%d chart=%d, want index=%d chart=%d", indexHits.Load(), chartHits.Load(), wantIndex, wantChart)
+					}
+				})
+			}
+		}
+	}
+
+}
 func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	failed := make(chan struct{})
 	var hits atomic.Int32

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -519,7 +520,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 
 func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 	readErr, closeErr := errors.New("body read"), errors.New("body close")
-	for _, outcome := range []string{"success", "status", "read", "limit"} {
+	for _, outcome := range []string{"success", "created", "last-success", "status", "read", "limit"} {
 		t.Run(outcome, func(t *testing.T) {
 			c := newTestTreeCache(t, "")
 			closes := 0
@@ -527,6 +528,10 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 				var reader io.Reader = strings.NewReader("complete")
 				status := http.StatusOK
 				switch outcome {
+				case "created":
+					status = http.StatusCreated
+				case "last-success":
+					status = 299
 				case "status":
 					status = http.StatusNotFound
 				case "read":
@@ -540,10 +545,16 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 			if !errors.Is(err, closeErr) || closes != 1 || strings.Count(err.Error(), closeErr.Error()) != 1 {
 				t.Fatalf("body cleanup: %v closes=%d", err, closes)
 			}
-			if outcome == "read" && !errors.Is(err, readErr) || outcome == "status" && !isHTTPClientError(err) || outcome == "limit" && !strings.Contains(err.Error(), "exceeds") {
+			if outcome == "read" && !errors.Is(err, readErr) || outcome == "status" && fetcherr.Classes(err)&fetcherr.Client == 0 || outcome == "limit" && !strings.Contains(err.Error(), "exceeds") {
 				t.Fatalf("operation identity: %v", err)
 			}
-			if outcome != "success" && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
+			if outcome == "status" {
+				status, ok := errors.AsType[*fetcherr.ResponseError](err)
+				if !ok || status.StatusCode != http.StatusNotFound || status.Op != http.MethodGet {
+					t.Fatalf("response facts=%+v error=%v", status, err)
+				}
+			}
+			if (outcome == "status" || outcome == "read" || outcome == "limit") && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
 				t.Fatalf("operation must precede cleanup: %v", err)
 			}
 		})

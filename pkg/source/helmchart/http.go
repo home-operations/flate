@@ -20,6 +20,7 @@ import (
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -197,7 +198,7 @@ func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (o
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return ocispec.Descriptor{}, fmt.Errorf("failed to fetch %s : %s", target, response.Status)
+		return ocispec.Descriptor{}, &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: http.MethodGet, Message: fmt.Sprintf("failed to fetch %s : %s", target, response.Status)}
 	}
 	h := digest.SHA256.Digester()
 	size, err := io.Copy(io.MultiWriter(w, h.Hash()), response.Body)

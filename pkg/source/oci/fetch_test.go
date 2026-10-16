@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -30,6 +32,8 @@ import (
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"oras.land/oras-go/v2/errdef"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
 // TestFetcher_ExtractsLayerWithoutTitleAnnotation regresses the silent
@@ -722,40 +726,207 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 }
 
 func TestFetcher_FailureSourceAndOperation(t *testing.T) {
-	for _, operation := range []string{"resolve", "fetch manifest", "fetch layer"} {
-		t.Run(operation, func(t *testing.T) {
-			art := newFakeOCIArtifact(t, map[string]string{"file": "x"})
-			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch {
-				case strings.Contains(r.URL.Path, "/manifests/"):
-					if operation == "resolve" || operation == "fetch manifest" && strings.HasSuffix(r.URL.Path, art.manifestDigest) && r.Method == http.MethodGet {
-						http.NotFound(w, r)
-						return
+	for _, layerOperation := range []string{sourcev1.OCILayerCopy, sourcev1.OCILayerExtract} {
+		for _, tc := range []struct {
+			operation string
+			status    int
+			attempts  int32
+			replay    bool
+		}{
+			{"list tags", 400, 1, false},
+			{"resolve", 400, 1, false},
+			{"fetch manifest", 400, 1, false},
+			{"fetch layer", 400, 1, false},
+			{"manifest body", 400, 1, false},
+			{"layer header", 400, 1, false},
+			{"layer body", 400, 1, false},
+			{"neutral body", 400, 1, false},
+			{"canceled body", 400, 1, false},
+			{"list tags", 429, 3, true},
+			{"resolve", 500, 3, true},
+			{"fetch manifest", 599, 3, true},
+			{"fetch layer", 600, 1, false},
+			{"resolve", 404, 1, false},
+		} {
+			operation := tc.operation
+			if operation == "layer header" && layerOperation == sourcev1.OCILayerCopy {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/%s/%d", layerOperation, operation, tc.status), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				art := newFakeOCIArtifact(t, map[string]string{"file": "x"})
+				var requests, failures atomic.Int32
+				srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					switch {
+					case strings.HasSuffix(r.URL.Path, "/tags/list"):
+						failures.Add(1)
+						http.Error(w, "registry failure", tc.status)
+					case strings.Contains(r.URL.Path, "/manifests/"):
+						if operation == "resolve" || operation == "fetch manifest" && strings.HasSuffix(r.URL.Path, art.manifestDigest) && r.Method == http.MethodGet {
+							failures.Add(1)
+							http.Error(w, "registry failure", tc.status)
+							return
+						}
+						w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+						w.Header().Set("Docker-Content-Digest", art.manifestDigest)
+						_, _ = w.Write(art.manifest)
+					case strings.HasSuffix(r.URL.Path, art.layerDigest):
+						if operation == "fetch layer" {
+							failures.Add(1)
+							http.Error(w, "registry failure", tc.status)
+							return
+						}
+						_, _ = w.Write(art.layer)
 					}
-					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
-					w.Header().Set("Docker-Content-Digest", art.manifestDigest)
-					_, _ = w.Write(art.manifest)
-				case strings.HasSuffix(r.URL.Path, art.layerDigest):
-					http.NotFound(w, r)
+				}))
+				t.Cleanup(srv.Close)
+				repo := &manifest.OCIRepository{Name: "failure", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/chart",
+					Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+					LayerSelector: &sourcev1.OCILayerSelector{Operation: layerOperation}}
+				if operation == "list tags" {
+					repo.Reference = &sourcev1.OCIRepositoryRef{SemVer: ">=1"}
 				}
-			}))
-			t.Cleanup(srv.Close)
-			c, err := sourcecache.New(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = c.Close() })
-			repo := &manifest.OCIRepository{Name: "failure", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/chart",
-				Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
-			_, err = (&Fetcher{Cache: c}).Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-			if err == nil || !strings.HasPrefix(err.Error(), ociID(repo)+" "+operation) || strings.Contains(err.Error(), "cache:") {
-				t.Fatalf("failure identity: %v", err)
-			}
-			if !errors.Is(err, manifest.ErrFlux) {
-				t.Fatalf("failure classification: %v", err)
-			}
-		})
+				root := t.TempDir()
+				c, err := sourcecache.New(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f := &Fetcher{Cache: c}
+				t.Cleanup(func() {
+					if err := f.Cache.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				client, material, err := f.newRepoClient(ctx, repo, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var original error
+				if strings.HasSuffix(operation, "body") || operation == "layer header" {
+					response := &errcode.ErrorResponse{Method: http.MethodGet, URL: mustURL(t, srv.URL+"/body"), StatusCode: tc.status}
+					original = response
+					if operation == "neutral body" {
+						original = &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: response.Method, Err: response}
+					}
+					if operation == "canceled body" {
+						original = context.Canceled
+					}
+					client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
+						resp, err := srv.Client().Transport.RoundTrip(req)
+						if err != nil || req.Method != http.MethodGet {
+							return resp, err
+						}
+						manifestBody := operation == "manifest body" && strings.Contains(req.URL.Path, "/manifests/")
+						layerBody := operation != "manifest body" && strings.HasSuffix(req.URL.Path, art.layerDigest)
+						if manifestBody || layerBody {
+							failures.Add(1)
+							_ = resp.Body.Close()
+							var prefix []byte
+							if layerBody && operation != "layer header" {
+								prefix = art.layer[:10]
+							}
+							resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(original)))
+							if operation == "canceled body" {
+								cancel()
+							}
+						}
+						return resp, nil
+					})}
+				}
+				retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
+				_, err = f.fetch(ctx, repo, registryAcquisition{client, material}, retry)
+				if failures.Load() != tc.attempts {
+					t.Fatalf("producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
+				}
+				t.Logf("live producer failures=%d; total requests=%d", failures.Load(), requests.Load())
+				prefix := operation
+				switch operation {
+				case "list tags":
+					prefix = "semver: list tags:"
+				case "manifest body":
+					prefix = "fetch manifest:"
+				case "layer header":
+					prefix = "gzip:"
+				case "layer body", "neutral body", "canceled body":
+					prefix = ""
+				}
+				if err == nil || !strings.HasPrefix(err.Error(), ociID(repo)+" "+prefix) || operation != "canceled body" && strings.Contains(err.Error(), "cache:") {
+					t.Fatalf("failure identity: %v", err)
+				}
+				if !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("failure classification: %v", err)
+				}
+				neutral, ok := errors.AsType[*fetcherr.ResponseError](err)
+				if tc.status == http.StatusNotFound {
+					if ok || !errors.Is(err, errdef.ErrNotFound) {
+						t.Fatalf("ORAS not-found mapping changed: %v", err)
+					}
+					return
+				}
+				if operation == "canceled body" {
+					if ok || !errors.Is(err, context.Canceled) {
+						t.Fatalf("caller cancellation changed: %v", err)
+					}
+					return
+				}
+				response, typed := errors.AsType[*errcode.ErrorResponse](err)
+				method := http.MethodGet
+				if operation == "resolve" {
+					method = http.MethodHead
+				}
+				if !ok || !typed || neutral.StatusCode != tc.status || neutral.Op != method || response.StatusCode != tc.status || response.Method != method || neutral.Error() != neutral.Err.Error() {
+					t.Fatalf("lost response facts: neutral=%+v response=%+v error=%v", neutral, response, err)
+				}
+				if original == nil {
+					if neutral.Err != response {
+						t.Fatalf("original ORAS response changed: %v", err)
+					}
+				} else if !errors.Is(err, original) {
+					t.Fatalf("original body failure changed: %v", err)
+				}
+				if operation == "neutral body" && neutral != original {
+					t.Fatalf("neutral body failure wrapped twice: %v", err)
+				}
+				if !tc.replay {
+					return
+				}
+				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+				if !ok || !terminal.Attempted {
+					t.Fatalf("initial exhaustion: %+v, %v", terminal, err)
+				}
+				before := requests.Load()
+				if err := c.Close(); err != nil {
+					t.Fatal(err)
+				}
+				f.Cache, err = sourcecache.New(t.Context(), root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if f.Cache == c {
+					t.Fatal("reopen reused the closed owner")
+				}
+				_, err = f.fetch(ctx, repo, registryAcquisition{client, material}, retry)
+				if requests.Load() != before || failures.Load() != tc.attempts {
+					t.Fatalf("replay fetched: requests=%d, want %d; failures=%d, want %d", requests.Load(), before, failures.Load(), tc.attempts)
+				}
+				terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
+				neutral, neutralOK := errors.AsType[*fetcherr.ResponseError](err)
+				response, typed = errors.AsType[*errcode.ErrorResponse](err)
+				if !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) || !neutralOK || !typed || neutral.StatusCode != tc.status || neutral.Op != method || response.StatusCode != tc.status || response.Method != method {
+					t.Fatalf("replayed response: terminal=%+v neutral=%+v response=%+v error=%v", terminal, neutral, response, err)
+				}
+				t.Logf("attempts=%d; requests before/after replay=%d/%d; status=%d operation=%s", tc.attempts, before, requests.Load(), neutral.StatusCode, neutral.Op)
+			})
+		}
 	}
+}
+
+type registryRoundTripper func(*http.Request) (*http.Response, error)
+
+func (rt registryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return rt(req)
 }
 
 func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
@@ -809,7 +980,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 }
 
 func TestFetcher_NetworkRoutes(t *testing.T) {
-	for _, route := range []string{"registry", "token", "redirect", "layer", "fallback"} {
+	for _, route := range []string{"registry", "token", "redirect", "tags", "manifest", "layer", "copy", "fallback"} {
 		t.Run(route, func(t *testing.T) {
 			var network source.Network
 			var bypass, requests atomic.Int32
@@ -836,7 +1007,10 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 				case route == "token":
 					w.Header().Set("Www-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry"`, target.URL))
 					w.WriteHeader(http.StatusUnauthorized)
-				case route == "redirect" || strings.Contains(r.URL.Path, "/blobs/"):
+				case route == "redirect",
+					route == "tags" && strings.HasSuffix(r.URL.Path, "/tags/list"),
+					route == "manifest" && r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/manifests/"),
+					strings.Contains(r.URL.Path, "/blobs/"):
 					http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 				default:
 					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
@@ -854,6 +1028,12 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			}
 			repo := &manifest.OCIRepository{Name: "network", Namespace: "test", URL: "oci://" + mustURL(t, registryURL).Host + "/test/chart", Insecure: true,
 				Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"}}
+			if route == "tags" {
+				repo.Reference = &sourcev1.OCIRepositoryRef{SemVer: ">=1"}
+			}
+			if route == "copy" {
+				repo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
+			}
 			f := &Fetcher{Cache: newSourceCache(t), Network: &network}
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
 			if route == "fallback" {
@@ -875,8 +1055,11 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 				t.Fatalf("route=%s error=%v terminal=%+v bypass=%d", route, err, terminal, bypass.Load())
 			}
 			want := int32(1)
-			if route == "layer" {
+			if route == "layer" || route == "copy" {
 				want = 3
+			}
+			if route == "manifest" {
+				want = 2
 			}
 			if route == "registry" || route == "fallback" {
 				want = 0

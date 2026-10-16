@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -31,6 +34,11 @@ import (
 type outcomeCustomWrapper struct{ error }
 
 func (e outcomeCustomWrapper) Unwrap() error { return e.error }
+
+type outcomeCustomJoin struct{ children []error }
+
+func (e outcomeCustomJoin) Error() string   { return "custom join" }
+func (e outcomeCustomJoin) Unwrap() []error { return e.children }
 
 type outcomeCycle struct{}
 
@@ -70,13 +78,31 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 			}
 		}},
 		{"DNS without inner cause", &net.DNSError{IsTimeout: true}, nil, nil},
-		{"ORAS response", &errcode.ErrorResponse{Method: http.MethodGet, URL: &url.URL{Host: "fixture-secret"}, StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}, {Code: errcode.ErrorCodeManifestUnknown}}}, nil, func(t *testing.T, err error) {
+		{"ORAS response", &fetcherr.ResponseError{StatusCode: 503, Op: http.MethodGet, Message: "fixture-secret", Err: &errcode.ErrorResponse{Method: http.MethodGet, URL: &url.URL{Host: "fixture-secret"}, StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}, {Code: errcode.ErrorCodeManifestUnknown}}}}, nil, func(t *testing.T, err error) {
 			r, ok := errors.AsType[*errcode.ErrorResponse](err)
 			if !ok || r.StatusCode != http.StatusServiceUnavailable || r.URL != nil || r.Method != http.MethodGet || len(r.Errors) != 2 || r.Errors[0].Code != errcode.ErrorCodeBlobUnknown || r.Errors[0].Message != "" || r.Errors[0].Detail != nil {
 				t.Fatalf("response wrapper: %+v", r)
 			}
 		}},
-		{"ORAS rate limit", &errcode.ErrorResponse{StatusCode: 429}, nil, nil},
+		{"ORAS rate limit", &fetcherr.ResponseError{StatusCode: 429, Err: &errcode.ErrorResponse{StatusCode: 429}}, nil, nil},
+		{"neutral response", &fetcherr.ResponseError{StatusCode: 599, Op: http.MethodHead, Message: "fixture-secret"}, nil, nil},
+		{"neutral redacted operation", &fetcherr.ResponseError{StatusCode: 500, Op: "fixture-secret", Message: "fixture-secret"}, nil, nil},
+		{"ORAS code value", &fetcherr.ResponseError{StatusCode: 503, Err: errcode.Error{Code: errcode.ErrorCodeManifestUnknown, Message: "fixture-secret"}}, nil, func(t *testing.T, err error) {
+			if _, ok := errors.AsType[errcode.Error](err); !ok {
+				t.Fatal("value code identity lost")
+			}
+			if _, ok := errors.AsType[*errcode.Error](err); ok {
+				t.Fatal("value code became pointer")
+			}
+		}},
+		{"ORAS code pointer", &fetcherr.ResponseError{StatusCode: 503, Err: &errcode.Error{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}}, nil, func(t *testing.T, err error) {
+			if code, ok := errors.AsType[*errcode.Error](err); !ok || code.Code != errcode.ErrorCodeBlobUnknown || code.Message != "" || code.Detail != nil {
+				t.Fatalf("pointer code identity: %+v", code)
+			}
+			if _, ok := errors.AsType[errcode.Error](err); ok {
+				t.Fatal("pointer code became value")
+			}
+		}},
 		{"join", errors.Join(connReset(), syscall.ECONNREFUSED), syscall.ECONNREFUSED, nil},
 		{"fmt multiple", fmt.Errorf("fixture-secret: %w %w", connReset(), syscall.ETIMEDOUT), syscall.ETIMEDOUT, nil},
 	}
@@ -97,6 +123,16 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 				t.Fatalf("read: %+v, %v", got, err)
 			}
 			replay := got.replay()
+			if status, ok := errors.AsType[*fetcherr.ResponseError](tc.cause); ok {
+				decoded, ok := errors.AsType[*fetcherr.ResponseError](replay)
+				if !ok || decoded.StatusCode != status.StatusCode || decoded.Op != outcomeOp(status.Op) || decoded.Message != "" {
+					t.Fatalf("neutral response: %+v", decoded)
+				}
+				root := got.record.Cause
+				if root.Kind != "terminal" || len(root.Children) != 1 || root.Children[0].Kind != "producer" || len(root.Children[0].Children) != 1 || root.Children[0].Children[0].Kind != "status" {
+					t.Fatalf("neutral response shape: %+v", root)
+				}
+			}
 			if terminal, ok := errors.AsType[*TerminalError](replay); !ok || terminal.Attempted || !errors.Is(replay, manifest.ErrFlux) {
 				t.Fatalf("replay terminal identity: %v", replay)
 			}
@@ -132,13 +168,25 @@ func TestOutcome_Exclusions(t *testing.T) {
 		{"cache IO", &CacheError{syscall.ECONNRESET}},
 		{"short write", io.ErrShortWrite},
 		{"integrity", content.ErrMismatchedDigest},
-		{"permanent HTTP", &errcode.ErrorResponse{StatusCode: 404}},
-		{"unknown code", &errcode.ErrorResponse{StatusCode: 503, Errors: errcode.Errors{{Code: "fixture-secret"}}}},
-		{"invalid digest code", &errcode.ErrorResponse{StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeDigestInvalid}}}},
+		{"permanent HTTP", &fetcherr.ResponseError{StatusCode: 404}},
+		{"terminal HTTP", &fetcherr.ResponseError{StatusCode: 600}},
+		{"unknown code", &fetcherr.ResponseError{StatusCode: 503, Err: &errcode.ErrorResponse{StatusCode: 503, Errors: errcode.Errors{{Code: "fixture-secret"}}}}},
+		{"invalid digest code", &fetcherr.ResponseError{StatusCode: 503, Err: &errcode.ErrorResponse{StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeDigestInvalid}}}}},
+		{"raw ORAS response", &errcode.ErrorResponse{StatusCode: 503}},
+		{"raw ORAS code", errcode.Error{Code: errcode.ErrorCodeBlobUnknown}},
+		{"neutral unsupported child", &fetcherr.ResponseError{StatusCode: 503, Err: errors.New("fixture-secret")}},
+		{"neutral wrapped unsupported child", &fetcherr.ResponseError{StatusCode: 503, Err: outcomeCustomWrapper{connReset()}}},
+		{"neutral cancellation", &fetcherr.ResponseError{StatusCode: 503, Err: context.Canceled}},
+		{"neutral caller deadline", &fetcherr.ResponseError{StatusCode: 503, Err: context.DeadlineExceeded}},
+		{"neutral input", &fetcherr.ResponseError{StatusCode: 503, Err: manifest.ErrInput}},
+		{"neutral EOF without transport", &fetcherr.ResponseError{StatusCode: 503, Err: io.ErrUnexpectedEOF}},
+		{"neutral cycle", &fetcherr.ResponseError{StatusCode: 503, Err: outcomeCycle{}}},
 		{"non-timeout DNS", &net.DNSError{IsNotFound: true}},
 		{"DNS cancellation", &net.DNSError{IsTimeout: true, UnwrapErr: context.DeadlineExceeded}},
 		{"custom timeout", timeoutErr{}},
 		{"custom wrapper", outcomeCustomWrapper{connReset()}},
+		{"custom join", outcomeCustomJoin{[]error{connReset(), syscall.ECONNREFUSED}}},
+		{"custom neutral wrapper", outcomeCustomWrapper{&fetcherr.ResponseError{StatusCode: 503}}},
 		{"cached child", &TerminalError{Err: connReset(), Attempted: false}},
 		{"ambiguous EOF", io.ErrUnexpectedEOF},
 		{"formatting EOF", fmt.Errorf("read: %w", io.ErrUnexpectedEOF)},
@@ -160,29 +208,43 @@ func TestOutcome_Exclusions(t *testing.T) {
 	}
 	for _, n := range []int{outcomeDepthLimit - 3, outcomeDepthLimit - 2} {
 		err := error(syscall.ECONNRESET)
+		cause := outcomeCause{Kind: "reset"}
 		for range n {
 			err = fmt.Errorf("context: %w", err)
+			cause = outcomeCause{Kind: "wrap", Children: []outcomeCause{cause}}
 		}
 		got := newOutcome(outcomeFailure(err), time.Now().UTC(), 1, ocispec.Descriptor{})
 		if (got != nil) != (n == outcomeDepthLimit-3) {
 			t.Fatalf("depth limit: wraps=%d accepted=%t", n, got != nil)
 		}
+		codec := outcomeCodecState{}
+		_, ok := codec.decode(outcomeCause{Kind: "terminal", Children: []outcomeCause{{Kind: "producer", Children: []outcomeCause{cause}}}}, 0, 1)
+		if ok != (n == outcomeDepthLimit-3) {
+			t.Fatalf("decode depth limit: wraps=%d accepted=%t", n, ok)
+		}
 	}
 	for _, n := range []int{outcomeNodeLimit - 3, outcomeNodeLimit - 2} {
 		children := make([]error, n)
+		causes := make([]outcomeCause, n)
 		for i := range children {
 			children[i] = syscall.ECONNRESET
+			causes[i] = outcomeCause{Kind: "reset"}
 		}
 		got := newOutcome(outcomeFailure(errors.Join(children...)), time.Now().UTC(), 1, ocispec.Descriptor{})
 		if (got != nil) != (n == outcomeNodeLimit-3) {
 			t.Fatalf("node limit: children=%d accepted=%t", n, got != nil)
+		}
+		codec := outcomeCodecState{}
+		_, ok := codec.decode(outcomeCause{Kind: "terminal", Children: []outcomeCause{{Kind: "producer", Children: []outcomeCause{{Kind: "join", Children: causes}}}}}, 0, 1)
+		if ok != (n == outcomeNodeLimit-3) {
+			t.Fatalf("decode node limit: children=%d accepted=%t", n, ok)
 		}
 	}
 	codes := make(errcode.Errors, outcomeNodeLimit)
 	for i := range codes {
 		codes[i].Code = errcode.ErrorCodeBlobUnknown
 	}
-	if newOutcome(outcomeFailure(&errcode.ErrorResponse{StatusCode: 503, Errors: codes}), time.Now().UTC(), 1, ocispec.Descriptor{}) != nil {
+	if newOutcome(outcomeFailure(&fetcherr.ResponseError{StatusCode: 503, Err: &errcode.ErrorResponse{StatusCode: 503, Errors: codes}}), time.Now().UTC(), 1, ocispec.Descriptor{}) != nil {
 		t.Fatal("oversize ORAS cause tree accepted")
 	}
 
@@ -208,7 +270,7 @@ func TestOutcome_Time(t *testing.T) {
 	for _, tc := range []struct {
 		count uint32
 		delay time.Duration
-	}{{1, 750 * time.Millisecond}, {2, 1500 * time.Millisecond}, {3, 3 * time.Second}, {11, 768 * time.Second}, {12, 15 * time.Minute}, {math.MaxUint32, 15 * time.Minute}} {
+	}{{1, 750 * time.Millisecond}, {2, 1500 * time.Millisecond}, {3, 3 * time.Second}, {11, 768 * time.Second}, {12, 15 * time.Minute}, {math.MaxInt32 + 1, 15 * time.Minute}, {math.MaxUint32, 15 * time.Minute}} {
 		deadline, valid := outcomeDeadline(at, tc.count)
 		if !valid || deadline.Sub(at) != tc.delay {
 			t.Fatalf("count %d: %s, %t", tc.count, deadline.Sub(at), valid)
@@ -355,7 +417,43 @@ func TestOutcome_ReadBoundsAndIntegrity(t *testing.T) {
 }
 
 func TestOutcome_InvalidRecords(t *testing.T) {
-	for _, scenario := range []string{"version", "count", "completion", "unknown field", "unknown cause", "cause field", "too deep", "bare EOF", "no terminal", "no remote", "format", "schema", "media", "two layers", "subject", "config media", "layer is outcome"} {
+	code := outcomeCause{Kind: "code", Code: errcode.ErrorCodeBlobUnknown}
+	codes := outcomeCause{Kind: "codes", Children: []outcomeCause{code}}
+	invalidCauses := map[string]outcomeCause{
+		"status client":            {Kind: "status", Status: 404},
+		"status terminal":          {Kind: "status", Status: 600},
+		"status children":          {Kind: "status", Status: 503, Children: []outcomeCause{{Kind: "reset"}, {Kind: "refused"}}},
+		"status unknown child":     {Kind: "status", Status: 503, Children: []outcomeCause{{Kind: "unknown"}}},
+		"status unknown operation": {Kind: "status", Status: 503, Op: "fixture-secret"},
+		"raw response":             {Kind: "response", Status: 503},
+		"raw codes":                codes,
+		"leaf children":            {Kind: "reset", Children: []outcomeCause{{Kind: "flux"}}},
+		"leaf network":             {Kind: "reset", Network: "tcp"},
+		"leaf status":              {Kind: "reset", Status: 503},
+		"leaf code":                {Kind: "reset", Code: errcode.ErrorCodeBlobUnknown},
+		"leaf temporary":           {Kind: "reset", Temporary: true},
+		"leaf not found":           {Kind: "reset", NotFound: true},
+		"empty join":               {Kind: "join"},
+		"wrap children":            {Kind: "wrap", Children: []outcomeCause{{Kind: "reset"}, {Kind: "refused"}}},
+		"DNS children":             {Kind: "dns", Children: []outcomeCause{{Kind: "reset"}, {Kind: "refused"}}},
+		"net unknown network":      {Kind: "net", Network: "fixture-secret", Children: []outcomeCause{{Kind: "reset"}}},
+		"URL unknown operation":    {Kind: "url", Op: "fixture-secret", Children: []outcomeCause{{Kind: "reset"}}},
+		"sibling transport EOF":    {Kind: "join", Children: []outcomeCause{{Kind: "url", Children: []outcomeCause{{Kind: "reset"}}}, {Kind: "eof"}}},
+	}
+	for name, cause := range map[string]outcomeCause{
+		"response not codes":     {Kind: "response", Status: 503, Children: []outcomeCause{code}},
+		"response wrapped codes": {Kind: "response", Status: 503, Children: []outcomeCause{{Kind: "wrap", Children: []outcomeCause{codes}}}},
+		"response children":      {Kind: "response", Status: 503, Children: []outcomeCause{codes, codes}},
+		"codes pointer":          {Kind: "codes", Children: []outcomeCause{{Kind: "code-pointer", Code: errcode.ErrorCodeBlobUnknown}}},
+		"codes wrapped value":    {Kind: "codes", Children: []outcomeCause{{Kind: "wrap", Children: []outcomeCause{code}}}},
+		"codes noncode":          {Kind: "codes", Children: []outcomeCause{{Kind: "reset"}}},
+		"unknown code":           {Kind: "code", Code: "fixture-secret"},
+		"code children":          {Kind: "code", Code: errcode.ErrorCodeBlobUnknown, Children: []outcomeCause{{Kind: "flux"}}},
+	} {
+		invalidCauses[name] = outcomeCause{Kind: "status", Status: 503, Children: []outcomeCause{cause}}
+	}
+	scenarios := []string{"version", "count", "completion", "unknown field", "unknown cause field", "trailing JSON", "unknown cause", "cause field", "too deep", "bare EOF", "no terminal", "no remote", "format", "schema", "media", "two layers", "subject", "config media", "layer is outcome"}
+	for _, scenario := range append(scenarios, slices.Sorted(maps.Keys(invalidCauses))...) {
 		t.Run(scenario, func(t *testing.T) {
 			c := newCache(t, t.TempDir())
 			o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
@@ -363,6 +461,9 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 			var m ocispec.Manifest
 			if err := json.Unmarshal(data, &m); err != nil {
 				t.Fatal(err)
+			}
+			if cause, ok := invalidCauses[scenario]; ok {
+				o.record.Cause = outcomeCause{Kind: "terminal", Children: []outcomeCause{{Kind: "join", Children: []outcomeCause{{Kind: "reset"}, cause}}}}
 			}
 			switch scenario {
 			case "version":
@@ -405,6 +506,12 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 			if scenario == "unknown field" {
 				config = append([]byte(`{"unknown":"fixture-secret",`), config[1:]...)
 			}
+			if scenario == "unknown cause field" {
+				config = bytes.Replace(config, []byte(`"kind":`), []byte(`"unknown":"fixture-secret","kind":`), 1)
+			}
+			if scenario == "trailing JSON" {
+				config = append(config, []byte(`{}`)...)
+			}
 			m.Config = content.NewDescriptorFromBytes(outcomeConfig, config)
 			if scenario == "config media" {
 				m.Config.MediaType = "unknown"
@@ -444,7 +551,7 @@ func TestOutcome_PublicationFailure(t *testing.T) {
 			o := newOutcome(live, time.Now().UTC(), 1, ocispec.Descriptor{})
 			switch scenario {
 			case "tag":
-				index := filepath.Join(c.layout.OCI(), "index.json")
+				index := filepath.Join(c.root.Name(), indexPath())
 				if err := os.Remove(index); err != nil {
 					t.Fatal(err)
 				}
@@ -613,11 +720,11 @@ func TestOutcome_LastGoodRedaction(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Sweep(t.Context(), c.layout.Root, SweepOpts{MaxAge: time.Hour})
+	res, err := Sweep(t.Context(), c.root.Name(), SweepOpts{MaxAge: time.Hour})
 	if err != nil || len(res.Errors) != 0 || len(res.Removed) != 1 || res.Removed[0] != id {
 		t.Fatalf("retire last edge: %+v, %v", res, err)
 	}
-	if _, err := os.Stat(filepath.Join(c.layout.Root, blobPath(last.Digest))); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(c.root.Name(), blobPath(last.Digest))); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("retired payload remains: %v", err)
 	}
 }

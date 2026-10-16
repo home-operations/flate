@@ -106,7 +106,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 					t.Fatal(err)
 				}
 				stale := time.Now().Add(-24 * time.Hour)
-				if err := os.Chtimes(filepath.Join(c.layout.Root, blobPath(digest.FromString("stale"))), stale, stale); err != nil {
+				if err := os.Chtimes(filepath.Join(c.root.Name(), blobPath(digest.FromString("stale"))), stale, stale); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -117,15 +117,15 @@ func TestSweep_GitGenerations(t *testing.T) {
 			}
 			switch scenario {
 			case "bad-index":
-				testutil.WriteFile(t, c.layout.OCI(), "index.json", "{")
+				testutil.WriteFile(t, filepath.Join(c.root.Name(), ociDir), "index.json", "{")
 			case "missing-payload":
-				if err := os.Remove(filepath.Join(c.layout.Root, blobPath(desc.Digest))); err != nil {
+				if err := os.Remove(filepath.Join(c.root.Name(), blobPath(desc.Digest))); err != nil {
 					t.Fatal(err)
 				}
 			}
 			outside := t.TempDir()
 			if strings.HasPrefix(scenario, "escaping-") {
-				link := filepath.Join(c.layout.OCI(), ocispec.ImageIndexFile)
+				link := filepath.Join(c.root.Name(), indexPath())
 				if strings.HasPrefix(scenario, "escaping-payload") {
 					link = filepath.Join(root, blobPath(desc.Digest))
 				}
@@ -188,7 +188,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 			if err := c.Close(); err != nil {
 				t.Fatal(err)
 			}
-			r, err := os.OpenRoot(c.layout.Root)
+			r, err := os.OpenRoot(c.root.Name())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,14 +198,14 @@ func TestSweep_GitGenerations(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := generationPath(orphan.id)
-			if !slices.Equal(selection.generations, []string{path}) || !slices.Equal(selection.result.Removed, []string{filepath.Join(c.layout.Root, path)}) || len(selection.tags) != 0 {
+			if !slices.Equal(selection.generations, []string{path}) || !slices.Equal(selection.result.Removed, []string{filepath.Join(c.root.Name(), path)}) || len(selection.tags) != 0 {
 				t.Fatalf("selected relative orphan: %+v", selection)
 			}
 			outside := t.TempDir()
-			link, target := filepath.Join(c.layout.Root, generationPath("")), outside
+			link, target := filepath.Join(c.root.Name(), generationPath("")), outside
 			marker := filepath.Join(orphan.id, "marker")
 			if component == "final" {
-				link = filepath.Join(c.layout.Root, path)
+				link = filepath.Join(c.root.Name(), path)
 				marker = "marker"
 			}
 			testutil.WriteFile(t, outside, marker, "untouched")
@@ -253,7 +253,7 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 			var retired, generations []string
 			for _, id := range []string{"source-git-stale", "git-base-stale", "source-git-touched", "git-base-touched"} {
 				g, desc, key := sweepGit(t, c, id)
-				if err := os.Chtimes(filepath.Join(c.layout.Root, blobPath(desc.Digest)), stale, stale); err != nil {
+				if err := os.Chtimes(filepath.Join(c.root.Name(), blobPath(desc.Digest)), stale, stale); err != nil {
 					t.Fatal(err)
 				}
 				if id == "source-git-touched" || id == "git-base-touched" {
@@ -335,7 +335,7 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 	}
 	old := time.Now().Add(-24 * time.Hour)
 	for i, desc := range roots {
-		if err := os.Chtimes(filepath.Join(c.layout.Root, blobPath(desc.Digest)), old, old); err != nil {
+		if err := os.Chtimes(filepath.Join(c.root.Name(), blobPath(desc.Digest)), old, old); err != nil {
 			t.Fatal(err)
 		}
 		before := sweepSnapshot(t, root)
@@ -357,7 +357,7 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 			t.Fatalf("dry-run selection differs (-want +got):\n%s", diff)
 		}
 		for _, anchor := range anchors {
-			_, err := os.Stat(filepath.Join(c.layout.Root, blobPath(anchor.Digest)))
+			_, err := os.Stat(filepath.Join(c.root.Name(), blobPath(anchor.Digest)))
 			if i == 0 && err != nil || i == 1 && !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("shared payload: %v", err)
 			}
@@ -457,7 +457,7 @@ func TestSweep_AbsentRootAndUnrelatedDirectories(t *testing.T) {
 			t.Fatalf("unrelated entry %q changed", path)
 		}
 	}
-	if _, err := oci.NewFromFS(t.Context(), os.DirFS(c.layout.OCI())); err != nil {
+	if _, err := oci.NewFromFS(t.Context(), os.DirFS(filepath.Join(c.root.Name(), ociDir))); err != nil {
 		t.Fatalf("swept store no longer readable: %v", err)
 	}
 }

@@ -2,7 +2,6 @@ package kustomize
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -10,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -88,7 +88,7 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 				err = reader.Close()
 			}
 			rf.err = err
-			if err != nil && !isHTTPClientError(err) {
+			if err != nil && fetcherr.Classes(err)&fetcherr.Client == 0 {
 				c.remoteFetches.CompareAndDelete(key, rf)
 			}
 			cancel()
@@ -105,9 +105,4 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-}
-
-func isHTTPClientError(err error) bool {
-	status, ok := errors.AsType[*httpStatusError](err)
-	return ok && status.Code >= 400 && status.Code < 500 && status.Code != 429
 }

@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/net/idna"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 )
@@ -68,8 +69,7 @@ func (n *Network) HTTPTransport(tr *http.Transport) http.RoundTripper {
 			return nil, &cache.TerminalError{Err: *err}
 		}
 		conn, err := dial(ctx, network, address)
-		op, ok := errors.AsType[*net.OpError](err)
-		if ok && (op.Op == "dial" || op.Op == "connect") && op.Timeout() &&
+		if fetcherr.DialTimeout(err) &&
 			!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && request.live() {
 			cause.CompareAndSwap(nil, &err)
 			return conn, &cache.TerminalError{Err: err, Attempted: true}

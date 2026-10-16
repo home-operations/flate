@@ -132,12 +132,13 @@ func (r *positionReader) Seek(offset int64, whence int) (int64, error) {
 	return n, err
 }
 
-func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
+func alignNext(offset int64) int64 { return (offset + 511) / 512 * 512 }
+
+func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 	pos := &positionReader{Reader: r}
 	tr := tar.NewReader(pos)
 	var builder *tree.Builder
-	if index == nil {
-		index = &tarFS{}
+	if index.root == nil {
 		builder = tree.NewBuilder(nil)
 	}
 	index.nodes = map[string]*tarNode{".": {FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}}
@@ -160,12 +161,12 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 			return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, maxExtractedBytes)
 		}
 		total += h.Size
-		nextHeader = (pos.offset + h.Size + 511) / 512 * 512
+		nextHeader = alignNext(pos.offset + h.Size)
 		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
 			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers every declared entry.
 				return nil, err
 			}
-			nextHeader = (pos.offset + 511) / 512 * 512
+			nextHeader = alignNext(pos.offset)
 			continue
 		}
 		sparse := false
@@ -200,14 +201,14 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (fs.FS, error) {
 			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers this regular sparse entry.
 				return nil, err
 			}
-			nextHeader = (pos.offset + 511) / 512 * 512
+			nextHeader = alignNext(pos.offset)
 		}
 		if builder != nil {
 			data := make([]byte, h.Size)
 			if _, err := io.ReadFull(tr, data); err != nil {
 				return nil, err
 			}
-			nextHeader = (pos.offset + 511) / 512 * 512
+			nextHeader = alignNext(pos.offset)
 			if err := builder.AddFile(name, data, 0o600); err != nil {
 				return nil, err
 			}

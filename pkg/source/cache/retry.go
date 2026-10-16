@@ -10,14 +10,11 @@ import (
 	"math"
 	"math/rand/v2"
 	"net"
-	"net/http"
-	"slices"
 	"syscall"
 	"time"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
 // RetryConfig bounds producer attempts within one acquisition.
@@ -56,29 +53,10 @@ func (e *TerminalError) Unwrap() []error { return []error{manifest.ErrFlux, e.Er
 
 type attemptCeilingKey struct{}
 
-func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, string, error) {
+func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy) (*entry, string, error) {
+	key.id = key.producer.identity()
 	if key.id == "" {
-		var content struct {
-			Archive any
-			Blob    any
-			Git     any
-		}
-		switch {
-		case key.archive:
-			content.Archive = struct {
-				Content      any
-				Ignore       string
-				WithDefaults bool
-			}{key.Content, key.Ignore, key.WithDefaults}
-		case key.git != nil:
-			content.Git = key.git.key
-		default:
-			content.Blob = struct{ Content any }{key.Content}
-		}
-		key.id = manifest.Fingerprint(content)
-		if key.id == "" {
-			return nil, "", &CacheError{fmt.Errorf("%w: acquisition content cannot be fingerprinted", manifest.ErrInput)}
-		}
+		return nil, "", &CacheError{fmt.Errorf("%w: acquisition content cannot be fingerprinted", manifest.ErrInput)}
 	}
 	policy.Retry.Attempts = max(1, policy.Retry.Attempts)
 	if ceiling, _ := ctx.Value(attemptCeilingKey{}).(bool); ceiling {
@@ -87,7 +65,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, prod
 	for attempt := 1; ; attempt++ {
 		remaining := policy
 		remaining.Retry.Attempts -= attempt - 1
-		e, err := c.acquireOnce(ctx, key, remaining, produce)
+		e, err := c.acquireOnce(ctx, key, remaining)
 		if err == nil {
 			return e, key.id, nil
 		}
@@ -111,23 +89,26 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, prod
 	}
 }
 
-func (c RetryConfig) backoff(attempt int) time.Duration {
-	ceiling := c.MaxWait
-	if ceiling <= 0 {
-		ceiling = 15 * time.Minute
+func backoffSchedule(attempt uint64, minimum, maximum time.Duration) (time.Duration, time.Duration) {
+	if maximum <= 0 {
+		maximum = 15 * time.Minute
 	}
-	delay := c.MinWait
-	if delay <= 0 {
-		delay = 750 * time.Millisecond
+	if minimum <= 0 {
+		minimum = 750 * time.Millisecond
 	}
-	delay = min(delay, ceiling)
-	for range attempt {
-		if delay >= ceiling-delay {
-			delay = ceiling
+	delay := min(minimum, maximum)
+	for ; attempt > 0; attempt-- {
+		if delay >= maximum-delay {
+			delay = maximum
 			break
 		}
 		delay *= 2
 	}
+	return delay, maximum
+}
+
+func (c RetryConfig) backoff(attempt int) time.Duration {
+	delay, ceiling := backoffSchedule(uint64(max(attempt, 0)), c.MinWait, c.MaxWait)
 	if c.Jitter <= 0 || math.IsNaN(c.Jitter) || math.IsInf(c.Jitter, 0) {
 		return delay
 	}
@@ -140,42 +121,25 @@ func (c RetryConfig) backoff(attempt int) time.Duration {
 }
 
 func retryable(err error) bool {
-	if err == nil {
-		return false
-	}
 	if _, ok := errors.AsType[*TerminalError](err); ok {
 		return false
 	}
 	if _, ok := errors.AsType[*fs.PathError](err); ok {
 		return false
 	}
+	classes := fetcherr.Classes(err)
 	switch {
 	case errors.Is(err, io.ErrShortWrite), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded),
 		errors.Is(err, manifest.ErrInput), errors.Is(err, manifest.ErrObjectNotFound),
 		errors.Is(err, manifest.ErrMissingSecret), errors.Is(err, manifest.ErrSourceSkipped),
-		permanentStatus(err):
+		classes&(fetcherr.Terminal|fetcherr.Client) != 0:
 		return false
 	}
-	if status, ok := errors.AsType[*errcode.ErrorResponse](err); ok {
-		return status.StatusCode == http.StatusTooManyRequests || status.StatusCode >= 500 && status.StatusCode < 600
+	if classes&fetcherr.Transient != 0 {
+		return true
 	}
 	if network, ok := errors.AsType[net.Error](err); ok && network.Timeout() {
 		return true
 	}
 	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, io.ErrUnexpectedEOF)
-}
-
-func permanentStatus(err error) bool {
-	if status, ok := err.(*errcode.ErrorResponse); ok {
-		return status.StatusCode != http.StatusTooManyRequests && (status.StatusCode < 500 || status.StatusCode >= 600)
-	}
-	switch wrapped := err.(type) {
-	case interface{ Unwrap() []error }:
-		if slices.ContainsFunc(wrapped.Unwrap(), permanentStatus) {
-			return true
-		}
-	case interface{ Unwrap() error }:
-		return permanentStatus(wrapped.Unwrap())
-	}
-	return false
 }

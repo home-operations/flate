@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -33,7 +32,7 @@ var owners = struct {
 // New selects backing once. An empty root allocates no files or directories.
 func New(ctx context.Context, root string) (*Cache, error) {
 	if root == "" {
-		return &Cache{locks: keylock.New[string](), persistBlob: discardBlob}, nil
+		return &Cache{locks: keylock.New[string]()}, nil
 	}
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -46,11 +45,16 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	if err != nil {
 		return nil, &CacheError{err}
 	}
-	l := layout{Root: root}
+	disk, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, &CacheError{err}
+	}
+	root = disk.Name()
 	owners.Lock()
 	if o := owners.stores[root]; o != nil {
 		o.refs++
 		owners.Unlock()
+		_ = disk.Close()
 		select {
 		case <-ctx.Done():
 			owners.Lock()
@@ -61,7 +65,7 @@ func New(ctx context.Context, root string) (*Cache, error) {
 			return o.cache, o.err
 		}
 	}
-	o := &owner{ready: make(chan struct{}), refs: 1, lock: flock.New(l.OCILock(), flock.SetPermissions(0o600))}
+	o := &owner{ready: make(chan struct{}), refs: 1, lock: flock.New(filepath.Join(disk.Name(), ociLock), flock.SetPermissions(0o600))}
 	owners.stores[root] = o
 	owners.Unlock()
 	locked, err := o.lock.TryLock()
@@ -76,44 +80,37 @@ func New(ctx context.Context, root string) (*Cache, error) {
 		}
 	}
 	var store *oci.Store
-	var disk *os.Root
 	if err == nil {
-		disk, err = os.OpenRoot(root)
-	}
-	if err == nil {
-		store, err = oci.NewWithContext(ctx, l.OCI())
-		if err != nil && ctx.Err() == nil {
-			index := filepath.Join(l.OCI(), ocispec.ImageIndexFile)
-			data, readErr := disk.ReadFile(filepath.Join("oci", ocispec.ImageIndexFile))
-			if !errors.Is(readErr, os.ErrNotExist) && (readErr != nil || json.Unmarshal(data, new(ocispec.Index)) != nil) {
-				if removeErr := disk.Remove(filepath.Join("oci", ocispec.ImageIndexFile)); removeErr != nil {
-					err = errors.Join(err, removeErr)
-				} else {
-					slog.Warn("cache: rebuilding unreadable store index", "path", index, "error", err)
-					store, err = oci.NewWithContext(ctx, l.OCI())
-				}
-			}
-		}
+		store, err = openStore(ctx, disk)
 	}
 	owners.Lock()
 	if err != nil {
-		if disk != nil {
-			err = errors.Join(err, disk.Close())
-		}
+		err = errors.Join(err, disk.Close())
 		o.err = &CacheError{err}
 		delete(owners.stores, root)
 		_ = o.lock.Close()
 	} else {
-		o.cache = &Cache{layout: l, root: disk, store: store, locks: keylock.New[string](), persistBlob: discardBlob}
-		if identity := processIdentity; identity != "" {
-			o.cache.persistBlob = func(ctx context.Context, id string, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
-				return o.cache.blob(ctx, acquireKey{id: blobID(identity, id), lookupOnly: produce == nil}, policy, produce)
-			}
-		}
+		o.cache = &Cache{root: disk, store: store, locks: keylock.New[string](), persistBlob: processIdentity != ""}
 	}
 	close(o.ready)
 	owners.Unlock()
 	return o.cache, o.err
+}
+
+func openStore(ctx context.Context, root *os.Root) (*oci.Store, error) {
+	store, err := oci.NewWithContext(ctx, filepath.Join(root.Name(), ociDir))
+	if err == nil || ctx.Err() != nil {
+		return store, err
+	}
+	data, readErr := root.ReadFile(indexPath())
+	if errors.Is(readErr, os.ErrNotExist) || readErr == nil && json.Unmarshal(data, new(ocispec.Index)) == nil {
+		return nil, err
+	}
+	if removeErr := root.Remove(indexPath()); removeErr != nil {
+		return nil, errors.Join(err, removeErr)
+	}
+	slog.Warn("cache: rebuilding unreadable store index", "path", indexPath(), "root", root.Name(), "error", err)
+	return oci.NewWithContext(ctx, filepath.Join(root.Name(), ociDir))
 }
 
 // Close releases this owner's share. It MUST follow all acquired readers.
@@ -124,7 +121,7 @@ func (c *Cache) Close() error {
 	}
 	owners.Lock()
 	defer owners.Unlock()
-	o := owners.stores[c.layout.Root]
+	o := owners.stores[c.root.Name()]
 	if o == nil || o.cache != c {
 		return nil
 	}
@@ -132,7 +129,7 @@ func (c *Cache) Close() error {
 	if o.refs != 0 {
 		return nil
 	}
-	delete(owners.stores, c.layout.Root)
+	delete(owners.stores, c.root.Name())
 	c.entries.Clear()
 	if err := errors.Join(o.lock.Close(), c.root.Close()); err != nil {
 		return &CacheError{err}

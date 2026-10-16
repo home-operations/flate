@@ -25,8 +25,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -322,6 +322,7 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 			status        int
 			code, message string
 		}{
+			{http.StatusTooManyRequests, "SlowDown", "temporary failure"},
 			{http.StatusServiceUnavailable, "SlowDown", "temporary failure"},
 			{http.StatusForbidden, "AccessDenied", "access denied"},
 		} {
@@ -352,7 +353,9 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 				}, cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond})
 				if tc.status == http.StatusForbidden {
 					cause, ok := errors.AsType[minio.ErrorResponse](err)
-					if !ok || cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
+					response, typed := errors.AsType[*fetcherr.ResponseError](err)
+					if !ok || !typed || response.StatusCode != tc.status || response.Op != http.MethodGet || !errors.Is(response.Err, cause) ||
+						cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
 						err.Error() != "Bucket test/retry: "+cause.Error() || calls.Load() != 1 {
 						t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
 					}
@@ -374,7 +377,7 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				calls.Add(1)
 				w.Header().Set("Content-Type", "application/xml")
 				w.WriteHeader(status)
-				_, _ = io.WriteString(w, `<Error><Code>SlowDown</Code><Message>temporary failure</Message></Error>`)
+				_, _ = io.WriteString(w, `<Error><Code>SlowDown</Code><Message>temporary failure fixture-secret</Message></Error>`)
 			}))
 			t.Cleanup(srv.Close)
 			root := t.TempDir()
@@ -391,8 +394,8 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 			retry := cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}
 			_, err = f.Fetch(t.Context(), b, retry)
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
-			cause, typed := errors.AsType[*errcode.ErrorResponse](err)
-			if !ok || !terminal.Attempted || !typed || cause.StatusCode != status || calls.Load() != 3 {
+			cause, typed := errors.AsType[*fetcherr.ResponseError](err)
+			if !ok || !terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet || cause.Error() != "temporary failure fixture-secret" || calls.Load() != 3 {
 				t.Fatalf("terminal failure: %v, requests=%d", err, calls.Load())
 			}
 			if err := c.Close(); err != nil {
@@ -424,6 +427,9 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				return desc, data
 			}
 			initial, record := readRecord()
+			if strings.Contains(string(record), "fixture-secret") || strings.Contains(string(record), "temporary failure") {
+				t.Fatalf("persisted upstream diagnostic: %s", record)
+			}
 			var timing struct {
 				Completed time.Time `json:"completed"`
 				Count     uint32    `json:"count"`
@@ -440,8 +446,8 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 			f.Cache = reopened
 			_, err = f.Fetch(t.Context(), b, retry)
 			terminal, ok = errors.AsType[*cache.TerminalError](err)
-			cause, typed = errors.AsType[*errcode.ErrorResponse](err)
-			if !ok || terminal.Attempted || !typed || cause.StatusCode != status || calls.Load() != 3 {
+			cause, typed = errors.AsType[*fetcherr.ResponseError](err)
+			if !ok || terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet || cause.Err != nil || cause.Message != "" || calls.Load() != 3 {
 				t.Fatalf("replayed failure: %v, requests=%d", err, calls.Load())
 			}
 			if !time.Now().Before(deadline) {

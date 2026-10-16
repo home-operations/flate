@@ -25,8 +25,8 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -52,19 +52,20 @@ func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
 
 func TestRetryable(t *testing.T) {
-	cases := []struct {
+	type retryCase struct {
 		name string
 		err  error
 		want bool
-	}{
+	}
+	cases := []retryCase{
 		{"nil", nil, false},
 		{"skipped joined reset", errors.Join(manifest.ErrSourceSkipped, connReset()), false},
 		{"cancelled joined timeout", errors.Join(context.Canceled, timeoutErr{}), false},
 		{"local file joined reset", errors.Join(&fs.PathError{Op: "write", Path: "sink", Err: syscall.ECONNRESET}, connReset()), false},
 		{"short write joined reset", errors.Join(io.ErrShortWrite, connReset()), false},
-		{"429", &errcode.ErrorResponse{StatusCode: 429}, true},
-		{"503", &errcode.ErrorResponse{StatusCode: 503}, true},
-		{"joined statuses", errors.Join(&errcode.ErrorResponse{StatusCode: 503}, &errcode.ErrorResponse{StatusCode: 404}, connReset()), false},
+		{"429", &fetcherr.ResponseError{StatusCode: 429}, true},
+		{"503", &fetcherr.ResponseError{StatusCode: 503}, true},
+		{"joined statuses", errors.Join(&fetcherr.ResponseError{StatusCode: 503}, &fetcherr.ResponseError{StatusCode: 404}, connReset()), false},
 		{"input joined timeout", errors.Join(manifest.ErrInput, timeoutErr{}), false},
 		{"missing secret joined reset", errors.Join(manifest.ErrMissingSecret, connReset()), false},
 		{"not found joined timeout", errors.Join(manifest.ErrObjectNotFound, timeoutErr{}), false},
@@ -93,6 +94,23 @@ func TestRetryable(t *testing.T) {
 		// transient leaf (here a timeout net.Error) coexists in the chain.
 		{"permanent wins over transient leaf",
 			fmt.Errorf("%w: %w", context.DeadlineExceeded, timeoutErr{}), false},
+	}
+	for _, tc := range []struct {
+		status int
+		want   bool
+	}{
+		{200, false}, {300, false}, {400, false}, {401, false}, {403, false}, {404, false},
+		{429, true}, {499, false}, {500, true}, {503, true}, {599, true}, {600, false},
+	} {
+		cause := &fetcherr.ResponseError{StatusCode: tc.status, Op: "GET"}
+		cases = append(cases, retryCase{fmt.Sprintf("status-%d", tc.status), fmt.Errorf("edge: %w", cause), tc.want})
+		if !tc.want {
+			for i, transient := range []error{&fetcherr.ResponseError{StatusCode: 503, Op: "GET"}, timeoutErr{}} {
+				cases = append(cases,
+					retryCase{fmt.Sprintf("terminal-%d/first/%d", tc.status, i), errors.Join(cause, transient), false},
+					retryCase{fmt.Sprintf("terminal-%d/last/%d", tc.status, i), errors.Join(transient, fmt.Errorf("nested: %w", cause)), false})
+			}
+		}
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,7 +208,7 @@ func TestAcquire_RetrySequence(t *testing.T) {
 						if tc.record && (err != nil || desc.MediaType != ocispec.MediaTypeImageManifest) || !tc.record && !errors.Is(err, errdef.ErrNotFound) {
 							t.Fatalf("eligibility descriptor=%+v, error=%v", desc, err)
 						}
-						files, err := os.ReadDir(c.layout.OCI())
+						files, err := os.ReadDir(filepath.Join(c.root.Name(), ociDir))
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -563,6 +581,9 @@ func TestBackoff_NormalizationAndSaturation(t *testing.T) {
 	}{
 		{"default", RetryConfig{}, 0, 750 * time.Millisecond},
 		{"default ceiling", RetryConfig{}, 1000, 15 * time.Minute},
+		{"max count", RetryConfig{}, math.MaxInt, 15 * time.Minute},
+		{"negative count", RetryConfig{}, -1, 750 * time.Millisecond},
+		{"negative bounds", RetryConfig{MinWait: -1, MaxWait: -1}, 0, 750 * time.Millisecond},
 		{"inverted bounds", RetryConfig{MinWait: time.Hour, MaxWait: time.Second}, 0, time.Second},
 		{"saturation", RetryConfig{MinWait: time.Duration(math.MaxInt64/2 + 1), MaxWait: time.Duration(math.MaxInt64)}, 1, time.Duration(math.MaxInt64)},
 		{"nan", RetryConfig{Jitter: math.NaN()}, 0, 750 * time.Millisecond},
@@ -592,7 +613,7 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 			}
 			c := newCache(t, root)
 			calls := 0
-			g, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{Retry: fastRetry(2)}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			g, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{MaxAge: Forever, Retry: fastRetry(2)}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				calls++
 				if _, err := worktree.Stat("partial"); !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("attempt inherited partial worktree: %v", err)
@@ -608,7 +629,7 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 					return plumbing.ZeroHash, connReset()
 				}
 				if disk {
-					entries, err := os.ReadDir(filepath.Dir(c.layout.GitObjects("")))
+					entries, err := os.ReadDir(filepath.Dir(filepath.Join(c.root.Name(), gitObjectsPath(""))))
 					if err != nil || len(entries) != 1 {
 						t.Fatalf("failed generation remains: %v, %v", entries, err)
 					}
@@ -617,6 +638,13 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 			})
 			if err != nil || g == nil || calls != 2 {
 				t.Fatalf("generation=%v, calls=%d, error=%v", g, calls, err)
+			}
+			held, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{MaxAge: Forever}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+				calls++
+				return plumbing.ZeroHash, nil
+			})
+			if err != nil || held != g || calls != 2 {
+				t.Fatalf("warm generation=%v, calls=%d, error=%v", held, calls, err)
 			}
 		})
 	}

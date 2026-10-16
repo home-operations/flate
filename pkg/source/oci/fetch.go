@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,7 +16,9 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -107,11 +110,11 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	tag := cmp.Or(versionTag(ref), latestTag)
 	desc, err := client.Resolve(ctx, tag)
 	if err != nil {
-		return desc, fmt.Errorf("resolve %s: %w", tag, err)
+		return desc, fmt.Errorf("resolve %s: %w", tag, orasError(err))
 	}
 	data, err := content.FetchAll(ctx, client, desc)
 	if err != nil {
-		return desc, fmt.Errorf("fetch manifest: %w", err)
+		return desc, fmt.Errorf("fetch manifest: %w", orasError(err))
 	}
 	var m ocispec.Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -132,30 +135,40 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	}
 	r, err := client.Fetch(ctx, layer)
 	if err != nil {
-		return desc, fmt.Errorf("fetch layer: %w", err)
+		return desc, fmt.Errorf("fetch layer: %w", orasError(err))
 	}
 	defer func() { _ = r.Close() }()
 	verified := content.NewVerifyReader(r, layer)
 	if effectiveLayerOperation(selector) == sourcev1.OCILayerExtract {
 		gz, err := gzip.NewReader(verified)
 		if err != nil {
-			return desc, fmt.Errorf("gzip: %w", err)
+			return desc, fmt.Errorf("gzip: %w", orasError(err))
 		}
 		_, copyErr := io.Copy(w, gz) //nolint:gosec // The archive consumer caps expanded regular payloads before publication.
 		closeErr := gz.Close()
 		if copyErr != nil {
-			return desc, copyErr
+			return desc, orasError(copyErr)
 		}
 		if closeErr != nil {
 			return desc, closeErr
 		}
 	} else {
 		if _, err := io.Copy(w, verified); err != nil {
-			return desc, err
+			return desc, orasError(err)
 		}
 	}
 	if _, err := io.Copy(io.Discard, verified); err != nil {
 		return desc, err
 	}
 	return desc, verified.Verify()
+}
+
+func orasError(err error) error {
+	if _, ok := errors.AsType[*fetcherr.ResponseError](err); ok {
+		return err
+	}
+	if response, ok := errors.AsType[*errcode.ErrorResponse](err); ok {
+		return &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: response.Method, Err: err}
+	}
+	return err
 }

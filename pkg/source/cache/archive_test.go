@@ -126,7 +126,10 @@ func TestAcquire_EmptyEntryHeadersCountAgainstCap(t *testing.T) {
 }
 
 func TestAcquire_TrailingRecordPadding(t *testing.T) {
-	data := append(archive(t, "file", "x"), make([]byte, 8192)...)
+	old := maxExtractedBytes
+	maxExtractedBytes = 2*512 + 2
+	t.Cleanup(func() { maxExtractedBytes = old })
+	data := append(archive(t, "file", "x", "other", "y"), make([]byte, 8192)...)
 	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
 		t.Run(backing.name, func(t *testing.T) {
 			root := backing.root

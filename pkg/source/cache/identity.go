@@ -1,9 +1,9 @@
 package cache
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"runtime/debug"
+
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 const flateModule = "github.com/home-operations/flate"
@@ -41,11 +41,14 @@ func buildIdentity(info *debug.BuildInfo) string {
 	if !identified {
 		return ""
 	}
-	digest := sha256.Sum256([]byte(info.String()))
-	return hex.EncodeToString(digest[:])
+	return manifest.Fingerprint(info.String())
+}
+
+type renderIdentity struct {
+	Build  string
+	Render string
 }
 
 func blobID(identity, id string) string {
-	digest := sha256.Sum256([]byte("render-blob-v1\x00" + identity + "\x00" + id))
-	return "render-v1-" + hex.EncodeToString(digest[:])
+	return "render-" + manifest.Fingerprint(renderIdentity{Build: identity, Render: id})
 }

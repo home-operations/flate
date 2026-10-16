@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/minio/minio-go/v7"
@@ -42,7 +43,7 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 	var entries []minio.ObjectInfo
 	for obj := range client.ListObjects(ctx, b.BucketName, minio.ListObjectsOptions{Prefix: b.Prefix, Recursive: true}) {
 		if obj.Err != nil {
-			return ocispec.Descriptor{}, obj.Err
+			return ocispec.Descriptor{}, bucketResponseError(obj.Err)
 		}
 		entries = append(entries, obj)
 	}
@@ -159,7 +160,20 @@ func (c *bucketChunk) get(ctx context.Context, client *minio.Client, bucket stri
 		_ = opts.SetRange(c.start, c.start+c.size-1)
 	}
 	body, _, header, err := (minio.Core{Client: client}).GetObject(ctx, bucket, c.object.Key, opts)
-	return body, header, err
+	return body, header, bucketResponseError(err)
+}
+
+func bucketResponseError(err error) error {
+	status, ok := errors.AsType[minio.ErrorResponse](err)
+	if !ok {
+		return err
+	}
+	response := &fetcherr.ResponseError{StatusCode: status.StatusCode, Op: http.MethodGet, Err: err}
+	if fetcherr.Classify(status.StatusCode) == fetcherr.Transient {
+		// The outcome codec must never persist MinIO messages or unsupported causes.
+		response.Message, response.Err = err.Error(), nil
+	}
+	return response
 }
 
 func (c *bucketChunk) fetch(ctx context.Context, client *minio.Client, bucket string) error {

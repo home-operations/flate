@@ -4,7 +4,6 @@ package bucket
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -39,8 +37,7 @@ type Fetcher struct {
 	ForceGeneric bool
 }
 
-// Fetch implements source.TypedFetcher[*manifest.Bucket]. The typed
-// signature is wrapped via source.Wrap at orchestrator registration.
+// Fetch implements source.TypedFetcher[*manifest.Bucket].
 func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.RetryConfig) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, source.ErrUnsupportedProvider("Bucket",
@@ -60,12 +57,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 	}
 	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(endpoint, secure), material}, Ignore: ignore, Required: []string{"revision", "object-count"}}
 	input, desc, id, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		desc, err := walkBucket(ctx, client, b, w)
-		if status, ok := errors.AsType[minio.ErrorResponse](err); ok &&
-			(status.StatusCode == http.StatusTooManyRequests || status.StatusCode >= 500 && status.StatusCode < 600) {
-			err = fmt.Errorf("%v: %w", err, &errcode.ErrorResponse{StatusCode: status.StatusCode})
-		}
-		return desc, err
+		return walkBucket(ctx, client, b, w)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", bucketID(b), err)

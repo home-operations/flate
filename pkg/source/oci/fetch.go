@@ -18,7 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -34,8 +33,11 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
 	}
-	h := manifest.Fingerprint([8]any{repo.URL, ref, authIdentity(repo), f.RegistryConfig, repo.Insecure, repo.LayerSelector, ignore, sourceignore.RulesVersion})
-	id := "source-oci-" + h
+	request := struct {
+		Source         any
+		RegistryConfig string
+	}{repo.Content(ref), f.RegistryConfig}
+	var id string
 	maxAge := repo.Interval.Duration
 	if ref.Digest != "" {
 		maxAge = cache.Forever
@@ -53,18 +55,17 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 	}
 	switch effectiveLayerOperation(repo.LayerSelector) {
 	case sourcev1.OCILayerCopy:
-		id = "blob-oci-" + h
-		r, desc, err := f.Cache.Blob(ctx, cache.BlobKey{ID: id}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
+		r, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: request, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
-		input, descriptor = cache.FileFS(source.OCICopiedLayerFilename, r), desc
+		input, descriptor, id = cache.FileFS(source.OCICopiedLayerFilename, r), desc, key
 		if err := r.Close(); err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
 	case sourcev1.OCILayerExtract:
 		var err error
-		input, descriptor, err = f.Cache.Acquire(ctx, cache.ArchiveKey{ID: id, Ignore: ignore, WithDefaults: true}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
+		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: request, Ignore: ignore, WithDefaults: true, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", ociID(repo), err)
 		}
@@ -72,7 +73,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, clien
 		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, effectiveLayerOperation(repo.LayerSelector))
 	}
 	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input,
-		Key: id + "@" + descriptor.Digest.String(), Revision: descriptor.Annotations["flate.revision"],
+		Key: id, Revision: descriptor.Annotations["flate.revision"],
 		Digest: descriptor.Digest.String(), Size: descriptor.Size, Metadata: maps.Clone(descriptor.Annotations)}, nil
 }
 

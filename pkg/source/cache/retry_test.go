@@ -153,7 +153,7 @@ func TestAcquire_RetrySequence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newCache(t, "")
 			calls := 0
-			r, _, err := c.Blob(t.Context(), BlobKey{ID: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				calls++
 				if ctx.Err() != nil {
 					t.Error(ctx.Err())
@@ -197,9 +197,9 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 			cause := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 			terminal := &TerminalError{Err: cause, Attempted: attempted}
 			calls := 0
-			_, _, err := c.Blob(t.Context(), BlobKey{ID: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
 				calls++
-				_, _, err := c.Blob(ctx, BlobKey{ID: "inner"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, terminal })
+				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, terminal })
 				return ocispec.Descriptor{}, err
 			})
 			got, ok := errors.AsType[*TerminalError](err)
@@ -212,9 +212,9 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 		t.Run(fmt.Sprintf("child-%d", attempts), func(t *testing.T) {
 			c := newCache(t, "")
 			outer, inner := 0, 0
-			_, _, err := c.Blob(t.Context(), BlobKey{ID: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
 				outer++
-				_, _, err := c.Blob(ctx, BlobKey{ID: "inner"}, Policy{Retry: fastRetry(attempts)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(attempts)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 					inner++
 					return ocispec.Descriptor{}, connReset()
 				})
@@ -237,7 +237,7 @@ func TestAcquire_RetryFreshArchive(t *testing.T) {
 			c := newCache(t, root)
 			calls := 0
 			payload := archive(t, "file", "complete")
-			input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "partial"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "partial"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				calls++
 				if calls == 1 {
 					_, _ = w.Write(payload[:len(payload)/2])
@@ -272,7 +272,7 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 							if i == 0 {
 								attempts = 1
 							}
-							_, _, err := c.Blob(t.Context(), BlobKey{ID: "shared"}, Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 								calls[i]++
 								if (i == 0 && !reverse || i == concurrency-1 && reverse) && calls[i] == 1 {
 									close(started)
@@ -298,7 +298,7 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 					cancelled := make(chan error, 1)
 					cancelCalls := 0
 					go func() {
-						_, _, err := c.Blob(cancelCtx, BlobKey{ID: "shared"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						_, _, _, err := c.Blob(cancelCtx, BlobKey{Content: "shared"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 							cancelCalls++
 							return ocispec.Descriptor{}, nil
 						})
@@ -336,7 +336,7 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 		done := make(chan error, 1)
 		calls := 0
 		go func() {
-			r, _, err := c.Blob(t.Context(), BlobKey{ID: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 				calls++
 				return ocispec.Descriptor{}, connReset()
 			})
@@ -346,7 +346,7 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 			done <- err
 		}()
 		synctest.Wait()
-		r, _, err := c.Blob(t.Context(), BlobKey{ID: "shared"}, Policy{MaxAge: Forever}, producer([]byte("other fill"), ocispec.Descriptor{}))
+		r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever}, producer([]byte("other fill"), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -370,7 +370,7 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 				calls := make([]int, concurrency)
 				for i := range concurrency {
 					go func() {
-						_, _, err := c.Blob(ctx, BlobKey{ID: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 							calls[i]++
 							return ocispec.Descriptor{}, connReset()
 						})
@@ -387,7 +387,7 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 					}
 				}
 				for i := range concurrency {
-					_, _, err := c.Blob(ctx, BlobKey{ID: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+					_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 						calls[i]++
 						return ocispec.Descriptor{}, nil
 					})
@@ -438,7 +438,7 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 			}
 			c := newCache(t, root)
 			calls := 0
-			g, err := c.Git(t.Context(), GitKey{ID: "partial-git", RecurseSubmodules: true}, Policy{Retry: fastRetry(2)}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+			g, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{Retry: fastRetry(2)}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				calls++
 				if _, err := worktree.Stat("partial"); !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("attempt inherited partial worktree: %v", err)
@@ -483,7 +483,7 @@ func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
 					calls := make([]int, concurrency)
 					for i := range concurrency {
 						go func() {
-							_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: fmt.Sprintf("invalid-%d", i)}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: fmt.Sprintf("invalid-%d", i)}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 								calls[i]++
 								_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
 								<-ctx.Done()
@@ -529,7 +529,7 @@ func TestAcquire_BackoffResets(t *testing.T) {
 		for range 2 {
 			calls := 0
 			start := time.Now()
-			r, _, err := c.Blob(t.Context(), BlobKey{ID: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				calls++
 				if calls == 1 {
 					return ocispec.Descriptor{}, connReset()
@@ -577,15 +577,15 @@ func TestAcquire_CleanupFailureStopsRetry(t *testing.T) {
 						var err error
 						switch kind {
 						case "git":
-							_, err = c.Git(t.Context(), GitKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+							_, _, err = c.Git(t.Context(), GitKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 								return plumbing.ZeroHash, fail()
 							})
 						case "archive":
-							_, _, err = c.Acquire(t.Context(), ArchiveKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err = c.Acquire(t.Context(), ArchiveKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 								return ocispec.Descriptor{}, fail()
 							})
 						case "blob":
-							_, _, err = c.Blob(t.Context(), BlobKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 								return ocispec.Descriptor{}, fail()
 							})
 						}

@@ -25,7 +25,6 @@ import (
 	// HTTPS operations must retain flate's header timeout and egress guard.
 	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -90,8 +89,11 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 	if repo.Reference != nil {
 		refLabel = cmp.Or(gitRefLabel(*repo.Reference), refLabel)
 	}
-	h := manifest.Fingerprint([4]any{repo.URL, authIdentity(repo), gitCacheKey(repo, refLabel, sourceignore.RulesVersion), f.Depth})
-	key := sourcecache.GitKey{ID: "source-git-" + h, Ref: refLabel, RecurseSubmodules: repo.RecurseSubmodules}
+	content := struct {
+		Source any
+		Depth  int
+	}{repo.Content(effectiveRef(repo.Reference)), f.Depth}
+	key := sourcecache.GitKey{Content: content, Ref: refLabel, RecurseSubmodules: repo.RecurseSubmodules}
 	maxAge := repo.Interval.Duration
 	if canUseCachedGitSlot(repo.Reference) {
 		maxAge = sourcecache.Forever
@@ -100,10 +102,9 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
 	}
-	viewOptions := gittree.ViewOptions{Sparse: repo.SparseCheckout, Ignore: ignore}
+	viewOptions := gittree.ViewOptions{Content: content, Sparse: repo.SparseCheckout, Ignore: ignore}
 	var input *gittree.FS
-	var pin string
-	generation, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+	generation, id, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{repo, opts})
 		if err != nil {
@@ -122,20 +123,20 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.GitRepository, opts 
 				return plumbing.ZeroHash, err
 			}
 		}
-		viewOptions.Identity = key.ID + "@" + hash.String()
-		input, pin, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Worktree: worktree, Commit: hash}, viewOptions, nil)
+
+		input, _, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Worktree: worktree, Commit: hash}, viewOptions, nil)
 		return hash, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", gitID(repo), err)
 	}
-	viewOptions.Identity = key.ID + "@" + generation.Commit.String()
-	input, pin, err = generationView(ctx, generation, viewOptions, input)
+
+	input, _, err = generationView(ctx, generation, viewOptions, input)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", manifest.ErrInput, gitID(repo), err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: pin}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id}, nil
 }
 
 type gitAcquisition struct {
@@ -219,7 +220,7 @@ func initRemote(storer storage.Storer, worktree billy.Filesystem, url string) (*
 
 func generationView(ctx context.Context, generation *sourcecache.GitGeneration, options gittree.ViewOptions, validated *gittree.FS) (*gittree.FS, string, error) {
 	if validated != nil {
-		return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: validated, Identity: options.Identity})
+		return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: validated})
 	}
 	options.Worktree = generation.Worktree
 	return gittree.New(ctx, generation.Backing, generation.Commit, options)
@@ -274,28 +275,6 @@ func gitRefLabel(ref manifest.GitRepositoryRef) string {
 	return manifest.GitRefString(ref)
 }
 
-func gitCacheKey(repo *manifest.GitRepository, refLabel, rulesVersion string) string {
-	ignore := ""
-	if repo.Ignore != nil {
-		ignore = *repo.Ignore
-	}
-	payload := struct {
-		Ref               string   `json:"ref"`
-		Ignore            string   `json:"ignore,omitempty"`
-		SparseCheckout    []string `json:"sparseCheckout,omitempty"`
-		RecurseSubmodules bool     `json:"recurseSubmodules,omitempty"`
-		RulesVersion      string   `json:"rulesVersion"`
-	}{
-		Ref:               refLabel,
-		Ignore:            ignore,
-		SparseCheckout:    repo.SparseCheckout,
-		RecurseSubmodules: repo.RecurseSubmodules,
-		RulesVersion:      rulesVersion,
-	}
-	h := manifest.Fingerprint(payload)
-	return refLabel + "#opts:" + h
-}
-
 func canUseCachedGitSlot(ref *manifest.GitRepositoryRef) bool {
 	return ref != nil &&
 		ref.Commit != "" &&
@@ -316,13 +295,4 @@ func effectiveDepth(depth int, ref *manifest.GitRepositoryRef) int {
 // source.QualifiedName so every fetcher formats kind/ns/name identically.
 func gitID(repo *manifest.GitRepository) string {
 	return source.QualifiedName("GitRepository", repo.Namespace, repo.Name)
-}
-
-// authIdentity returns the cache-key auth tag for a GitRepository.
-// Combines the SecretRef (HTTPS / SSH creds) and ProxySecretRef the
-// fetcher binds. Returns "" for anonymous clones so they share slots
-// for unauthenticated sources.
-func authIdentity(repo *manifest.GitRepository) string {
-	return source.AuthIdentityFromRefs(repo.Namespace,
-		repo.SecretRef, repo.ProxySecretRef)
 }

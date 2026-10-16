@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	digest "github.com/opencontainers/go-digest"
@@ -393,8 +392,9 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := manifest.Fingerprint([5]any{"https://charts.example.invalid", "demo", "0.1.0", source.AuthIdentityFromRefs("demo", nil, nil), false})
-	r, _, err := c.Blob(t.Context(), sourcecache.BlobKey{ID: "blob-chart-" + h}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
+	chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
+	r, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart any }{repository.Content(), chart.Content()}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(archive.Bytes())
 		return ocispec.Descriptor{Digest: digest.FromBytes(archive.Bytes()), Size: int64(archive.Len()), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
 	})

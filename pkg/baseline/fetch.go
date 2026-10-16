@@ -21,7 +21,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -66,8 +65,8 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 		return nil, err
 	}
 	remote := &baseRemote{client: client, endpoint: ep, capabilities: refs.Capabilities, pin: pin, url: url}
-	key := sourcecache.GitKey{ID: "baseline-meta-" + manifest.Fingerprint([]string{url, pin.String()}), Ref: pin.String()}
-	generation, err := owner.Git(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+	key := sourcecache.GitKey{Content: struct{ URL, Commit string }{url, pin.String()}, Ref: pin.String()}
+	generation, _, err := owner.Git(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
 		if err := remote.fetch(ctx, upper, nil); err != nil {
 			return plumbing.ZeroHash, err
 		}

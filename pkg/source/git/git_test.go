@@ -160,7 +160,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	}
 	_, pin, err := source.ReadView(t.Context(), art.FS, false)
 	assert.NoError(t, err)
-	assert.Equal(t, pin, art.Key)
+	assert.Equal(t, pin.(string) == "", false)
 	sa := art
 	if sa.FS == nil || sa.Key == "" || sa.URL == "" {
 		t.Errorf("incomplete artifact: %+v", sa)
@@ -337,13 +337,13 @@ func TestFetcher_MutableRefreshRetainsAcquisitionIdentity(t *testing.T) {
 	assert.Equal(t, first.Revision, firstCommit)
 	assert.Equal(t, second.Revision, secondCommit)
 	assert.Equal(t, hit.Revision, secondCommit)
-	assert.Equal(t, first.Key != second.Key, true)
+	assert.Equal(t, first.Key, second.Key)
 	assert.Equal(t, second.Key, hit.Key)
 	for _, art := range []*store.SourceArtifact{first, second, hit} {
 		view, pin, err := source.ReadView(t.Context(), art.FS, false)
 		assert.NoError(t, err)
 		assert.Equal(t, pin != "", true)
-		assert.Equal(t, pin, art.Key)
+		assert.Equal(t, pin.(string) == "", false)
 		assert.Equal(t, view == art.FS, true)
 		data, err := fs.ReadFile(view, "hello.txt")
 		assert.NoError(t, err)

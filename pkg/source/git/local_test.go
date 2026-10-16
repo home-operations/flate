@@ -99,7 +99,11 @@ func TestResolveLocal_References(t *testing.T) {
 			}
 			view, pin, err := source.ReadView(t.Context(), artifact.FS, false)
 			assert.NoError(t, err)
-			assert.Equal(t, pin, "")
+			if artifact.Key == "" {
+				assert.Equal(t, pin, any(nil))
+			} else {
+				assert.Equal(t, pin, any(artifact.Key))
+			}
 			data, err := fs.ReadFile(view, "value.txt")
 			assert.NoError(t, err)
 			wantBody := "A"

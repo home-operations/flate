@@ -24,20 +24,18 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				root = t.TempDir()
 			}
 			c := newCache(t, root)
-			key := BlobKey{ID: "blob-completed"}
+			key := BlobKey{Content: "blob-completed"}
 			for range 2 {
-				r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 				if r != nil || !errors.Is(err, errdef.ErrNotFound) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("lookup miss: reader=%v, error=%v", r, err)
 				}
 			}
-			if _, ok := c.entries.Load(key.ID); ok {
-				t.Fatal("lookup miss installed an entry")
-			}
+			c.entries.Range(func(_, _ any) bool { t.Error("lookup miss installed an entry"); return true })
 			var held fs.FS
 			var heldPin, heldPayload string
 			for _, payload := range []string{"first", ""} {
-				r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(payload), ocispec.Descriptor{}))
+				r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(payload), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -55,11 +53,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				if err := r.Close(); err != nil {
 					t.Fatal(err)
 				}
-				if r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, nil); !errors.Is(err, errdef.ErrNotFound) || r != nil {
+				if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, nil); !errors.Is(err, errdef.ErrNotFound) || r != nil {
 					t.Fatalf("stale lookup: reader=%v, error=%v", r, err)
 				}
 				if backing == "disk" {
-					e, _ := c.entries.Load(key.ID)
+					e, _ := c.entries.Load(id)
 					raw, err := os.ReadFile(filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest)))
 					if err != nil || string(raw) != payload {
 						t.Fatalf("plain completed payload=%q: %v", raw, err)
@@ -69,7 +67,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					}
 					c = newCache(t, root)
 				}
-				first, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				first, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -89,7 +87,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				// The same key must remain usable while a returned reader is retained.
 				var wg sync.WaitGroup
 				wg.Go(func() {
-					other, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+					other, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 					if err != nil {
 						t.Error(err)
 						return
@@ -124,13 +122,18 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 						root = t.TempDir()
 					}
 					c := newCache(t, root)
-					key := BlobKey{ID: "render-test-v1-payload", PersistOnly: true}
-					if r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+					key := BlobKey{Content: "render-test-v1-payload", PersistOnly: true}
+					for _, content := range []any{"", struct{ Key string }{"render-test-v1-payload"}} {
+						if r, _, id, err := c.Blob(t.Context(), BlobKey{Content: content, PersistOnly: true}, Policy{MaxAge: Forever}, nil); r != nil || id != "" || !errors.Is(err, manifest.ErrInput) {
+							t.Fatalf("invalid render identity: id=%q, %v", id, err)
+						}
+					}
+					if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 						t.Fatalf("cold lookup: %v", err)
 					}
 					persisted := backing == "disk" && identity != ""
 					calls := 0
-					r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						calls++
 						_, err := io.WriteString(w, "completed")
 						return ocispec.Descriptor{}, err
@@ -153,7 +156,7 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 						t.Fatal(err)
 					}
 					c = newCache(t, root)
-					r, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+					r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 					if persisted {
 						if err != nil {
 							t.Fatal(err)
@@ -167,7 +170,7 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 					ctx, cancel := context.WithCancel(t.Context())
 					cancel()
 					for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, producer(nil, ocispec.Descriptor{})} {
-						if r, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, produce); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
+						if r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, produce); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
 							t.Fatalf("disabled cancellation: %v", err)
 						}
 					}
@@ -195,14 +198,14 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					source, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-ordinary"}, Policy{MaxAge: Forever}, producer([]byte("source"), ocispec.Descriptor{}))
+					source, _, _, err := c.Blob(t.Context(), BlobKey{Content: "blob-ordinary"}, Policy{MaxAge: Forever}, producer([]byte("source"), ocispec.Descriptor{}))
 					if err != nil {
 						t.Fatal(err)
 					}
 					if err := source.Close(); err != nil {
 						t.Fatal(err)
 					}
-					source, _, err = c.Blob(t.Context(), BlobKey{ID: "blob-ordinary"}, Policy{MaxAge: Forever}, nil)
+					source, _, _, err = c.Blob(t.Context(), BlobKey{Content: "blob-ordinary"}, Policy{MaxAge: Forever}, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -225,9 +228,9 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 			if persistOnly && root == "" {
 				continue
 			}
-			key := BlobKey{ID: "blob-error", PersistOnly: persistOnly}
+			key := BlobKey{Content: "blob-error", PersistOnly: persistOnly}
 			failure := errors.New("failed completed producer")
-			r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				_, _ = io.WriteString(w, "partial")
 				return ocispec.Descriptor{}, failure
 			})
@@ -236,14 +239,14 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if r, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
+			if r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("lookup cancellation: %v", err)
 			}
 		}
 	}
 	c := newCache(t, t.TempDir())
-	key := BlobKey{ID: "blob-missing-payload"}
-	r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte("payload"), ocispec.Descriptor{}))
+	key := BlobKey{Content: "blob-missing-payload"}
+	r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte("payload"), ocispec.Descriptor{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,12 +260,12 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 	if handle.ReadCloser != nil || handle.input.open != nil {
 		t.Fatal("failed Close retained the backing reader")
 	}
-	e, _ := c.entries.Load(key.ID)
+	e, _ := c.entries.Load(id)
 	if err := os.Remove(filepath.Join(c.layout.Root, blobPath(e.(*entry).stored.Digest))); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, fs.ErrNotExist) || errors.Is(err, errdef.ErrNotFound) || !errors.Is(err, manifest.ErrFlux) {
+		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, fs.ErrNotExist) || errors.Is(err, errdef.ErrNotFound) || !errors.Is(err, manifest.ErrFlux) {
 			t.Fatalf("missing payload became miss: %v", err)
 		}
 	}
@@ -279,8 +282,8 @@ func TestBlob_ConcurrentPayloads(t *testing.T) {
 			ready.Done()
 			<-start
 			payload := bytes.Repeat([]byte{byte(i)}, 2<<20)
-			key := BlobKey{ID: string(rune('a' + i))}
-			r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
+			key := BlobKey{Content: string(rune('a' + i))}
+			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
 			if err != nil {
 				t.Error(err)
 				return
@@ -289,7 +292,7 @@ func TestBlob_ConcurrentPayloads(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			r, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+			r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 			if err != nil {
 				t.Error(err)
 				return

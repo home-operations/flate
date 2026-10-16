@@ -19,12 +19,22 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func openGeneration(t *testing.T, f *Fetcher, artifact *store.SourceArtifact) *git.Repository {
+func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, artifact *store.SourceArtifact) *git.Repository {
 	t.Helper()
-	id, _, _ := strings.Cut(artifact.Key, "@")
-	generation, err := f.Cache.Git(t.Context(), sourcecache.GitKey{ID: id}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	ref := "HEAD"
+	if spec.Reference != nil && gitRefLabel(*spec.Reference) != "" {
+		ref = gitRefLabel(*spec.Reference)
+	}
+	key := sourcecache.GitKey{Content: struct {
+		Source any
+		Depth  int
+	}{spec.Content(effectiveRef(spec.Reference)), f.Depth}, Ref: ref, RecurseSubmodules: spec.RecurseSubmodules}
+	generation, id, err := f.Cache.Git(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if id != artifact.Key {
+		t.Fatalf("generation identity = %q, want %q", id, artifact.Key)
 	}
 	storer := filesystem.NewStorageWithOptions(generation.Backing, objectcache.NewObjectLRU(0), filesystem.Options{LargeObjectThreshold: 1})
 	t.Cleanup(func() {
@@ -71,7 +81,7 @@ func TestMirror_ShallowCloneTruncatesHistory(t *testing.T) {
 		}
 	}
 
-	mirrorRepo := openGeneration(t, f, art)
+	mirrorRepo := openGeneration(t, f, repo, art)
 	shallows, err := mirrorRepo.Storer.Shallow()
 	if err != nil {
 		t.Fatalf("Shallow(): %v", err)
@@ -113,7 +123,7 @@ func TestMirror_ShallowTagFetch(t *testing.T) {
 	if _, err := fs.Stat(art.FS, path.Join("chart.yaml")); err != nil {
 		t.Errorf("worktree missing tagged file: %v", err)
 	}
-	if _, err := openGeneration(t, f, art).CommitObject(plumbing.NewHash(parent)); err == nil {
+	if _, err := openGeneration(t, f, repo, art).CommitObject(plumbing.NewHash(parent)); err == nil {
 		t.Errorf("pre-tag commit %s should be absent from a depth=1 mirror", parent)
 	}
 }
@@ -153,6 +163,9 @@ func TestMirror_ShallowIncrementalFetchAfterTipMove(t *testing.T) {
 	}
 	if art2.Revision != newTip {
 		t.Errorf("revision after tip move = %q, want new tip %q", art2.Revision, newTip)
+	}
+	if art2.Key != art1.Key {
+		t.Fatalf("same acquisition family changed identity: %q/%q", art1.Key, art2.Key)
 	}
 	if _, err := fs.Stat(art2.FS, path.Join("c2.txt")); err != nil {
 		t.Errorf("worktree missing new-tip file after incremental shallow fetch: %v", err)
@@ -215,7 +228,7 @@ func TestMirror_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 		t.Fatalf("Fetch tag: %v", err)
 	}
 
-	mirrorRepo := openGeneration(t, f, art)
+	mirrorRepo := openGeneration(t, f, repo, art)
 	refs, err := mirrorRepo.References()
 	if err != nil {
 		t.Fatalf("References: %v", err)

@@ -21,6 +21,21 @@ func (h *HelmRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindHelmRepository].Group, Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
 }
 
+// Content returns the repository inputs that define HTTP acquisitions.
+func (h *HelmRepository) Content() any {
+	var auth []NamedResource
+	for _, ref := range []*LocalObjectReference{h.SecretRef, h.CertSecretRef} {
+		if ref != nil && ref.Name != "" {
+			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: h.Namespace, Name: ref.Name})
+		}
+	}
+	return struct {
+		URL             string
+		Auth            []NamedResource
+		PassCredentials bool
+	}{h.URL, auth, h.PassCredentials}
+}
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (h *HelmRepository) WithNamespace(namespace string) BaseManifest {
 	out := *h

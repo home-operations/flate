@@ -29,6 +29,24 @@ func (b *Bucket) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindBucket].Group, Kind: KindBucket, Namespace: b.Namespace, Name: b.Name}
 }
 
+// Content returns the source inputs for the effective bucket endpoint.
+func (b *Bucket) Content(endpoint string, secure bool) any {
+	var auth []NamedResource
+	for _, ref := range []*LocalObjectReference{b.SecretRef, b.CertSecretRef, b.ProxySecretRef} {
+		if ref != nil && ref.Name != "" {
+			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: b.Namespace, Name: ref.Name})
+		}
+	}
+	return struct {
+		Endpoint   string
+		Secure     bool
+		BucketName string
+		Prefix     string
+		Region     string
+		Auth       []NamedResource
+	}{endpoint, secure, b.BucketName, b.Prefix, b.Region, auth}
+}
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (b *Bucket) WithNamespace(namespace string) BaseManifest {
 	out := *b

@@ -68,7 +68,7 @@ func renderPersistenceEligible(t testing.TB) bool {
 
 func readTestRenderFrame(t testing.TB, cache *TreeCache, key string) (readSetSnapshot, []byte, bool) {
 	t.Helper()
-	r, _, err := cache.owner.Blob(t.Context(), sourcecache.BlobKey{ID: key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	r, _, _, err := cache.owner.Blob(t.Context(), sourcecache.BlobKey{Content: key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if errors.Is(err, errdef.ErrNotFound) {
 		return readSetSnapshot{}, nil, false
 	}
@@ -88,7 +88,7 @@ func readTestRenderFrame(t testing.TB, cache *TreeCache, key string) (readSetSna
 
 func publishTestFrame(t testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	t.Helper()
-	r, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	r, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		_, err := w.Write(raw)
 		return ocispec.Descriptor{}, err
 	})
@@ -138,14 +138,14 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 
 	// Prove the next call is a real HIT (returns stored bytes, skips krusty) by
 	// tampering the cached output and confirming it comes back verbatim.
-	key := renderKey(demoRawSpec, root, "selected", "")
+	key := renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoRawSpec, SubPath: "selected"}, root, nil)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := renderPersistenceEligible(t)
 	if ok != eligible {
 		t.Fatalf("persisted render = %v, want %v", ok, eligible)
 	}
 	if eligible {
-		publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
+		publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
 	}
 	cache.Close()
 	if err := cache.owner.Close(); err != nil {
@@ -220,9 +220,15 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	})
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
-	ctx := context.Background()
+	ctx := t.Context()
+	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}
+	input, err := cache.sourceRootFor(ctx, req.Source, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := renderKey(req, root, input.ignore)
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+	out1, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
@@ -237,7 +243,15 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	}
 
 	cache = newTestTreeCache(t, cacheDir)
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+	req.Source = localSource(t, root)
+	input, err = cache.sourceRootFor(ctx, req.Source, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renderKey(req, root, input.ignore) == key {
+		t.Fatal("re-admitted ignore bytes reused the render key")
+	}
+	out2, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -391,7 +405,7 @@ func TestRenderFlux_RemoteNotCached(t *testing.T) {
 				if err != nil || !strings.Contains(string(out), fmt.Sprintf("remote-v%d", v)) {
 					t.Fatalf("remote version %d: %s, %v", v, out, err)
 				}
-				if _, _, hit := readTestRenderFrame(t, cache, renderKey(demoRawSpec, root, ".", "")); hit {
+				if _, _, hit := readTestRenderFrame(t, cache, renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoRawSpec, SubPath: "."}, root, nil)); hit {
 					t.Fatal("remote render persisted without a local read-set identity")
 				}
 			}
@@ -399,36 +413,42 @@ func TestRenderFlux_RemoteNotCached(t *testing.T) {
 	}
 }
 
-func TestRenderKey_VersionedSalt(t *testing.T) {
-	files := map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")}
-	root := writeTree(t, files)
-	oldKey := manifest.Fingerprint(struct {
-		Spec       map[string]any
-		SourceRoot string
-		SubPath    string
-		Ignore     string
-		Version    string
-	}{demoRawSpec, root, ".", "", "render-fs-v4"})
-	if renderKey(demoRawSpec, root, ".", "") == oldKey {
-		t.Fatal("preceding render-key domain still active")
-	}
-	for _, origin := range []string{"disk", "artifact"} {
-		t.Run(origin, func(t *testing.T) {
-			cacheDir := t.TempDir()
-			cache := newTestTreeCache(t, cacheDir)
-			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
-			key := oldKey
-			if origin == "artifact" {
-				req.Source = &store.SourceArtifact{Key: "pin", FS: memoryTree(t, files)}
-				key = manifest.Fingerprint([]string{oldKey, "pin"})
+func TestRenderKey_ContentInputs(t *testing.T) {
+	req := RenderRequest{Source: &store.SourceArtifact{Key: "family"}, SubPath: ".", Spec: demoRawSpec}
+	key := renderKey(req, "/source", nil)
+	for _, tc := range []struct {
+		name   string
+		change func(*RenderRequest)
+		root   string
+		ignore any
+	}{
+		{name: "spec", change: func(r *RenderRequest) { r.Spec = ksDoc(map[string]any{"namePrefix": "other-"}) }},
+		{name: "root", root: "/other"},
+		{name: "subpath", change: func(r *RenderRequest) { r.SubPath = "app" }},
+		{name: "ignore selection", change: func(r *RenderRequest) { r.ApplyIgnore = true }},
+		{name: "ignore bytes", ignore: []byte("*.yaml")},
+		{name: "acquisition", change: func(r *RenderRequest) { r.Source.Key = "other-family" }},
+		{name: "revision", change: func(r *RenderRequest) { r.Source.Revision = "revision" }},
+		{name: "digest", change: func(r *RenderRequest) { r.Source.Digest = "digest" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := req
+			source := *req.Source
+			changed.Source = &source
+			if tc.change != nil {
+				tc.change(&changed)
 			}
-			publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, testRenderFrame(t, readSetSnapshot{}, []byte("STALE")))
-			cache = newTestTreeCache(t, cacheDir)
-			out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
-			if err != nil || !strings.Contains(string(out), "name: fresh") {
-				t.Fatalf("persisted old key reused: %s, %v", out, err)
+			root := "/source"
+			if tc.root != "" {
+				root = tc.root
+			}
+			if got := renderKey(changed, root, tc.ignore); got == "" || got == key {
+				t.Fatal("changed render input reused the key")
 			}
 		})
+	}
+	if got := renderKey(req, "/source", nil); got != key {
+		t.Fatal("unchanged render input changed the key")
 	}
 }
 
@@ -439,8 +459,8 @@ func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
 	})
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
-	key := renderKey(demoRawSpec, root, ".", "")
-	publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
+	key := renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoRawSpec, SubPath: "."}, root, nil)
+	publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: struct{ Render string }{key}}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
 	out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 	if err != nil || !strings.Contains(string(out), "name: fresh") {
 		t.Fatalf("ordinary raw identity reused cached output: %s, %v", out, err)
@@ -473,19 +493,20 @@ func TestRenderFlux_CacheFrames(t *testing.T) {
 			cacheDir := t.TempDir()
 			cache := newTestTreeCache(t, cacheDir)
 			source := localSource(t, root)
-			key := renderKey(demoRawSpec, root, ".", "")
 			if tc.immutable {
 				source.Key = "immutable-pin"
-				key = manifest.Fingerprint([]string{key, source.Key})
+				source.Revision, source.Digest = "revision", "digest"
 			}
+			req := RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoRawSpec}
+			key := renderKey(req, root, nil)
 			frame := testRenderFrame(t, tc.snapshot, []byte("STALE\n"))
 			if tc.malformed {
 				frame = []byte{0, 0, 0, 1, 'x'}
 			} else if tc.empty {
 				frame = testRenderFrame(t, tc.snapshot, nil)
 			}
-			publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, frame)
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, frame)
+			out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -533,7 +554,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 			eligible := renderPersistenceEligible(t)
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
 			cache := newTestTreeCache(t, t.TempDir())
-			key := sourcecache.BlobKey{ID: renderKey(demoRawSpec, root, ".", ""), PersistOnly: true}
+			key := sourcecache.BlobKey{Content: renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoRawSpec, SubPath: "."}, root, nil), PersistOnly: true}
 			frame := testRenderFrame(t, readSetSnapshot{Files: []fileEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}}}, []byte("VALIDATED\n"))
 			if validate {
 				publishTestFrame(t, cache.owner, key, frame)
@@ -568,7 +589,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 			progress := make(chan error, 1)
 			wg.Go(func() {
 				progress <- func() error {
-					r, _, err := cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+					r, _, _, err := cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 					if r != nil {
 						err = errors.Join(err, r.Close())
 					}
@@ -578,7 +599,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 					if (!validate || !eligible) && !errors.Is(err, errdef.ErrNotFound) {
 						return fmt.Errorf("lookup before completed publication: %w", err)
 					}
-					r, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						_, err := w.Write(frame)
 						return ocispec.Descriptor{}, err
 					})
@@ -588,7 +609,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 					if err := r.Close(); err != nil {
 						return err
 					}
-					r, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{ID: "ordinary-source"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{Content: struct{ Name string }{"ordinary-source"}}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						_, err := io.WriteString(w, "source")
 						return ocispec.Descriptor{}, err
 					})

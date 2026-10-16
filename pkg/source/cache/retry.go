@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -53,23 +54,46 @@ func (e *TerminalError) Error() string { return e.Err.Error() }
 // Unwrap exposes the domain sentinel and the underlying cause.
 func (e *TerminalError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} }
 
-func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
+func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, string, error) {
+	if key.id == "" {
+		var content struct {
+			Archive any
+			Blob    any
+			Git     any
+		}
+		switch {
+		case key.archive:
+			content.Archive = struct {
+				Content      any
+				Ignore       string
+				WithDefaults bool
+			}{key.Content, key.Ignore, key.WithDefaults}
+		case key.git != nil:
+			content.Git = key.git.key
+		default:
+			content.Blob = struct{ Content any }{key.Content}
+		}
+		key.id = manifest.Fingerprint(content)
+		if key.id == "" {
+			return nil, "", &CacheError{fmt.Errorf("%w: acquisition content cannot be fingerprinted", manifest.ErrInput)}
+		}
+	}
 	for attempt := 1; ; attempt++ {
 		e, err := c.acquireOnce(ctx, key, policy.MaxAge, produce)
 		if err == nil {
-			return e, nil
+			return e, key.id, nil
 		}
 		if _, ok := errors.AsType[*TerminalError](err); ok {
-			return nil, err
+			return nil, "", err
 		}
 		if _, ok := err.(*producerError); !ok || !retryable(err) {
-			return nil, err
+			return nil, "", err
 		}
 		if attempt >= max(1, policy.Retry.Attempts) {
-			return nil, &TerminalError{Err: err, Attempted: true}
+			return nil, "", &TerminalError{Err: err, Attempted: true}
 		}
 		delay := policy.Retry.backoff(attempt - 1)
-		slog.Debug("cache: acquisition failed, retrying", "key", key.ID, "attempt", attempt, "delay", delay, "error", err)
+		slog.Debug("cache: acquisition failed, retrying", "key", key.id, "attempt", attempt, "delay", delay, "error", err)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -77,7 +101,7 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, prod
 		case <-timer.C:
 		}
 		if ctx.Err() != nil {
-			return nil, &TerminalError{Err: errors.Join(err, ctx.Err()), Attempted: true}
+			return nil, "", &TerminalError{Err: errors.Join(err, ctx.Err()), Attempted: true}
 		}
 	}
 }

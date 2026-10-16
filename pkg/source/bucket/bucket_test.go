@@ -235,6 +235,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 						b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/",
 							Endpoint: srv.URL, Insecure: true, Region: "us-east-1", Interval: metav1.Duration{Duration: time.Hour},
 							SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+						var family string
 						for range 2 {
 							art, err := f.Fetch(t.Context(), b, cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
 							if attempts == 1 {
@@ -247,6 +248,10 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 								t.Error(err)
 								return
 							}
+							if art.Key == "" || family != "" && art.Key != family {
+								t.Errorf("warm acquisition family = %q, first = %q", art.Key, family)
+							}
+							family = art.Key
 							want := namespace
 							if namespace == "second" {
 								want = "other"

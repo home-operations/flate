@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
@@ -69,6 +70,15 @@ func (f *tarFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	f.cursor = end
 	return entries, nil
 }
+
+func (t *tarFS) identify(content digest.Digest, key ArchiveKey) {
+	t.identity = manifest.Fingerprint(struct {
+		Digest       digest.Digest
+		Ignore       string
+		WithDefaults bool
+	}{content, key.Ignore, key.WithDefaults})
+}
+
 func (t *tarFS) Open(name string) (fs.File, error) {
 	if t.memory != nil {
 		return t.memory.Open(name)

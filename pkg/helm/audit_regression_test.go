@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
@@ -32,7 +33,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: "", chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
+			assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(tc.chart)), chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
 		})
 	}
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/go-git/go-git/v5/storage/transactional"
 
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -36,35 +35,39 @@ type selection struct {
 	current  *gittree.FS
 	worktree billy.Filesystem
 	owner    *sourcecache.Cache
+	content  any
 }
 
-func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, error) {
+func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, error) {
 	baseTree, entries, err := s.baseEntries(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	candidates, dirty, err := s.candidates(ctx, baseTree, entries)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	if err := s.acquireBodies(ctx, entries, candidates); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	routing, err := s.compareCandidates(ctx, candidates, dirty, entries)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	slices.Sort(routing)
 	backing := s.repo.Storer.(*filesystem.Storage).Filesystem()
 	if s.base.backing != nil {
 		backing = s.base.backing
 	}
-	baseline, _, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Mode: gittree.Direct, Current: s.current, Changes: routing})
+	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Content: s.content, Mode: gittree.Direct, Current: s.current, Changes: routing})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	changes, err := s.filterChanges(ctx, baseline, routing, entries)
-	return baseline, changes, err
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return baseline, changes, identity, nil
 }
 
 func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]object.TreeEntry, error) {
@@ -186,11 +189,12 @@ func (s selection) acquireBodies(ctx context.Context, entries map[string]object.
 		return nil
 	}
 	hashes := slices.SortedFunc(maps.Keys(routed), func(a, b plumbing.Hash) int { return bytes.Compare(a[:], b[:]) })
-	ids := []string{s.base.remote.url, s.base.Hash.String()}
-	for _, hash := range hashes {
-		ids = append(ids, hash.String())
-	}
-	generation, err := s.owner.Git(ctx, sourcecache.GitKey{ID: "baseline-wants-" + manifest.Fingerprint(ids), Ref: s.base.Hash.String()}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
+	content := struct {
+		URL    string
+		Commit string
+		Wants  []plumbing.Hash
+	}{s.base.remote.url, s.base.Hash.String(), hashes}
+	generation, _, err := s.owner.Git(ctx, sourcecache.GitKey{Content: content, Ref: s.base.Hash.String()}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, upper storage.Storer, _ billy.Filesystem) (plumbing.Hash, error) {
 		if err := copyMetadata(ctx, s.base.Repo.Storer, upper, s.base.Hash); err != nil {
 			return plumbing.ZeroHash, err
 		}

@@ -63,11 +63,11 @@ func BenchmarkBlob_Put(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = c.Close() })
 	payload := syntheticManifests(200)
-	key := BlobKey{ID: "render-benchmark"}
+	key := BlobKey{Content: "render-benchmark"}
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		r, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
+		r, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -84,8 +84,8 @@ func BenchmarkBlob_Get(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = c.Close() })
 	payload := syntheticManifests(200)
-	key := BlobKey{ID: "render-benchmark"}
-	r, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
+	key := BlobKey{Content: "render-benchmark"}
+	r, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func BenchmarkBlob_Get(b *testing.B) {
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		r, _, err := c.Blob(b.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -119,7 +119,7 @@ func BenchmarkBlob_PutParallel(b *testing.B) {
 	payloads := make([][]byte, callers)
 	var batchBytes int64
 	for i := range callers {
-		keys[i] = BlobKey{ID: fmt.Sprintf("render-benchmark-%d", i)}
+		keys[i] = BlobKey{Content: fmt.Sprintf("render-benchmark-%d", i)}
 		payloads[i] = mixedWindowPayload(uint64(i + 1))
 		batchBytes += int64(len(payloads[i]))
 	}
@@ -133,7 +133,7 @@ func BenchmarkBlob_PutParallel(b *testing.B) {
 			joined.Go(func() {
 				ready.Done()
 				<-start
-				r, _, err := c.Blob(b.Context(), keys[i], Policy{MaxAge: 0}, producer(payloads[i], ocispec.Descriptor{}))
+				r, _, _, err := c.Blob(b.Context(), keys[i], Policy{MaxAge: 0}, producer(payloads[i], ocispec.Descriptor{}))
 				if err != nil {
 					b.Error(err)
 					return

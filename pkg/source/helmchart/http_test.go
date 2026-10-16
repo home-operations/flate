@@ -96,9 +96,18 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			r := httpRepo(srv.URL)
-			f := newHTTPFetcher(t, r)
+			root := t.TempDir()
+			c, err := sourcecache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			f := New(nil, nil, nil, Config{Cache: c})
 			if _, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{}); err == nil {
 				t.Fatal("accepted invalid index")
+			}
+			if _, ok := f.indexCache.Load("sha256:" + chartDigest([]byte(tc.data))); ok {
+				t.Fatal("invalid index entered parsed memo")
 			}
 			idx, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
 			if err != nil {
@@ -107,9 +116,20 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 			if _, err := idx.Get("app-template", "1.0.0"); err != nil {
 				t.Fatal(err)
 			}
-			warm := New(nil, nil, nil, Config{Cache: f.cache})
-			if _, err := warm.fetchIndex(t.Context(), r, sourcecache.RetryConfig{}); err != nil {
-				t.Fatalf("cached index: %v", err)
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			c, err = sourcecache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			warm := New(nil, nil, nil, Config{Cache: c})
+			cached, err := warm.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatalf("disk-cached index: %v", err)
+			}
+			if memo, ok := warm.indexCache.Load("sha256:" + chartDigest([]byte(helmRepoIndex("")))); !ok || memo != cached {
+				t.Fatal("disk-cached index did not populate digest-bound memo")
 			}
 			if got := attempts.Load(); got != 2 {
 				t.Fatalf("index fetched %d times, want 2", got)
@@ -307,12 +327,14 @@ func buildChartTarGz(t *testing.T, name, version string) []byte {
 
 func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
+	var hits atomic.Int32
 	requireAuth := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if u, p, ok := r.BasicAuth(); !ok || u != "alice" || p != "hunter2" {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
+			hits.Add(1)
 			next(w, r)
 		}
 	}
@@ -332,8 +354,32 @@ func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
 	})
 
-	if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("Fetch: %v", err)
+	base := *r
+	keys := make(map[string]string)
+	for i, tc := range []struct {
+		name   string
+		change func(*manifest.HelmRepository)
+	}{
+		{"original", func(*manifest.HelmRepository) {}},
+		{"secret name", func(r *manifest.HelmRepository) { r.SecretRef = &manifest.LocalObjectReference{Name: "other"} }},
+		{"auth namespace", func(r *manifest.HelmRepository) { r.Namespace = "other" }},
+		{"pass credentials", func(r *manifest.HelmRepository) { r.PassCredentials = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := base
+			tc.change(&current)
+			art, err := f.fetchHTTPChart(t.Context(), &current, helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if previous, ok := keys[art.Key]; ok {
+				t.Fatalf("%s reused %s acquisition", tc.name, previous)
+			}
+			keys[art.Key] = tc.name
+			if got, want := hits.Load(), int32(2*(i+1)); got != want {
+				t.Fatalf("index/chart requests=%d, want %d", got, want)
+			}
+		})
 	}
 }
 
@@ -490,6 +536,16 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	if _, err := updated.Get("app-template", "2.0.0"); err != nil || updated == first || hits.Load() != 3 {
 		t.Fatalf("expired index not refreshed: hits=%d, error=%v", hits.Load(), err)
 	}
+	other := *r
+	other.URL += "/other"
+	shared, err := f.fetchIndex(t.Context(), &other, sourcecache.RetryConfig{})
+	if err != nil || shared != updated || hits.Load() != 4 {
+		t.Fatalf("equal response digest across URLs=%p/%p, hits=%d, error=%v", updated, shared, hits.Load(), err)
+	}
+	key := "sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
+	if memo, ok := f.indexCache.Load(key); !ok || memo != updated {
+		t.Fatal("index memo is not keyed by response digest")
+	}
 }
 
 func TestFetchHTTPChart_NestedIndexExhaustion(t *testing.T) {
@@ -549,6 +605,10 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	memo, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
 	if err != nil || memo != updated || hits.Load() != 2 {
 		t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
+	}
+	key := "sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
+	if cached, ok := f.indexCache.Load(key); !ok || cached != updated {
+		t.Fatal("concurrent refresh did not publish its response digest")
 	}
 }
 

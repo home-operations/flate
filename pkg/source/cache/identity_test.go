@@ -73,8 +73,8 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	root := t.TempDir()
 	processIdentity = identityA
 	c := newCache(t, root)
-	key := BlobKey{ID: "render-input", PersistOnly: true}
-	r, _, err := c.Blob(t.Context(), BlobKey{ID: key.ID}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
+	key := BlobKey{Content: "render-input", PersistOnly: true}
+	r, _, _, err := c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,16 +87,17 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		}
 		processIdentity = identity
 		c = newCache(t, root)
-		if r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
-		r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(identity), ocispec.Descriptor{}))
+		r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(identity), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := r.Close(); err != nil {
 			t.Fatal(err)
 		}
+		assert.Equal(t, id, blobID(identity, key.Content.(string)))
 	}
 	for _, identity := range []string{identityA, identityB} {
 		if err := c.Close(); err != nil {
@@ -104,7 +105,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		}
 		processIdentity = identity
 		c = newCache(t, root)
-		r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +126,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
-		r, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
+		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
 		if produce == nil {
 			if r != nil || !errors.Is(err, errdef.ErrNotFound) {
 				t.Fatalf("dirty lookup hit: %v", err)

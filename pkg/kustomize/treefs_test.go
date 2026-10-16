@@ -418,11 +418,17 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 
 func TestRenderFlux_ArtifactIdentity(t *testing.T) {
 	cache := newTestTreeCache(t, t.TempDir())
-	for _, pin := range []string{"first", "second"} {
-		source := &store.SourceArtifact{Key: pin, LocalPath: "/missing-label", FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML(pin)})}
+	for _, pin := range []struct{ key, revision, digest, name string }{
+		{key: "first", name: "first"},
+		{key: "second", name: "second"},
+		{key: "family", revision: "first", digest: "first", name: "initial"},
+		{key: "family", revision: "second", digest: "first", name: "new-revision"},
+		{key: "family", revision: "second", digest: "second", name: "new-digest"},
+	} {
+		source := &store.SourceArtifact{Key: pin.key, Revision: pin.revision, Digest: pin.digest, LocalPath: "/missing-label", FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML(pin.name)})}
 		out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
-		if err != nil || !strings.Contains(string(out), "name: "+pin) {
-			t.Fatalf("artifact key reused stale render: %s %v", out, err)
+		if err != nil || !strings.Contains(string(out), "name: "+pin.name) {
+			t.Fatalf("artifact identity reused stale render: %s %v", out, err)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -126,11 +127,10 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 					t.Fatalf("release mutated (-want +got):\n%s", diff)
 				}
 			}
-			loaded, err := cli.loadChart(t.Context(), hr)
-			if err != nil {
-				t.Fatal(err)
+			var canonical *chart.Chart
+			for _, entry := range cli.chartCache {
+				canonical = entry.loaded.chart
 			}
-			canonical := loaded.chart
 			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
 				t.Fatal("parallel renders mutated canonical metadata")
 			}

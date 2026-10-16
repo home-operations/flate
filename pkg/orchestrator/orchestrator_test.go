@@ -192,9 +192,9 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 					t.Cleanup(func() { _ = owner.Close() })
 					cfg.Cache = owner
 				}
-				key := sourcecache.BlobKey{ID: "blob-before-stop"}
+				key := sourcecache.BlobKey{Content: "blob-before-stop"}
 				if cfg.Cache != nil {
-					reader, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour},
+					reader, _, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour},
 						func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 							_, err := io.WriteString(w, "caller-owned")
 							return ocispec.Descriptor{}, err
@@ -228,7 +228,7 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 					}
 				}
 				if cfg.Cache != nil {
-					reader, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+					reader, _, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
 					assert.NoError(t, err)
 					assert.NoError(t, reader.Close())
 				}
@@ -1961,13 +1961,13 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = c.Close() })
 				calls := 0
-				key := sourcecache.BlobKey{ID: "blob-owner-test"}
+				key := sourcecache.BlobKey{Content: "blob-owner-test"}
 				produce := func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 					calls++
 					_, err := io.WriteString(w, "held")
 					return ocispec.Descriptor{}, err
 				}
-				reader, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+				reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1990,7 +1990,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				if err != nil || len(entries) != 0 {
 					t.Fatalf("diff sides created independent cache backing: entries=%v err=%v", entries, err)
 				}
-				reader, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+				reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -2009,7 +2009,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 						t.Fatalf("partial side left TreeCache open: %v", err)
 					}
 				}
-				reader, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+				reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
 				assert.NoError(t, err)
 				assert.NoError(t, reader.Close())
 

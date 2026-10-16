@@ -80,7 +80,7 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 					close(workers.drain)
 				}
 			}()
-			reader, _, err := c.owner.Blob(workerCtx, cache.BlobKey{ID: "remote-http-" + manifest.Fingerprint(urlStr)}, cache.Policy{Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			reader, _, _, err := c.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				return c.httpGetURL(ctx, urlStr, w)
 			})
 			if err == nil {

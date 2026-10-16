@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -396,6 +397,52 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 }
 
 func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shared_view_pinned_%t", pinned), func(t *testing.T) {
+			root := t.TempDir()
+			st := store.New()
+			bootstrap := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
+			if pinned {
+				bootstrap.Key = "family"
+			}
+			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+			d := discoverer{cfg: Config{Store: st}}
+			ids := []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "one", Name: "source"}, {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "two", Name: "alias"}}
+			for _, id := range ids {
+				if id == ids[1] {
+					repository := &manifest.GitRepository{Name: id.Name, Namespace: id.Namespace}
+					repository.SparseCheckout = []string{}
+					st.AddObject(repository)
+				}
+				if ok, err := d.publishBootstrapAlias(t.Context(), id, root); err != nil || !ok {
+					t.Fatalf("publish alias = %t, %v", ok, err)
+				}
+			}
+			first := st.GetArtifact(ids[0]).(*store.SourceArtifact)
+			second := st.GetArtifact(ids[1]).(*store.SourceArtifact)
+			if first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root || second.LocalRoot != root || !first.InputAlias || !second.InputAlias {
+				t.Fatalf("alias view/ownership = %+v, %+v", first, second)
+			}
+			for _, generation := range []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}} {
+				next := *bootstrap
+				next.Revision, next.Digest = generation.revision, generation.digest
+				next.FS = fstest.MapFS{"file": {Data: []byte("other")}}
+				st.SetArtifact(manifest.BootstrapSourceID, &next)
+				if _, err := d.publishBootstrapAlias(t.Context(), ids[0], root); err != nil {
+					t.Fatal(err)
+				}
+				got := st.GetArtifact(ids[0]).(*store.SourceArtifact)
+				if got.FS == first.FS || got.Key != "" || got.Revision != generation.revision || got.Digest != generation.digest {
+					t.Fatalf("generation reused alias identity: %+v", got)
+				}
+				data, err := fs.ReadFile(got.FS, "file")
+				if err != nil || string(data) != "other" {
+					t.Fatalf("alias generation bytes = %q, %v", data, err)
+				}
+				first, bootstrap = got, &next
+			}
+		})
+	}
 	root := t.TempDir()
 	st := store.New()
 	repository := &manifest.GitRepository{Name: "flux-system", Namespace: "flux-system"}

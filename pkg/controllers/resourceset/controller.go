@@ -9,6 +9,7 @@ package resourceset
 
 import (
 	"context"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -112,8 +113,8 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 	// rawSink bookkeeping is cumulative and already complete. AddObject
 	// independently suppresses equal RawObject arrivals. Changed inputs require
 	// a fresh render; fp is reused for SetArtifact.
-	fp := resourceSetFingerprint(rs, c.Store)
-	if handled, err := c.FingerprintDedup(id, fp, func([]map[string]any) {}); handled {
+	fp, handled, err := c.FingerprintDedup(id, resourceSetContent(rs, c.Store), func([]map[string]any) {})
+	if handled {
 		return err
 	}
 
@@ -196,4 +197,35 @@ func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
 		}
 	}
 	return false
+}
+
+func resourceSetContent(rs *manifest.ResourceSet, s *store.Store) any {
+	resolve := resourceset.StoreResolver(s)
+	providers := make(map[manifest.NamedResource]*manifest.ResourceSetInputProvider)
+	for edge := range manifest.References(rs) {
+		if edge.Use != "inputsFrom" {
+			continue
+		}
+		matches, err := resolve(rs.InputsFrom[edge.Position], edge.NamedResource)
+		if err != nil {
+			return nil
+		}
+		for _, p := range matches {
+			providers[p.Named()] = p
+		}
+	}
+	ids := make([]manifest.NamedResource, 0, len(providers))
+	for id := range providers {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	var inputs []any
+	for _, id := range ids {
+		content, err := providers[id].Content()
+		if err != nil {
+			return nil
+		}
+		inputs = append(inputs, content)
+	}
+	return rs.Content(inputs)
 }

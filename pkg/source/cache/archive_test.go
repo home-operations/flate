@@ -48,7 +48,7 @@ func TestAcquire_ArchiveNames(t *testing.T) {
 					if err := w.Close(); err != nil {
 						t.Fatal(err)
 					}
-					input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: tc.name}, Policy{MaxAge: 0}, producer(data.Bytes(), ocispec.Descriptor{}))
+					input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: tc.name}, Policy{MaxAge: 0}, producer(data.Bytes(), ocispec.Descriptor{}))
 					if !errors.Is(err, tc.wantErr) {
 						t.Fatalf("archive name %q: %v, want %v", tc.entry, err, tc.wantErr)
 					}
@@ -99,7 +99,7 @@ func TestAcquire_SkippedSparseEntryCountsAgainstCap(t *testing.T) {
 		t.Run(backing.name, func(t *testing.T) {
 			root := backing.root
 			c := newCache(t, root)
-			_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-sparse-cap"}, Policy{MaxAge: 0}, producer(gnuSparseEntry(1<<36), ocispec.Descriptor{}))
+			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-sparse-cap"}, Policy{MaxAge: 0}, producer(gnuSparseEntry(1<<36), ocispec.Descriptor{}))
 			if err == nil {
 				t.Fatalf("root=%q: skipped sparse entry declaring 64 GiB bypassed the 1 MiB expanded-byte cap", root)
 			}
@@ -114,11 +114,11 @@ func TestAcquire_EmptyEntryHeadersCountAgainstCap(t *testing.T) {
 	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
 		t.Run(backing.name, func(t *testing.T) {
 			c := newCache(t, backing.root)
-			key := ArchiveKey{ID: "source-empty-headers-cap"}
-			if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "a", "", "b", "", "c", ""), ocispec.Descriptor{})); err == nil {
+			key := ArchiveKey{Content: "source-empty-headers-cap"}
+			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "a", "", "b", "", "c", ""), ocispec.Descriptor{})); err == nil {
 				t.Fatal("empty entry headers bypassed extract cap")
 			}
-			if _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "a", "", "b", ""), ocispec.Descriptor{})); err != nil {
+			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "a", "", "b", ""), ocispec.Descriptor{})); err != nil {
 				t.Fatalf("retry at extract cap: %v", err)
 			}
 		})
@@ -131,7 +131,7 @@ func TestAcquire_TrailingRecordPadding(t *testing.T) {
 		t.Run(backing.name, func(t *testing.T) {
 			root := backing.root
 			c := newCache(t, root)
-			if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-padding"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {
+			if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-padding"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {
 				t.Fatalf("root=%q: %v", root, err)
 			}
 		})

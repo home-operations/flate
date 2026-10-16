@@ -32,17 +32,23 @@ const maxTrailingBytes = 1 << 20
 
 // ArchiveKey identifies an archive and its source-ignore policy.
 type ArchiveKey struct {
-	ID           string
+	// Content describes the producer inputs.
+	Content      any
 	Ignore       string
 	WithDefaults bool
+	// Required lists unprefixed descriptor annotation names; it does not affect identity.
+	Required []string
 }
 
 // BlobKey identifies single-file content.
 type BlobKey struct {
-	ID string
+	// Content describes the producer inputs, or a render identity with PersistOnly.
+	Content any
 	// PersistOnly records only with identified disk backing. Otherwise lookup misses and
 	// publication returns a closeable empty reader without invoking the producer.
 	PersistOnly bool
+	// Required lists unprefixed descriptor annotation names; it does not affect identity.
+	Required []string
 }
 
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
@@ -52,7 +58,7 @@ type Cache struct {
 	store       *oci.Store
 	locks       *keylock.KeyMap[string]
 	entries     sync.Map
-	persistBlob func(context.Context, string, Policy, func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error)
+	persistBlob func(context.Context, string, Policy, func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, string, error)
 }
 
 type entry struct {
@@ -71,6 +77,7 @@ func (e *CacheError) Unwrap() []error { return []error{manifest.ErrFlux, e.Err} 
 
 type acquireKey struct {
 	ArchiveKey
+	id         string
 	archive    bool
 	git        *gitRequest
 	lookupOnly bool
@@ -85,50 +92,55 @@ func (e *readerError) Unwrap() error     { return e.error }
 func (e *producerError) Unwrap() []error { return []error{manifest.ErrFlux, e.error} }
 
 // Acquire publishes a complete archive only after produce succeeds.
-func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (fs.FS, ocispec.Descriptor, error) {
-	e, err := c.acquire(ctx, acquireKey{ArchiveKey: key, archive: true}, policy, produce)
+// Its acquisition identity is empty on failure.
+func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (fs.FS, ocispec.Descriptor, string, error) {
+	e, id, err := c.acquire(ctx, acquireKey{ArchiveKey: key, archive: true}, policy, produce)
 	if err != nil {
-		return nil, ocispec.Descriptor{}, err
+		return nil, ocispec.Descriptor{}, "", err
 	}
-	return e.fs, e.descriptor, nil
+	return e.fs, e.descriptor, id, nil
 }
 
 // Blob returns an independent reader over a complete generation. A nil producer only looks up
 // a fresh generation; zero Policy.MaxAge with a producer replaces the generation. Disabled
 // PersistOnly publication returns a closeable empty reader without running produce.
-func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
+// Its acquisition identity is empty on failure.
+func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
 	if key.PersistOnly {
-		return c.persistBlob(ctx, key.ID, policy, produce)
+		id, ok := key.Content.(string)
+		if !ok || id == "" {
+			return nil, ocispec.Descriptor{}, "", &CacheError{fmt.Errorf("%w: render blob content must be a nonempty identity", manifest.ErrInput)}
+		}
+		return c.persistBlob(ctx, id, policy, produce)
 	}
-	return c.blob(ctx, key.ID, policy, produce)
+	return c.blob(ctx, acquireKey{Content: key.Content, Required: key.Required, lookupOnly: produce == nil}, policy, produce)
 }
 
-func discardBlob(ctx context.Context, _ string, _ Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
+func discardBlob(ctx context.Context, id string, _ Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, ocispec.Descriptor{}, &CacheError{err}
+		return nil, ocispec.Descriptor{}, "", &CacheError{err}
 	}
 	if produce == nil {
-		return nil, ocispec.Descriptor{}, &CacheError{errdef.ErrNotFound}
+		return nil, ocispec.Descriptor{}, "", &CacheError{errdef.ErrNotFound}
 	}
-	return io.NopCloser(strings.NewReader("")), ocispec.Descriptor{}, nil
+	return io.NopCloser(strings.NewReader("")), ocispec.Descriptor{}, id, nil
 }
 
-func (c *Cache) blob(ctx context.Context, id string, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, error) {
-	request := acquireKey{ID: id, lookupOnly: produce == nil}
-	e, err := c.acquire(ctx, request, policy, produce)
+func (c *Cache) blob(ctx context.Context, key acquireKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
+	e, id, err := c.acquire(ctx, key, policy, produce)
 	if err != nil {
-		return nil, ocispec.Descriptor{}, err
+		return nil, ocispec.Descriptor{}, "", err
 	}
 	input := e.fs.(fileFS)
 	r, err := input.Open("content")
 	if err != nil {
-		return nil, ocispec.Descriptor{}, &CacheError{err}
+		return nil, ocispec.Descriptor{}, "", &CacheError{err}
 	}
-	return &blobHandle{ReadCloser: r, input: input}, e.descriptor, nil
+	return &blobHandle{ReadCloser: r, input: input}, e.descriptor, id, nil
 }
 
 func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, maxAge time.Duration, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (*entry, error) {
-	id := key.ID
+	id := key.id
 	release, err := c.locks.Acquire(ctx, id)
 	if err != nil {
 		return nil, &CacheError{err}
@@ -144,7 +156,7 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, maxAge time.Dur
 			return nil, &CacheError{err}
 		}
 		if err == nil {
-			upstream, at, valid := decode(desc, id)
+			upstream, at, valid := decode(desc, key.Required)
 			if valid && fresh(at, maxAge) {
 				e = &entry{descriptor: upstream, stored: desc, resolved: at}
 				if key.git != nil {
@@ -156,7 +168,8 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, maxAge time.Dur
 						e = nil
 					}
 				} else if key.archive {
-					index := &tarFS{root: c.root, digest: desc.Digest, identity: manifest.Fingerprint([3]any{desc.Digest, key.Ignore, key.WithDefaults})}
+					index := &tarFS{root: c.root, digest: desc.Digest}
+					index.identify(desc.Digest, key.ArchiveKey)
 					file, err := c.root.Open(blobPath(desc.Digest))
 					if err != nil {
 						return nil, &CacheError{err}
@@ -219,6 +232,10 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 	var tmpName string
 	var index *tarFS
 	var h digest.Digester
+	if key.archive {
+		h = digest.SHA256.Digester()
+		sink = h.Hash()
+	}
 	if c.store != nil {
 		var err error
 		tmpName = filepath.Join("oci", "acquire-"+uuid.NewString())
@@ -239,7 +256,9 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 				resultErr = errors.Join(resultErr, cleanup)
 			}
 		}()
-		h = digest.SHA256.Digester()
+		if h == nil {
+			h = digest.SHA256.Digester()
+		}
 		sink = io.MultiWriter(tmp, h.Hash())
 		if key.archive {
 			index = &tarFS{root: c.root}
@@ -267,9 +286,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 		}
 	} else if key.archive {
 		e.fs, e.descriptor, err = produceArchive(ctx, key.ArchiveKey, index, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-			if tmp != nil {
-				w = io.MultiWriter(w, sink)
-			}
+			w = io.MultiWriter(w, sink)
 			return produce(ctx, w)
 		})
 	} else {
@@ -281,13 +298,14 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 	if err != nil {
 		return nil, err
 	}
+	if key.archive {
+		e.fs.(*tarFS).identify(h.Digest(), key.ArchiveKey)
+	}
 	e.resolved = time.Now().UTC()
 	if c.store == nil {
-		if key.archive {
-			e.fs.(*tarFS).identity = uuid.NewString()
-		} else {
+		if !key.archive {
 			data := buf.Bytes()
-			e.fs = fileFS{name: "content", identity: uuid.NewString(), size: int64(len(data)), open: func() (io.ReadCloser, error) {
+			e.fs = fileFS{name: "content", identity: manifest.SHA256Hex(data), size: int64(len(data)), open: func() (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(data)), nil
 			}}
 		}
@@ -299,7 +317,6 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 	}
 	if key.archive {
 		index.digest = stored.Digest
-		index.identity = manifest.Fingerprint([3]any{stored.Digest, key.Ignore, key.WithDefaults})
 		if err := pruneArchive(index, index.nodes, key.ArchiveKey); err != nil {
 			return nil, err
 		}
@@ -318,7 +335,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 	if err := errors.Join(closeErr, removeErr); err != nil {
 		return nil, err
 	}
-	if err := c.store.Tag(ctx, stored, key.ID); err != nil {
+	if err := c.store.Tag(ctx, stored, key.id); err != nil {
 		return nil, err
 	}
 	e.stored = stored
@@ -423,21 +440,19 @@ func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest
 	return stored, nil
 }
 
-func decode(stored ocispec.Descriptor, id string) (ocispec.Descriptor, time.Time, bool) {
+func decode(stored ocispec.Descriptor, required []string) (ocispec.Descriptor, time.Time, bool) {
 	a := maps.Clone(stored.Annotations)
 	delete(a, ocispec.AnnotationRefName)
 	at, err := time.Parse(time.RFC3339Nano, a[prefix+"resolved-at"])
 	size, sizeErr := strconv.ParseInt(a[prefix+"upstream-size"], 10, 64)
 	d := digest.Digest(a[prefix+"upstream-digest"])
 	valid := stored.Digest.Validate() == nil && err == nil && sizeErr == nil && size >= 0 && (d == "" || d.Validate() == nil)
-	switch {
-	case strings.HasPrefix(id, "source-oci-"), strings.HasPrefix(id, "blob-oci-"):
-		valid = valid && d != "" && a[prefix+"revision"] != ""
-	case strings.HasPrefix(id, "source-bucket-"):
-		count, err := strconv.Atoi(a[prefix+"object-count"])
-		valid = valid && err == nil && count >= 0 && a[prefix+"revision"] != ""
-	case strings.HasPrefix(id, "blob-chart-"):
-		valid = valid && a[prefix+"chart-version"] != "" && a[prefix+"chart-url"] != ""
+	for _, field := range required {
+		valid = valid && a[prefix+field] != ""
+		if field == "object-count" {
+			count, err := strconv.Atoi(a[prefix+field])
+			valid = valid && err == nil && count >= 0
+		}
 	}
 	mediaType := a[prefix+"upstream-media-type"]
 	for _, k := range []string{"resolved-at", "upstream-digest", "upstream-size", "upstream-media-type"} {

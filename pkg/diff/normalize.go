@@ -1,9 +1,7 @@
 package diff
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -106,9 +104,7 @@ func binaryDataSummary(v any) string {
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
 	if err != nil {
-		sum := sha256.Sum256([]byte(s))
-		return fmt.Sprintf(binaryDataRawSummaryFormat, len(s), hex.EncodeToString(sum[:8]))
+		return fmt.Sprintf(binaryDataRawSummaryFormat, len(s), manifest.SHA256Hex([]byte(s))[:16])
 	}
-	sum := sha256.Sum256(decoded)
-	return fmt.Sprintf(binaryDataSummaryFormat, len(decoded), hex.EncodeToString(sum[:8]))
+	return fmt.Sprintf(binaryDataSummaryFormat, len(decoded), manifest.SHA256Hex(decoded)[:16])
 }

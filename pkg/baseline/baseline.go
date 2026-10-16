@@ -71,19 +71,22 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	if err != nil {
 		return nil, err
 	}
-	before, selected, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, worktree: worktree, owner: owner})
-	if err != nil {
-		return nil, err
-	}
-	label := filepath.Join(root, ".flate-base", r.Hash.String())
 	urls, err := gitrepo.RemoteURLs(repo)
 	if err != nil {
 		urls = nil
 	}
-	identity := manifest.Fingerprint(append([]string{root, r.Hash.String(), "direct"}, urls...))
+	content := struct {
+		Root    string
+		Remotes []string
+	}{root, urls}
+	before, selected, identity, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, worktree: worktree, owner: owner, content: content})
+	if err != nil {
+		return nil, err
+	}
+	label := filepath.Join(root, ".flate-base", r.Hash.String())
 	return &Result{
 		Source:    &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: current, Metadata: map[string]string{"baseline-selection": r.Source}},
-		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: "base-" + identity, FS: before},
+		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, FS: before},
 		Changes:   selected, Rev: shortRev(r.Hash), SelfURLs: urls,
 	}, nil
 }

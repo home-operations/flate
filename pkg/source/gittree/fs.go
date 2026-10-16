@@ -27,6 +27,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/transactional"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
 )
@@ -45,8 +46,8 @@ const (
 
 // ViewOptions shapes a commit view without changing its object backing.
 type ViewOptions struct {
-	// Identity carries the acquisition authority supplied by the Git fetcher.
-	Identity string
+	// Content carries source coordinates without filesystem or routing state.
+	Content  any
 	Mode     ViewMode
 	Sparse   []string
 	Ignore   string
@@ -118,6 +119,7 @@ func (i gitInfo) Sys() any           { return nil }
 // Direct with a zero commit retains Current admitted semantics. Mutable Source
 // views are refreshed for one operation; pinned views retain their backing.
 // Source without additional shaping retains an already shaped Current view.
+// The returned identity pins committed selection; mutable views return an empty identity.
 func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
@@ -177,10 +179,29 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 		return nil, "", err
 	}
-	if err := input.view.(*gitView).shape(opts); err != nil {
+	g := input.view.(*gitView)
+	currentIdentity := ""
+	if current := currentTree(opts.Current); commit == plumbing.ZeroHash && current != nil {
+		currentIdentity = current.identity
+	}
+	committed := commit != plumbing.ZeroHash && (opts.Worktree == nil || opts.Content != nil)
+	if committed || currentIdentity != "" {
+		g.identity = manifest.Fingerprint(struct {
+			Content any
+			Commit  string
+			Current string
+			Mode    ViewMode
+			Sparse  []string `json:",omitempty"`
+			Ignore  string
+		}{opts.Content, commit.String(), currentIdentity, opts.Mode, opts.Sparse, opts.Ignore})
+		if g.identity == "" {
+			return nil, "", fmt.Errorf("%w: git view content cannot be fingerprinted", manifest.ErrInput)
+		}
+	}
+	if err := g.shape(opts); err != nil {
 		return nil, "", err
 	}
-	return input, input.view.(*gitView).identity, nil
+	return input, g.identity, nil
 }
 
 func currentTree(input fs.FS) *gitView {
@@ -197,7 +218,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	combined := &struct {
 		FS
 		gitView
-	}{commit: commit, identity: opts.Identity, mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
+	}{commit: commit, mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
 	input := &combined.gitView
 	combined.view = input
 	input.storers.New = func() any {
@@ -251,7 +272,9 @@ func (g *gitView) shape(opts ViewOptions) error {
 	if opts.Mode == Direct {
 		visible = func(name string) bool { return g.nodes[name].mode&fs.ModeSymlink == 0 }
 	}
-	if g.identity == "" && (opts.Current != nil || opts.Worktree != nil) {
+	mutable := g.identity == "" && (opts.Current != nil || opts.Worktree != nil)
+	routed := g.commit != plumbing.ZeroHash && opts.Current != nil
+	if mutable || routed {
 		refresh := opts
 		refresh.Sparse, refresh.Changes = slices.Clone(opts.Sparse), slices.Clone(opts.Changes)
 		g.refresh = &refresh

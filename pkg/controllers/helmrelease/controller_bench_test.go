@@ -22,13 +22,14 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 		{"direct OCI", &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest}},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			var identity string
+			var identity any
 			if tc.source != nil {
-				identity = tc.source.Digest + "\x00" + tc.source.Revision
+				identity = struct{ Digest, Revision string }{tc.source.Digest, tc.source.Revision}
 			}
+			c := base.New(store.New(), nil, "test")
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp := helmReleaseFingerprint(hr, identity, nil); fp == "" {
+				if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil), func([]map[string]any) {}); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}
@@ -43,11 +44,12 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	st := store.New()
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest})
 	resolver := helm.NewStoreSourceResolver(st)
+	c := base.New(st, nil, "test")
 	b.ReportAllocs()
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.ChartSource())
-		identity := source.Digest + "\x00" + source.Revision
-		if fp := helmReleaseFingerprint(hr, identity, nil); fp == "" {
+		identity := struct{ Digest, Revision string }{source.Digest, source.Revision}
+		if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil), func([]map[string]any) {}); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
 	}

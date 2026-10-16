@@ -11,6 +11,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -233,24 +234,48 @@ metadata: {name: bare}
 
 }
 
-// TestReconcile_RenderError_MarksFailed pins that a malformed RS template
-// (referencing a nonexistent input) marks the RS Failed and surfaces the
-// error — the failure path the deleted post-run pass used to own.
 func TestReconcile_RenderError_MarksFailed(t *testing.T) {
-	c, s := newController(t)
-	rs := &manifest.ResourceSet{
-		Name: "broken", Namespace: "flux-system",
-		ResourcesTemplate: `---
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: << .nonexistent.field >>}
-`,
-	}
-	s.AddObject(rs)
-
-	info := dispatchToFixpoint(t, c, s, rs.Named())
-	if info.Status != store.StatusFailed {
-		t.Fatalf("status = %+v, want Failed", info)
+	for _, fault := range []string{"template", "provider export", "provider resolution"} {
+		t.Run(fault, func(t *testing.T) {
+			c, s := newController(t)
+			rs := &manifest.ResourceSet{
+				Name: "broken", Namespace: "flux-system",
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n",
+			}
+			provider := staticRSIP("input", rs.Namespace, nil, map[string]string{"value": "valid"})
+			switch fault {
+			case "provider export":
+				rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{}}}
+			case "provider resolution":
+				rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: provider.Name}}
+				s.AddObject(provider)
+			}
+			s.AddObject(rs)
+			if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+				t.Fatalf("initial render: %+v", info)
+			}
+			artifact := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+			if artifact.Fingerprint == "" {
+				t.Fatal("successful render lacks replay candidate")
+			}
+			switch fault {
+			case "template":
+				changed := *rs
+				changed.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: << .nonexistent.field >>}\n"
+				s.AddObject(&changed)
+			case "provider export":
+				changed := *provider
+				changed.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid json")}}
+				s.AddObject(&changed)
+			case "provider resolution":
+				changed := *rs
+				changed.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "missing"}}
+				s.AddObject(&changed)
+			}
+			if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusFailed {
+				t.Fatalf("status = %+v, want Failed", info)
+			}
+		})
 	}
 }
 

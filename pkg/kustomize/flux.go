@@ -23,6 +23,7 @@ import (
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -58,28 +59,22 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
 	}
 	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
-	ignoreKey := ""
+	var ignore any
 	if req.ApplyIgnore {
 		input, err := cache.sourceRootFor(ctx, req.Source, root)
 		if err != nil {
 			return nil, err
 		}
-		lower, root = input.fs, input.root
+		lower, ignore = input.fs, input.ignore
 	}
 	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
-	if req.ApplyIgnore {
-		ignoreKey = "source"
-	}
-	key := renderKey(req.Spec, root, req.SubPath, ignoreKey)
-	if req.Source.Key != "" {
-		key = manifest.Fingerprint([]string{key, req.Source.Key})
-	}
-	blobKey := sourcecache.BlobKey{ID: key, PersistOnly: true}
-	reader, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	key := renderKey(req, root, ignore)
+	blobKey := sourcecache.BlobKey{Content: key, PersistOnly: true}
+	reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
 		return nil, fmt.Errorf("kustomize render cache lookup: %w", err)
 	}
@@ -170,7 +165,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	}
 	// Remote inputs have no identity in the source read set.
 	if !injected {
-		reader, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 			frame, err := encodeFrame(rec.snapshot(), out)
 			if err != nil {
 				return ocispec.Descriptor{}, fmt.Errorf("encode kustomize render frame: %w", err)
@@ -188,46 +183,52 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	return out, nil
 }
 
-// renderKeyVersion MUST change whenever rendered bytes or cache framing change.
-const renderKeyVersion = "render-fs-v5"
-
-// Mutable source content is validated by the read set rather than a
-// whole-checkout hash; immutable pins are folded into this domain key at lookup.
-func renderKey(rawSpec map[string]any, sourceRoot, subPath, ignoreKey string) string {
+// Mutable files are validated by the read set; immutable generations are part
+// of the render content. Filesystem handles and retry/storage policy are never encoded.
+func renderKey(req RenderRequest, root string, ignore any) string {
+	var immutable any
+	if req.Source.Key != "" {
+		immutable = struct{ Key, Revision, Digest string }{req.Source.Key, req.Source.Revision, req.Source.Digest}
+	}
 	return manifest.Fingerprint(struct {
-		Spec       map[string]any
-		SourceRoot string
-		SubPath    string
-		Ignore     string
-		Version    string
-	}{rawSpec, sourceRoot, subPath, ignoreKey, renderKeyVersion})
+		Spec        map[string]any
+		SourceRoot  string
+		SubPath     string
+		ApplyIgnore bool
+		Ignore      any
+		Immutable   any
+	}{req.Spec, root, req.SubPath, req.ApplyIgnore, ignore, immutable})
 }
 
 type sourceRoot struct {
-	root string
-	fs   fs.FS
+	fs     fs.FS
+	ignore any
 }
 
 // Source admission belongs to the run owner. Every reader of a source MUST use
 // the same view; the checkout MUST remain stable until all readers finish.
-func (c *TreeCache) sourceRootFor(ctx context.Context, source *store.SourceArtifact, root string) (*sourceRoot, error) {
+func (c *TreeCache) sourceRootFor(ctx context.Context, artifact *store.SourceArtifact, root string) (*sourceRoot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	key := struct {
 		source *store.SourceArtifact
 		root   string
-	}{source, root}
+	}{artifact, root}
 	if cached, ok := c.sourceRoots.Load(key); ok {
 		return cached.(func() (*sourceRoot, error))()
 	}
 	// Shared admission belongs to the cache lifetime, not the first reader's cancellation.
 	load := sync.OnceValues(func() (*sourceRoot, error) {
-		input, _, err := gittree.New(context.Background(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: source.FS})
+		_, ignore, err := source.ReadView(context.Background(), artifact.FS, true)
 		if err != nil {
 			return nil, err
 		}
-		return &sourceRoot{root: root, fs: input}, nil
+		input, _, err := gittree.New(context.Background(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS})
+		if err != nil {
+			return nil, err
+		}
+		return &sourceRoot{fs: input, ignore: ignore}, nil
 	})
 	actual, _ := c.sourceRoots.LoadOrStore(key, load)
 	return actual.(func() (*sourceRoot, error))()

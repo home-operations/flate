@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"path"
 	"path/filepath"
 	"sync"
@@ -68,13 +67,10 @@ type Client struct {
 	cache *cache.Cache
 }
 
-// Only mutable archive entries need stat validation; directories use captured content.
+// Mutable archives retain the exact bytes consumed by the upstream loader.
 type chartCacheEntry struct {
-	immutable   bool
-	chart       *chart.Chart
-	mtime       int64 // unix nanos
-	size        int64
-	fingerprint string
+	loaded  chartLoadResult
+	archive []byte
 }
 
 // NewClient constructs a Client borrowing the supplied nonnil cache owner.
@@ -127,6 +123,7 @@ func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtif
 type chartLoadResult struct {
 	chart       *chart.Chart
 	fingerprint string
+	oci         *ociChartContent
 	artifact    store.SourceArtifact
 }
 
@@ -149,7 +146,7 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 		return chartLoadResult{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
-	input, pin, err := source.ReadView(ctx, art.FS, false)
+	input, authority, err := source.ReadView(ctx, art.FS, false)
 	if err != nil {
 		return chartLoadResult{}, err
 	}
@@ -163,19 +160,18 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 	if err != nil {
 		return chartLoadResult{}, err
 	}
-	admitted := *art
-	admitted.FS, admitted.Key = input, pin
+	pin, _ := authority.(string)
 	label := location
 	if art.LocalPath != "" {
 		label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
 	}
 	var files []*archive.BufferedFile
-	var fingerprint string
-	cacheKey := ""
-	pinned := pin != ""
-	if !pinned {
+	var origin any
+	if pin != "" {
+		origin = struct{ Pin, Location string }{pin, location}
+	} else {
 		var missing bool
-		files, fingerprint, missing, err = captureChartDir(admitted.FS, location)
+		files, missing, err = captureChartDir(input, location)
 		if missing {
 			return chartLoadResult{}, err
 		}
@@ -183,53 +179,67 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 			return chartLoadResult{}, fmt.Errorf("load chart %s: %w", label, err)
 		}
 		if files != nil {
-			cacheKey = fingerprint
+			content := make([]chartFileContent, len(files))
+			for i, f := range files {
+				content[i] = chartFileContent{Name: f.Name, Data: f.Data}
+			}
+			origin = content
 		} else if art.LocalPath != "" {
-			cacheKey = manifest.Fingerprint([3]string{art.LocalRoot, art.LocalPath, location})
-		}
-	} else {
-		cacheKey = manifest.Fingerprint([2]string{admitted.Key, location})
-	}
-	if ch, fp, ok := c.lookupCachedChart(cacheKey, admitted.FS, location); ok {
-		return chartLoadResult{chart: ch, fingerprint: fp, artifact: *art}, nil
-	}
-	if cacheKey != "" {
-		release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
-		if err != nil {
-			return chartLoadResult{}, err
-		}
-		defer release()
-	}
-	if ch, fp, ok := c.lookupCachedChart(cacheKey, admitted.FS, location); ok {
-		return chartLoadResult{chart: ch, fingerprint: fp, artifact: *art}, nil
-	}
-	var ch *chart.Chart
-	if files != nil {
-		ch, err = loader.LoadFiles(files)
-	} else {
-		var missing bool
-		ch, fingerprint, missing, err = loadFSChart(admitted.FS, location)
-		if missing {
-			return chartLoadResult{}, err
+			origin = struct{ Root, Path, Location string }{art.LocalRoot, art.LocalPath, location}
 		}
 	}
-	if err != nil {
-		if _, ok := errors.AsType[chart.ValidationError](err); ok {
-			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
+	cacheKey := ""
+	if origin != nil {
+		cacheKey = manifest.Fingerprint(origin)
+	}
+	immutable := pin != "" || files != nil
+	c.chartMu.RLock()
+	entry, cached := c.chartCache[cacheKey]
+	c.chartMu.RUnlock()
+	if !cached || !immutable {
+		if cacheKey != "" {
+			release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
+			if err != nil {
+				return chartLoadResult{}, err
+			}
+			defer release()
+			c.chartMu.RLock()
+			entry, cached = c.chartCache[cacheKey]
+			c.chartMu.RUnlock()
 		}
-		return chartLoadResult{}, fmt.Errorf("load chart %s: %w", label, err)
+		if !cached || !immutable {
+			if files != nil {
+				var ch *chart.Chart
+				ch, err = loader.LoadFiles(files)
+				if err == nil {
+					entry = chartCacheEntry{loaded: chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}}
+				}
+			} else {
+				var missing bool
+				entry, missing, err = loadFSChart(input, location, entry)
+				if missing {
+					return chartLoadResult{}, err
+				}
+			}
+			if err != nil {
+				if _, ok := errors.AsType[chart.ValidationError](err); ok {
+					err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
+				}
+				return chartLoadResult{}, fmt.Errorf("load chart %s: %w", label, err)
+			}
+			if immutable {
+				entry.archive = nil
+			}
+			if cacheKey != "" {
+				c.chartMu.Lock()
+				c.chartCache[cacheKey] = entry
+				c.chartMu.Unlock()
+			}
+		}
 	}
-	immutable := pinned || files != nil
-	mtime, size, valid := int64(0), int64(0), immutable
-	if !valid {
-		mtime, size, valid = archiveCacheFingerprint(admitted.FS, location)
-	}
-	if cacheKey != "" && valid {
-		c.chartMu.Lock()
-		c.chartCache[cacheKey] = chartCacheEntry{immutable: immutable, chart: ch, mtime: mtime, size: size, fingerprint: fingerprint}
-		c.chartMu.Unlock()
-	}
-	return chartLoadResult{chart: ch, fingerprint: fingerprint, artifact: *art}, nil
+	loaded := entry.loaded
+	loaded.artifact = *art
+	return loaded, nil
 }
 
 // cloneChartForRender returns a shallow copy of src with the fields
@@ -275,33 +285,4 @@ func cloneChartForRender(src *chart.Chart) *chart.Chart {
 		out.SetDependencies(clones...)
 	}
 	return &out
-}
-
-// Mutable lookups validate the current FS at the chart's relative location.
-func (c *Client) lookupCachedChart(key string, input fs.FS, location string) (*chart.Chart, string, bool) {
-	c.chartMu.RLock()
-	entry, ok := c.chartCache[key]
-	c.chartMu.RUnlock()
-	if !ok {
-		return nil, "", false
-	}
-	if entry.immutable {
-		return entry.chart, entry.fingerprint, true
-	}
-	mtime, size, ok := archiveCacheFingerprint(input, location)
-	if !ok {
-		return nil, "", false
-	}
-	if mtime != entry.mtime || size != entry.size {
-		return nil, "", false
-	}
-	return entry.chart, entry.fingerprint, true
-}
-
-func archiveCacheFingerprint(input fs.FS, location string) (mtime, size int64, ok bool) {
-	info, err := fs.Stat(input, location)
-	if err != nil || info.IsDir() {
-		return 0, 0, false
-	}
-	return info.ModTime().UnixNano(), info.Size(), true
 }

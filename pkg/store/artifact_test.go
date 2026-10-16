@@ -40,6 +40,26 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	if events != 3 {
 		t.Fatalf("changed Key did not fire: %d", events)
 	}
+	for _, tc := range []struct{ revision, digest string }{
+		{revision: "one", digest: "aaa"},
+		{revision: "two", digest: "aaa"},
+		{revision: "two", digest: "bbb"},
+	} {
+		artifact := mk("other")
+		artifact.Revision, artifact.Digest = tc.revision, tc.digest
+		before := events
+		s.SetArtifact(id, artifact)
+		if events != before+1 {
+			t.Fatalf("generation %s/%s did not fire: %d", tc.revision, tc.digest, events)
+		}
+		equal := *artifact
+		equal.FS = mk("other").FS
+		s.SetArtifact(id, &equal)
+		if events != before+1 {
+			t.Fatal("equal family and generation re-fired the artifact event")
+		}
+	}
+
 	for _, text := range []string{"old", "new"} {
 		s.SetArtifact(id, &SourceArtifact{LocalPath: "label", FS: fstest.MapFS{"file": {Data: []byte(text)}}})
 		got, err := fs.ReadFile(s.GetArtifact(id).(*SourceArtifact).FS, "file")
@@ -48,7 +68,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 		}
 	}
 	assert.Equal(t, s.GetArtifact(foreign).(*SourceArtifact).Key, "pin")
-	assert.Diff(t, ids, []manifest.NamedResource{id, foreign, id, id, id})
+	assert.Diff(t, ids, []manifest.NamedResource{id, foreign, id, id, id, id, id, id})
 }
 
 func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {

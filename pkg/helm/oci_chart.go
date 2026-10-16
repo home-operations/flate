@@ -7,7 +7,6 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 const chartDigestPrefixLength = 12
@@ -52,20 +51,4 @@ func splitOCIRevision(revision string) (*semver.Version, string, error) {
 		return nil, "", fmt.Errorf("%w: invalid artifact revision %q", manifest.ErrInput, revision)
 	}
 	return tagVer, suffix[:chartDigestPrefixLength], nil
-}
-
-func ociChartFingerprint(fingerprint string, source *store.SourceArtifact, disabled bool) string {
-	var buf [512]byte
-	data := append(buf[:0], fingerprint...)
-	data = append(data, 0)
-	data = append(data, source.Digest...)
-	data = append(data, 0)
-	data = append(data, source.Revision...)
-	data = append(data, 0)
-	if disabled {
-		data = append(data, 1)
-	} else {
-		data = append(data, 0)
-	}
-	return manifest.SHA256Hex(data)
 }

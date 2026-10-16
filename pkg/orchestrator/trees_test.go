@@ -384,7 +384,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 					for i := range inputs {
 						input := &joinedTreeFS{}
 						input.acquire = func() error {
-							reader, _, err := owner.Blob(ctx, sourcecache.BlobKey{ID: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
+							reader, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
 								func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
 									entered <- struct{}{}
 									<-ctx.Done()
@@ -434,8 +434,8 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 							t.Fatal("backing released before held acquisitions joined")
 						}
 					}
-					key := sourcecache.BlobKey{ID: "backing-survives"}
-					reader, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					key := sourcecache.BlobKey{Content: "backing-survives"}
+					reader, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						_, err := io.WriteString(w, "live")
 						return ocispec.Descriptor{}, err
 					})
@@ -450,7 +450,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						<-completed
 					}
 					if tc.injected {
-						reader, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+						reader, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
 						assert.NoError(t, err)
 						assert.NoError(t, reader.Close())
 						assert.NoError(t, owner.Close())

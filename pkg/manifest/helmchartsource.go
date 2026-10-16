@@ -35,6 +35,14 @@ func (h *HelmChartSource) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindHelmChartSource].Group, Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
 }
 
+// Content returns the chart selection for HTTP acquisition.
+func (h *HelmChartSource) Content() any {
+	return struct {
+		Chart   string
+		Version string
+	}{h.Chart, h.Version}
+}
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 	out := *h

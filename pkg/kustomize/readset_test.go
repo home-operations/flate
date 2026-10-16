@@ -91,4 +91,21 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 			t.Error("an optional component that materialized must invalidate")
 		}
 	})
+	for _, tc := range []struct {
+		name          string
+		before, after fstest.MapFS
+	}{
+		{name: "absent to file", before: fstest.MapFS{}, after: fstest.MapFS{"comp": {}}},
+		{name: "file to directory", before: fstest.MapFS{"comp": {}}, after: fstest.MapFS{"comp/child": {}}},
+		{name: "directory to file", before: fstest.MapFS{"comp/child": {}}, after: fstest.MapFS{"comp": {}}},
+		{name: "directory to absent", before: fstest.MapFS{"comp/child": {}}, after: fstest.MapFS{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := recordAgainst(root, tc.before, nil, nil, []string{"comp"})
+			if !snap.stillValidFS(tc.before) || snap.stillValidFS(tc.after) {
+				t.Fatal("probed node transition did not invalidate")
+			}
+		})
+	}
+
 }

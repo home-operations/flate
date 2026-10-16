@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -204,27 +203,27 @@ func (d *discoverer) publishBootstrapAlias(ctx context.Context, id manifest.Name
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
 	}
-	tuple := []string{repoRoot, bootstrap.LocalRoot, bootstrap.Key, "source", ignore, strconv.FormatBool(repo.RecurseSubmodules)}
-	viewKey := manifest.Fingerprint(append(tuple, repo.SparseCheckout...))
+	viewKey := manifest.Fingerprint(struct {
+		Root, Origin, Key, Revision, Digest string
+		Ignore                              string
+		Sparse                              []string `json:",omitempty"`
+		Recurse                             bool
+	}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Revision, bootstrap.Digest, ignore, repo.SparseCheckout, repo.RecurseSubmodules})
 	viewRoot := filepath.Join(filepath.Dir(repoRoot), ".flate-sources", viewKey)
 	input := d.aliasViews[viewKey]
 	var err error
 	if input != nil {
 		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
-		if err != nil {
-			return false, err
-		}
 	} else {
 		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, Ignore: ignore, Sparse: repo.SparseCheckout})
-		if err != nil {
-			return false, err
-		}
-		if d.aliasViews == nil {
-			d.aliasViews = make(map[string]fs.FS)
-		}
-		d.aliasViews[viewKey] = input
 	}
-
+	if err != nil {
+		return false, err
+	}
+	if d.aliasViews == nil {
+		d.aliasViews = make(map[string]fs.FS)
+	}
+	d.aliasViews[viewKey] = input
 	artifact := *bootstrap
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, url, input
 	artifact.InputAlias = true

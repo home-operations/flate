@@ -22,7 +22,7 @@ import (
 
 // GitKey identifies a Git family, its normalized requested ref and recursion policy.
 type GitKey struct {
-	ID                string
+	Content           any
 	Ref               string
 	RecurseSubmodules bool
 }
@@ -42,12 +42,13 @@ type gitRequest struct {
 }
 
 // Git acquires a private generation through the common freshness and publication path.
-func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, error) {
-	e, err := c.acquire(ctx, acquireKey{ID: key.ID, git: &gitRequest{key, produce}}, policy, nil)
+// Its acquisition identity is empty on failure.
+func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, string, error) {
+	e, id, err := c.acquire(ctx, acquireKey{git: &gitRequest{key, produce}}, policy, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return e.git, nil
+	return e.git, id, nil
 }
 
 func (c *Cache) produceGit(ctx context.Context, request *gitRequest) (generation *GitGeneration, descriptor ocispec.Descriptor, resultErr error) {

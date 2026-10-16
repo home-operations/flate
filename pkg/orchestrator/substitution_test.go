@@ -145,7 +145,7 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 				t.Fatalf("invalid or unredacted SDK overlay error: %v", err)
 			}
 			if cfg.Cache != nil {
-				r, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{ID: "after-constructor-failure"}, sourcecache.Policy{MaxAge: sourcecache.Forever},
+				r, _, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{Content: "after-constructor-failure"}, sourcecache.Policy{MaxAge: sourcecache.Forever},
 					func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 						_, err := io.WriteString(w, "caller-owned")
 						return ocispec.Descriptor{}, err

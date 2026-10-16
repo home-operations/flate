@@ -44,6 +44,28 @@ func (g *GitRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindGitRepository].Group, Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
 }
 
+// Content returns the source inputs that define the selected Git content.
+func (g *GitRepository) Content(ref GitRepositoryRef) any {
+	var auth []NamedResource
+	for _, ref := range []*LocalObjectReference{g.SecretRef, g.ProxySecretRef} {
+		if ref != nil && ref.Name != "" {
+			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: g.Namespace, Name: ref.Name})
+		}
+	}
+	ignore := ""
+	if g.Ignore != nil {
+		ignore = *g.Ignore
+	}
+	return struct {
+		URL               string
+		Ref               GitRepositoryRef
+		Auth              []NamedResource
+		Ignore            string
+		SparseCheckout    []string `json:",omitempty"`
+		RecurseSubmodules bool
+	}{g.URL, ref, auth, ignore, g.SparseCheckout, g.RecurseSubmodules}
+}
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (g *GitRepository) WithNamespace(namespace string) BaseManifest {
 	out := *g
@@ -121,6 +143,28 @@ type OCILayerSelector = sourcev1.OCILayerSelector
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
+}
+
+// Content returns the source inputs that define the selected OCI content.
+func (o *OCIRepository) Content(ref OCIRepositoryRef) any {
+	var auth []NamedResource
+	for _, ref := range []*LocalObjectReference{o.SecretRef, o.CertSecretRef, o.ProxySecretRef} {
+		if ref != nil && ref.Name != "" {
+			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: o.Namespace, Name: ref.Name})
+		}
+	}
+	ignore := ""
+	if o.Ignore != nil {
+		ignore = *o.Ignore
+	}
+	return struct {
+		URL           string
+		Ref           OCIRepositoryRef
+		Auth          []NamedResource
+		Insecure      bool
+		LayerSelector *OCILayerSelector
+		Ignore        string
+	}{o.URL, ref, auth, o.Insecure, o.LayerSelector, ignore}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.

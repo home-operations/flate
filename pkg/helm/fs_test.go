@@ -56,7 +56,8 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 				t.Cleanup(func() { _ = listener.Close() })
 			}
 			want, wantErr := loader.LoadDir(root)
-			got, _, _, gotErr := loadFSChart(os.DirFS(root), ".")
+			entry, _, gotErr := loadFSChart(os.DirFS(root), ".", chartCacheEntry{})
+			got := entry.loaded.chart
 			if irregular {
 				if wantErr == nil || gotErr == nil {
 					t.Fatalf("irregular: upstream=%v FS=%v", wantErr, gotErr)
@@ -165,7 +166,7 @@ func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
 	if _, err := loader.LoadDir(root); err == nil {
 		t.Fatal("Helm accepted oversized fixture")
 	}
-	if _, _, _, err := loadFSChart(input, "."); !errors.Is(err, manifest.ErrInput) {
+	if _, _, err := loadFSChart(input, ".", chartCacheEntry{}); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("oversized FS chart lacks input classification: %v", err)
 	}
 }
@@ -185,21 +186,19 @@ func TestChartPathInFS_InvalidArtifacts(t *testing.T) {
 
 func TestLoadFSChart_InvalidInputs(t *testing.T) {
 	for name, input := range map[string]fstest.MapFS{
-		"missing":  {},
-		"empty":    {"chart": {Mode: fs.ModeDir}},
-		"archive":  {"chart": {Data: []byte("invalid archive")}},
-		"metadata": {"chart/Chart.yaml": {Data: []byte("name: chart\nversion: invalid\n")}},
-		"ignore":   {"chart/.helmignore": {Data: []byte("**\n")}},
+		"missing":       {},
+		"empty":         {"chart": {Mode: fs.ModeDir}},
+		"empty archive": {"chart": {Data: []byte{}}},
+		"archive":       {"chart": {Data: []byte("invalid archive")}},
+		"metadata":      {"chart/Chart.yaml": {Data: []byte("name: chart\nversion: invalid\n")}},
+		"ignore":        {"chart/.helmignore": {Data: []byte("**\n")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, fingerprint, missing, err := loadFSChart(input, "chart")
+			_, missing, err := loadFSChart(input, "chart", chartCacheEntry{})
 			if missing != (name == "missing") {
 				t.Fatalf("missing location = %v for %s: %v", missing, name, err)
 			}
-			if name == "empty" && fingerprint == "" {
-				t.Fatal("empty directory was treated as an archive")
-			}
-			if name == "archive" || name == "empty" {
+			if name == "archive" || name == "empty" || name == "empty archive" {
 				if err == nil {
 					t.Fatal("invalid chart must return an error")
 				}
@@ -338,32 +337,27 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 			reads[name]++
 			return input.Open(name)
 		}}
-		files, fp, err := chartFilesInFS(observed)
+		files, err := chartFilesInFS(observed)
 		assert.NoError(t, err)
 		assert.Equal(t, reads[".helmignore"], 1)
 		assert.Equal(t, reads["charts/child/templates/cm.yaml"], 1)
-		assert.Equal(t, fp, manifest.Fingerprint([][2]any{
-			{".helmignore", []byte("# first\n")},
-			{"Chart.yaml", input["Chart.yaml"].Data},
-			{"charts/child/Chart.yaml", input["charts/child/Chart.yaml"].Data},
-			{"charts/child/templates/cm.yaml", []byte("old")},
-		}))
-		_, same, err := chartFilesInFS(input)
+		same, err := chartFilesInFS(input)
 		assert.NoError(t, err)
-		assert.Equal(t, same, fp)
+		if diff := cmp.Diff(files, same); diff != "" {
+			t.Fatal(diff)
+		}
 		input["charts/child/templates/cm.yaml"].Data = []byte("new")
 		input[".helmignore"].Data = []byte("# second\n")
 		ch, err := loader.LoadFiles(files)
 		assert.NoError(t, err)
 		assert.Equal(t, string(ch.Dependencies()[0].Templates[0].Data), "old")
 		assert.Equal(t, reads["charts/child/templates/cm.yaml"], 1)
-		_, next, err := chartFilesInFS(input)
+		next, err := chartFilesInFS(input)
 		assert.NoError(t, err)
-		assert.Equal(t, next == fp, false)
-		later, laterFP, _, err := loadFSChart(input, ".")
+		assert.Equal(t, cmp.Equal(next, files), false)
+		later, _, err := loadFSChart(input, ".", chartCacheEntry{})
 		assert.NoError(t, err)
-		assert.Equal(t, laterFP, next)
-		assert.Equal(t, string(later.Dependencies()[0].Templates[0].Data), "new")
+		assert.Equal(t, string(later.loaded.chart.Dependencies()[0].Templates[0].Data), "new")
 		clear(reads)
 		cli, err := NewClient(newTestCache(t, ""))
 		assert.NoError(t, err)
@@ -396,7 +390,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 			input := base()
 			input[".helmignore"] = &fstest.MapFile{Data: []byte(".helmignore\n")}
 			input["a"] = &fstest.MapFile{Data: []byte("bc")}
-			files, before, err := chartFilesInFS(input)
+			files, err := chartFilesInFS(input)
 			assert.NoError(t, err)
 			for _, file := range files {
 				if file.Name == ".helmignore" {
@@ -404,9 +398,9 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 				}
 			}
 			tc.change(input)
-			_, after, err := chartFilesInFS(input)
+			after, err := chartFilesInFS(input)
 			assert.NoError(t, err)
-			assert.Equal(t, before == after, tc.same)
+			assert.Equal(t, cmp.Equal(files, after, cmpopts.IgnoreFields(archive.BufferedFile{}, "ModTime")), tc.same)
 		})
 	}
 }
@@ -454,7 +448,7 @@ func TestLoadFSChart_FailureRecovery(t *testing.T) {
 				t.Fatalf("lost read/close error: %v", err)
 			}
 			if failure == "disappeared" {
-				_, _, missing, err := loadFSChart(observed, ".")
+				_, missing, err := loadFSChart(observed, ".", chartCacheEntry{})
 				assert.Equal(t, missing, false)
 				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 			}

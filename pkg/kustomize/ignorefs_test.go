@@ -183,14 +183,19 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 	if strings.Contains(string(out1), "name: b") {
 		t.Fatalf("b.yaml should be excluded; got %s", out1)
 	}
-	key := renderKey(demoRawSpec, root, ".", "source")
+	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}
+	input, err := cache.sourceRootFor(ctx, req.Source, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := renderKey(req, root, input.ignore)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := renderPersistenceEligible(t)
 	if ok != eligible {
 		t.Fatalf("persisted render = %v, want %v", ok, eligible)
 	}
 	if eligible {
-		publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
+		publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
 	}
 	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {

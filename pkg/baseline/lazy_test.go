@@ -68,6 +68,9 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 			}
 			res, err := AutoResolve(t.Context(), root, pin.String(), testOwner(t, ""))
 			assert.NoError(t, err)
+			if res.BaseInput.Key == "" || res.Source.Key != "" || res.BaseInput.Revision != pin.String() || res.BaseInput.LocalRoot != root {
+				t.Fatalf("baseline identity = %+v; current identity = %+v", res.BaseInput, res.Source)
+			}
 			var want []string
 			if tc.changed {
 				want = []string{"file"}
@@ -92,7 +95,7 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				}
 				view, pin, err := source.ReadView(t.Context(), res.BaseInput.FS, false)
 				assert.NoError(t, err)
-				assert.Equal(t, pin, "")
+				assert.Equal(t, pin, any(res.BaseInput.Key))
 				data, err := fs.ReadFile(view, "unchanged.yaml")
 				assert.NoError(t, err)
 				assert.Equal(t, string(data), body)

@@ -61,7 +61,7 @@ func newTestCache(t testing.TB, root string) *cache.Cache {
 
 func acquireChartFS(t testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 	t.Helper()
-	acquired, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{ID: t.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	acquired, _, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{Content: t.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		tw := tar.NewWriter(w)
 		err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil || entry.IsDir() {

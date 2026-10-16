@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"errors"
+	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/tree"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -38,7 +39,7 @@ func TestLocalFS_Reads(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, pin, err := ReadView(t.Context(), input, false)
-	assert.Equal(t, pin, "")
+	assert.Equal(t, pin, any(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +74,43 @@ func TestLocalFS_Reads(t *testing.T) {
 }
 
 func TestLocalFS_ReadView(t *testing.T) {
+	t.Run("ignore_snapshot", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, ".sourceignore", "root\n")
+		testutil.WriteFile(t, root, "nested/.sourceignore", "first\n")
+		testutil.WriteFile(t, root, ".git/.sourceignore", "excluded\n")
+		input, err := NewLocalFS(t.Context(), root)
+		assert.NoError(t, err)
+		_, content, err := ReadView(t.Context(), input, true)
+		assert.NoError(t, err)
+		want := []struct {
+			Path string
+			Data []byte
+		}{{".sourceignore", []byte("root\n")}, {"nested/.sourceignore", []byte("first\n")}}
+		assert.Diff(t, content, any(want))
+		testutil.WriteFile(t, root, "nested/.sourceignore", "other\n")
+		_, retained, err := ReadView(t.Context(), input, true)
+		assert.NoError(t, err)
+		assert.Diff(t, retained, content)
+		input, err = NewLocalFS(t.Context(), root)
+		assert.NoError(t, err)
+		_, refreshed, err := ReadView(t.Context(), input, true)
+		assert.NoError(t, err)
+		want[1].Data = []byte("other\n")
+		assert.Diff(t, refreshed, any(want))
+		assert.NoError(t, os.Rename(filepath.Join(root, "nested"), filepath.Join(root, "renamed")))
+		input, err = NewLocalFS(t.Context(), root)
+		assert.NoError(t, err)
+		_, moved, err := ReadView(t.Context(), input, true)
+		assert.NoError(t, err)
+		want[1].Path = "renamed/.sourceignore"
+		assert.Diff(t, moved, any(want))
+		_, unfiltered, err := ReadView(t.Context(), input, false)
+		assert.NoError(t, err)
+		if unfiltered != nil {
+			t.Fatalf("unfiltered policy = %v", unfiltered)
+		}
+	})
 	t.Run("point_lookup_without_listing", func(t *testing.T) {
 		root := t.TempDir()
 		dir := filepath.Join(root, "siblings")
@@ -106,7 +144,7 @@ func TestLocalFS_ReadView(t *testing.T) {
 		t.Fatal(err)
 	}
 	observed, pin, err := ReadView(t.Context(), input, false)
-	assert.Equal(t, pin, "")
+	assert.Equal(t, pin, any(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +152,8 @@ func TestLocalFS_ReadView(t *testing.T) {
 		t.Fatalf("initial missing file = %v", err)
 	}
 	hidden, pin, err := ReadView(t.Context(), input, true)
-	assert.Equal(t, pin, "")
+	snapshot := pin
+	assert.Equal(t, snapshot == nil, false)
 	assert.Equal(t, err, nil)
 	if _, err := fs.Stat(hidden, "dir"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("directory without survivors = %v", err)
@@ -127,7 +166,7 @@ func TestLocalFS_ReadView(t *testing.T) {
 	}
 	testutil.WriteFile(t, root, "dir/arrived", "arrived")
 	fresh, pin, err := ReadView(t.Context(), input, true)
-	assert.Equal(t, pin, "")
+	assert.Diff(t, pin, snapshot)
 	assert.Equal(t, err, nil)
 	testutil.WriteFile(t, root, ".sourceignore", "/*\n")
 	readmitted, err := NewLocalFS(t.Context(), root)
@@ -135,10 +174,12 @@ func TestLocalFS_ReadView(t *testing.T) {
 		t.Fatal(err)
 	}
 	ignored, pin, err := ReadView(t.Context(), readmitted, true)
-	assert.Equal(t, pin, "")
+	if cmp.Equal(pin, snapshot) {
+		t.Fatal("re-admission retained changed ignore bytes")
+	}
 	assert.Equal(t, err, nil)
 	plain, pin, err := ReadView(t.Context(), readmitted, false)
-	assert.Equal(t, pin, "")
+	assert.Equal(t, pin, any(nil))
 	assert.Equal(t, err, nil)
 	memory := fstest.MapFS{"kept": {Data: []byte("content")}}
 	passthrough, pin, err := ReadView(t.Context(), memory, true)
@@ -169,7 +210,7 @@ func TestLocalFS_ReadView(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			view, pin, err := ReadView(t.Context(), input, true)
-			assert.Equal(t, pin, "")
+			assert.Diff(t, pin, snapshot)
 			if err != nil {
 				t.Error(err)
 				return
@@ -196,7 +237,7 @@ func TestLocalFS_ReadView(t *testing.T) {
 		owner, err := cache.New(t.Context(), "")
 		assert.NoError(t, err)
 		t.Cleanup(func() { assert.NoError(t, owner.Close()) })
-		acquired, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{ID: "admission"}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		acquired, _, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{Content: "admission"}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 			tw := tar.NewWriter(w)
 			if err := tw.WriteHeader(&tar.Header{Name: "file", Mode: 0o600, Size: 7}); err != nil {
 				return ocispec.Descriptor{}, err
@@ -205,7 +246,7 @@ func TestLocalFS_ReadView(t *testing.T) {
 			return ocispec.Descriptor{}, errors.Join(err, tw.Close())
 		})
 		assert.NoError(t, err)
-		r, _, err := owner.Blob(t.Context(), cache.BlobKey{ID: "blob"}, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: "blob"}, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 			_, err := io.WriteString(w, "content")
 			return ocispec.Descriptor{}, err
 		})

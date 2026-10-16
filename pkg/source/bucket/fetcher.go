@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -54,9 +53,8 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 	if b.Ignore != nil {
 		ignore = *b.Ignore
 	}
-	h := manifest.Fingerprint([8]any{endpoint, secure, b.BucketName, b.Prefix, b.Region, authIdentity(b), ignore, sourceignore.RulesVersion})
-	key := cache.ArchiveKey{ID: "source-bucket-" + h, Ignore: ignore}
-	input, desc, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	key := cache.ArchiveKey{Content: b.Content(endpoint, secure), Ignore: ignore, Required: []string{"revision", "object-count"}}
+	input, desc, id, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		desc, err := walkBucket(ctx, client, b, w)
 		if status, ok := errors.AsType[minio.ErrorResponse](err); ok {
 			err = &statusError{err: err, status: &errcode.ErrorResponse{StatusCode: status.StatusCode}}
@@ -71,7 +69,7 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 		Kind:     manifest.KindBucket,
 		URL:      fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
 		FS:       input,
-		Key:      key.ID + "@" + desc.Annotations["flate.revision"],
+		Key:      id,
 		Revision: desc.Annotations["flate.revision"],
 		Metadata: map[string]string{
 			"objectCount": desc.Annotations["flate.object-count"],
@@ -120,12 +118,4 @@ func (f *Fetcher) newMinioClient(b *manifest.Bucket) (client *minio.Client, endp
 // source.QualifiedName so every fetcher formats kind/ns/name identically.
 func bucketID(b *manifest.Bucket) string {
 	return source.QualifiedName("Bucket", b.Namespace, b.Name)
-}
-
-// authIdentity returns the cache-key auth tag for a Bucket. Combines
-// SecretRef (S3 access creds), CertSecretRef (TLS), and
-// ProxySecretRef. Returns "" when all are unset.
-func authIdentity(b *manifest.Bucket) string {
-	return source.AuthIdentityFromRefs(b.Namespace,
-		b.SecretRef, b.CertSecretRef, b.ProxySecretRef)
 }

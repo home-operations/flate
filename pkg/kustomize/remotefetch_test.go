@@ -458,7 +458,7 @@ func TestFetchRemote_CloseJoinsAcquisition(t *testing.T) {
 						}
 						check := func(owner *sourcecache.Cache) {
 							t.Helper()
-							reader, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{ID: "remote-http-" + manifest.Fingerprint(url)}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+							reader, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ URL string }{url}}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 							if err != nil {
 								if !errors.Is(err, errdef.ErrNotFound) {
 									t.Fatal(err)
@@ -496,10 +496,10 @@ func TestFetchRemote_CloseJoinsKeyWait(t *testing.T) {
 					}
 					c := newTestTreeCache(t, root)
 					url := "https://example.invalid/key"
-					key := sourcecache.BlobKey{ID: "remote-http-" + manifest.Fingerprint(url)}
+					key := sourcecache.BlobKey{Content: struct{ URL string }{url}}
 					entered, release, held := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 					go func() {
-						r, _, err := c.owner.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						r, _, _, err := c.owner.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 							close(entered)
 							<-release
 							return ocispec.Descriptor{}, nil

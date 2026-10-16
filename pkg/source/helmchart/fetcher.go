@@ -3,8 +3,6 @@ package helmchart
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -40,7 +38,7 @@ type Fetcher struct {
 	network   *source.Network
 	transport http.RoundTripper
 
-	indexCache                 sync.Map                // map[string]indexMemo
+	indexCache                 sync.Map                // map[string]*repo.IndexFile
 	indexLocks                 *keylock.KeyMap[string] // serialize parsed memo publication
 	disableChartDigestTracking bool
 }
@@ -233,6 +231,5 @@ const syntheticChartHashHexLength = 7
 // synthetic OCIRepository is never stored (the OCI fetcher caches by URL+ref,
 // not name), so for it the name is mainly log readability.
 func syntheticChartName(repoName, chartName, chartURL, version string) string {
-	sum := sha256.Sum256([]byte(chartURL + "@" + version))
-	return repoName + "-" + chartName + "-" + hex.EncodeToString(sum[:])[:syntheticChartHashHexLength]
+	return repoName + "-" + chartName + "-" + manifest.SHA256Hex([]byte(chartURL + "@" + version))[:syntheticChartHashHexLength]
 }

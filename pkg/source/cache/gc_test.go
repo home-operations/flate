@@ -26,9 +26,9 @@ import (
 	"oras.land/oras-go/v2/content/oci"
 )
 
-func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descriptor) {
+func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descriptor, string) {
 	t.Helper()
-	g, err := c.Git(t.Context(), GitKey{ID: key, RecurseSubmodules: true}, Policy{MaxAge: 0},
+	g, id, err := c.Git(t.Context(), GitKey{Content: key, RecurseSubmodules: true}, Policy{MaxAge: 0},
 		func(context.Context,
 
 			storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
@@ -40,11 +40,11 @@ func sweepGit(t *testing.T, c *Cache, key string) (*GitGeneration, ocispec.Descr
 	for _, input := range []billy.Filesystem{g.Backing, g.Worktree} {
 		testutil.WriteFile(t, input.Root(), "marker", "retained")
 	}
-	desc, err := c.store.Resolve(t.Context(), key)
+	desc, err := c.store.Resolve(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return g, desc
+	return g, desc, id
 }
 
 func sweepSnapshot(t *testing.T, root string) map[string]string {
@@ -85,20 +85,20 @@ func TestSweep_GitGenerations(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			c := newCache(t, root)
-			first, _ := sweepGit(t, c, "source-git-sweep")
-			second, desc := sweepGit(t, c, "source-git-sweep")
+			first, _, _ := sweepGit(t, c, "source-git-sweep")
+			second, desc, key := sweepGit(t, c, "source-git-sweep")
 			if scenario == "bad-anchor" || scenario == "bad-graph" {
 				if scenario == "bad-anchor" {
 					desc.Annotations[prefix+"git-generation"] = "../outside"
 				} else {
 					desc.MediaType = ocispec.MediaTypeImageIndex
 				}
-				if err := c.store.Tag(t.Context(), desc, "source-git-sweep"); err != nil {
+				if err := c.store.Tag(t.Context(), desc, key); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if scenario == "bad-graph" {
-				r, _, err := c.Blob(t.Context(), BlobKey{ID: "a-expired"}, Policy{MaxAge: 0}, producer([]byte("stale"), ocispec.Descriptor{}))
+				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "a-expired"}, Policy{MaxAge: 0}, producer([]byte("stale"), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -183,8 +183,8 @@ func TestSweep_GitGenerations(t *testing.T) {
 	for _, component := range []string{"parent", "final"} {
 		t.Run("selected-"+component+"-replacement", func(t *testing.T) {
 			c := newCache(t, t.TempDir())
-			orphan, _ := sweepGit(t, c, "source-git-replacement")
-			retained, _ := sweepGit(t, c, "source-git-replacement")
+			orphan, _, _ := sweepGit(t, c, "source-git-replacement")
+			retained, _, _ := sweepGit(t, c, "source-git-replacement")
 			if err := c.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -252,20 +252,20 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 			stale := time.Now().Add(-24 * time.Hour)
 			var retired, generations []string
 			for _, id := range []string{"source-git-stale", "git-base-stale", "source-git-touched", "git-base-touched"} {
-				g, desc := sweepGit(t, c, id)
+				g, desc, key := sweepGit(t, c, id)
 				if err := os.Chtimes(filepath.Join(c.layout.Root, blobPath(desc.Digest)), stale, stale); err != nil {
 					t.Fatal(err)
 				}
 				if id == "source-git-touched" || id == "git-base-touched" {
 					desc.Annotations[prefix+"resolved-at"] = stale.UTC().Format(time.RFC3339Nano)
-					if err := c.store.Tag(t.Context(), desc, id); err != nil {
+					if err := c.store.Tag(t.Context(), desc, key); err != nil {
 						t.Fatal(err)
 					}
-					if _, err := c.Git(t.Context(), GitKey{ID: id, RecurseSubmodules: true}, Policy{MaxAge: Forever}, nil); err != nil {
+					if _, _, err := c.Git(t.Context(), GitKey{Content: id, RecurseSubmodules: true}, Policy{MaxAge: Forever}, nil); err != nil {
 						t.Fatal(err)
 					}
 				} else {
-					retired = append(retired, id)
+					retired = append(retired, key)
 					generations = append(generations, filepath.Dir(g.Backing.Root()))
 				}
 			}
@@ -300,10 +300,10 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 	var anchors []ocispec.Descriptor
 	var generations []*GitGeneration
 	for _, id := range []string{"source-git-shared", "git-base-shared"} {
-		g, desc := sweepGit(t, c, id)
+		g, desc, key := sweepGit(t, c, id)
 		generations = append(generations, g)
 		anchors = append(anchors, desc)
-		if err := c.store.Untag(t.Context(), id); err != nil {
+		if err := c.store.Untag(t.Context(), key); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -372,8 +372,8 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 func TestSweep_SharedIntermediateRetainsGitAnchor(t *testing.T) {
 	root := t.TempDir()
 	c := newCache(t, root)
-	generation, anchor := sweepGit(t, c, "source-git-shared")
-	if err := c.store.Untag(t.Context(), "source-git-shared"); err != nil {
+	generation, anchor, key := sweepGit(t, c, "source-git-shared")
+	if err := c.store.Untag(t.Context(), key); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(ocispec.Index{SchemaVersion: 2, Manifests: []ocispec.Descriptor{anchor}})

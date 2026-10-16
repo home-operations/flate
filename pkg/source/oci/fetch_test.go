@@ -173,6 +173,9 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	if art2.Digest == art1.Digest {
 		t.Fatalf("mutable tag reused stale digest %s", art2.Digest)
 	}
+	if art2.Key != art1.Key || art2.Revision == art1.Revision {
+		t.Fatalf("refresh identity: key=%q/%q revision=%q/%q", art1.Key, art2.Key, art1.Revision, art2.Revision)
+	}
 	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v2") {
 		t.Fatalf("second fetch content = %q", got)
 	}
@@ -571,6 +574,60 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 			t.Fatalf("source collision: %q, want %q", got, body)
 		}
 		keys = append(keys, art.Key)
+		if body != "first" {
+			continue
+		}
+		tlsCfg, err := f.resolveTLS(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := f.newRepoClient(repo, nil, tlsCfg, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identities := map[string]string{art.Key: "original"}
+		for _, tc := range []struct {
+			name   string
+			change func(*manifest.OCIRepository, *Fetcher)
+		}{
+			{"ref", func(r *manifest.OCIRepository, _ *Fetcher) { r.Reference = &manifest.OCIRepositoryRef{Tag: "latest"} }},
+			{"ignore", func(r *manifest.OCIRepository, _ *Fetcher) { r.Ignore = new("*.tmp") }},
+			{"insecure", func(r *manifest.OCIRepository, _ *Fetcher) { r.Insecure = false }},
+			{"layer selector", func(r *manifest.OCIRepository, _ *Fetcher) {
+				r.LayerSelector = &manifest.OCILayerSelector{Operation: sourcev1.OCILayerExtract}
+			}},
+			{"registry config", func(_ *manifest.OCIRepository, f *Fetcher) { f.RegistryConfig = "other-config.json" }},
+			{"secret", func(r *manifest.OCIRepository, _ *Fetcher) {
+				r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+			}},
+			{"auth namespace", func(r *manifest.OCIRepository, _ *Fetcher) {
+				r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+				r.Namespace = "other"
+			}},
+			{"cert", func(r *manifest.OCIRepository, _ *Fetcher) {
+				r.CertSecretRef = &manifest.LocalObjectReference{Name: "cert"}
+			}},
+			{"proxy", func(r *manifest.OCIRepository, _ *Fetcher) {
+				r.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
+			}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				current := *repo
+				fetcher := &Fetcher{Cache: c}
+				tc.change(&current, fetcher)
+				got, err := fetcher.fetch(t.Context(), &current, client, sourcecache.RetryConfig{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if previous, ok := identities[got.Key]; ok {
+					t.Fatalf("%s reused %s acquisition", tc.name, previous)
+				}
+				identities[got.Key] = tc.name
+				if got := mustReadFile(t, got.FS, "app.yaml"); got != body {
+					t.Fatalf("variant content=%q, want %q", got, body)
+				}
+			})
+		}
 	}
 	if keys[0] == keys[1] {
 		t.Fatal("distinct sources share their published identity")

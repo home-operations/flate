@@ -51,7 +51,7 @@ type SourceArtifact struct {
 	// Only an admitted bootstrap uses its original checkout root for Git metadata.
 	LocalRoot string
 
-	// Key pins immutable content, source options, authentication and shaping rules.
+	// Key identifies an immutable acquisition family; Revision and Digest select its generation.
 	// Empty Key with FS denotes mutable content requiring cache validation.
 	// Nonempty Key without FS requires acquisition before reading.
 	Key string
@@ -145,7 +145,7 @@ func (a *ResourceSetArtifact) RenderedFingerprint() string { return a.Fingerprin
 //     Source-controller refresh loops cache their own SourceArtifact
 //     and re-publish the same pointer on every tick; the short-
 //     circuit avoids reflection entirely for that case.
-//  2. Pinned source payloads are compared by Key and remaining metadata by value.
+//  2. Pinned source payloads are compared by family and generation metadata.
 //     Distinct mutable views replace each other. Filesystems MUST NOT be compared
 //     or traversed under the shard lock.
 //  3. reflect.DeepEqual fallback for distinct-pointer dedup. Phase 1
@@ -186,7 +186,7 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 	return sh.artifacts[id]
 }
 
-// Payload identity is pinned by Key; never walk a filesystem under the shard lock.
+// Family and generation metadata pin payload identity; never walk a filesystem under the shard lock.
 func sameArtifact(prev, next Artifact) bool {
 	a, aok := prev.(*SourceArtifact)
 	b, bok := next.(*SourceArtifact)

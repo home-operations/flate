@@ -69,12 +69,3 @@ func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRe
 func ociID(repo *manifest.OCIRepository) string {
 	return source.QualifiedName("OCIRepository", repo.Namespace, repo.Name)
 }
-
-// authIdentity returns the cache-key auth tag for an OCIRepository.
-// Combines SecretRef (registry creds), CertSecretRef (TLS material), and
-// ProxySecretRef since each can change which artifact bytes a reconcile
-// resolves to.
-func authIdentity(repo *manifest.OCIRepository) string {
-	return source.AuthIdentityFromRefs(repo.Namespace,
-		repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef)
-}

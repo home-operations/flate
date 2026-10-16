@@ -99,15 +99,27 @@ func reconcileNode(t *testing.T, c *Controller, id manifest.NamedResource, drain
 func TestController_FetchesAndStoresArtifact(t *testing.T) {
 	const content = "source artifact bytes"
 	f := &fakeFetcher{artifact: &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "u", LocalPath: "/tmp", Key: "pin",
+		Kind: manifest.KindGitRepository, URL: "u", LocalPath: "/tmp", Key: "pin", Revision: "one", Digest: "aaa",
 		FS: fstest.MapFS{"source.txt": {Data: []byte(content)}},
 	}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 	st.AddObject(repo)
 
-	for _, phase := range []string{"initial", "reacquired"} {
+	for _, phase := range []string{"initial", "revised", "digested", "reacquired"} {
 		t.Run(phase, func(t *testing.T) {
+			if phase == "revised" || phase == "digested" {
+				next := *f.artifact
+				if phase == "revised" {
+					next.Revision = "two"
+				} else {
+					next.Digest = "bbb"
+				}
+				f.artifact = &next
+				previous := *st.GetArtifact(repo.Named()).(*store.SourceArtifact)
+				previous.FS = nil
+				st.SetArtifact(repo.Named(), &previous)
+			}
 			if phase == "reacquired" {
 				pin := *f.artifact
 				pin.FS = nil
@@ -120,7 +132,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 				t.Fatalf("configured policy=%+v", f.retry)
 			}
 			art, ok := st.GetArtifact(repo.Named()).(*store.SourceArtifact)
-			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" {
+			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" || art.Revision != f.artifact.Revision || art.Digest != f.artifact.Digest {
 				t.Fatalf("artifact = %+v, want readable source with original identity", art)
 			}
 			if got, err := fs.ReadFile(art.FS, "source.txt"); err != nil || string(got) != content {

@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -121,12 +120,11 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		if repository.Ignore != nil {
 			ignore = *repository.Ignore
 		}
-		input, _, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Sparse: repository.SparseCheckout, Ignore: ignore})
+		input, key, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Content: struct{ Root string }{identity}, Sparse: repository.SparseCheckout, Ignore: ignore})
 		if err != nil {
 			return nil, localError(repository, err)
 		}
-		key := manifest.Fingerprint([3]string{identity, r.hash.String(), gitCacheKey(repository, r.hash.String(), sourceignore.RulesVersion)})
-		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: filepath.Join(filepath.Dir(identity), ".flate-sources", key), Revision: r.hash.String(), Key: "local-git-" + key, FS: input}
+		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: filepath.Join(filepath.Dir(identity), ".flate-sources", key), Revision: r.hash.String(), Key: key, FS: input}
 		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil

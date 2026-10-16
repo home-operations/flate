@@ -379,33 +379,56 @@ func TestFingerprintDedup(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	docs := []map[string]any{{"kind": "ConfigMap"}}
-	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: "fp1"})
-
 	var emitted int
 	emit := func([]map[string]any) { emitted++ }
+	fp, handled, err := c.FingerprintDedup(id, []string{"one"}, emit)
+	if fp == "" || handled || err != nil {
+		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
+	}
+	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: fp})
 
 	// Fingerprint mismatch → render (not handled), no emit.
-	if handled, err := c.FingerprintDedup(id, "other", emit); handled || err != nil {
+	if _, handled, err := c.FingerprintDedup(id, "other", emit); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
+	foreign := id
+	foreign.Group = "other.example"
+	if _, handled, err := c.FingerprintDedup(foreign, []string{"one"}, emit); handled || err != nil || emitted != 0 {
+		t.Fatalf("foreign group: handled=%v err=%v emitted=%d; want false,nil,0", handled, err, emitted)
+	}
 	// Match → handled, emit replays the cached docs.
-	if handled, err := c.FingerprintDedup(id, "fp1", emit); !handled || err != nil {
+	if got, handled, err := c.FingerprintDedup(id, []string{"one"}, emit); !handled || err != nil || got != fp {
 		t.Errorf("match: handled=%v err=%v; want true,nil", handled, err)
 	}
 	// No artifact for the id → render (not handled).
 	none := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
-	if handled, _ := c.FingerprintDedup(none, "fp1", emit); handled {
+	if _, handled, _ := c.FingerprintDedup(none, []string{"one"}, emit); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}
 	if emitted != 1 {
 		t.Errorf("emit called %d times; want 1 (only on the match)", emitted)
 	}
-
-	// Empty fingerprint never matches (safe re-render), even fp==""==stored.
-	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs, Fingerprint: ""})
-	if handled, _ := c.FingerprintDedup(id, "", emit); handled {
-		t.Error("empty fingerprint matched; want never-match (false)")
+	for _, tc := range []struct {
+		name    string
+		content any
+	}{
+		{"nil content", nil}, {"unmarshalable content", []any{make(chan int)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, handled, err := c.FingerprintDedup(id, tc.content, emit)
+			if got != "" || handled || err != nil {
+				t.Fatalf("invalid content key=%q, handled=%v, err=%v", got, handled, err)
+			}
+		})
 	}
+	s.SetArtifact(id, &store.KustomizationArtifact{Manifests: docs})
+	if _, handled, _ := c.FingerprintDedup(id, []string{"one"}, emit); handled {
+		t.Error("empty stored fingerprint replayed")
+	}
+	if fp, handled, err := c.FingerprintDedup(id, []any{make(chan int)}, emit); fp != "" || handled || err != nil {
+		t.Fatalf("invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
+	}
+
 }
 
 // TestFingerprintDedup_PreflightError: a match that coincides with a
@@ -416,10 +439,11 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
-	s.SetArtifact(id, &store.KustomizationArtifact{Fingerprint: "fp1"})
+	fp, _, _ := c.FingerprintDedup(id, []string{"one"}, func([]map[string]any) {})
+	s.SetArtifact(id, &store.KustomizationArtifact{Fingerprint: fp})
 	c.SetPreflight(func(manifest.NamedResource) (string, bool) { return "cycle detected", true })
 
-	handled, err := c.FingerprintDedup(id, "fp1", func([]map[string]any) {
+	_, handled, err := c.FingerprintDedup(id, []string{"one"}, func([]map[string]any) {
 		t.Error("emit must not run when a preflight error is surfaced")
 	})
 	if !handled || err == nil {

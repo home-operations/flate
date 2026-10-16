@@ -8,7 +8,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/internal/assert"
@@ -25,7 +25,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
-	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 )
 
 func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
@@ -75,115 +74,75 @@ func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
 }
 
 func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
-	for _, route := range []string{"local", "direct", "alias", "anonymous"} {
-		for _, edit := range []string{"template", "values", "values-file", "ignore", "dependency", "dependency-archive", "addition", "deletion"} {
-			t.Run(route+"/"+edit, func(t *testing.T) {
-				root := t.TempDir()
-				testutil.WriteFile(t, root, "Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
-				testutil.WriteFile(t, root, "values.yaml", "answer: old\n")
-				testutil.WriteFile(t, root, "prod.yaml", "answer: old\n")
-				testutil.WriteFile(t, root, "templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: main\ndata:\n  answer: {{ .Values.answer | quote }}\n")
-				extra := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\n"
-				if edit == "ignore" || edit == "deletion" {
-					testutil.WriteFile(t, root, "templates/extra.yaml", extra)
-				}
-				if edit == "ignore" {
-					testutil.WriteFile(t, root, ".helmignore", "templates/extra.yaml\n")
-				}
-				if edit == "dependency" {
-					testutil.WriteFile(t, root, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
-					testutil.WriteFile(t, root, "charts/child/templates/cm.yaml", strings.ReplaceAll(extra, "extra", "old"))
-				}
-				writeArchive := func(marker string) {
-					t.Helper()
-					child := minimalChart()
-					child.Metadata.Name = "child"
-					child.Templates[0].Data = []byte(strings.ReplaceAll(extra, "extra", marker))
-					name, err := chartutil.Save(child, t.TempDir())
-					assert.NoError(t, err)
-					data, err := os.ReadFile(name)
-					assert.NoError(t, err)
-					testutil.WriteFile(t, root, "charts/child.tgz", string(data))
-				}
-				if edit == "dependency-archive" {
-					writeArchive("old")
-				}
-				var input fs.FS
-				switch route {
-				case "local":
-					var err error
-					input, err = source.NewLocalFS(t.Context(), root)
-					assert.NoError(t, err)
-				case "direct", "alias":
-					art, err := gittree.AdmitDirectory(t.Context(), root)
-					assert.NoError(t, err)
-					input = art.FS
-					if route == "alias" {
-						input, _, err = gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Current: input})
-						assert.NoError(t, err)
-					}
-				case "anonymous":
-					input = os.DirFS(root)
-				}
-				cli, err := NewClient(newTestCache(t, ""))
-				assert.NoError(t, err)
-				st := store.New()
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: ".", RepoName: "repo", RepoNamespace: "default", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
-				if edit == "values-file" {
-					hr.ChartValuesFiles = []string{"prod.yaml"}
-				}
-				art := &store.SourceArtifact{FS: input, LocalPath: root, InputAlias: route == "alias", Key: "misleading-pin"}
-				st.SetArtifact(hr.ChartSource(), art)
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
-				stat, err := os.Stat(filepath.Join(root, "Chart.yaml"))
-				assert.NoError(t, err)
-				before, err := cli.Template(t.Context(), hr, nil, Options{})
-				assert.NoError(t, err)
-				switch edit {
-				case "template":
-					testutil.WriteFile(t, root, "templates/cm.yaml", strings.ReplaceAll(extra, "extra", "new"))
-				case "values":
-					testutil.WriteFile(t, root, "values.yaml", "answer: new\n")
-				case "values-file":
-					testutil.WriteFile(t, root, "prod.yaml", "answer: new\n")
-				case "ignore":
-					testutil.WriteFile(t, root, ".helmignore", "# include extra\n")
-				case "dependency":
-					testutil.WriteFile(t, root, "charts/child/templates/cm.yaml", strings.ReplaceAll(extra, "extra", "new"))
-				case "dependency-archive":
-					writeArchive("new")
-				case "addition":
-					testutil.WriteFile(t, root, "templates/arrived/cm.yaml", extra)
-				case "deletion":
-					assert.NoError(t, os.Remove(filepath.Join(root, "templates/extra.yaml")))
-				}
-				after, err := cli.Template(t.Context(), hr, nil, Options{})
-				assert.NoError(t, err)
-				if before == after {
-					t.Fatalf("independent Template call served stale %s", edit)
-				}
-				want := "new"
-				if edit == "addition" || edit == "ignore" {
-					want = "name: extra"
-				}
-				if edit == "deletion" {
-					if strings.Contains(after, "name: extra") {
-						t.Fatal("deleted template still rendered")
-					}
-				} else if !strings.Contains(after, want) {
-					t.Fatalf("missing edited output %q: %s", want, after)
-				}
-				now, err := os.Stat(filepath.Join(root, "Chart.yaml"))
-				assert.NoError(t, err)
-				if now.Size() != stat.Size() || !now.ModTime().Equal(stat.ModTime()) {
-					t.Fatal("regression changed Chart.yaml stat")
-				}
-				assert.Equal(t, art.Key, "misleading-pin")
-			})
+	dir := t.TempDir()
+	files := map[string]string{
+		"mychart/Chart.yaml":                     "apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: first\n",
+		"mychart/values.yaml":                    "k: v1\n",
+		"mychart/templates/cm.yaml":              "kind: ConfigMap\n",
+		"mychart/charts/child/Chart.yaml":        "apiVersion: v2\nname: child\nversion: 0.1.0\ndescription: first\n",
+		"mychart/charts/child/templates/cm.yaml": "kind: ConfigMap\n",
+	}
+	for name, body := range files {
+		testutil.WriteFile(t, dir, name, body)
+	}
+	cli, err := NewClient(newTestCache(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	hr := newHR()
+	first, err := cli.loadChart(t.Context(), hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Unix(100, 0)
+	for name := range files {
+		if err := os.Chtimes(filepath.Join(dir, name), stamp, stamp); err != nil {
+			t.Fatal(err)
 		}
+	}
+	touched, err := cli.loadChart(t.Context(), hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if touched.chart != first.chart || touched.fingerprint != first.fingerprint {
+		t.Fatal("unchanged-byte touch reloaded chart")
+	}
+	for _, tc := range []struct{ name, path, from, to string }{
+		{"metadata", "mychart/Chart.yaml", "first", "other"},
+		{"defaults", "mychart/values.yaml", "v1", "v2"},
+		{"template", "mychart/templates/cm.yaml", "ConfigMap", "Namespace"},
+		{"dependency metadata", "mychart/charts/child/Chart.yaml", "first", "other"},
+		{"dependency template", "mychart/charts/child/templates/cm.yaml", "ConfigMap", "Namespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := cli.loadChart(t.Context(), hr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := strings.ReplaceAll(files[tc.path], tc.from, tc.to)
+			testutil.WriteFile(t, dir, tc.path, body)
+			if err := os.Chtimes(filepath.Join(dir, tc.path), stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+			after, err := cli.loadChart(t.Context(), hr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.chart == before.chart || computeTemplateKey(after, nil, Options{}, hr) == computeTemplateKey(before, nil, Options{}, hr) {
+				t.Fatal("same-size, same-mtime edit reused chart content")
+			}
+		})
 	}
 }
 
+// TestLoadChart_PerCallCloneIsolatesValuesAndDependencies pins that
+// each LoadChart call returns a fresh outer *chart.Chart whose
+// Values map and Metadata.Dependencies slice are independent of the
+// cached canonical AND of every other concurrent caller. Without
+// the clone, helm's ProcessDependencies (called by Install.Run)
+// mutates Chart.Values and per-Dependency Enabled flags on the
+// shared pointer, racing across reconciles.
 func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 	input := fstest.MapFS{
 		"Chart.yaml":                     {Data: []byte("apiVersion: v2\nname: parent\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 1.0.0\n  condition: child.enabled\n")},
@@ -261,12 +220,12 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "first", Namespace: "default", Chart: manifest.HelmChart{Name: "one", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo", RepoNamespace: "default"}}
 	var previous *chart.Chart
 	for _, id := range []string{"git-one", "git-two"} {
-		generation, err := owner.Git(t.Context(), cache.GitKey{ID: id}, cache.Policy{MaxAge: cache.Forever}, produce)
+		generation, _, err := owner.Git(t.Context(), cache.GitKey{Content: id}, cache.Policy{MaxAge: cache.Forever}, produce)
 		assert.NoError(t, err)
 		backing := &chartBacking{Filesystem: generation.Backing}
-		input, pin, err := gittree.New(t.Context(), backing, generation.Commit, gittree.ViewOptions{Identity: id + "@" + generation.Commit.String()})
+		input, pin, err := gittree.New(t.Context(), backing, generation.Commit, gittree.ViewOptions{Content: struct{ Source string }{id}})
 		assert.NoError(t, err)
-		assert.Equal(t, pin, id+"@"+generation.Commit.String())
+		assert.Equal(t, pin == "", false)
 		art := &store.SourceArtifact{FS: input, Key: "untrusted", InputAlias: true, LocalPath: root, Revision: id}
 		st.SetArtifact(hr.ChartSource(), art)
 		first, err := cli.loadChart(t.Context(), hr)

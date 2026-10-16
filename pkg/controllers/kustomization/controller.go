@@ -185,10 +185,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// post-Prepare inputs are byte-identical to the cached artifact. The
 	// shared helper publishes nothing (publish=false) — see its doc for the
 	// churn/quiescence rationale (#657–#660). fp is reused for SetArtifact below.
-	fp := kustomizationFingerprint(ks, fingerprintSource(source))
-	if handled, err := c.FingerprintDedup(id, fp, func(docs []map[string]any) {
+	sourceContent := struct{ Path, Key, Revision, Digest string }{source.LocalPath, source.Key, source.Revision, source.Digest}
+	fp, handled, err := c.FingerprintDedup(id, ks.Content(sourceContent), func(docs []map[string]any) {
 		c.Emit(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace}, false)
-	}); handled {
+	})
+	if handled {
 		return err
 	}
 

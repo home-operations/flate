@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -58,6 +59,64 @@ func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) p
 }
 
 func TestNew_EntryPolicy(t *testing.T) {
+	t.Run("identity", func(t *testing.T) {
+		repo := mustInit(t, t.TempDir())
+		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
+		backing := repo.Storer.(*filesystem.Storage).Filesystem()
+		current := fstest.MapFS{"file": {Data: []byte("dirty")}}
+		opts := ViewOptions{Content: struct{ Root string }{"root"}, Mode: Direct, Current: current, Changes: []string{"file"}}
+		input, identity, err := New(t.Context(), backing, commit, opts)
+		assert.NoError(t, err)
+		if identity == "" {
+			t.Fatal("committed baseline with current routing has no identity")
+		}
+		data, err := fs.ReadFile(input, "file")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "malicious")
+		for _, tc := range []struct {
+			name   string
+			change func(*ViewOptions)
+			equal  bool
+		}{
+			{"empty_sparse", func(o *ViewOptions) { o.Sparse = []string{} }, true},
+			{"routing", func(o *ViewOptions) {
+				o.Current = fstest.MapFS{"file": {Data: []byte("other")}}
+				o.Changes = []string{"file", "absent"}
+			}, true},
+			{"coordinates", func(o *ViewOptions) { o.Content = struct{ Root string }{"other"} }, false},
+			{"mode", func(o *ViewOptions) { o.Mode = Source }, false},
+			{"sparse", func(o *ViewOptions) { o.Sparse = []string{"file"} }, false},
+			{"ignore", func(o *ViewOptions) { o.Ignore = "absent\n" }, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				changed := opts
+				tc.change(&changed)
+				_, got, err := New(t.Context(), backing, commit, changed)
+				assert.NoError(t, err)
+				if got == "" || (got == identity) != tc.equal {
+					t.Fatalf("identity = %q, base = %q; equal=%t", got, identity, tc.equal)
+				}
+			})
+		}
+		other := craftedCommit(t, repo, object.TreeEntry{Name: "other", Mode: filemode.Regular})
+		_, changed, err := New(t.Context(), backing, other, opts)
+		assert.NoError(t, err)
+		if changed == identity {
+			t.Fatal("commit change reused an admission identity")
+		}
+		for _, mode := range []ViewMode{Direct, Source} {
+			mutable, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: current})
+			assert.NoError(t, err)
+			if key != "" {
+				t.Fatalf("mutable mode %d has identity %q", mode, key)
+			}
+			_, key, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: mutable})
+			assert.NoError(t, err)
+			if key != "" {
+				t.Fatalf("refreshed mutable mode %d has identity %q", mode, key)
+			}
+		}
+	})
 	for _, tc := range []struct {
 		name    string
 		mode    filemode.FileMode
@@ -68,15 +127,18 @@ func TestNew_EntryPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := mustInit(t, t.TempDir())
 			commit := craftedCommit(t, repo, object.TreeEntry{Name: tc.name, Mode: tc.mode})
-			input, _, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{})
+			input, identity, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{})
 			if tc.invalid {
-				if err == nil {
-					t.Fatal("malformed entry accepted")
+				if err == nil || identity != "" {
+					t.Fatal("malformed entry accepted or assigned an identity")
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if identity == "" {
+				t.Fatal("committed view has no identity")
 			}
 			entries, err := fs.ReadDir(input, ".")
 			if err != nil || len(entries) != 0 {
@@ -144,15 +206,16 @@ func TestNew_EntryPolicy(t *testing.T) {
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		identity := "source-git-acquired@" + commit.String()
-		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct, Identity: identity})
+		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct, Content: identity})
 		assert.NoError(t, err)
-		assert.Equal(t, pin, identity)
+		assert.Equal(t, pin == "", false)
+		originalPin := pin
 		held, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: input})
 		assert.NoError(t, err)
-		assert.Equal(t, pin, identity)
+		assert.Equal(t, pin, originalPin)
 		assert.Equal(t, held == input, true)
 		_, pin, err = New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct})
 		assert.NoError(t, err)
-		assert.Equal(t, pin, "")
+		assert.Equal(t, pin == "", false)
 	})
 }

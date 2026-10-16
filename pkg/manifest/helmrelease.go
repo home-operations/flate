@@ -374,3 +374,34 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 }
 
 func (h *HelmRelease) kind() KindInfo { return kindTable[kindHelmRelease].KindInfo }
+
+// Content returns effective render inputs; emission metadata does not affect replay.
+func (h *HelmRelease) Content(source any, omitted []NamedResource) any {
+	return struct {
+		Omitted                  []NamedResource
+		Source                   any
+		ReleaseName              string
+		ReleaseNamespace         string
+		Chart                    HelmChart
+		Values                   map[string]any
+		Spec                     helmv2.HelmReleaseSpec
+		ChartValuesFiles         []string
+		IgnoreMissingValuesFiles bool
+		CRDsPolicy               string
+		DisableSchemaValidation  bool
+		DisableOpenAPIValidation bool
+	}{
+		Omitted:                  omitted,
+		Source:                   source,
+		ReleaseName:              h.ReleaseName(),
+		ReleaseNamespace:         h.ReleaseNamespace(),
+		Chart:                    h.Chart,
+		Values:                   h.Values,
+		Spec:                     h.HelmReleaseSpec,
+		ChartValuesFiles:         h.ChartValuesFiles,
+		IgnoreMissingValuesFiles: h.IgnoreMissingValuesFiles,
+		CRDsPolicy:               h.CRDsPolicy,
+		DisableSchemaValidation:  h.DisableSchemaValidation,
+		DisableOpenAPIValidation: h.DisableOpenAPIValidation,
+	}
+}

@@ -6,6 +6,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -32,7 +33,7 @@ func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	}
 	stamped.Annotations = map[string]string{"reconcile.fluxcd.io/requestedAt": "now"}
 
-	if got, want := kustomizationFingerprint(stamped, "/repo"), kustomizationFingerprint(base, "/repo"); got != want {
+	if got, want := replayKey(stamped.Content("/repo")), replayKey(base.Content("/repo")); got != want {
 		t.Errorf("fingerprint changed under label/annotation stamping; got %q want %q", got, want)
 	}
 }
@@ -50,7 +51,7 @@ func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
 	patched := base.Clone()
 	patched.TargetNamespace = "production"
 
-	if got := kustomizationFingerprint(base, "/repo"); got == kustomizationFingerprint(patched, "/repo") {
+	if got := replayKey(base.Content("/repo")); got == replayKey(patched.Content("/repo")) {
 		t.Errorf("fingerprint should differ when spec.targetNamespace mutates; both = %q", got)
 	}
 }
@@ -65,7 +66,7 @@ func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
 		Name: "apps", Namespace: "flux-system",
 		Path: "./apps",
 	}
-	if a, b := kustomizationFingerprint(ks, "/repo-a"), kustomizationFingerprint(ks, "/repo-b"); a == b {
+	if a, b := replayKey(ks.Content("/repo-a")), replayKey(ks.Content("/repo-b")); a == b {
 		t.Errorf("fingerprint must differ across distinct sourceRoots; both = %q", a)
 	}
 }
@@ -81,7 +82,7 @@ func TestKustomizationFingerprint_PreparedOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kustomizationFingerprint(first, "/repo") == kustomizationFingerprint(second, "/repo") {
+	if replayKey(first.Content("/repo")) == replayKey(second.Content("/repo")) {
 		t.Fatal("effective overlay missing from dedup fingerprint")
 	}
 	if len(ks.PostBuildSubstitute) != 0 {
@@ -114,7 +115,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				if prepared.PostBuildSubstitute["VALUE"] != value {
 					t.Fatal("supplied value missing from prepared manifest")
 				}
-				fingerprints = append(fingerprints, kustomizationFingerprint(prepared, "/repo"))
+				fingerprints = append(fingerprints, replayKey(prepared.Content("/repo")))
 			}
 			if fingerprints[0] == "" || fingerprints[0] == fingerprints[1] || fingerprints[0] != fingerprints[2] {
 				t.Fatalf("supplied values missing from stable fingerprint: %v", fingerprints)
@@ -136,7 +137,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := kustomizationFingerprint(ordinary, "/repo")
+	want := replayKey(ordinary.Content("/repo"))
 	for _, tc := range []struct {
 		name string
 		opts Options
@@ -151,7 +152,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := kustomizationFingerprint(prepared, "/repo"); got != want || got == "" {
+			if got := replayKey(prepared.Content("/repo")); got != want || got == "" {
 				t.Fatalf("no-option fingerprint=%q, ordinary=%q", got, want)
 			}
 		})
@@ -162,11 +163,13 @@ func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
 	ks := &manifest.Kustomization{Path: "app"}
 	first := &store.SourceArtifact{LocalPath: "/label", Key: "one"}
 	second := &store.SourceArtifact{LocalPath: "/label", Key: "two"}
-	if kustomizationFingerprint(ks, fingerprintSource(first)) == kustomizationFingerprint(ks, fingerprintSource(second)) {
+	if replayKey(ks.Content(struct{ Path, Key, Revision, Digest string }{first.LocalPath, first.Key, first.Revision, first.Digest})) == replayKey(ks.Content(struct{ Path, Key, Revision, Digest string }{second.LocalPath, second.Key, second.Revision, second.Digest})) {
 		t.Fatal("changed artifact key did not change the render fingerprint")
 	}
-	first.Key = ""
-	if got := fingerprintSource(first); got != first.LocalPath {
-		t.Fatalf("disk fingerprint source = %q, want %q", got, first.LocalPath)
-	}
+}
+
+func replayKey(content any) string {
+	c := base.New(store.New(), nil, "test")
+	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content, func([]map[string]any) {})
+	return fp
 }

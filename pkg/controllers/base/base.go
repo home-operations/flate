@@ -265,32 +265,27 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 	c.Store.UpdateStatus(id, store.StatusPending, msg)
 }
 
-// FingerprintDedup short-circuits a reconcile when id's cached rendered
-// artifact carries a non-empty fingerprint equal to fp — the effective inputs
-// are byte-identical, so the expensive render (kustomize/helm) is skipped. It
-// still replays the cached docs through emit so the idempotent per-emission
-// side-effects (keep-set extension + parent provenance) fire on every reconcile
-// pass; emit is the controller's Emit(id, docs, wipeSecrets, publish=false)
-// replay closure. The replay deliberately does NOT re-publish the children: they were
-// already published byte-identically by the render that set this artifact, so
-// re-AddObject-ing them would only re-fire listeners and re-submit already-
-// settled resources — churn that can transiently un-Ready a parent and race
-// quiescence (the "not ready" non-determinism, see #657–#660).
-//
-// Returns (handled=true, err): the caller returns err. err is non-nil only when
-// a preflight error was discovered mid-flight. Returns (false, nil) to render
-// normally. Centralizes the byte-identical KS/HR dedup short-circuit.
-func (c *Controller) FingerprintDedup(id manifest.NamedResource, fp string, emit func(docs []map[string]any)) (bool, error) {
+// FingerprintDedup derives the replay key from content and returns it for artifact
+// publication. Nil or unmarshalable content MUST bypass replay. Matching artifacts
+// replay through emit without publishing children; preflight failures still win.
+func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any, emit func([]map[string]any)) (string, bool, error) {
+	if content == nil {
+		return "", false, nil
+	}
+	fp := manifest.Fingerprint(content)
+	if fp == "" {
+		return "", false, nil
+	}
 	existing, ok := c.Store.GetArtifact(id).(store.RenderedArtifact)
-	if !ok || existing.RenderedFingerprint() == "" || existing.RenderedFingerprint() != fp {
-		return false, nil
+	if !ok || existing.RenderedFingerprint() != fp {
+		return fp, false, nil
 	}
 	if err := c.PreflightError(id); err != nil {
-		return true, err
+		return fp, true, err
 	}
 	c.log.Debug("skipped re-render (fingerprint unchanged)", "id", id.String())
 	emit(existing.RenderedManifests())
-	return true, nil
+	return fp, true, nil
 }
 
 // IsFileIndexed reports whether id is tracked by the file-existence

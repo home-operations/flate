@@ -44,10 +44,10 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 			request.MaxAge = sourcecache.Forever
 		}
 	}
-	h := manifest.Fingerprint([3]string{request.URL, request.Ref, "remote-base-v1"})
-	key := sourcecache.GitKey{ID: "git-base-" + h, Ref: cmp.Or(request.Ref, "HEAD")}
+	content := struct{ URL, Ref string }{request.URL, request.Ref}
+	key := sourcecache.GitKey{Content: content, Ref: cmp.Or(request.Ref, "HEAD")}
 	var input *gittree.FS
-	generation, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+	generation, id, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		// Opaque base refs require upstream rev-parse over all advertised heads and tags.
 		acquisition := *repo
@@ -68,16 +68,16 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		input, _, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Commit: hash}, gittree.ViewOptions{Mode: gittree.RemoteBase}, nil)
+		input, _, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Commit: hash}, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase}, nil)
 		return hash, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	input, _, err = generationView(ctx, generation, gittree.ViewOptions{Mode: gittree.RemoteBase}, input)
+	input, _, err = generationView(ctx, generation, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase}, input)
 	if err != nil {
 		return nil, fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: key.ID + "@" + generation.Commit.String(), FS: input}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: id, FS: input}, nil
 }

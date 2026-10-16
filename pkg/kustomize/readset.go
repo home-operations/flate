@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -43,7 +42,7 @@ func diskKind(exists, isDir bool) nodeKind {
 func hashEntries(entries []string) string {
 	sorted := slices.Clone(entries)
 	slices.Sort(sorted)
-	return manifest.SHA256Hex([]byte(strings.Join(sorted, "\x00")))
+	return manifest.Fingerprint(sorted)
 }
 
 // readSet accumulates a build's disk reads. Safe for the concurrent access a

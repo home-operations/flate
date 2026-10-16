@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 
+	fluxignore "github.com/fluxcd/pkg/sourceignore"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -35,44 +36,83 @@ func NewLocalFS(ctx context.Context, root string) (fs.FS, error) {
 		return nil, fmt.Errorf("%w: local source root: %w", manifest.ErrInput, err)
 	}
 	l := &localFS{root: resolved}
-	l.ignored = sync.OnceValues(func() (*sourceignore.Matcher, error) {
-		return sourceignore.New(resolved, nil, true)
+	l.ignored = sync.OnceValues(func() (localIgnore, error) {
+		matcher, err := sourceignore.New(resolved, nil, true)
+		if err != nil {
+			return localIgnore{}, err
+		}
+		var content []struct {
+			Path string
+			Data []byte
+		}
+		err = filepath.WalkDir(resolved, func(name string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if name != resolved && d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.Name() != fluxignore.IgnoreFile {
+				return nil
+			}
+			rel, err := filepath.Rel(resolved, name)
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(name) //nolint:gosec // name is an ignore file found within the admitted root
+			if err != nil {
+				return err
+			}
+			content = append(content, struct {
+				Path string
+				Data []byte
+			}{filepath.ToSlash(rel), data})
+			return nil
+		})
+		if err != nil {
+			return localIgnore{}, fmt.Errorf("sourceignore fingerprint: %w", err)
+		}
+		return localIgnore{matcher: matcher, content: content}, nil
 	})
 	return l, nil
 }
 
-// ReadView refreshes mutable observations for one consumer operation.
-// Its string is the returned view's acquisition identity, empty for mutable input.
-// Local ignore policy belongs to the admission and refreshes on re-admission.
-func ReadView(ctx context.Context, input fs.FS, applyIgnore bool) (fs.FS, string, error) {
+// ReadView creates private observations for one local consumer operation.
+// The content is an ordered local ignore snapshot, or the immutable acquisition
+// identity of a cache-owned view. Re-admission refreshes local ignore policy.
+func ReadView(ctx context.Context, input fs.FS, applyIgnore bool) (fs.FS, any, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	l, ok := input.(*localFS)
 	if !ok {
 		if git, ok := input.(*gittree.FS); ok {
-			return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: git})
+			refreshed, pin, err := gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: git})
+			return refreshed, pin, err
 		}
 		return input, cache.AcquisitionIdentity(input), nil
 	}
 	v := &localReadView{root: l.root, dirs: make(map[string]localDirectory)}
 	if !applyIgnore {
-		return v, "", nil
+		return v, nil, nil
 	}
 	policy, err := l.ignored()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
-	v.matcher, v.hiddenDirs = policy, make(map[string]bool)
-	return v, "", nil
+	v.matcher, v.hiddenDirs = policy.matcher, make(map[string]bool)
+	return v, policy.content, nil
 }
 
 type localFS struct {
 	root    string
-	ignored func() (*sourceignore.Matcher, error)
+	ignored func() (localIgnore, error)
 }
 
 // Descriptor calls have ephemeral observations so the descriptor is shareable.
@@ -84,6 +124,11 @@ func (l *localFS) Open(name string) (fs.File, error) {
 func (l *localFS) Stat(name string) (fs.FileInfo, error) {
 	v := &localReadView{root: l.root}
 	return v.Stat(name)
+}
+
+type localIgnore struct {
+	matcher *sourceignore.Matcher
+	content any
 }
 
 type localReadView struct {

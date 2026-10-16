@@ -214,3 +214,20 @@ func (k *Kustomization) references(yield func(Reference) bool) {
 }
 
 func (k *Kustomization) kind() KindInfo { return kindTable[kindKustomization].KindInfo }
+
+// Content returns prepared render inputs without emission labels or annotations.
+func (k *Kustomization) Content(source any) any {
+	return struct {
+		Path                string
+		Source              any
+		Contents            map[string]any
+		PostBuildSubstitute map[string]any
+		Spec                kustomizev1.KustomizationSpec
+	}{
+		Path:                k.Path,
+		Source:              source,
+		Contents:            k.Contents,
+		PostBuildSubstitute: k.PostBuildSubstitute,
+		Spec:                k.KustomizationSpec,
+	}
+}

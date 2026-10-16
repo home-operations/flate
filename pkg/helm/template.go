@@ -50,6 +50,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if !opts.DisableChartDigestTracking {
 			trackedVersion = version
 		}
+		loaded.oci = &ociChartContent{Digest: art.Digest, Revision: art.Revision, DisableTracking: opts.DisableChartDigestTracking}
 	}
 	caps, err := opts.capabilities()
 	if err != nil {
@@ -72,14 +73,10 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		finalValues = loader.MergeMaps(base, hrValues)
 	}
 
-	rendered := loaded
-	if hr.UsesDirectOCIRepository() {
-		rendered.fingerprint = ociChartFingerprint(loaded.fingerprint, &loaded.artifact, opts.DisableChartDigestTracking)
-	}
-	key := computeTemplateKey(rendered, finalValues, opts, hr)
-	blobKey := cache.BlobKey{ID: key, PersistOnly: true}
+	key := computeTemplateKey(loaded, finalValues, opts, hr)
+	blobKey := cache.BlobKey{Content: key, PersistOnly: true}
 	if key != "" {
-		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, nil)
+		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, nil)
 		if err == nil {
 			data, readErr := io.ReadAll(reader)
 			if err := errors.Join(readErr, reader.Close()); err != nil {
@@ -153,7 +150,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
 	if key != "" {
-		reader, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 			_, err := io.WriteString(w, out)
 			return ocispec.Descriptor{}, err
 		})
@@ -251,10 +248,10 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 // maps MUST be cloned because downstream values layering mutates them. The
 // missing-file policy separates requests that skip files from those that fail.
 func (c *Client) mergeChartValuesFiles(loaded chartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
-	if loaded.fingerprint == "" {
+	key := chartValuesCacheKey(loaded, names, ignoreMissing)
+	if key == "" {
 		return mergeChartValuesFilesUncached(loaded.chart, names, ignoreMissing)
 	}
-	key := chartValuesCacheKey(loaded.fingerprint, names, ignoreMissing)
 	c.chartMu.RLock()
 	cached, ok := c.chartValuesCache[key]
 	c.chartMu.RUnlock()
@@ -278,20 +275,16 @@ func (c *Client) mergeChartValuesFiles(loaded chartLoadResult, names []string, i
 }
 
 // chartValuesCacheKey separates ordered filenames and the missing-file policy.
-func chartValuesCacheKey(fingerprint string, names []string, ignoreMissing bool) string {
-	var buf [512]byte
-	data := append(buf[:0], fingerprint...)
-	data = append(data, 0)
-	for _, n := range names {
-		data = append(data, n...)
-		data = append(data, 0)
+func chartValuesCacheKey(loaded chartLoadResult, names []string, ignoreMissing bool) string {
+	if loaded.fingerprint == "" {
+		return ""
 	}
-	if ignoreMissing {
-		data = append(data, 1)
-	} else {
-		data = append(data, 0)
-	}
-	return manifest.SHA256Hex(data)
+	return manifest.Fingerprint(struct {
+		Chart         string
+		OCI           *ociChartContent
+		Names         []string
+		IgnoreMissing bool
+	}{loaded.fingerprint, loaded.oci, names, ignoreMissing})
 }
 
 // mergeChartValuesFilesUncached merges the named values files (relative

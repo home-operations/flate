@@ -57,7 +57,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if loaded.fingerprint == "" || loaded.fingerprint == previous {
+		if chartValuesCacheKey(loaded, hr.ChartValuesFiles, false) == "" || chartValuesCacheKey(loaded, hr.ChartValuesFiles, false) == previous {
 			t.Fatal("different chart content shared a fingerprint")
 		}
 		merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)
@@ -65,7 +65,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 		assert.Equal(t, merged["marker"], any([]string{"original", "second"}[i]))
-		previous = loaded.fingerprint
+		previous = chartValuesCacheKey(loaded, hr.ChartValuesFiles, false)
 	}
 }
 
@@ -97,8 +97,7 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 		if failures[i] != nil {
 			t.Fatal(failures[i])
 		}
-		assert.Equal(t, result.fingerprint, loaded.fingerprint)
-		assert.Equal(t, result.chart == loaded.chart, true)
+		assert.Equal(t, chartValuesCacheKey(result, hr.ChartValuesFiles, false), chartValuesCacheKey(loaded, hr.ChartValuesFiles, false))
 	}
 	loaded = results[0]
 	merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)

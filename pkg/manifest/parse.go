@@ -8,7 +8,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 // decodeInto re-marshals a parsed YAML document into a typed Flux CR
@@ -171,7 +170,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 		obj, err = parseRawObject(doc)
 	}
 	if err == nil && obj != nil && opts.DefaultNamespace != "" && obj.Named().Namespace == "" {
-		if isNamespaceScoped(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind}) {
+		if (KindInfo{Kind: kind, apiVersion: apiVersion}).Namespaced() {
 			obj = obj.WithNamespace(opts.DefaultNamespace)
 			if !changed {
 				doc = maps.Clone(doc)

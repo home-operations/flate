@@ -70,13 +70,6 @@ func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, r
 	return a.inner.Fetch(ctx, typed, retry)
 }
 
-// Suspendable is satisfied by source CR types that carry a
-// spec.suspend bool. The source controller short-circuits suspended
-// objects before invoking the Fetcher.
-type Suspendable interface {
-	Suspended() bool
-}
-
 // ExistenceFetcher is the no-op Fetcher registered for kinds whose
 // existence alone is enough to satisfy downstream waits — used today
 // for HelmRepository (a registry/index base whose per-chart pull is a

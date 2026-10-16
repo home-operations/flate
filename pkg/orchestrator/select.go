@@ -152,7 +152,10 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 		return ""
 	}
 	src := hr.ChartSource()
-	return manifest.ChartVersion(s.run.store.GetObject(src))
+	if chart, ok := s.run.store.GetObject(src).(interface{ ChartVersion() string }); ok {
+		return chart.ChartVersion()
+	}
+	return ""
 }
 
 func (s *selectionSide) collectWarnings(name string, kinds map[manifest.NamedResource]bool, comparison bool) {
@@ -176,7 +179,7 @@ func selectionCandidates(sides []selectionSide) []manifest.NamedResource {
 	for _, side := range sides {
 		for _, obj := range side.result.Objects {
 			id := obj.Named()
-			if manifest.KindOf(obj).Includes("render") {
+			if manifest.KindOf(obj).Render {
 				producers[id] = struct{}{}
 			}
 		}

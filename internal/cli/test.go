@@ -20,7 +20,7 @@ import (
 func newTestCmd() *cobra.Command {
 	var kinds []string
 	for info := range manifest.Kinds() {
-		if info.Includes("test") {
+		if info.Test {
 			kinds = append(kinds, info.Kind)
 		}
 	}

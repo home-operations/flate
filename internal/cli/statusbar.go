@@ -43,11 +43,7 @@ type barModel struct {
 	// re-write doesn't double-count and a genuine flip recounts.
 	printed map[manifest.NamedResource]store.Status
 	done    int // declared resources that reached a terminal status
-	// total counts every declared id seen so far — a live lower bound that grows
-	// as discovery and renders surface more resources. Synthetic/internal ids
-	// (the bootstrap source, synthesized HelmCharts) are excluded via barExcluded
-	// so the denominator matches flate's own report rather than overshooting it.
-	total int
+	total   int
 }
 
 // statusMsg carries one store status event into the bar's Update loop.
@@ -96,14 +92,8 @@ func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// track applies one status event: the declared-only counting + in-flight set
-// behind the [done/total] gauge. A first sighting grows total (and joins the
-// in-flight set while Pending); any terminal status (Ready / Failed / a
-// skipped-or-suspended Ready) counts toward done once and drops the id from
-// in-flight. barExcluded drops synthetic/internal ids so the gauge mirrors the
-// output.
 func (m *barModel) track(id manifest.NamedResource, info store.StatusInfo) {
-	if barExcluded(id) {
+	if id.ReportHidden() {
 		return
 	}
 	if _, seen := m.first[id]; !seen {
@@ -138,19 +128,6 @@ func (m barModel) View() tea.View {
 	}
 	line += "  " + output.Dim(output.Elapsed(time.Since(m.startedAt)), m.color)
 	return tea.NewView(output.Truncate(line, m.width))
-}
-
-// barExcluded reports ids the bar must neither count nor name: the synthetic
-// bootstrap GitRepository and any HelmChart (always internally synthesized for a
-// HelmRepository-backed HelmRelease — see helmrelease.materializeHelmChartSource).
-// Neither is a resource the user declared, and neither appears in flate's own
-// report: `flate test` skips the bootstrap id and its kind set omits HelmChart.
-// Counting them made the bar's [done/total] overshoot every report (e.g. 175 vs
-// 174 when only the bootstrap leaks; +1 per HelmRepository-backed HelmRelease on
-// top). Excluding the same two id-classes aligns the bar's population exactly
-// with `flate test all`'s "collected N".
-func barExcluded(id manifest.NamedResource) bool {
-	return id == manifest.BootstrapSourceID || id.KindInfo().Includes("report-hidden")
 }
 
 // inflightLabels returns the in-flight resource names ordered by first-seen

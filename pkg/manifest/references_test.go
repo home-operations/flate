@@ -54,6 +54,9 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		{APIVersion: "foreign.example/v2", Kind: KindKustomization, Name: "ready"},
 		{APIVersion: FluxKustomizeDomain + "/v2", Kind: KindKustomization, Name: "ready"},
 	}
+	for _, dep := range r.DependsOn {
+		KindOf(&RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+	}
 	r.InputsFrom = []fluxopv1.InputProviderReference{
 		{Kind: "Unsupported", Name: "inputs"}, {Selector: &metav1.LabelSelector{}},
 		{Name: "inputs"}, {APIVersion: "v1", Name: "inputs"},
@@ -206,7 +209,7 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 func TestReferences_NoAllocations(t *testing.T) {
 	var kinds []string
 	for info := range Kinds() {
-		if info.Includes("test") {
+		if info.Test {
 			kinds = append(kinds, info.Kind)
 		}
 	}
@@ -216,7 +219,7 @@ func TestReferences_NoAllocations(t *testing.T) {
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		assert.Equal(t, unsafe.Sizeof(DependencyRef{}), uintptr(80))
 		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(112))
-		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(40))
+		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
 	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{ValuesFrom: []ValuesReference{{Name: "values"}}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {

@@ -74,7 +74,7 @@ func (l *Loader) buildRenderers(repoRoot string, producers *manifest.ProducerInd
 		l.Store.AddObject(b.secrets[id])
 	}
 	for id, r := range l.Index.Files() {
-		if id.KindInfo().Includes("structural") && r.Parent == (manifest.NamedResource{}) {
+		if id.KindInfo().Structural && r.Parent == (manifest.NamedResource{}) {
 			if parents := b.emittedFiles[r.File]; len(parents) == 1 && parents[0] != id {
 				r.Parent = parents[0]
 				l.Index.Records[id] = r
@@ -282,12 +282,12 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 	record := func(obj manifest.BaseManifest) {
 		info := manifest.KindOf(obj)
 		switch {
-		case info.Includes("data"):
+		case info.Data:
 			b.recordDataObject(obj, v.namespace, v.fallback, v.owner)
 			if s, ok := obj.(*manifest.Secret); ok {
 				b.materializeSecret(s, v.namespace, v.fallback)
 			}
-		case info.Includes("structural"):
+		case info.Structural:
 			b.emittedFiles[coordinate] = appendUniqueProducer(b.emittedFiles[coordinate], v.owner)
 		default:
 			raw, ok := obj.(*manifest.RawObject)

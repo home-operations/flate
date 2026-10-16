@@ -680,7 +680,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if !l.acceptObject(id) {
 			continue
 		}
-		if !info.Includes("discovery") {
+		if !info.Discovery {
 			// Under render-driven discovery, HRs / ConfigMaps /
 			// Secrets / raw manifests stay out of the Store at file-
 			// load time. They reach the Store via KS render
@@ -714,7 +714,7 @@ func (l *Loader) recordDataFile(absPath string) error {
 	}
 	for _, obj := range objs {
 		id := obj.Named()
-		if !manifest.KindOf(obj).Includes("data") {
+		if !manifest.KindOf(obj).Data {
 			// Non-data kinds (most commonly templated Flux CRs in a
 			// Component subtree) intentionally stay invisible — the
 			// producer-index use case is data-only.

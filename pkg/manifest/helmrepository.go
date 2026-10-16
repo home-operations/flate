@@ -21,6 +21,9 @@ func (h *HelmRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindHelmRepository].Group, Kind: KindHelmRepository, Namespace: h.Namespace, Name: h.Name}
 }
 
+// Suspended reports whether reconciliation is paused on this resource.
+func (h *HelmRepository) Suspended() bool { return h.Suspend }
+
 // Content returns the repository inputs that define HTTP acquisitions.
 func (h *HelmRepository) Content() any {
 	var auth []NamedResource

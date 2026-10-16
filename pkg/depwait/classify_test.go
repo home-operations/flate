@@ -1,6 +1,7 @@
 package depwait
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -76,18 +77,24 @@ func TestClassify_CoreStates(t *testing.T) {
 			}
 		})
 	}
-	w.AllowMissingCRDs = true
-	for _, group := range []string{"apiextensions.k8s.io", "example.test", ""} {
-		t.Run("CRD/group="+group, func(t *testing.T) {
-			dep := manifest.DependencyRef{Group: group, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.test"}
-			want := ClassFailed
-			if group == "apiextensions.k8s.io" {
-				want = ClassReady
-			}
-			if got := w.Classify(dep, manifest.DrainCascade); got.Kind != want {
-				t.Fatalf("missing CRD: %+v, want %v", got, want)
-			}
-		})
+	for _, allow := range []bool{false, true} {
+		w.AllowMissingCRDs = allow
+		for _, group := range []string{"apiextensions.k8s.io", "example.test", ""} {
+			t.Run(fmt.Sprintf("CRD/group=%s/allow=%t", group, allow), func(t *testing.T) {
+				dep := manifest.DependencyRef{Group: group, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.test"}
+				for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
+					want := Classification{Kind: ClassFailed, Message: "dependency not found"}
+					if level == manifest.DrainNone {
+						want = Classification{Kind: ClassBlocked}
+					} else if allow && group == "apiextensions.k8s.io" {
+						want = Classification{Kind: ClassReady}
+					}
+					if got := w.Classify(dep, level); got != want {
+						t.Fatalf("missing CRD at %v: %+v, want %+v", level, got, want)
+					}
+				}
+			})
+		}
 	}
 }
 

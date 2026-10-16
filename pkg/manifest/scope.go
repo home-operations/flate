@@ -1,27 +1,26 @@
 package manifest
 
-import (
-	"sync"
+import "sigs.k8s.io/kustomize/kyaml/yaml"
 
-	"sigs.k8s.io/kustomize/kyaml/openapi"
-	"sigs.k8s.io/kustomize/kyaml/yaml"
+type scopeResolver interface {
+	ResolveScope(yaml.TypeMeta) bool
+	LookupScope(yaml.TypeMeta) (bool, bool)
+}
 
-	"github.com/home-operations/flate/internal/kustomize"
-)
+var scopes scopeResolver
 
-var namespaceScopes sync.Map
-
-func isNamespaceScoped(t yaml.TypeMeta) bool {
-	if value, ok := namespaceScopes.Load(t); ok {
-		return value.(bool)
+// RegisterScopeResolver installs the process scope owner once during initialization.
+// Standalone SDK users MUST register before parsing or querying scope. ResolveScope
+// prepares builtin answers; LookupScope reads only those prepared answers.
+func RegisterScopeResolver(resolver scopeResolver) {
+	if scopes != nil || resolver == nil {
+		panic("manifest: scope resolver must be registered once during initialization")
 	}
-	kustomize.BuildMutex.Lock()
-	defer kustomize.BuildMutex.Unlock()
-	if value, ok := namespaceScopes.Load(t); ok {
-		return value.(bool)
-	}
-	namespaced, found := openapi.IsNamespaceScoped(t)
-	namespaced = namespaced || !found
-	namespaceScopes.Store(t, namespaced)
-	return namespaced
+	scopes = resolver
+}
+
+// Namespaced resolves the authored GVK through the registered scope owner.
+// Unknown or versionless kinds use the upstream namespaced fallback.
+func (k KindInfo) Namespaced() bool {
+	return k.Kind != "" && scopes.ResolveScope(yaml.TypeMeta{APIVersion: k.apiVersion, Kind: k.Kind})
 }

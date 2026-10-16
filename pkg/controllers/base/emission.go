@@ -18,7 +18,7 @@ type Child struct {
 // raw children retain AddObject's deduplication and arrival behavior.
 // Returned documents are authoritative even when a typed child is invalid.
 func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions, publish bool) ([]Child, []map[string]any) {
-	sourceOnly := parent.KindInfo().Includes("source-only")
+	sourceOnly := parent.KindInfo().SourceOnly
 	log := c.Logger()
 	children := make([]Child, 0, len(docs))
 	var emitted []manifest.NamedResource
@@ -57,7 +57,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 		switch {
 		case !info.Tracked || sourceOnly && info.Group != manifest.SourceDomain:
 			c.Store.AddObject(obj)
-		case info.Includes("render"):
+		case info.Render:
 			continue
 		default:
 			c.KeepEmitted(parent, obj)
@@ -73,7 +73,7 @@ func (c *Controller) Emit(parent manifest.NamedResource, docs []map[string]any, 
 	for _, child := range children {
 		obj := child.Obj
 		info := manifest.KindOf(obj)
-		if !info.Includes("render") {
+		if !info.Render {
 			continue
 		}
 		id := obj.Named()

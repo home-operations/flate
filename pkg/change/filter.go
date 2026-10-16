@@ -480,7 +480,7 @@ func (f *Filter) resolve() {
 		// sources it emits (e.g. components/namespace producing one
 		// OCIRepository per tenant ns) never land in the store, and
 		// the leaf can't resolve its chart ref.
-		if !queue[head].KindInfo().Includes("structural") {
+		if !queue[head].KindInfo().Structural {
 			continue
 		}
 		src := record.File

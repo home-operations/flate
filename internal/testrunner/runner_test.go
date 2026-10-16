@@ -23,7 +23,6 @@ func TestRun_AllPass(t *testing.T) {
 	s.AddObject(raw)
 
 	rep := runSelected(t, o)
-	assert.Equal(t, Run(&orchestrator.Result{Objects: []manifest.BaseManifest{s.GetObject(raw.Named())}}).Matched, 0)
 	if rep.AnyFailed() || rep.Passed != 2 {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
@@ -80,11 +79,30 @@ func TestRun_SkippedReasonReportedAsSkipped(t *testing.T) {
 
 func TestRun_NoStatus(t *testing.T) {
 	o, s := newRunner(t)
-	s.AddObject(&manifest.Kustomization{Name: "x", Namespace: "ns"})
+	obj := &manifest.Kustomization{Name: "x", Namespace: "ns"}
+	s.AddObject(obj)
 	rep := runSelected(t, o)
-	if !rep.AnyFailed() {
-		t.Errorf("expected failure for no-status case")
+	if !rep.AnyFailed() || rep.Matched != 1 || rep.Failed != 1 || len(rep.Cases) != 1 {
+		t.Fatalf("expected one failure for no-status case: %+v", rep)
 	}
+	assert.Equal(t, rep.Cases[0].Reason, "no status reported")
+	_, exists := s.GetStatus(obj.Named())
+	assert.Equal(t, exists, false)
+	assert.Equal(t, len(s.FailedResources()), 0)
+	for _, obj := range []manifest.BaseManifest{
+		&manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace},
+		&manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindKustomization, Name: "foreign", Namespace: "apps"},
+	} {
+		t.Run(obj.Named().Kind, func(t *testing.T) {
+			o, s := newRunner(t)
+			s.AddObject(obj)
+			rep := runSelected(t, o, obj.Named())
+			if rep.Matched != 0 || rep.Failed != 0 || len(rep.Cases) != 0 {
+				t.Fatalf("object without prepared reporting status entered the report: %+v", rep)
+			}
+		})
+	}
+
 }
 
 func TestRun_SelectedNamespace(t *testing.T) {
@@ -238,6 +256,11 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 	_ = (output.Encoder{Writer: &b}).Test(rep, nil, nil, 0)
 	if out := b.String(); !strings.Contains(out, "broken-rs") || !strings.Contains(out, "nope") {
 		t.Errorf("roster must show the non-roster failure inline:\n%s", out)
+	}
+
+	explicit := runSelected(t, o, manifest.NamedResource{Group: chart.Group, Kind: chart.Kind, Name: chart.Name})
+	if explicit.Matched != 1 || len(explicit.Cases) != 2 || explicit.Cases[0].ID != chart || explicit.Cases[0].Reason != "synthetic chart failure" {
+		t.Fatalf("explicit chart must retain its selected row before the foreign diagnostic: %+v", explicit)
 	}
 }
 

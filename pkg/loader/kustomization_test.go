@@ -5,9 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -219,6 +221,87 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		r.mountSources(st)
 		if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("released pin read host content through its coordinate: %v", err)
+		}
+	})
+
+	t.Run("artifact membership and invalidation", func(t *testing.T) {
+		st := store.New()
+		reader := documentReader{cache: map[string]document{}}
+		root := t.TempDir()
+		git := &manifest.GitRepository{Name: "git"}
+		oci := &manifest.OCIRepository{Name: "oci"}
+		bucket := &manifest.Bucket{Name: "bucket"}
+		var mounted []string
+		for _, tc := range []struct {
+			obj   manifest.BaseManifest
+			mount bool
+		}{
+			{git, true},
+			{oci, true},
+			{bucket, true},
+			{&manifest.ExternalArtifact{Name: "external"}, true},
+			{&manifest.HelmRepository{Name: "repository"}, false},
+			{&manifest.HelmChartSource{Name: "chart"}, false},
+			{&manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Name: "foreign"}, false},
+		} {
+			id := tc.obj.Named()
+			path := filepath.Join(root, id.Name)
+			testutil.WriteFile(t, path, "Kustomization", "namespace: host\n")
+			st.AddObject(tc.obj)
+			st.SetArtifact(id, &store.SourceArtifact{LocalRoot: root, LocalPath: path, FS: fstest.MapFS{
+				"Kustomization": {Data: []byte("namespace: " + id.Name + "\n")},
+			}})
+			if tc.mount {
+				mounted = append(mounted, path)
+			}
+		}
+		alias := &manifest.GitRepository{Name: "alias"}
+		st.AddObject(alias)
+		st.SetArtifact(alias.Named(), st.GetArtifact(git.Named()))
+		absentPath := &manifest.GitRepository{Name: "absent-path"}
+		st.AddObject(absentPath)
+		st.SetArtifact(absentPath.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
+		wrongArtifact := &manifest.Bucket{Name: "wrong-artifact"}
+		st.AddObject(wrongArtifact)
+		st.SetArtifact(wrongArtifact.Named(), &store.ResourceSetArtifact{})
+		bootstrapPath := filepath.Join(root, "bootstrap")
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: bootstrapPath, FS: fstest.MapFS{
+			"Kustomization": {Data: []byte("namespace: bootstrap\n")},
+		}})
+		assert.Equal(t, st.GetObject(manifest.BootstrapSourceID) == nil, true)
+		mounted = append(mounted, bootstrapPath)
+		slices.Sort(mounted)
+		assert.Diff(t, reader.mountSources(st), mounted)
+		assert.Equal(t, len(reader.views), len(mounted))
+		for _, path := range mounted {
+			body, _ := reader.read(path)
+			if body == nil || body.Namespace != filepath.Base(path) {
+				t.Fatalf("mounted content = %v for %s", body, path)
+			}
+			if again, _ := reader.read(path); again != body {
+				t.Fatal("unchanged mounted document was re-parsed")
+			}
+		}
+		assert.Equal(t, len(reader.mountSources(st)), 0)
+		ociPath, bucketPath := filepath.Join(root, "oci"), filepath.Join(root, "bucket")
+		late := filepath.Join(ociPath, "late")
+		if body, _ := reader.read(late); body != nil {
+			t.Fatal("unexpected document before replacement")
+		}
+		st.SetArtifact(oci.Named(), &store.SourceArtifact{LocalPath: ociPath, FS: fstest.MapFS{
+			"Kustomization":      {Data: []byte("namespace: replaced\n")},
+			"late/Kustomization": {Data: []byte("namespace: late\n")},
+		}})
+		st.DeleteObject(bucket.Named())
+		assert.Diff(t, reader.mountSources(st), []string{bucketPath, ociPath})
+		if body, _ := reader.read(ociPath); body == nil || body.Namespace != "replaced" {
+			t.Fatalf("replacement retained stale document: %v", body)
+		}
+		if body, _ := reader.read(late); body == nil || body.Namespace != "late" {
+			t.Fatalf("replacement retained negative cache: %v", body)
+		}
+		if body, _ := reader.read(bucketPath); body != nil || reader.mountedRoot(bucketPath) != "" {
+			t.Fatal("removed source retained a mount or read the physical decoy")
 		}
 	})
 }

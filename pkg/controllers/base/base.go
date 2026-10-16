@@ -24,7 +24,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -207,7 +206,7 @@ func (c *Controller) Configure(opts Options) {
 func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest) {
 	if f := c.filter; f != nil {
 		for _, id := range f.AddEmitted(parent, child) {
-			if id.KindInfo().Includes("refire") {
+			if id.KindInfo().Refire {
 				c.Store.Refire(id)
 			}
 		}
@@ -366,7 +365,7 @@ func (c *Controller) Close() {
 
 // preGate marks suspended objects Ready; refresh MUST never apply changed-only filtering.
 func (c *Controller) preGate(obj manifest.BaseManifest) bool {
-	if s, ok := obj.(source.Suspendable); ok && s.Suspended() {
+	if obj.Suspended() {
 		c.Store.UpdateStatus(obj.Named(), store.StatusReady, store.MsgSuspended)
 		return true
 	}

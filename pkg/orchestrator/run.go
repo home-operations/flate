@@ -76,7 +76,7 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	// the ordering the controller goroutine could start waiting on a peer
 	// that's also waiting on it.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		if !id.KindInfo().Includes("render") {
+		if !id.KindInfo().Render {
 			return
 		}
 		o.updateDependencyGraphFor(id)
@@ -237,14 +237,14 @@ func (o *Orchestrator) collectManifests(failed map[manifest.NamedResource]store.
 			var docs []map[string]any
 			// Take the rendered artifact unless this is a FAILED HelmRelease
 			// (whose artifact may be a stale transient render — see above).
-			if _, failedResource := failed[id]; !manifest.KindOf(obj).Includes("transient-output") || !failedResource {
+			if _, failedResource := failed[id]; !manifest.KindOf(obj).TransientOutput || !failedResource {
 				if art, ok := o.store.GetArtifact(id).(store.RenderedArtifact); ok {
 					docs = art.RenderedManifests()
 				}
 			}
 			// ResourceSet children attach to their owning Kustomization (the RS
 			// doc itself stays in the parent's kustomize output).
-			if manifest.KindOf(obj).Includes("structural") {
+			if manifest.KindOf(obj).Structural {
 				docs = append(docs, o.rsExtensions[id]...)
 			}
 			if docs = manifest.DropKinds(docs, skip); len(docs) > 0 {

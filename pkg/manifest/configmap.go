@@ -20,6 +20,9 @@ func (c *ConfigMap) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindConfigMap].Group, Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
 }
 
+// Suspended reports whether reconciliation is paused on this resource.
+func (c *ConfigMap) Suspended() bool { return false }
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
 	out := *c
@@ -71,6 +74,9 @@ type Secret struct {
 func (s *Secret) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindSecret].Group, Kind: KindSecret, Namespace: s.Namespace, Name: s.Name}
 }
+
+// Suspended reports whether reconciliation is paused on this resource.
+func (s *Secret) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (s *Secret) WithNamespace(namespace string) BaseManifest {

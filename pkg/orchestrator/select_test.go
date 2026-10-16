@@ -425,6 +425,89 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	if _, exists := res.Statuses[chart]; exists || res.Counts[victim.Kind] != 1 {
 		t.Fatal("prerequisite entered diagnostic roster or roots count")
 	}
+
+	bootstrap := &manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace}
+	ordinary := &manifest.GitRepository{Name: "ordinary", Namespace: "flux-system"}
+	otherNamespace := &manifest.GitRepository{Name: bootstrap.Name, Namespace: "other"}
+	foreignChart := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: chart.Kind, Namespace: chart.Namespace, Name: chart.Name}
+	statusless := &manifest.Kustomization{Name: "statusless", Namespace: victim.Namespace}
+	for _, obj := range []manifest.BaseManifest{bootstrap, ordinary, otherNamespace, foreignChart, statusless} {
+		run.store.AddObject(obj)
+	}
+	run.store.UpdateStatus(bootstrap.Named(), store.StatusFailed, "bootstrap failed")
+	run.store.UpdateStatus(ordinary.Named(), store.StatusReady, "")
+	run.store.UpdateStatus(otherNamespace.Named(), store.StatusReady, "")
+	run.store.UpdateStatus(foreignChart.Named(), store.StatusFailed, "foreign chart failed")
+	run.Result.Failed = run.store.FailedResources()
+	run.Result.Manifests = make(map[manifest.NamedResource][]map[string]any)
+	for _, obj := range run.store.ListObjects("", "") {
+		run.Result.Manifests[obj.Named()] = []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}}}
+	}
+	for _, tc := range []struct {
+		name     string
+		root     manifest.NamedResource
+		objects  []manifest.BaseManifest
+		statuses []manifest.NamedResource
+	}{
+		{
+			name: "render roster with missing status", root: manifest.NamedResource{Group: victim.Group, Kind: victim.Kind},
+			objects:  []manifest.BaseManifest{statusless, run.store.GetObject(victim)},
+			statuses: []manifest.NamedResource{victim, statusless.Named(), extra, foreignChart.Named()},
+		},
+		{
+			name: "explicit chart", root: manifest.NamedResource{Group: chart.Group, Kind: chart.Kind},
+			objects:  []manifest.BaseManifest{run.store.GetObject(chart)},
+			statuses: []manifest.NamedResource{chart, victim, extra, foreignChart.Named()},
+		},
+		{
+			name: "explicit source", root: manifest.NamedResource{Group: bootstrap.Named().Group, Kind: bootstrap.Named().Kind},
+			objects:  []manifest.BaseManifest{bootstrap, ordinary, otherNamespace},
+			statuses: []manifest.NamedResource{ordinary.Named(), otherNamespace.Named(), victim, extra, foreignChart.Named()},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{tc.root}, nil)
+			res := results[0]
+			assert.Diff(t, res.Objects, tc.objects)
+			assert.Diff(t, res.Counts, map[string]int{tc.root.Kind: len(tc.objects)})
+			wantDocs := make(map[manifest.NamedResource][]map[string]any)
+			for _, obj := range tc.objects {
+				wantDocs[obj.Named()] = run.Result.Manifests[obj.Named()]
+			}
+			assert.Diff(t, res.Manifests, wantDocs)
+			slices.SortFunc(tc.statuses, manifest.NamedResource.Compare)
+			assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), tc.statuses)
+			assert.Equal(t, maps.Equal(res.Failed, run.Result.Failed), true)
+			if info, ok := res.Statuses[statusless.Named()]; ok {
+				assert.Equal(t, info.Status, store.StatusFailed)
+				assert.Equal(t, info.Message, "no status reported")
+			}
+			_, exists := run.store.GetStatus(statusless.Named())
+			assert.Equal(t, exists, false)
+			assert.Equal(t, maps.Equal(run.store.FailedResources(), run.Result.Failed), true)
+		})
+	}
+	t.Run("extra failure query filters", func(t *testing.T) {
+		run := selectedRun(&Result{})
+		obj := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
+		run.store.AddObject(obj)
+		run.store.UpdateStatus(obj.Named(), store.StatusReady, "")
+		eligible := &manifest.ResourceSet{Name: obj.Name, Namespace: obj.Namespace}
+		for _, extra := range []*manifest.ResourceSet{
+			eligible,
+			{Name: "other", Namespace: obj.Namespace},
+			{Name: obj.Name, Namespace: "other"},
+		} {
+			run.store.AddObject(extra)
+			run.store.UpdateStatus(extra.Named(), store.StatusFailed, "extra failure")
+		}
+		run.Result.Failed = run.store.FailedResources()
+		selected, _, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+		assert.Diff(t, slices.SortedFunc(maps.Keys(selected[0].Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{obj.Named(), eligible.Named()})
+		assert.Diff(t, selected[0].Objects, []manifest.BaseManifest{obj})
+		assert.Equal(t, len(run.store.FailedResources()), 3)
+	})
+
 }
 
 func TestSelect_CascadesAndSharedVictims(t *testing.T) {
@@ -558,6 +641,7 @@ func TestSelect_AuthoredPrerequisites(t *testing.T) {
 	provider := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "provider"}
 	rs := &manifest.ResourceSet{Name: "selected", Namespace: "apps"}
 	rs.DependsOn = []fluxopv1.Dependency{{APIVersion: dep.Group + "/v2", Kind: dep.Kind, Name: dep.Name, Namespace: dep.Namespace}}
+	manifest.KindOf(&manifest.RawObject{APIVersion: dep.Group + "/v2", Kind: dep.Kind}).Namespaced()
 	rs.InputsFrom = []fluxopv1.InputProviderReference{{Name: provider.Name}, {}}
 	for _, tc := range []struct {
 		name   string
@@ -647,6 +731,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 			{name: "missing source", absent: true},
 			{name: "helm chart", kind: manifest.KindHelmChart, want: "2.3.4"},
 			{name: "missing helm chart", kind: manifest.KindHelmChart, absent: true},
+			{name: "nonapplicable source", kind: manifest.KindHelmRepository},
 		} {
 			t.Run(tc.name+"/source_"+ns.namespace, func(t *testing.T) {
 				run := selectedRun(&Result{})
@@ -658,11 +743,14 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 				hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
 				run.store.AddObject(hr)
 				if !tc.absent {
-					if kind == manifest.KindHelmChart {
+					switch kind {
+					case manifest.KindHelmChart:
 						source := &manifest.HelmChartSource{Name: "chart", Namespace: ns.source}
 						source.Version = tc.want
 						run.store.AddObject(source)
-					} else {
+					case manifest.KindHelmRepository:
+						run.store.AddObject(&manifest.HelmRepository{Name: "chart", Namespace: ns.source})
+					default:
 						source := &manifest.OCIRepository{Name: "chart", Namespace: ns.source}
 						source.Reference = tc.ref
 						run.store.AddObject(source)

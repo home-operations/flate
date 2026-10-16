@@ -13,7 +13,8 @@ import (
 )
 
 // BuildMutex MUST guard every krusty build and uncached scope lookup because
-// krusty mutates process-global OpenAPI and plugin state.
+// krusty mutates process-global OpenAPI and plugin state. The registered scope
+// owner resolves cold keys here before publication; reference walks only read its memo.
 var BuildMutex sync.Mutex
 
 // Build renders with Flux's options while retaining builtin schema definitions.

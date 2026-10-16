@@ -67,6 +67,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 		if err != nil || gv.Version == "" {
 			return nil, inputf("ResourceSet %w", field.Invalid(field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"), dep.APIVersion, "must have a valid version"))
 		}
+		scopes.ResolveScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
 	}
 	spec, _ := doc["spec"].(map[string]any)
 	inputsFrom, _ := spec["inputsFrom"].([]any)
@@ -117,6 +118,9 @@ type ResourceSetInputProvider struct {
 func (p *ResourceSetInputProvider) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindResourceSetInputProvider].Group, Kind: KindResourceSetInputProvider, Namespace: p.Namespace, Name: p.Name}
 }
+
+// Suspended reports whether reconciliation is paused on this resource.
+func (p *ResourceSetInputProvider) Suspended() bool { return false }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (p *ResourceSetInputProvider) WithNamespace(namespace string) BaseManifest {
@@ -204,7 +208,11 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 	for i, dep := range r.DependsOn {
 		gv, _ := schema.ParseGroupVersion(dep.APIVersion)
 		id := Resolve(NamedResource{Group: gv.Group, Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}, "", r.Namespace)
-		if !isNamespaceScoped(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind}) {
+		namespaced, prepared := scopes.LookupScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
+		if !prepared {
+			panic("manifest: ResourceSet dependency scope was not prepared")
+		}
+		if !namespaced {
 			id.Namespace = ""
 		}
 		if !yield(Reference{

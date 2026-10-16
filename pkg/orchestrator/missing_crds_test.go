@@ -230,6 +230,9 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		rs.DependsOn = append(rs.DependsOn,
 			fluxopv1.Dependency{APIVersion: "example.test/v1", Kind: crdA.Kind, Name: crdA.Name},
 			fluxopv1.Dependency{APIVersion: "v1", Kind: crdB.Kind, Name: crdB.Name})
+		for _, dep := range rs.DependsOn {
+			manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+		}
 		s.AddObject(rs)
 		if tc.hasStatus {
 			s.UpdateStatus(rs.Named(), tc.status, "")
@@ -248,6 +251,9 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			st := store.New()
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name, Namespace: "explicit"}}}
+			for _, dep := range rs.DependsOn {
+				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+			}
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusReady, "")
 			st.SetArtifact(rs.Named(), &store.ResourceSetArtifact{})
@@ -304,6 +310,9 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			if state != "add" && state != "filter add" {
 				rs.DependsOn = []fluxopv1.Dependency{crd}
 			}
+			for _, dep := range rs.DependsOn {
+				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+			}
 			s.AddObject(rs)
 			if blocked := c.ReconcileNode(t.Context(), rs.Named(), 1); len(blocked) != 0 {
 				t.Fatalf("initial render blocked: %v", blocked)
@@ -321,6 +330,9 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			}
 			if state == "remove" || state == "add" {
 				fresh.ResourcesTemplate = strings.ReplaceAll(rs.ResourcesTemplate, "old", "new")
+			}
+			for _, dep := range fresh.DependsOn {
+				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 			}
 			s.AddObject(&fresh)
 			if strings.HasPrefix(state, "filter") {

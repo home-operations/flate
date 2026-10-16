@@ -6,19 +6,6 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
-// ChartVersion returns a source's declared chart version, or empty for other objects.
-func ChartVersion(obj BaseManifest) string {
-	switch obj := obj.(type) {
-	case *OCIRepository:
-		if obj.Reference != nil {
-			return cmp.Or(obj.Reference.Digest, obj.Reference.SemVer, obj.Reference.Tag)
-		}
-	case *HelmChartSource:
-		return obj.Version
-	}
-	return ""
-}
-
 // HelmChartSource is the Flux HelmChart CR — the standalone source-
 // kind that emits a chart artifact a HelmRelease can reference via
 // spec.chartRef. Distinct from the inline HelmChart projection that
@@ -34,6 +21,12 @@ type HelmChartSource struct {
 func (h *HelmChartSource) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindHelmChartSource].Group, Kind: KindHelmChart, Namespace: h.Namespace, Name: h.Name}
 }
+
+// Suspended reports whether reconciliation is paused on this resource.
+func (h *HelmChartSource) Suspended() bool { return h.Suspend }
+
+// ChartVersion returns the source's declared chart version.
+func (h *HelmChartSource) ChartVersion() string { return h.Version }
 
 // Content returns the chart selection for HTTP acquisition.
 func (h *HelmChartSource) Content() any {

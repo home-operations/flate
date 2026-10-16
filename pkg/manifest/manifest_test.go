@@ -93,86 +93,57 @@ func TestNamedResource(t *testing.T) {
 		(&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v2"}).Named())
 }
 
-// TestParse_Suspend covers the spec.suspend passthrough across the
-// three suspendable kinds (HelmRelease, Kustomization, Bucket); each
-// parse fn returns a distinct type sharing a Suspend bool field.
 func TestParse_Suspend(t *testing.T) {
-	cases := []struct {
-		name string
-		yaml string
-		get  func(map[string]any) (bool, error)
+	for _, tc := range []struct {
+		kind, apiVersion, spec string
+		suspendable            bool
 	}{
-		{
-			name: "HelmRelease",
-			yaml: `
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: hr, namespace: ns}
-spec:
-  suspend: true
-  chart:
-    spec:
-      chart: c
-      sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`,
-			get: func(d map[string]any) (bool, error) {
-				hr, err := parseHelmRelease(d)
-				if err != nil {
-					return false, err
+		{KindHelmRelease, HelmReleaseDomain + "/v2", "{chart: {spec: {chart: c, sourceRef: {kind: HelmRepository, name: r}}}}", true},
+		{KindKustomization, FluxKustomizeDomain + "/v1", "{path: ./apps, sourceRef: {kind: GitRepository, name: src}, interval: 5m}", true},
+		{KindGitRepository, SourceDomain + "/v1", "{url: 'https://example.test/repo.git'}", true},
+		{KindOCIRepository, SourceDomain + "/v1", "{url: 'oci://example.test/chart'}", true},
+		{KindBucket, SourceDomain + "/v1", "{bucketName: x, endpoint: e, interval: 5m}", true},
+		{KindHelmRepository, SourceDomain + "/v1", "{url: 'https://example.test/charts'}", true},
+		{KindHelmChart, SourceDomain + "/v1", "{chart: c, sourceRef: {kind: HelmRepository, name: r}}", true},
+		{KindResourceSet, FluxOperatorDomain + "/v1", "{}", true},
+		{KindExternalArtifact, SourceDomain + "/v1", "{}", false},
+		{KindResourceSetInputProvider, FluxOperatorDomain + "/v1", "{}", false},
+		{KindConfigMap, CoreAPIVersion, "{}", false},
+		{KindSecret, CoreAPIVersion, "{}", false},
+		{"Widget", "example.test/v1", "{}", false},
+	} {
+		for _, suspend := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/suspend=%t", tc.kind, suspend), func(t *testing.T) {
+				doc := mustYAML(t, fmt.Sprintf("apiVersion: %s\nkind: %s\nmetadata: {name: test, namespace: ns}\nspec: %s\n", tc.apiVersion, tc.kind, tc.spec))
+				doc["spec"].(map[string]any)["suspend"] = suspend
+				if tc.kind == KindResourceSet && suspend {
+					doc["metadata"].(map[string]any)["annotations"] = map[string]any{FluxOperatorDomain + "/reconcile": "disabled"}
 				}
-				return hr.Suspend, nil
-			},
-		},
-		{
-			name: "Kustomization",
-			yaml: `
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: ks, namespace: ns}
-spec:
-  suspend: true
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: src, namespace: ns}
-  interval: 5m
-`,
-			get: func(d map[string]any) (bool, error) {
-				ks, err := parseKustomization(d)
+				obj, _, _, err := ParseDoc(doc, defaultParseDocOptions())
 				if err != nil {
-					return false, err
+					t.Fatalf("parse: %v", err)
 				}
-				return ks.Suspend, nil
-			},
-		},
-		{
-			name: "Bucket",
-			yaml: `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: Bucket
-metadata: {name: b, namespace: ns}
-spec:
-  suspend: true
-  bucketName: x
-  endpoint: e
-  interval: 5m
-`,
-			get: func(d map[string]any) (bool, error) {
-				b, err := parseBucket(d)
-				if err != nil {
-					return false, err
-				}
-				return b.Suspend, nil
-			},
-		},
+				assert.Equal(t, obj.Suspended(), tc.suspendable && suspend)
+			})
+		}
 	}
-	for _, tc := range cases {
+}
+
+func TestNamedResource_IsCRD(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   NamedResource
+		want bool
+	}{
+		{"canonical", NamedResource{Group: "apiextensions.k8s.io", Kind: KindCustomResourceDefinition, Name: "widgets.example.test"}, true},
+		{"explicit namespace", NamedResource{Group: "apiextensions.k8s.io", Kind: KindCustomResourceDefinition, Namespace: "ns"}, true},
+		{"foreign group", NamedResource{Group: "example.test", Kind: KindCustomResourceDefinition}, false},
+		{"core group", NamedResource{Kind: KindCustomResourceDefinition}, false},
+		{"different kind", NamedResource{Group: "apiextensions.k8s.io", Kind: "CustomResourceDefinitionList"}, false},
+		{"zero identity", NamedResource{}, false},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			suspend, err := tc.get(mustYAML(t, tc.yaml))
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			if !suspend {
-				t.Errorf("expected Suspend=true; got false")
-			}
+			assert.Equal(t, tc.id.IsCRD(), tc.want)
 		})
 	}
 }
@@ -1312,7 +1283,7 @@ metadata: {name: x}`, "Foo", false},
 				if raw, ok := obj.(*RawObject); ok {
 					info := KindOf(raw)
 					assert.Equal(t, info.Group, apiGroup(DocAPIVersion(doc)))
-					assert.Equal(t, info.Tracked || info.Runnable || info.Status || info.Includes("discovery") || info.Includes("test"), false)
+					assert.Equal(t, info.Tracked || info.Runnable || info.Status || info.Discovery || info.Test, false)
 					spec, _ := doc["spec"].(map[string]any)
 					assert.Diff(t, raw.Spec, spec)
 				}
@@ -1401,7 +1372,7 @@ spec: {name: b}`},
 				t.Fatalf("ParseDoc: %v", err)
 			}
 			info := KindOf(obj)
-			if info.Tracked || info.Runnable || info.Status || info.Includes("discovery") || info.Includes("test") {
+			if info.Tracked || info.Runnable || info.Status || info.Discovery || info.Test {
 				t.Fatalf("got %T, want *RawObject", obj)
 			}
 			assert.Equal(t, obj.Named().Namespace, "apps")

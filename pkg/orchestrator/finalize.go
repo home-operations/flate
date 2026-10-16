@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -32,7 +30,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		return external
 	})
 	for id, info := range failed {
-		if !id.KindInfo().Includes("render") {
+		if !id.KindInfo().Render {
 			continue
 		}
 		// A resource that any parent's render also emitted is by
@@ -145,7 +143,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 			continue
 		}
 		for dep := range manifest.References(rs) {
-			if dep.Use != "dependsOn" || dep.Kind != manifest.KindCustomResourceDefinition || dep.Group != apiextensionsv1.GroupName {
+			if dep.Use != "dependsOn" || !dep.IsCRD() {
 				continue
 			}
 			crd := dep.NamedResource

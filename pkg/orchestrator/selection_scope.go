@@ -106,7 +106,7 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 				add(ref.NamedResource)
 			}
 		}
-		if id.KindInfo().Includes("render") {
+		if id.KindInfo().Render {
 			for _, dep := range s.run.requiredDataDependencies(id) {
 				add(dep)
 			}
@@ -265,30 +265,34 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 func (s *selectionSide) prepareStatuses(name string) {
 	seen := make(map[manifest.NamedResource]bool)
 	blocked := make(map[manifest.NamedResource][]manifest.NamedResource)
-	add := func(id manifest.NamedResource) {
+	add := func(id manifest.NamedResource, info store.StatusInfo) {
 		seen[id] = true
-		if info, ok := s.run.store.GetStatus(id); ok {
-			if s.result.Statuses == nil {
-				s.result.Statuses = make(map[manifest.NamedResource]store.StatusInfo)
-			}
-			s.result.Statuses[id] = info
-			if info.Status == store.StatusFailed && info.IsDependencyFailure() {
-				blocked[id] = info.BlockedBy()
-			}
+		if s.result.Statuses == nil {
+			s.result.Statuses = make(map[manifest.NamedResource]store.StatusInfo)
+		}
+		s.result.Statuses[id] = info
+		if info.Status == store.StatusFailed && info.IsDependencyFailure() {
+			blocked[id] = info.BlockedBy()
 		}
 	}
 	for _, obj := range s.result.Objects {
 		id := obj.Named()
-		if id != manifest.BootstrapSourceID && manifest.KindOf(obj).Tracked {
-			add(id)
+		if facts := manifest.KindOf(obj); facts.Tracked && (!id.ReportHidden() || !facts.SourceArtifact) {
+			info, ok := s.run.store.GetStatus(id)
+			if !ok {
+				info = store.StatusInfo{Status: store.StatusFailed, Message: "no status reported"}
+			}
+			add(id, info)
 		}
 	}
 	for id := range s.run.Result.Failed {
-		if seen[id] || id == manifest.BootstrapSourceID || id.KindInfo().Includes("report-hidden") ||
+		if seen[id] || id.ReportHidden() ||
 			(name != "" && id.Name != name) || !s.includes(id.Namespace) {
 			continue
 		}
-		add(id)
+		if info, ok := s.run.store.GetStatus(id); ok {
+			add(id, info)
+		}
 	}
 	for victim, blockers := range blocked {
 		roots := rootsOf(victim, blocked)

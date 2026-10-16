@@ -190,27 +190,31 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 	}
 }
 
-// TestModel_ExcludesSyntheticIDs: the synthetic bootstrap GitRepository and
-// internally-synthesized HelmCharts appear in no `flate test`/`build` report, so
-// the bar must neither count them nor list them in-flight — otherwise its
-// [done/total] overshoots every report (the 175-vs-174 gap).
 func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 	m := newBarModel(false)
 	boot := manifest.BootstrapSourceID
 	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
-	declared := barID("declared")
+	declared := []manifest.NamedResource{
+		barID("declared"),
+		{Group: "foreign.example", Kind: chart.Kind, Namespace: chart.Namespace, Name: chart.Name},
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "ordinary"},
+		{Group: boot.Group, Kind: boot.Kind, Namespace: "other", Name: boot.Name},
+	}
+	ids := append([]manifest.NamedResource{boot, chart}, declared...)
 
-	for _, id := range []manifest.NamedResource{boot, chart, declared} {
+	for _, id := range ids {
 		m.track(id, store.StatusInfo{Status: store.StatusPending})
 	}
-	for _, id := range []manifest.NamedResource{boot, chart, declared} {
+	if got := m.inflightLabels(); len(got) != len(declared) {
+		t.Fatalf("in-flight labels = %v, want %d declared resources", got, len(declared))
+	}
+	for _, id := range ids {
 		m.track(id, store.StatusInfo{Status: store.StatusReady})
 	}
-	if m.done != 1 || m.total != 1 {
-		t.Errorf("synthetic ids leaked into counts: done=%d total=%d; want 1/1", m.done, m.total)
+	if m.done != len(declared) || m.total != len(declared) {
+		t.Errorf("live counts: done=%d total=%d; want %d/%d", m.done, m.total, len(declared), len(declared))
 	}
 
-	// Excluded ids never enter the in-flight set, even while Pending.
 	m2 := newBarModel(false)
 	m2.track(boot, store.StatusInfo{Status: store.StatusPending})
 	m2.track(chart, store.StatusInfo{Status: store.StatusPending})

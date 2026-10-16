@@ -277,6 +277,17 @@ func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
 }
 
 func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
+
+	scopeCases := []struct{ version, kind, namespace string }{
+		{"v1", "ConfigMap", "apps"},
+		{"rbac.authorization.k8s.io/v1", "ClusterRole", ""},
+		{"foreign.example/v1", "ClusterRole", "apps"},
+		{"rbac.authorization.k8s.io/v999", "ClusterRole", "apps"},
+		{"nvidia.com/v1", "ClusterPolicy", "apps"},
+	}
+	for _, tc := range scopeCases {
+		manifest.KindOf(&manifest.RawObject{APIVersion: tc.version, Kind: tc.kind}).Namespaced()
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "remote")
 	}))
@@ -321,13 +332,7 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 							default:
 							}
 							duringRender := activeRenders.Load() != 0
-							for _, tc := range []struct{ version, kind, namespace string }{
-								{"v1", "ConfigMap", "apps"},
-								{"rbac.authorization.k8s.io/v1", "ClusterRole", ""},
-								{"foreign.example/v1", "ClusterRole", "apps"},
-								{"rbac.authorization.k8s.io/v999", "ClusterRole", "apps"},
-								{"nvidia.com/v1", "ClusterPolicy", "apps"},
-							} {
+							for _, tc := range scopeCases {
 								doc := map[string]any{"apiVersion": tc.version, "kind": tc.kind, "metadata": map[string]any{"name": "scope"}}
 								obj, authoritative, changed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 								if err != nil {

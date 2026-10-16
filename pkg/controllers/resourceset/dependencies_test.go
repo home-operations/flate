@@ -9,6 +9,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -28,6 +29,7 @@ func TestCollectDeps_ScopeAndImmutability(t *testing.T) {
 	} {
 		t.Run(tc.api+"/"+tc.kind+"/"+tc.namespace, func(t *testing.T) {
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{APIVersion: tc.api, Kind: tc.kind, Name: "dependency", Namespace: tc.namespace, Ready: true, ReadyExpr: "true"}}}
+			manifest.KindOf(&manifest.RawObject{APIVersion: tc.api, Kind: tc.kind}).Namespaced()
 			s.AddObject(rs)
 			want := []manifest.DependencyRef{{Group: schema.FromAPIVersionAndKind(tc.api, tc.kind).Group, Kind: tc.kind, Name: "dependency", Namespace: tc.want, ReadyExpr: "true"}}
 			assert.Diff(t, c.collectDeps(rs), want)
@@ -64,6 +66,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			if hasParent {
 				want = append(want, manifest.DependencyRef{NamedResource: parent})
 			}
+			manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization}).Namespaced()
 			deps := c.collectDeps(rs)
 			assert.Diff(t, deps, want)
 			assert.Equal(t, calls, 1)

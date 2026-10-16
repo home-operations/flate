@@ -89,6 +89,9 @@ data: {key: fixed}
 					s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{Manifests: before.Manifests})
 				case "blocked gate", "failed gate":
 					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					for _, dep := range fresh.DependsOn {
+						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+					}
 					s.AddObject(&fresh)
 					want = schedule.OutcomeBlocked
 					if name == "failed gate" {
@@ -111,6 +114,9 @@ data: {key: fixed}
 					gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns", Suspend: true}
 					s.AddObject(gate)
 					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
+					for _, dep := range fresh.DependsOn {
+						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+					}
 					s.AddObject(&fresh)
 					s.UpdateStatus(gate.Named(), store.StatusReady, store.MsgSuspended)
 					s.UpdateStatus(rs.Named(), store.StatusPending, "queued")

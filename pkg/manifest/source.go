@@ -192,6 +192,14 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }
 
+// ChartVersion returns the digest, semver constraint or tag declared by the source.
+func (o *OCIRepository) ChartVersion() string {
+	if o.Reference == nil {
+		return ""
+	}
+	return cmp.Or(o.Reference.Digest, o.Reference.SemVer, o.Reference.Tag)
+}
+
 // parseOCIRepository decodes an OCIRepository CR.
 func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	var cr sourcev1.OCIRepository
@@ -261,9 +269,7 @@ func (e *ExternalArtifact) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
-// Suspended is always false for ExternalArtifact — the CR has no
-// spec.suspend field per Flux's schema. Defined so the source
-// controller's Suspendable check is uniform.
+// Suspended reports whether reconciliation is paused on this resource.
 func (e *ExternalArtifact) Suspended() bool { return false }
 
 // parseExternalArtifact decodes an ExternalArtifact CR via the

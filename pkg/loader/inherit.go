@@ -205,7 +205,7 @@ func (l *Loader) projectAuthoredRecord(r manifest.DiscoveryRecord, authored mani
 			record.Refs = old.Refs
 		}
 		records[id] = record
-		if info := manifest.KindOf(projected); info.Tracked && info.Includes("discovery") {
+		if info := manifest.KindOf(projected); info.Tracked && info.Discovery {
 			objects[id] = projected
 		}
 	}

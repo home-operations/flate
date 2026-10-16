@@ -39,10 +39,10 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if id.KindInfo().Includes("parent") {
+		if id.KindInfo().Parent {
 			r.Parent, _ = manifest.StrictParent(claims, r.File, id, own[id])
 		}
-		if id.KindInfo().Includes("structural") {
+		if id.KindInfo().Structural {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](id); ok {
 				_, r.Pinned, _ = SourceView(l.Store, ks, repoRoot)
 			}
@@ -96,13 +96,13 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 
 func (l *Loader) fillOwners() {
 	for id, r := range l.Index.Files() {
-		if id.KindInfo().Includes("data") {
+		if id.KindInfo().Data {
 			r.Owners, _ = l.Index.OwnersOfFile(r.File)
 			l.Index.Records[id] = r
 		}
 	}
 	for id, r := range l.Index.Records {
-		if id.KindInfo().Includes("data") && id.Namespace != "" {
+		if id.KindInfo().Data && id.Namespace != "" {
 			raw := id
 			raw.Namespace = ""
 			for _, owner := range l.Index.Records[raw].Owners {

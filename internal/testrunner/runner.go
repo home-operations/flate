@@ -11,20 +11,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Run classifies selected objects and their status snapshot.
+// Run classifies the objects and reporting statuses prepared by orchestrator.Select.
 func Run(result *orchestrator.Result) output.TestReport {
 	var rep output.TestReport
-	seen := make(map[manifest.NamedResource]bool, len(result.Objects))
-	for _, obj := range result.Objects {
-		id := obj.Named()
-		// Bootstrap and foreign objects have no user-facing reconcile verdict.
-		if id == manifest.BootstrapSourceID || !manifest.KindOf(obj).Tracked {
-			continue
-		}
-		seen[id] = true
-		rep.Matched++
-		info, ok := result.Statuses[id]
-		c := classify(id, info, ok)
+	add := func(id manifest.NamedResource, info store.StatusInfo) {
+		c := classify(id, info)
 		switch c.Outcome {
 		case output.OutcomePassed:
 			rep.Passed++
@@ -32,11 +23,20 @@ func Run(result *orchestrator.Result) output.TestReport {
 			rep.Skipped++
 		case output.OutcomeBlocked:
 			rep.Blocked = append(rep.Blocked, c)
-			continue
+			return
 		default:
 			rep.Failed++
 		}
 		rep.Cases = append(rep.Cases, c)
+	}
+	seen := make(map[manifest.NamedResource]bool, len(result.Objects))
+	for _, obj := range result.Objects {
+		id := obj.Named()
+		if info, ok := result.Statuses[id]; ok {
+			seen[id] = true
+			rep.Matched++
+			add(id, info)
+		}
 	}
 
 	extra := make([]manifest.NamedResource, 0)
@@ -44,30 +44,18 @@ func Run(result *orchestrator.Result) output.TestReport {
 		if info.Status != store.StatusFailed || seen[id] {
 			continue
 		}
-		// A synthetic HelmChart's failure is included in its consuming HR's reason.
-		if id == manifest.BootstrapSourceID || id.KindInfo().Includes("report-hidden") {
-			continue
-		}
 		extra = append(extra, id)
 	}
 	slices.SortFunc(extra, manifest.NamedResource.Compare)
 	for _, id := range extra {
-		c := classify(id, result.Statuses[id], true)
-		if c.Outcome == output.OutcomeBlocked {
-			rep.Blocked = append(rep.Blocked, c)
-			continue
-		}
-		rep.Failed++
-		rep.Cases = append(rep.Cases, c)
+		add(id, result.Statuses[id])
 	}
 	slices.SortFunc(rep.Blocked, func(a, b output.Case) int { return a.ID.Compare(b.ID) })
 	return rep
 }
 
-func classify(id manifest.NamedResource, info store.StatusInfo, ok bool) output.Case {
+func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
 	switch {
-	case !ok:
-		return output.Case{ID: id, Outcome: output.OutcomeFailed, Reason: "no status reported"}
 	case info.Status == store.StatusFailed:
 		if info.IsDependencyFailure() {
 			return output.Case{ID: id, Outcome: output.OutcomeBlocked, Reason: info.Message}

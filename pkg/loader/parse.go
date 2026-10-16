@@ -9,6 +9,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
+	_ "github.com/home-operations/flate/internal/kustomize" // Loader-only SDK entrypoints MUST install the process scope owner at startup.
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )

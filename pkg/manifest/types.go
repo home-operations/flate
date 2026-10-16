@@ -6,6 +6,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
+	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -33,6 +34,16 @@ type NamedResource struct {
 	Kind      string `json:"kind"                yaml:"kind"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Name      string `json:"name"                yaml:"name"`
+}
+
+// IsCRD reports whether the identity is a Kubernetes CustomResourceDefinition.
+func (n NamedResource) IsCRD() bool {
+	return n.Group == apix.GroupName && n.Kind == KindCustomResourceDefinition
+}
+
+// ReportHidden reports whether the identity is internal to reconciliation reports.
+func (n NamedResource) ReportHidden() bool {
+	return n == BootstrapSourceID || n.Group == SourceDomain && n.Kind == KindHelmChart
 }
 
 // Resolve applies forced, authored and fallback namespace precedence without changing other fields.
@@ -76,6 +87,7 @@ type BaseManifest interface {
 	// WithNamespace changes only the internal namespace, retaining immutable borrowed payloads.
 	WithNamespace(string) BaseManifest
 	Named() NamedResource
+	Suspended() bool
 	kind() KindInfo
 }
 
@@ -104,6 +116,8 @@ type Reference struct {
 // References yields dependencies in source-field order without deduplication.
 // The object and its embedded spec MUST remain immutable during iteration.
 // Direct SDK objects MUST satisfy their reference schemas, including valid explicit API versions.
+// Before walking a directly constructed ResourceSet, prepare each dependsOn GVK with
+// KindOf on a RawObject carrying its APIVersion and Kind, then Namespaced. ParseDoc does this at admission.
 // Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
 func References(obj BaseManifest) iter.Seq[Reference] {
 	return func(yield func(Reference) bool) {
@@ -165,6 +179,9 @@ func (r *RawObject) Named() NamedResource {
 	return NamedResource{Group: apiGroup(r.APIVersion), Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
+// Suspended reports whether reconciliation is paused on this resource.
+func (r *RawObject) Suspended() bool { return false }
+
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (r *RawObject) WithNamespace(namespace string) BaseManifest {
 	out := *r
@@ -218,5 +235,5 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 }
 
 func (r *RawObject) kind() KindInfo {
-	return KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind}
+	return KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind, apiVersion: r.APIVersion}
 }

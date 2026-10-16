@@ -335,8 +335,16 @@ func TestDispatchNode(t *testing.T) {
 		{"filtered", &manifest.HelmRelease{Name: "active"}, true, false, store.MsgUnchanged, false},
 		{"suspended before filter", &manifest.HelmRelease{Name: "suspended", Suspend: true}, true, false, store.MsgSuspended, false},
 		{"suspended before preflight", &manifest.HelmRelease{Name: "suspended", Suspend: true}, false, true, store.MsgSuspended, false},
-		{"nonimplementing chart", chart, false, false, "", true},
-		{"nonimplementing data", &manifest.ConfigMap{Name: "data"}, false, false, "", true},
+		{"suspended chart before filter", chart, true, false, store.MsgSuspended, false},
+		{"suspended chart before preflight", chart, false, true, store.MsgSuspended, false},
+		{"active chart", &manifest.HelmChartSource{Name: "active-chart"}, false, false, "", true},
+		{"suspended repository before filter", &manifest.HelmRepository{Name: "repo", Suspend: true}, true, false, store.MsgSuspended, false},
+		{"suspended repository before preflight", &manifest.HelmRepository{Name: "repo", Suspend: true}, false, true, store.MsgSuspended, false},
+		{"active repository", &manifest.HelmRepository{Name: "repo"}, false, false, "", true},
+		{"data", &manifest.ConfigMap{Name: "data"}, false, false, "", true},
+		{"secret", &manifest.Secret{Name: "secret"}, false, false, "", true},
+		{"raw object", &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "raw", Spec: map[string]any{"suspend": true}}, false, false, "", true},
+		{"input provider", &manifest.ResourceSetInputProvider{Name: "provider"}, false, false, "", true},
 		{"external artifact", &manifest.ExternalArtifact{Name: "source"}, false, false, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

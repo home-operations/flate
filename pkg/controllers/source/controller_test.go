@@ -162,24 +162,44 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 }
 
 func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
-	f := &fakeFetcher{}
-	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
-
-	repo := &manifest.GitRepository{
-		Name: "r", Namespace: "ns",
-		URL: "https://example/r.git", Suspend: true,
-	}
-	st.AddObject(repo)
-
-	info := dispatchToFixpoint(t, c, st, repo.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if info.Message != "suspended" {
-		t.Errorf("expected suspended message; got %q", info.Message)
-	}
-	if f.calls != 0 {
-		t.Errorf("suspended source must not fetch; calls=%d", f.calls)
+	for _, suspended := range []bool{false, true} {
+		t.Run(fmt.Sprintf("suspend=%t", suspended), func(t *testing.T) {
+			objects := []manifest.BaseManifest{
+				&manifest.GitRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/repo.git", Suspend: suspended},
+				&manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/charts", Suspend: suspended},
+				&manifest.HelmChartSource{Name: "chart", Namespace: "ns", Chart: "app", Suspend: suspended},
+			}
+			st := store.New()
+			ts := task.NewBounded(2)
+			c := New(st, ts)
+			t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
+			for _, obj := range objects {
+				c.Fetchers[obj.Named().Kind] = &fakeFetcher{}
+				st.AddObject(obj)
+			}
+			c.StartLifecycle()
+			for _, obj := range objects {
+				ts.Go(t.Context(), obj.Named().String(), func(ctx context.Context) {
+					if deps := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone); len(deps) != 0 {
+						t.Errorf("blocked source %s: %v", obj.Named(), deps)
+					}
+				})
+			}
+			ts.BlockTillDone()
+			for _, obj := range objects {
+				t.Run(obj.Named().Kind, func(t *testing.T) {
+					info, _ := st.GetStatus(obj.Named())
+					message, calls := "", 1
+					if suspended {
+						message, calls = store.MsgSuspended, 0
+					}
+					f := c.Fetchers[obj.Named().Kind].(*fakeFetcher)
+					if info.Status != store.StatusReady || info.Message != message || f.calls != calls {
+						t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
+					}
+				})
+			}
+		})
 	}
 }
 

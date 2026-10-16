@@ -34,7 +34,7 @@ import (
 var reconcilableKinds = func() []manifest.KindInfo {
 	var kinds []manifest.KindInfo
 	for info := range manifest.Kinds() {
-		if info.Includes("render") {
+		if info.Render {
 			kinds = append(kinds, info)
 		}
 	}

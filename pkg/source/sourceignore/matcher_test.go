@@ -45,6 +45,11 @@ func TestNew_PatternDefaults(t *testing.T) {
 			match: []string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, keep: append([]string{"app/keep.tmp"}, patternKeeps...),
 		},
 		{
+			name: "field negates VCS pattern", extra: new("!.git/HEAD\n"), withDefaults: true,
+			match: []string{".git/config"},
+			keep:  append([]string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, patternKeeps...),
+		},
+		{
 			name: "defaults disabled",
 			keep: append([]string{".git/HEAD", "app/cache.tmp", "other/cache.tmp"}, patternKeeps...),
 		},
@@ -55,6 +60,11 @@ func TestNew_PatternDefaults(t *testing.T) {
 		{
 			name: "file patterns without defaults", files: map[string]string{".sourceignore": "*.tmp\n"},
 			match: []string{"app/cache.tmp", "other/cache.tmp"}, keep: append([]string{".git/HEAD"}, patternKeeps...),
+		},
+		{
+			name: "field negates nested pattern without defaults", files: map[string]string{"app/.sourceignore": "*.tmp\n"},
+			extra: new("!app/keep.tmp\n"), match: []string{"app/cache.tmp"},
+			keep: append([]string{".git/HEAD", "app/keep.tmp", "other/cache.tmp"}, patternKeeps...),
 		},
 		{
 			name: "field patterns without defaults", extra: new("*.tmp\n"),

@@ -16,12 +16,10 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/go-git/go-git/v5/storage/transactional"
 
 	"github.com/home-operations/flate/pkg/change"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -144,14 +142,12 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 	}
 	for name, st := range status {
 		if st.Staging != git.Unmodified || st.Worktree != git.Unmodified {
-			candidates[name] = true
-			dirty[name] = true
+			candidates[name], dirty[name] = true, true
 		}
 	}
 	err = walkCurrent(ctx, s.worktree, ".", func(name string) {
 		if _, ok := headEntries[name]; !ok {
-			candidates[name] = true
-			dirty[name] = true
+			candidates[name], dirty[name] = true, true
 		}
 	})
 	if err != nil {
@@ -159,8 +155,7 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 	}
 	if statusErr != nil {
 		for name := range entries {
-			candidates[name] = true
-			dirty[name] = true
+			candidates[name], dirty[name] = true, true
 		}
 	}
 	return candidates, dirty, nil
@@ -239,14 +234,8 @@ func (s selection) acquireBodies(ctx context.Context, entries map[string]object.
 		return err
 	}
 	s.base.backing = generation.Backing
-	upper := filesystem.NewStorageWithOptions(generation.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
-	s.base.Repo = &git.Repository{Storer: transactional.NewStorage(s.repo.Storer, upper)}
-	if _, err := upper.Reference(fullBaseRef); err == nil {
-		s.base.remote.full = true
-	} else if !errors.Is(err, plumbing.ErrReferenceNotFound) {
-		return err
-	}
-	return nil
+	s.base.Repo, err = adopt(&fetched{backing: generation.Backing, remote: s.base.remote}, s.repo.Storer)
+	return err
 }
 
 func (s selection) compareCandidates(ctx context.Context, candidates, dirty map[string]bool, entries map[string]object.TreeEntry) ([]string, error) {
@@ -344,9 +333,8 @@ func (s selection) acquireBase(ctx context.Context) error {
 		return err
 	}
 	s.base.remote, s.base.backing = fetched.remote, fetched.backing
-	upper := filesystem.NewStorageWithOptions(fetched.backing, objectcache.NewObjectLRU(0), filesystem.Options{})
-	s.base.Repo = &git.Repository{Storer: transactional.NewStorage(s.repo.Storer, upper)}
-	return nil
+	s.base.Repo, err = adopt(fetched, s.repo.Storer)
+	return err
 }
 
 func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.TreeEntry, error) {

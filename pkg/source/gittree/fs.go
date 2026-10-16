@@ -116,40 +116,37 @@ func (i gitInfo) ModTime() time.Time { return time.Time{} }
 func (i gitInfo) Sys() any           { return nil }
 
 // New validates Git metadata and creates views without reading regular blob bodies.
-// Direct with a zero commit retains Current admitted semantics. Mutable Source
-// views are refreshed for one operation; pinned views retain their backing.
-// Source without additional shaping retains an already shaped Current view.
-// The returned identity pins committed selection; mutable views return an empty identity.
+// Mutable views refresh before reuse or construction; committed identities stay pinned.
 func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	if current, ok := opts.Current.(*FS); ok {
+	direct, source := opts.Mode == Direct, opts.Mode == Source
+	reuse := direct && commit == plumbing.ZeroHash
+	identity := ""
+	var local *localView
+	current, _ := opts.Current.(*FS)
+	if current != nil {
 		switch v := current.view.(type) {
 		case *localView:
-			opts.Current = newLocal(v.root)
-			if opts.Mode == Direct && commit == plumbing.ZeroHash {
-				return opts.Current.(*FS), "", nil
-			}
+			local, current = v, newLocal(v.root)
 		case *gitView:
 			if v.refresh != nil {
 				refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
 				if err != nil {
 					return nil, "", err
 				}
-				opts.Current = refreshed
-				v = refreshed.view.(*gitView)
+				current, v = refreshed, refreshed.view.(*gitView)
 			}
-			if commit == plumbing.ZeroHash && (opts.Mode == Direct || (opts.Mode == Source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0)) {
-				return opts.Current.(*FS), v.identity, nil
-			}
-		case *directView:
-			if opts.Mode == Direct && commit == plumbing.ZeroHash {
-				return current, "", nil
-			}
+			identity = v.identity
+			reuse = reuse || commit == plumbing.ZeroHash && source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0
 		}
+		opts.Current = current
 	}
-	if opts.Mode == Direct && commit == plumbing.ZeroHash && opts.Current != nil {
+	if reuse && opts.Current != nil {
+		if current != nil {
+			return current, identity, nil
+		}
 		input := &struct {
 			FS
 			directView
@@ -157,7 +154,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		input.view = &input.directView
 		return &input.FS, "", nil
 	}
-	if opts.Mode == Direct && opts.Current == nil && opts.Worktree != nil {
+	if direct && opts.Current == nil && opts.Worktree != nil {
 		root := opts.Worktree.Root()
 		if _, err := os.Stat(root); err != nil {
 			return nil, "", err
@@ -166,13 +163,11 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	}
 	input, err := newTree(ctx, backing, commit, opts)
 	if err != nil {
-		if opts.Mode == Source && errors.Is(err, fs.ErrPermission) {
-			if current, ok := opts.Current.(*FS); ok {
-				if mounted, ok := current.view.(*localView); ok {
-					// Flux reads .sourceignore before listing each directory; retain its diagnostic.
-					if _, ignoreErr := sourceignore.New(mounted.root, nil, true); ignoreErr != nil {
-						return nil, "", ignoreErr
-					}
+		if source && errors.Is(err, fs.ErrPermission) {
+			if local != nil {
+				// Flux reads .sourceignore before listing each directory; retain its diagnostic.
+				if _, ignoreErr := sourceignore.New(local.root, nil, true); ignoreErr != nil {
+					return nil, "", ignoreErr
 				}
 			}
 			return nil, "", fmt.Errorf("sourceignore load: %w", err)
@@ -180,20 +175,17 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		return nil, "", err
 	}
 	g := input.view.(*gitView)
-	currentIdentity := ""
-	if current := currentTree(opts.Current); commit == plumbing.ZeroHash && current != nil {
-		currentIdentity = current.identity
+	if commit != plumbing.ZeroHash {
+		identity = ""
 	}
-	committed := commit != plumbing.ZeroHash && (opts.Worktree == nil || opts.Content != nil)
-	if committed || currentIdentity != "" {
+	if committed := commit != plumbing.ZeroHash && (opts.Worktree == nil || opts.Content != nil); committed || identity != "" {
 		g.identity = manifest.Fingerprint(struct {
-			Content any
-			Commit  string
-			Current string
-			Mode    ViewMode
-			Sparse  []string `json:",omitempty"`
-			Ignore  string
-		}{opts.Content, commit.String(), currentIdentity, opts.Mode, opts.Sparse, opts.Ignore})
+			Content         any
+			Commit, Current string
+			Mode            ViewMode
+			Sparse          []string `json:",omitempty"`
+			Ignore          string
+		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
 		if g.identity == "" {
 			return nil, "", fmt.Errorf("%w: git view content cannot be fingerprinted", manifest.ErrInput)
 		}
@@ -260,18 +252,6 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 }
 
 func (g *gitView) shape(opts ViewOptions) error {
-	visible := func(name string) bool {
-		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-			base := path.Base(parent)
-			if base == "node_modules" || strings.HasPrefix(base, ".") {
-				return false
-			}
-		}
-		return true
-	}
-	if opts.Mode == Direct {
-		visible = func(name string) bool { return g.nodes[name].mode&fs.ModeSymlink == 0 }
-	}
 	mutable := g.identity == "" && (opts.Current != nil || opts.Worktree != nil)
 	routed := g.commit != plumbing.ZeroHash && opts.Current != nil
 	if mutable || routed {
@@ -279,44 +259,27 @@ func (g *gitView) shape(opts ViewOptions) error {
 		refresh.Sparse, refresh.Changes = slices.Clone(opts.Sparse), slices.Clone(opts.Changes)
 		g.refresh = &refresh
 	}
-	if opts.Mode == Source {
-		matcher, err := sourceignore.NewFS(g, nil, opts.Ignore, true)
-		if err != nil {
-			return err
-		}
-		visible = func(name string) bool {
-			return g.nodes[name].mode&fs.ModeSymlink == 0 &&
-				(len(opts.Sparse) == 0 || slices.ContainsFunc(opts.Sparse, func(dir string) bool { return strings.HasPrefix(name, dir) })) &&
-				!matcher.Match(filepath.FromSlash(name), false)
-		}
-	}
 	names := slices.Sorted(maps.Keys(g.nodes))
+	visible := ViewOptions.visible
+	var matcher *sourceignore.Matcher
 	var links *tree.Builder
-	if opts.Mode == RemoteBase {
-		raw := &gitView{nodes: g.nodes, backing: g.backing, current: g.current, changes: g.changes}
-		raw.storers.New = g.storers.New
-		links = tree.NewBuilder(raw)
-		for _, name := range names {
-			node := g.nodes[name]
-			if node.mode&fs.ModeSymlink == 0 {
-				continue
-			}
-			target, err := g.ReadLink(name)
-			if err != nil {
-				return err
-			}
-			if err := links.RemoveAll(name); err != nil {
-				return err
-			}
-			if err := links.AddSymlink(name, target); err != nil {
-				return err
-			}
-		}
+	var err error
+	switch opts.Mode {
+	case Direct:
+		visible = ViewOptions.directVisible
+	case Source:
+		visible = ViewOptions.sourceVisible
+		matcher, err = sourceignore.NewFS(g, nil, opts.Ignore, true)
+	case RemoteBase:
+		links, err = g.resolveLinks(names)
+	}
+	if err != nil {
+		return err
 	}
 	kept := map[string]bool{".": true}
 	for _, name := range names {
 		node := g.nodes[name]
-		if node.mode.IsDir() || !visible(name) {
+		if node.mode.IsDir() || !visible(opts, name, node.mode, matcher) {
 			continue
 		}
 		if node.mode&fs.ModeSymlink != 0 {
@@ -333,18 +296,55 @@ func (g *gitView) shape(opts ViewOptions) error {
 			}
 			g.nodes[name] = &gitNode{name: path.Base(name), hash: target.hash, mode: target.mode}
 		}
-		kept[name] = true
-		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+		for parent := name; parent != "."; parent = path.Dir(parent) {
 			kept[parent] = true
 		}
 	}
-	for name := range g.nodes {
-		if !kept[name] {
-			delete(g.nodes, name)
-		}
-	}
+	maps.DeleteFunc(g.nodes, func(name string, _ *gitNode) bool { return !kept[name] })
 	g.list()
 	return nil
+}
+
+func (o ViewOptions) directVisible(_ string, mode fs.FileMode, _ *sourceignore.Matcher) bool {
+	return mode&fs.ModeSymlink == 0
+}
+
+func (o ViewOptions) sourceVisible(name string, mode fs.FileMode, matcher *sourceignore.Matcher) bool {
+	return mode&fs.ModeSymlink == 0 &&
+		(len(o.Sparse) == 0 || slices.ContainsFunc(o.Sparse, func(dir string) bool { return strings.HasPrefix(name, dir) })) &&
+		!matcher.Match(filepath.FromSlash(name), false)
+}
+
+func (o ViewOptions) visible(name string, _ fs.FileMode, _ *sourceignore.Matcher) bool {
+	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+		base := path.Base(parent)
+		if base == "node_modules" || strings.HasPrefix(base, ".") {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
+	raw := &gitView{nodes: g.nodes, backing: g.backing, current: g.current, changes: g.changes}
+	raw.storers.New = g.storers.New
+	links := tree.NewBuilder(raw)
+	for _, name := range names {
+		if g.nodes[name].mode&fs.ModeSymlink == 0 {
+			continue
+		}
+		target, err := g.ReadLink(name)
+		if err != nil {
+			return nil, err
+		}
+		if err := links.RemoveAll(name); err != nil {
+			return nil, err
+		}
+		if err := links.AddSymlink(name, target); err != nil {
+			return nil, err
+		}
+	}
+	return links, nil
 }
 
 func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) error {

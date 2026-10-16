@@ -21,6 +21,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v5/storage/transactional"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -83,15 +84,26 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 		return nil, err
 	}
 	remote.pin = generation.Commit
-	storer := filesystem.NewStorageWithOptions(generation.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
-	// The private repository exposes metadata; it never represents a checkout.
-	repo := &git.Repository{Storer: storer}
-	if _, err := storer.Reference(fullBaseRef); err == nil {
-		remote.full = true
+	f := &fetched{hash: generation.Commit, backing: generation.Backing, remote: remote}
+	f.repo, err = adopt(f, nil)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func adopt(f *fetched, lower storage.Storer) (*git.Repository, error) {
+	upper := filesystem.NewStorageWithOptions(f.backing, objectcache.NewObjectLRU(0), filesystem.Options{})
+	if _, err := upper.Reference(fullBaseRef); err == nil {
+		f.remote.full = true
 	} else if !errors.Is(err, plumbing.ErrReferenceNotFound) {
 		return nil, err
 	}
-	return &fetched{repo: repo, hash: generation.Commit, backing: generation.Backing, remote: remote}, nil
+	var storer storage.Storer = upper
+	if lower != nil {
+		storer = transactional.NewStorage(lower, upper)
+	}
+	return &git.Repository{Storer: storer}, nil
 }
 
 func remotePin(refs *packp.AdvRefs, rev string) (plumbing.Hash, error) {
@@ -117,15 +129,8 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	req := packp.NewUploadPackRequestFromCapabilities(r.capabilities)
-	req.Capabilities.Delete(capability.Sideband64k)
-	req.Capabilities.Delete(capability.Sideband)
+	req := r.newRequest(len(wants) == 0)
 	if len(wants) == 0 {
-		req.Wants = []plumbing.Hash{r.pin}
-		if r.capabilities.Supports(capability.Shallow) {
-			req.Depth = packp.DepthCommits(1)
-			_ = req.Capabilities.Set(capability.Shallow)
-		}
 		if !r.full && r.capabilities.Supports(capability.Filter) {
 			if err := req.Capabilities.Set(capability.Filter); err != nil {
 				return err
@@ -136,16 +141,11 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 		}
 	} else if r.capabilities.Supports(capability.AllowReachableSHA1InWant) {
 		req.Wants = wants
+	} else if r.full {
+		return fmt.Errorf("base %s is missing objects after full fetch", r.pin)
 	} else {
-		if r.full {
-			return fmt.Errorf("base %s is missing objects after full fetch", r.pin)
-		}
 		r.full = true
-		req.Wants = []plumbing.Hash{r.pin}
-		if r.capabilities.Supports(capability.Shallow) {
-			req.Depth = packp.DepthCommits(1)
-			_ = req.Capabilities.Set(capability.Shallow)
-		}
+		req = r.newRequest(true)
 	}
 	for {
 		session, err := r.client.NewUploadPackSession(r.endpoint, nil)
@@ -158,12 +158,10 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 		}
 		err = errors.Join(err, session.Close())
 		if err == nil {
-			if r.full {
-				if err := upper.SetReference(plumbing.NewHashReference(fullBaseRef, r.pin)); err != nil {
-					return err
-				}
+			if !r.full {
+				return nil
 			}
-			return nil
+			return upper.SetReference(plumbing.NewHashReference(fullBaseRef, r.pin))
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -175,15 +173,22 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 			return err
 		}
 		r.full = true
-		req = packp.NewUploadPackRequestFromCapabilities(r.capabilities)
-		req.Capabilities.Delete(capability.Sideband64k)
-		req.Capabilities.Delete(capability.Sideband)
+		req = r.newRequest(true)
+	}
+}
+
+func (r *baseRemote) newRequest(full bool) *packp.UploadPackRequest {
+	req := packp.NewUploadPackRequestFromCapabilities(r.capabilities)
+	req.Capabilities.Delete(capability.Sideband64k)
+	req.Capabilities.Delete(capability.Sideband)
+	if full {
 		req.Wants = []plumbing.Hash{r.pin}
 		if r.capabilities.Supports(capability.Shallow) {
 			req.Depth = packp.DepthCommits(1)
 			_ = req.Capabilities.Set(capability.Shallow)
 		}
 	}
+	return req
 }
 
 func copyMetadata(ctx context.Context, source storage.Storer, upper storage.Storer, hash plumbing.Hash) error {

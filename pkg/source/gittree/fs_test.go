@@ -1,16 +1,17 @@
 package gittree
 
 import (
+	"context"
 	"errors"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/home-operations/flate/internal/testutil"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -18,6 +19,8 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/tree"
 )
 
 func mustInit(t *testing.T, dir string) *git.Repository {
@@ -56,6 +59,12 @@ func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) p
 	hash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	return hash
+}
+
+type admissionErrorFS struct{ err error }
+
+func (f admissionErrorFS) Open(name string) (fs.File, error) {
+	return nil, &fs.PathError{Op: "open", Path: name, Err: f.err}
 }
 
 func TestNew_EntryPolicy(t *testing.T) {
@@ -218,4 +227,259 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, pin == "", false)
 	})
+	t.Run("source reuse", func(t *testing.T) {
+		repo := mustInit(t, t.TempDir())
+		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
+		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Source})
+		assert.NoError(t, err)
+		for _, tc := range []struct {
+			name   string
+			ignore string
+			sparse []string
+			reuse  bool
+		}{
+			{name: "empty", reuse: true},
+			{name: "ignore", ignore: "file\n"},
+			{name: "sparse", sparse: []string{"other"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: tc.ignore, Sparse: tc.sparse})
+				assert.NoError(t, err)
+				assert.Equal(t, got == input, tc.reuse)
+				assert.Equal(t, key == pin, tc.reuse)
+				assert.Equal(t, key != "", true)
+				_, err = fs.Stat(got, "file")
+				assert.Equal(t, err == nil, tc.reuse)
+			})
+		}
+	})
+	t.Run("direct arbitrary and wrapper reuse", func(t *testing.T) {
+		current := fstest.MapFS{"file": {Data: []byte("current")}}
+		input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: current, Ignore: "file", Sparse: []string{"other"}})
+		assert.NoError(t, err)
+		assert.Equal(t, key, "")
+		current["new"] = &fstest.MapFile{Data: []byte("new")}
+		got, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: input})
+		assert.NoError(t, err)
+		assert.Equal(t, got == input, true)
+		assert.Equal(t, key, "")
+		for _, name := range []string{"file", "new"} {
+			data, err := fs.ReadFile(got, name)
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), string(current[name].Data))
+		}
+	})
+	t.Run("direct pinned worktree", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "file", "local")
+		input, key, err := New(t.Context(), nil, plumbing.NewHash(strings.Repeat("a", 40)), ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())})
+		assert.NoError(t, err)
+		assert.Equal(t, key, "")
+		data, err := fs.ReadFile(input, "file")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "local")
+		testutil.WriteFile(t, root, "new/deep/file", "new")
+		data, err = fs.ReadFile(input, "new/deep/file")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "new")
+		fresh, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: input})
+		assert.NoError(t, err)
+		assert.Equal(t, fresh != input, true)
+	})
+	t.Run("refresh before pinned construction", func(t *testing.T) {
+		root := t.TempDir()
+		repo := mustInit(t, root)
+		commit := craftedCommit(t, repo, object.TreeEntry{Name: "new", Mode: filemode.Regular})
+		testutil.WriteFile(t, root, "old", "old")
+		local, err := AdmitDirectory(t.Context(), root)
+		assert.NoError(t, err)
+		current, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: local.FS})
+		assert.NoError(t, err)
+		testutil.WriteFile(t, root, "new", "current")
+		input, key, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct, Current: current})
+		assert.NoError(t, err)
+		assert.Equal(t, key != "", true)
+		data, err := fs.ReadFile(input, "new")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "current")
+	})
+	t.Run("refresh snapshots", func(t *testing.T) {
+		repo := mustInit(t, t.TempDir())
+		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
+		opts := ViewOptions{Mode: Source, Current: fstest.MapFS{"file": {Data: []byte("dirty")}}, Sparse: []string{"file"}, Changes: []string{"file"}}
+		input, key, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, opts)
+		assert.NoError(t, err)
+		opts.Sparse[0], opts.Changes[0] = "other", "other"
+		fresh, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: input})
+		assert.NoError(t, err)
+		assert.Equal(t, pin, key)
+		data, err := fs.ReadFile(fresh, "file")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "malicious")
+	})
+	t.Run("shaping", func(t *testing.T) {
+		root := t.TempDir()
+		repo := mustInit(t, root)
+		for _, name := range []string{"target", ".rootfile", ".hidden/file", "node_modules/file", "dir/file"} {
+			testutil.WriteFile(t, root, name, name)
+		}
+		for name, target := range map[string]string{
+			"alias": ".hidden/link", ".hidden/link": "../target", "escape": "../outside", "missing": "absent", "directory": "dir",
+		} {
+			assert.NoError(t, os.Symlink(target, filepath.Join(root, name)))
+		}
+		wt, err := repo.Worktree()
+		assert.NoError(t, err)
+		assert.NoError(t, wt.AddWithOptions(&git.AddOptions{All: true}))
+		commit, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+		assert.NoError(t, err)
+		for _, tc := range []struct {
+			name  string
+			opts  ViewOptions
+			files []string
+		}{
+			{"source", ViewOptions{Mode: Source, Sparse: []string{"target", ".root"}, Ignore: "target/\n"}, []string{".rootfile", "target"}},
+			{"direct", ViewOptions{Mode: Direct}, []string{".hidden/file", ".rootfile", "dir/file", "node_modules/file", "target"}},
+			{"remote", ViewOptions{Mode: RemoteBase}, []string{".rootfile", "alias", "dir/file", "target"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				input, _, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, tc.opts)
+				assert.NoError(t, err)
+				var files []string
+				assert.NoError(t, fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+					if err != nil {
+						return err
+					}
+					if !entry.IsDir() {
+						files = append(files, name)
+					}
+					return nil
+				}))
+				assert.Diff(t, files, tc.files)
+				omitted := []string{"escape", "missing", "directory"}
+				if tc.opts.Mode == RemoteBase {
+					omitted = append(omitted, ".hidden", "node_modules")
+				} else {
+					omitted = append(omitted, "alias", ".hidden/link")
+				}
+				for _, name := range omitted {
+					_, err := fs.Stat(input, name)
+					if !errors.Is(err, fs.ErrNotExist) {
+						t.Fatalf("omitted %s: %v", name, err)
+					}
+				}
+				if tc.opts.Mode == RemoteBase {
+					data, err := fs.ReadFile(input, "alias")
+					assert.NoError(t, err)
+					assert.Equal(t, string(data), "target")
+				}
+			})
+		}
+	})
+	t.Run("unknown mode visibility", func(t *testing.T) {
+		current := fstest.MapFS{
+			".rootfile": {Data: []byte("root")}, "target": {Data: []byte("target")},
+			".hidden/file": {Data: []byte("hidden")}, "node_modules/file": {Data: []byte("modules")},
+		}
+		input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: ViewMode(255), Current: current})
+		assert.NoError(t, err)
+		entries, err := fs.ReadDir(input, ".")
+		assert.NoError(t, err)
+		var names []string
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		assert.Diff(t, names, []string{".rootfile", "target"})
+	})
+	t.Run("link errors", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			missing bool
+			want    error
+		}{
+			{"loop", false, tree.ErrLoop}, {"read", true, plumbing.ErrObjectNotFound},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				repo := mustInit(t, t.TempDir())
+				commit := craftedCommit(t, repo, object.TreeEntry{Name: "malicious", Mode: filemode.Symlink})
+				backing := repo.Storer.(*filesystem.Storage).Filesystem()
+				if tc.missing {
+					c, err := repo.CommitObject(commit)
+					assert.NoError(t, err)
+					tr, err := c.Tree()
+					assert.NoError(t, err)
+					hash := tr.Entries[0].Hash.String()
+					assert.NoError(t, backing.Remove("objects/"+hash[:2]+"/"+hash[2:]))
+				}
+				_, _, err := New(t.Context(), backing, commit, ViewOptions{Mode: RemoteBase})
+				assert.Equal(t, errors.Is(err, tc.want), true)
+				for _, mode := range []ViewMode{Source, Direct} {
+					input, _, err := New(t.Context(), backing, commit, ViewOptions{Mode: mode})
+					assert.NoError(t, err)
+					entries, err := fs.ReadDir(input, ".")
+					assert.NoError(t, err)
+					assert.Equal(t, len(entries), 0)
+				}
+			})
+		}
+	})
+	t.Run("missing ordinary body", func(t *testing.T) {
+		repo := mustInit(t, t.TempDir())
+		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
+		c, err := repo.CommitObject(commit)
+		assert.NoError(t, err)
+		tr, err := c.Tree()
+		assert.NoError(t, err)
+		hash := tr.Entries[0].Hash.String()
+		backing := repo.Storer.(*filesystem.Storage).Filesystem()
+		assert.NoError(t, backing.Remove("objects/"+hash[:2]+"/"+hash[2:]))
+		for _, mode := range []ViewMode{Source, Direct, RemoteBase, ViewMode(255)} {
+			input, _, err := New(t.Context(), backing, commit, ViewOptions{Mode: mode})
+			assert.NoError(t, err)
+			entries, err := fs.ReadDir(input, ".")
+			assert.NoError(t, err)
+			assert.Equal(t, len(entries), 1)
+			assert.Equal(t, entries[0].Name(), "file")
+			_, err = fs.ReadFile(input, "file")
+			assert.Equal(t, errors.Is(err, plumbing.ErrObjectNotFound), true)
+		}
+	})
+	t.Run("error classification", func(t *testing.T) {
+		for _, want := range []error{fs.ErrPermission, fs.ErrInvalid} {
+			_, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admissionErrorFS{err: want}})
+			assert.Equal(t, errors.Is(err, want), true)
+			assert.Equal(t, strings.HasPrefix(err.Error(), "sourceignore load: "), want == fs.ErrPermission)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, _, err := New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admissionErrorFS{err: fs.ErrPermission}})
+		assert.Equal(t, err, context.Canceled)
+	})
+	t.Run("local permission diagnostic", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, ".sourceignore", "ignored/\n")
+		testutil.WriteFile(t, root, "denied/file", "file")
+		ignore, denied := filepath.Join(root, ".sourceignore"), filepath.Join(root, "denied")
+		assert.NoError(t, os.Chmod(ignore, 0))
+		assert.NoError(t, os.Chmod(denied, 0))
+		t.Cleanup(func() {
+			assert.NoError(t, os.Chmod(ignore, 0o644))
+			assert.NoError(t, os.Chmod(denied, 0o755))
+		})
+		if _, err := os.ReadFile(ignore); !errors.Is(err, fs.ErrPermission) {
+			t.Skipf("filesystem cannot enforce ignore-file permission fixture: %v", err)
+		}
+		if _, err := os.ReadDir(denied); !errors.Is(err, fs.ErrPermission) {
+			t.Skipf("filesystem cannot enforce directory permission fixture: %v", err)
+		}
+		local, err := AdmitDirectory(t.Context(), root)
+		assert.NoError(t, err)
+		_, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: local.FS})
+		assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+		pathErr, ok := errors.AsType[*fs.PathError](err)
+		if !ok || pathErr.Path != ignore {
+			t.Fatalf("permission diagnostic = %v; want %s", err, ignore)
+		}
+	})
+
 }

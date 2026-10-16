@@ -1,6 +1,7 @@
 package sourceignore
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,6 +28,21 @@ func TestNewFS_Parity(t *testing.T) {
 				"app/keep.tmp":           "keep",
 				"app/deep/keep.tmp":      "drop",
 				"other/cache.tmp":        "drop",
+			},
+		},
+		{
+			name: "sibling_rules_at_different_depths",
+			files: map[string]string{
+				".sourceignore":             "*.tmp\n",
+				"app/.sourceignore":         "!keep.tmp\n",
+				"app/deep/.sourceignore":    "keep.tmp\n",
+				"app/keep.tmp":              "keep",
+				"app/deep/keep.tmp":         "drop",
+				"other/deep/.sourceignore":  "!keep.tmp\n",
+				"other/deep/keep.tmp":       "keep",
+				"other/deep/drop.tmp":       "drop",
+				"other/deep/child/keep.tmp": "keep",
+				"other/keep.tmp":            "drop",
 			},
 		},
 		{
@@ -111,4 +127,40 @@ func TestNewFS_Parity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewFS_ReadErrors(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, ".sourceignore", "*.tmp\n")
+	input := os.DirFS(root)
+	cases := []struct {
+		name    string
+		input   fs.FS
+		files   []string
+		wantErr error
+	}{
+		{name: "missing_supplied_file", input: input, files: []string{"missing/.sourceignore", ".sourceignore"}},
+		{name: "supplied_read_error", input: ignoreReadErrorFS{FS: input}, files: []string{".sourceignore"}, wantErr: fs.ErrPermission},
+		{name: "discovered_read_error", input: ignoreReadErrorFS{FS: input}, wantErr: fs.ErrPermission},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			matcher, err := NewFS(tc.input, tc.files, "!keep.tmp\n", true)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("NewFS error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil {
+				assert.Equal(t, matcher.Match("cache.tmp", false), true)
+				assert.Equal(t, matcher.Match("keep.tmp", false), false)
+			}
+		})
+	}
+}
+
+type ignoreReadErrorFS struct {
+	fs.FS
+}
+
+func (f ignoreReadErrorFS) ReadFile(name string) ([]byte, error) {
+	return nil, &fs.PathError{Op: "read", Path: name, Err: fs.ErrPermission}
 }

@@ -3,12 +3,15 @@ package change
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -228,4 +231,146 @@ func (c *cancellingFile) Read(p []byte) (int, error) {
 		c.cancel()
 	}
 	return n, err
+}
+
+func TestDetect_HashLimit(t *testing.T) {
+	for _, scenario := range []string{"changed", "canceled", "read error"} {
+		t.Run(scenario, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				reads := &hashReads{release: make(chan struct{})}
+				released := false
+				defer func() {
+					if !released {
+						close(reads.release)
+					}
+				}()
+				readErr := errors.New("hash read failed")
+				if scenario == "read error" {
+					reads.err = readErr
+				}
+				before, after := fstest.MapFS{}, fstest.MapFS{}
+				var want []string
+				for i := range 17 {
+					name := fmt.Sprintf("file-%02d.yaml", i)
+					before[name] = &fstest.MapFile{Data: []byte("old")}
+					after[name] = &fstest.MapFile{Data: []byte("new")}
+					want = append(want, name)
+				}
+				type result struct {
+					set *Set
+					err error
+				}
+				done := make(chan result, 1)
+				go func() {
+					set, err := Detect(ctx, &store.SourceArtifact{FS: &hashInput{FS: before, reads: reads, before: true}}, &store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}})
+					done <- result{set, err}
+				}()
+				synctest.Wait()
+				if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 {
+					t.Fatalf("blocked jobs: active=%d peak=%d before=%d, want eight overlapping jobs", reads.active.Load(), reads.maximum.Load(), reads.before.Load())
+				}
+				switch scenario {
+				case "changed":
+					for range 9 {
+						reads.release <- struct{}{}
+					}
+					synctest.Wait()
+					if reads.before.Load() != 17 || reads.active.Load() != 8 {
+						t.Fatalf("final hash wave: before=%d active=%d", reads.before.Load(), reads.active.Load())
+					}
+				case "canceled":
+					cancel()
+				case "read error":
+					reads.release <- struct{}{}
+				}
+				synctest.Wait()
+				select {
+				case got := <-done:
+					t.Fatalf("Detect returned before blocked readers drained: %+v", got)
+				default:
+				}
+				if scenario == "read error" && (reads.active.Load() != 7 || reads.before.Load() != 8) {
+					t.Fatalf("failed submission started extra jobs: active=%d before=%d", reads.active.Load(), reads.before.Load())
+				}
+				close(reads.release)
+				released = true
+				got := <-done
+				if reads.active.Load() != 0 || reads.opened.Load() != reads.closed.Load() || reads.maximum.Load() > 8 {
+					t.Fatalf("readers not drained: active=%d opened=%d closed=%d peak=%d", reads.active.Load(), reads.opened.Load(), reads.closed.Load(), reads.maximum.Load())
+				}
+				if scenario == "changed" {
+					if got.err != nil || got.set == nil || !slices.Equal(got.set.Paths(), want) || reads.before.Load() != 17 || reads.opened.Load() != 34 {
+						t.Fatalf("hash results: set=%v error=%v before=%d opened=%d", got.set, got.err, reads.before.Load(), reads.opened.Load())
+					}
+				} else {
+					cause := readErr
+					if scenario == "canceled" {
+						cause = context.Canceled
+					}
+					if !errors.Is(got.err, cause) || got.set != nil || reads.before.Load() != 8 {
+						t.Fatalf("failed hash results: set=%v error=%v before=%d", got.set, got.err, reads.before.Load())
+					}
+				}
+			})
+		})
+	}
+}
+
+type hashReads struct {
+	release                                 chan struct{}
+	err                                     error
+	failed                                  atomic.Bool
+	active, maximum, opened, closed, before atomic.Int32
+}
+
+type hashInput struct {
+	fs.FS
+	reads  *hashReads
+	before bool
+}
+
+func (f *hashInput) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err != nil || filepath.Ext(name) != ".yaml" {
+		return file, err
+	}
+	if f.before {
+		f.reads.before.Add(1)
+	}
+	f.reads.opened.Add(1)
+	active := f.reads.active.Add(1)
+	for maximum := f.reads.maximum.Load(); active > maximum; maximum = f.reads.maximum.Load() {
+		if f.reads.maximum.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+	return &hashReadFile{File: file, reads: f.reads, block: f.before}, nil
+}
+
+type hashReadFile struct {
+	fs.File
+	reads   *hashReads
+	started bool
+	block   bool
+}
+
+func (f *hashReadFile) Read(p []byte) (int, error) {
+	if !f.started {
+		f.started = true
+		if f.block {
+			<-f.reads.release
+			if f.reads.err != nil && f.reads.failed.CompareAndSwap(false, true) {
+				return 0, f.reads.err
+			}
+		}
+	}
+	return f.File.Read(p)
+}
+
+func (f *hashReadFile) Close() error {
+	f.reads.closed.Add(1)
+	f.reads.active.Add(-1)
+	return f.File.Close()
 }

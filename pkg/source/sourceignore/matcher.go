@@ -11,6 +11,7 @@
 package sourceignore
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -47,7 +48,11 @@ func New(root string, extra *string, withDefaults bool) (*Matcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sourceignore load: %w", err)
 	}
-	return newMatcher(domain, patterns, extra, withDefaults), nil
+	construct := newMatcher
+	if withDefaults {
+		construct = newSourceMatcher
+	}
+	return construct(domain, loadPatterns(domain, patterns, extra)), nil
 }
 
 // NewFS builds Flux policy from a slash-named immutable filesystem.
@@ -72,16 +77,15 @@ func NewFS(input fs.FS, files []string, extra string, withDefaults bool) (*Match
 		}
 	}
 	files = slices.Clone(files)
+	depth := func(dir string) int {
+		if dir == "." {
+			return 0
+		}
+		return 1 + strings.Count(dir, "/")
+	}
 	slices.SortFunc(files, func(a, b string) int {
 		a, b = path.Dir(a), path.Dir(b)
-		var left, right []string
-		if a != "." {
-			left = strings.Split(a, "/")
-		}
-		if b != "." {
-			right = strings.Split(b, "/")
-		}
-		return slices.Compare(left, right)
+		return cmp.Or(cmp.Compare(depth(a), depth(b)), strings.Compare(a, b))
 	})
 	var patterns []gitignore.Pattern
 	for _, name := range files {
@@ -98,24 +102,29 @@ func NewFS(input fs.FS, files []string, extra string, withDefaults bool) (*Match
 		}
 		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(string(data)), domain)...)
 	}
-	return newMatcher(nil, patterns, &extra, withDefaults), nil
+	construct := newMatcher
+	if withDefaults {
+		construct = newSourceMatcher
+	}
+	return construct(nil, loadPatterns(nil, patterns, &extra)), nil
 }
 
-func newMatcher(domain []string, patterns []gitignore.Pattern, extra *string, withDefaults bool) *Matcher {
+func loadPatterns(domain []string, patterns []gitignore.Pattern, extra *string) []gitignore.Pattern {
 	if extra != nil && strings.TrimSpace(*extra) != "" {
 		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(*extra), domain)...)
 	}
+	return patterns
+}
 
-	var matcher gitignore.Matcher
-	if withDefaults && len(patterns) == 0 {
-		matcher = flux.NewDefaultMatcher(patterns, domain)
-	} else {
-		if withDefaults {
-			patterns = append(flux.VCSPatterns(domain), patterns...)
-		}
-		matcher = flux.NewMatcher(patterns)
+func newSourceMatcher(domain []string, patterns []gitignore.Pattern) *Matcher {
+	if len(patterns) == 0 {
+		return &Matcher{matcher: flux.NewDefaultMatcher(patterns, domain), domain: domain}
 	}
-	return &Matcher{matcher: matcher, domain: domain}
+	return newMatcher(domain, append(flux.VCSPatterns(domain), patterns...))
+}
+
+func newMatcher(domain []string, patterns []gitignore.Pattern) *Matcher {
+	return &Matcher{matcher: flux.NewMatcher(patterns), domain: domain}
 }
 
 // Match reports whether rel (a path relative to the matcher's root, using the

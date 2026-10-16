@@ -101,24 +101,22 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 		}
 	}
 	hg, hashCtx := errgroup.WithContext(ctx)
-	const hashWorkers = 8
-	for worker := range min(hashWorkers, len(jobs)) {
+	hg.SetLimit(8)
+	for i := range jobs {
 		hg.Go(func() error {
-			for i := worker; i < len(jobs); i += hashWorkers {
-				if err := hashCtx.Err(); err != nil {
-					return err
-				}
-				job := &jobs[i]
-				b, err := hashFile(hashCtx, before.FS, job.name)
-				if err != nil {
-					return err
-				}
-				a, err := hashFile(hashCtx, after.FS, job.name)
-				if err != nil {
-					return err
-				}
-				job.changed = a != b
+			if err := hashCtx.Err(); err != nil {
+				return err
 			}
+			job := &jobs[i]
+			b, err := hashFile(hashCtx, before.FS, job.name)
+			if err != nil {
+				return err
+			}
+			a, err := hashFile(hashCtx, after.FS, job.name)
+			if err != nil {
+				return err
+			}
+			job.changed = a != b
 			return nil
 		})
 	}

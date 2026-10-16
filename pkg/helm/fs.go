@@ -61,9 +61,17 @@ func loadFSChart(input fs.FS, name string, previous chartCacheEntry) (chartCache
 	if files != nil {
 		ch, err = loader.LoadFiles(files)
 	} else {
-		data, err = fs.ReadFile(input, name)
-		if err != nil {
-			return chartCacheEntry{}, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
+		r, openErr := input.Open(name)
+		if openErr != nil {
+			return chartCacheEntry{}, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, openErr)
+		}
+		var readErr error
+		data, readErr = io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
+		if err := errors.Join(readErr, r.Close()); err != nil {
+			return chartCacheEntry{}, false, fmt.Errorf("%w: read chart %s: %w", manifest.ErrInput, name, err)
+		}
+		if int64(len(data)) > archive.MaxDecompressedChartSize {
+			return chartCacheEntry{}, false, fmt.Errorf("%w: chart archive exceeds maximum decompressed size", manifest.ErrInput)
 		}
 		if previous.archive != nil && bytes.Equal(data, previous.archive) {
 			return previous, false, nil

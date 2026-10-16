@@ -154,6 +154,59 @@ func BenchmarkLoadChart_FSWarm(b *testing.B) {
 	}
 }
 
+func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
+	old := archive.MaxDecompressedChartSize
+	archive.MaxDecompressedChartSize = 4096
+	t.Cleanup(func() { archive.MaxDecompressedChartSize = old })
+	t.Run("oversized", func(t *testing.T) {
+		data := bytes.Repeat([]byte("x"), int(archive.MaxDecompressedChartSize)+1)
+		input := fstest.MapFS{"chart.tgz": {Data: data}}
+		for _, tc := range []struct {
+			name     string
+			previous chartCacheEntry
+		}{
+			{"empty previous", chartCacheEntry{}},
+			{"matching previous", chartCacheEntry{archive: data}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				_, missing, err := loadFSChart(input, "chart.tgz", tc.previous)
+				assert.Equal(t, missing, false)
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				if err == nil || !strings.Contains(err.Error(), "chart archive exceeds maximum decompressed size") {
+					t.Errorf("expected archive size error, got %v", err)
+				}
+			})
+		}
+	})
+	t.Run("valid reload", func(t *testing.T) {
+		var buf bytes.Buffer
+		gw, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
+		assert.NoError(t, err)
+		tw := tar.NewWriter(gw)
+		data := []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")
+		assert.NoError(t, tw.WriteHeader(&tar.Header{Name: "chart/Chart.yaml", Mode: 0o600, Size: int64(len(data))}))
+		_, err = tw.Write(data)
+		assert.NoError(t, err)
+		assert.NoError(t, tw.Close())
+		assert.NoError(t, gw.Close())
+		assert.Equal(t, int64(len(data)) < archive.MaxDecompressedChartSize, true)
+		assert.Equal(t, int64(buf.Len()) < archive.MaxDecompressedChartSize, true)
+		input := fstest.MapFS{"chart.tgz": {Data: buf.Bytes()}}
+		loaded, missing, err := loadFSChart(input, "chart.tgz", chartCacheEntry{})
+		assert.NoError(t, err)
+		assert.Equal(t, missing, false)
+		assert.Equal(t, loaded.loaded.chart.Metadata.Name, "chart")
+		assert.Equal(t, loaded.loaded.chart.Metadata.Version, "1.0.0")
+		assert.Equal(t, bytes.Equal(loaded.archive, buf.Bytes()), true)
+		warm, missing, err := loadFSChart(input, "chart.tgz", loaded)
+		assert.NoError(t, err)
+		assert.Equal(t, missing, false)
+		assert.Equal(t, warm.loaded.chart == loaded.loaded.chart, true)
+		assert.Equal(t, warm.loaded.fingerprint, loaded.loaded.fingerprint)
+		assert.Equal(t, bytes.Equal(warm.archive, loaded.archive), true)
+	})
+}
+
 func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
 	old := archive.MaxDecompressedChartSize
 	archive.MaxDecompressedChartSize = 64

@@ -384,7 +384,8 @@ func TestRenderFlux_RemoteNotCached(t *testing.T) {
 				kustomization = "generators: [" + ref + "]\n"
 			case "plugin-directory":
 				kustomization = "generators: [plugins]\n"
-				files["plugins/kustomization.yaml"] = "resources: [g.yaml]\n"
+				files["plugins/kustomization.yaml"] = "resources: [nested]\n"
+				files["plugins/nested/kustomization.yaml"] = "resources: [../g.yaml]\n"
 				files["plugins/g.yaml"] = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [" + ref + "]\n"
 			}
 			files["kustomization.yaml"] = kustomization

@@ -112,14 +112,6 @@ func (c *Client) Resolver() SourceResolver {
 	return c.resolver
 }
 
-func (c *Client) resolveLocalSource(hr *manifest.HelmRelease) *store.SourceArtifact {
-	r := c.Resolver()
-	if r == nil {
-		return nil
-	}
-	return r.LocalSourceArtifact(hr.ChartSource())
-}
-
 type chartLoadResult struct {
 	chart       *chart.Chart
 	fingerprint string
@@ -141,7 +133,10 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 	default:
 		return chartLoadResult{}, fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.RepoKind)
 	}
-	art := c.resolveLocalSource(hr)
+	var art *store.SourceArtifact
+	if r := c.Resolver(); r != nil {
+		art = r.LocalSourceArtifact(hr.ChartSource())
+	}
 	if art == nil || art.FS == nil {
 		return chartLoadResult{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())

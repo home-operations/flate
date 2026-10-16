@@ -132,7 +132,11 @@ data:
 				wantOutput = "---\n# Source: mychart/crds/widgets.yaml\n" + crd + "\n" + wantRaw
 			}
 			assert.Equal(t, raw, wantOutput)
-			docs, err := cli.TemplateDocs(t.Context(), hr, nil, opts)
+			docsRaw, err := cli.Template(t.Context(), hr, nil, opts)
+			var docs []map[string]any
+			if err == nil {
+				docs, err = manifest.SplitDocs([]byte(docsRaw))
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +169,10 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, wantErr := cli.TemplateDocs(t.Context(), newHR(), nil, Options{})
+	raw, wantErr := cli.Template(t.Context(), newHR(), nil, Options{})
+	if wantErr == nil {
+		_, wantErr = manifest.SplitDocs([]byte(raw))
+	}
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
@@ -186,7 +193,11 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
-			docs, err := cli.TemplateDocs(t.Context(), hr, nil, Options{SkipCRDs: tc.skip})
+			docsRaw, err := cli.Template(t.Context(), hr, nil, Options{SkipCRDs: tc.skip})
+			var docs []map[string]any
+			if err == nil {
+				docs, err = manifest.SplitDocs([]byte(docsRaw))
+			}
 			if tc.policy != "Skip" {
 				if !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("got %v, want malformed CRD input error", err)
@@ -215,12 +226,18 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
-	_, wantErr := cli.TemplateDocs(t.Context(), newHR(), nil, Options{})
+	raw, wantErr := cli.Template(t.Context(), newHR(), nil, Options{})
+	if wantErr == nil {
+		_, wantErr = manifest.SplitDocs([]byte(raw))
+	}
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
 	for range 2 {
-		_, err := cli.TemplateDocs(t.Context(), newHR(), nil, Options{SkipCRDs: true})
+		raw, err := cli.Template(t.Context(), newHR(), nil, Options{SkipCRDs: true})
+		if err == nil {
+			_, err = manifest.SplitDocs([]byte(raw))
+		}
 		if !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("got %v, want malformed CRD input error", err)
 		}
@@ -266,8 +283,16 @@ dependencies:
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
 			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
-			included, wantErr := cli.TemplateDocs(t.Context(), hr, values, Options{})
-			docs, err := cli.TemplateDocs(t.Context(), hr, values, Options{SkipCRDs: true})
+			includedRaw, wantErr := cli.Template(t.Context(), hr, values, Options{})
+			var included []map[string]any
+			if wantErr == nil {
+				included, wantErr = manifest.SplitDocs([]byte(includedRaw))
+			}
+			docsRaw, err := cli.Template(t.Context(), hr, values, Options{SkipCRDs: true})
+			var docs []map[string]any
+			if err == nil {
+				docs, err = manifest.SplitDocs([]byte(docsRaw))
+			}
 			if tc.enabled {
 				if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)

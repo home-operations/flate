@@ -223,7 +223,7 @@ func TestReleaseManifest_HookSeparators(t *testing.T) {
 
 // TestApplyHRCommonMetadata_OnRenderedChart locks that commonMetadata
 // labels/annotations merge onto real rendered chart output — the
-// post-render pass the helmrelease controller runs after TemplateDocs.
+// post-render pass the helmrelease controller runs after Template and SplitDocs.
 func TestApplyHRCommonMetadata_OnRenderedChart(t *testing.T) {
 	cli := helmChartFixture(t)
 	hr := newHR()
@@ -232,9 +232,13 @@ func TestApplyHRCommonMetadata_OnRenderedChart(t *testing.T) {
 		Annotations: map[string]string{"owner": "platform"},
 	}
 
-	docs, err := cli.TemplateDocs(context.Background(), hr, nil, Options{NoHooks: true})
+	raw, err := cli.Template(context.Background(), hr, nil, Options{NoHooks: true})
+	var docs []map[string]any
+	if err == nil {
+		docs, err = manifest.SplitDocs([]byte(raw))
+	}
 	if err != nil {
-		t.Fatalf("TemplateDocs: %v", err)
+		t.Fatalf("Template and SplitDocs: %v", err)
 	}
 	if len(docs) == 0 {
 		t.Fatal("expected at least one rendered doc")
@@ -259,9 +263,13 @@ func TestApplyHRCommonMetadata_OnRenderedChart(t *testing.T) {
 func TestApplyHROriginLabels_OnRenderedChart(t *testing.T) {
 	cli := helmChartFixture(t)
 	hr := newHR()
-	docs, err := cli.TemplateDocs(context.Background(), hr, nil, Options{NoHooks: true})
+	raw, err := cli.Template(context.Background(), hr, nil, Options{NoHooks: true})
+	var docs []map[string]any
+	if err == nil {
+		docs, err = manifest.SplitDocs([]byte(raw))
+	}
 	if err != nil {
-		t.Fatalf("TemplateDocs: %v", err)
+		t.Fatalf("Template and SplitDocs: %v", err)
 	}
 	if len(docs) == 0 {
 		t.Fatal("expected at least one rendered doc")
@@ -292,9 +300,13 @@ func TestApplyHROriginLabels_WinsOverCommonMetadata(t *testing.T) {
 			"team":                        "platform",
 		},
 	}
-	docs, err := cli.TemplateDocs(context.Background(), hr, nil, Options{NoHooks: true})
+	raw, err := cli.Template(context.Background(), hr, nil, Options{NoHooks: true})
+	var docs []map[string]any
+	if err == nil {
+		docs, err = manifest.SplitDocs([]byte(raw))
+	}
 	if err != nil {
-		t.Fatalf("TemplateDocs: %v", err)
+		t.Fatalf("Template and SplitDocs: %v", err)
 	}
 	ApplyHRCommonMetadata(docs, hr.CommonMetadata)
 	ApplyHROriginLabels(docs, hr)

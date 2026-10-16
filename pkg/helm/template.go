@@ -61,9 +61,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		hrValues = map[string]any{}
 	}
 
-	// Apply chart valuesFiles BEFORE HR.Values so HR overrides win.
-	// Mirrors helm-controller's CoalesceValues layering: chart defaults
-	// (handled internally by helm) → chart-named valuesFiles → HR.Values.
+	// HR values must override the chart's named valuesFiles, matching helm-controller.
 	finalValues := hrValues
 	if len(hr.ChartValuesFiles) > 0 {
 		base, err := c.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
@@ -99,13 +97,8 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return "", fmt.Errorf("helm init: %w", err)
 	}
 	cfg.Capabilities = caps
-	// Override sprig's nondeterministic template functions (a fixed clock
-	// plus seeded random/uuid funcs, and in the cert tier seeded keys/certs)
-	// so the render is byte-reproducible. Helm v4 applies CustomTemplateFuncs
-	// last when building the engine FuncMap, so these win over sprig. The seed
-	// derives only from release name+namespace (both in the render-cache key),
-	// so a cache hit matches a cache miss. Build a fresh map per render — the
-	// random stream is stateful and must not be shared across goroutines.
+	// Helm applies CustomTemplateFuncs last. Each render needs its own stateful
+	// random stream, seeded by the release name and namespace in the cache key.
 	cfg.CustomTemplateFuncs = deterministic.Funcs(
 		deterministic.SeedFor(hr.ReleaseName(), hr.ReleaseNamespace()),
 	)
@@ -124,29 +117,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 	// Disabled dependencies must be pruned before validating their CRDs.
 	if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
-		crds := loaded.chart.CRDObjects()
-		for _, crd := range crds {
-			docs, err := manifest.DecodeDocs(crdReader(crd))
-			for _, doc := range docs {
-				manifest.ReleaseDoc(doc)
-			}
-			if err != nil {
-				// Full-stream diagnostics preserve Helm's line numbers across CRD files.
-				readers := make([]io.Reader, len(crds))
-				for i, crd := range crds {
-					readers[i] = crdReader(crd)
-				}
-				if _, fullErr := manifest.DecodeDocs(io.MultiReader(readers...)); fullErr != nil {
-					err = fullErr
-				}
-				return "", err
-			}
+		if err := validateCRDs(loaded.chart); err != nil {
+			return "", err
 		}
 	}
 
-	// spec.test.enable defaults to false; tests only land in the
-	// rendered output when the HR explicitly enables them or the
-	// CLI overrides. CLI --skip-tests always wins.
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
 	if key != "" {
@@ -164,8 +139,39 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	return out, nil
 }
 
+func validateCRDs(ch *chart.Chart) error {
+	crds := ch.CRDObjects()
+	for _, crd := range crds {
+		docs, err := manifest.DecodeDocs(crdReader(crd))
+		for _, doc := range docs {
+			manifest.ReleaseDoc(doc)
+		}
+		if err == nil {
+			continue
+		}
+		// Full-stream diagnostics preserve Helm's line numbers across CRD files.
+		readers := make([]io.Reader, len(crds))
+		for i, crd := range crds {
+			readers[i] = crdReader(crd)
+		}
+		docs, fullErr := manifest.DecodeDocs(io.MultiReader(readers...))
+		for _, doc := range docs {
+			manifest.ReleaseDoc(doc)
+		}
+		if fullErr != nil {
+			return fullErr
+		}
+		return err
+	}
+	return nil
+}
+
+func sourcePrefix(name string) string {
+	return "---\n" + sourceHeader + name + "\n"
+}
+
 func crdReader(crd chart.CRD) io.Reader {
-	return io.MultiReader(strings.NewReader("---\n"+sourceHeader+crd.Filename+"\n"),
+	return io.MultiReader(strings.NewReader(sourcePrefix(crd.Filename)),
 		bytes.NewReader(crd.File.Data), strings.NewReader("\n"))
 }
 
@@ -325,23 +331,6 @@ func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing
 	return out, nil
 }
 
-// TemplateDocs renders a HelmRelease and returns its output split into
-// individual documents (each a generic map).
-//
-// It deliberately stops at split: List flattening, the post-render
-// passes (ApplyHRCommonMetadata then ApplyHROriginLabels), and
-// DropKinds are orchestrated by the caller — the helmrelease controller
-// — so they run in the right order on the flattened docs. (Flattening
-// must precede the label passes, or List-bundled resources would never
-// receive the helm.toolkit.fluxcd.io ownership labels real Flux applies.)
-func (c *Client) TemplateDocs(ctx context.Context, hr *manifest.HelmRelease, values map[string]any, opts Options) ([]map[string]any, error) {
-	raw, err := c.Template(ctx, hr, values, opts)
-	if err != nil {
-		return nil, err
-	}
-	return manifest.SplitDocs([]byte(raw))
-}
-
 // ApplyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
 // ownership labels onto every non-hook rendered doc, mirroring
 // helm-controller's OriginLabels post-renderer fed through
@@ -417,13 +406,8 @@ func isHookDoc(doc map[string]any) bool {
 	return has
 }
 
-// releaseManifest joins rel.Manifest with hooks (when allowed) and
-// returns a single YAML string. ShowOnly filters by template path,
-// mirroring `helm template --show-only`.
 func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests bool) string {
-	// Pre-size the builder: rendered manifest + every hook body. Saves
-	// the geometric bytes.Buffer.grow walk on big releases — measured
-	// at ~300 MB of allocations on a 200-HR drag0n141 run.
+	// Reserve hook framing as well as bodies to avoid repeated growth on large releases.
 	size := len(rel.Manifest)
 	if !disableHooks {
 		for _, h := range rel.Hooks {
@@ -445,7 +429,8 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 			if !lastNewline {
 				b.WriteByte('\n')
 			}
-			fmt.Fprintf(&b, "---\n"+sourceHeader+"%s\n%s", h.Path, h.Manifest)
+			b.WriteString(sourcePrefix(h.Path))
+			b.WriteString(h.Manifest)
 			lastNewline = strings.HasSuffix(h.Manifest, "\n")
 		}
 	}

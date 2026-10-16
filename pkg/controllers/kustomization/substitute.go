@@ -28,6 +28,7 @@ func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map
 	if err != nil {
 		return nil, err
 	}
+	// Flux kustomize.SubstituteVariables uses varSubstitution to preserve YAML-to-JSON scalar semantics.
 	data, err := sigsyaml.YAMLToJSON(out)
 	if err != nil {
 		return nil, fmt.Errorf("substitute: convert doc to JSON: %w", err)

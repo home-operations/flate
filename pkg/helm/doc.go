@@ -3,8 +3,8 @@
 //
 // The exported surface:
 //
-//   - Client.Template / Client.TemplateDocs render a HelmRelease to
-//     YAML documents (the equivalent of
+//   - Client.Template renders a HelmRelease to
+//     a YAML stream (the equivalent of
 //     `helm template --dry-run --client-only`).
 //   - Client.SetSourceResolver wires the canonical source-CR lookup
 //     surface — production callers pass NewStoreSourceResolver(store)
@@ -14,7 +14,7 @@
 //     orchestrator can implement SourceResolver directly.
 //   - Prepare(hr, lookup, provider, cache) performs the pre-render dance
 //     (Clone → ResolveChartRef → ExpandValueReferences) — call this
-//     before TemplateDocs when rendering a HelmRelease in isolation.
+//     before Template when rendering a HelmRelease in isolation.
 //   - Options exposes the helm CLI flags flate understands
 //     (--kube-version, --api-versions, --no-hooks, etc.).
 //

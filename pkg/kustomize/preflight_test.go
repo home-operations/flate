@@ -127,21 +127,26 @@ func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 	}
 }
 
-// TestPreflightRemoteResources_WalksNestedKustomizations covers the recursive
-// case: a Components / overlay layout where the URL resource hides inside a
-// subdir's kustomization.yaml.
 func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: nested}\n"))
 	}))
 	t.Cleanup(srv.Close)
 
+	const parent = "resources:\n  - ./components/x\n"
 	fsys := memFSWith(t, map[string]string{
-		"kustomization.yaml":              "resources:\n  - ./components/x\n",
+		"kustomization.yaml":              parent,
 		"components/x/kustomization.yaml": "resources:\n  - " + srv.URL + "/nested.yaml\n",
 	})
-	if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
+	injected, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
+	if err != nil {
 		t.Fatalf("preflight: %v", err)
+	}
+	if !injected {
+		t.Fatal("nested remote input did not disable persistent caching")
+	}
+	if body, _ := fsys.ReadFile("kustomization.yaml"); string(body) != parent {
+		t.Fatalf("unchanged parent operand was rewritten: %q", body)
 	}
 	body, _ := fsys.ReadFile("components/x/kustomization.yaml")
 	if strings.Contains(string(body), srv.URL) {
@@ -413,7 +418,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 		{name: "plugin-secret-files", control: base + "generators: [g.yaml]\n", files: map[string]string{"g.yaml": "apiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: generated}\nfiles: [$URL/file.txt]\n"}, replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: Y29udGVudHM="},
 		{name: "plugin-case-insensitive-files", control: base + "generators: [g.yaml]\n", files: map[string]string{"g.yaml": strings.ReplaceAll(plugin, "files:", "Files:")}, replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
 		{name: "plugin-local-directory", control: base + "generators: [plugins]\n", files: map[string]string{"plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": strings.ReplaceAll(plugin, ", $URL/file.txt", "")}, want: "local.txt: owner"},
-		{name: "plugin-directory-two-owners", control: "resources: [a, b]\n", files: map[string]string{"a/kustomization.yaml": "namePrefix: a-\ngenerators: [../plugins]\n", "b/kustomization.yaml": "namePrefix: b-\ngenerators: [../plugins]\n", "plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": plugin, "a/local.txt": "owner-a", "b/local.txt": "owner-b"}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner-b"},
+		{name: "plugin-directory-two-owners", control: "resources: [a, b]\n", files: map[string]string{"a/kustomization.yaml": "namePrefix: a-\ngenerators: [../plugins]\n", "b/kustomization.yaml": "namePrefix: b-\ngenerators: [../plugins]\n", "plugins/kustomization.yaml": "resources: [nested]\n", "plugins/nested/kustomization.yaml": "resources: [../g.yaml]\n", "plugins/g.yaml": plugin, "a/local.txt": "owner-a", "b/local.txt": "owner-b"}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner-b"},
 		{name: "plugin-patch", control: base + "transformers: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: PatchTransformer\nmetadata: {name: patch}\npath: $URL/patch.yaml\n"}, replies: map[string]string{"/patch.yaml": patch}, want: "marker: patched"},
 		{name: "plugin-json", control: base + "transformers: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: PatchJson6902Transformer\nmetadata: {name: patch}\n" + target + "path: $URL/patch.json\n"}, replies: map[string]string{"/patch.json": `[{"op":"replace","path":"/data/marker","value":"patched"}]`}, want: "marker: patched"},
 		{name: "plugin-strategic", control: base + "transformers: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata: {name: patch}\npaths: [$URL/patch.yaml]\n"}, replies: map[string]string{"/patch.yaml": patch}, want: "marker: patched"},
@@ -492,6 +497,9 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error=%v, want %q", err, tc.wantErr)
+				}
+				if tc.name == "plugin-directory-cycle" && !strings.Contains(err.Error(), remoteResourcePrefix) {
+					t.Fatalf("cycle diagnostic lost private view: %v", err)
 				}
 			} else if err != nil || !strings.Contains(string(out), strings.ReplaceAll(tc.want, "$URL", url)) {
 				t.Fatalf("render: %s, %v; want %q", out, err, tc.want)

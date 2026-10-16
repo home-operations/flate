@@ -211,10 +211,6 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// chart" below (after the fingerprint dedup) stays unconditional. See
 	// base.SetPendingUnlessReady (#657/#658).
 	c.SetPendingUnlessReady(id, "resolving chart")
-	// helm.Prepare clones hr, resolves chartRef, and expands values —
-	// the same pre-render dance an embedder calling TemplateDocs
-	// directly performs. Keeping one canonical implementation here
-	// means changes to the contract only land in one place.
 	hr, err = helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store), c.Helm.ValuesCache())
 	if err != nil {
 		return err
@@ -245,7 +241,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 		return err
 	}
 
-	// Fingerprint dedup (helm.TemplateDocs is the hot path): skip the
+	// Fingerprint dedup (helm.Template is the hot path): skip the
 	// re-render and replay the cached artifact's side-effects when the
 	// effective spec is byte-identical to the cached artifact — the common
 	// trigger is a parent KS re-emitting this HR with stamped ownership
@@ -272,7 +268,11 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
-	docs, err := c.Helm.TemplateDocs(ctx, hr, hr.Values, c.Options)
+	raw, err := c.Helm.Template(ctx, hr, hr.Values, c.Options)
+	var docs []map[string]any
+	if err == nil {
+		docs, err = manifest.SplitDocs([]byte(raw))
+	}
 	if err != nil {
 		// Best-effort rescue: if this HR's parent Kustomization couldn't read a
 		// substituteFrom Secret offline, a required value the render needs may
@@ -344,7 +344,11 @@ func (c *Controller) renderBestEffort(ctx context.Context, id manifest.NamedReso
 	if len(paths) == 0 {
 		return nil, nil, false
 	}
-	docs, err := c.Helm.TemplateDocs(ctx, hr, filled, c.Options)
+	raw, err := c.Helm.Template(ctx, hr, filled, c.Options)
+	if err != nil {
+		return nil, nil, false
+	}
+	docs, err := manifest.SplitDocs([]byte(raw))
 	if err != nil {
 		return nil, nil, false
 	}

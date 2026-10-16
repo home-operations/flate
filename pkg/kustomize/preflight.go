@@ -76,117 +76,132 @@ type controlLocation struct {
 }
 
 type inputWalk struct {
-	cache    *TreeCache
-	fs       *treeFS
-	visited  map[controlLocation][]byte
-	mounts   []string
-	injected bool
+	cache   *TreeCache
+	fs      *treeFS
+	visited map[controlLocation][]byte
+	mounts  []string
+}
+
+type inputResult struct {
+	rewritten, injected bool
+}
+
+func replaced(changed bool) inputResult {
+	return inputResult{rewritten: changed, injected: changed}
+}
+
+func (r inputResult) merge(other inputResult) inputResult {
+	return inputResult{rewritten: r.rewritten || other.rewritten, injected: r.injected || other.injected}
+}
+
+type inputPath struct {
+	file, replacement string
+	directory         bool
 }
 
 func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) (bool, error) {
 	w := inputWalk{cache: cache, fs: memFS.(*treeFS), visited: make(map[controlLocation][]byte)}
-	err := w.directory(ctx, subPath, "")
+	result, err := w.directory(ctx, subPath, "")
 	if err != nil {
 		err = fmt.Errorf("%w: preflight: %w", manifest.ErrFlux, err)
 	}
-	return w.injected, err
+	return result.injected, err
 }
 
-func (w *inputWalk) directory(ctx context.Context, dir, pluginRoot string) error {
+func (w *inputWalk) directory(ctx context.Context, dir, pluginRoot string) (inputResult, error) {
 	canonical, _, err := w.fs.CleanedAbs(dir)
 	if err != nil {
-		return err
+		return inputResult{}, err
 	}
 	file, ok := kustomizationFileIn(w.fs, canonical.String())
 	if !ok {
-		return nil // Build owns missing and conflicting control-file diagnostics.
+		return inputResult{}, nil // Build owns missing and conflicting control-file diagnostics.
 	}
 	loc := controlLocation{file: file, root: canonical.String(), pluginRoot: pluginRoot}
 	key := w.location(loc)
 	if _, ok := w.visited[key]; ok {
-		return nil // Preserve the graph so Build still rejects cycles.
+		return inputResult{}, nil // Preserve the graph so Build still rejects cycles.
 	}
 	body, err := w.fs.ReadFile(file)
 	if err != nil {
-		return err
+		return inputResult{}, err
 	}
 	// Build owns local parse diagnostics for byte-for-byte parity.
 	var k types.Kustomization
 	if err := k.Unmarshal(body); err != nil {
-		return nil
+		return inputResult{}, nil
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return nil
+		return inputResult{}, nil
 	}
 	if err := yaml.NewRNode(&doc).DeAnchor(); err != nil {
-		return nil
+		return inputResult{}, nil
 	}
 	w.visited[key] = []byte(canonical.String())
-	changed, err := w.fields(ctx, loc, &doc, controlFields)
-	if loc.pluginRoot != "" && !w.injected {
+	result, err := w.fields(ctx, loc, &doc, controlFields)
+	if loc.pluginRoot != "" && !result.injected {
 		w.visited[key] = []byte(key.root)
 	}
-	if err != nil || !changed {
-		return err
+	if err != nil || !result.rewritten {
+		return result, err
 	}
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
-		return err
+		return inputResult{}, err
 	}
-	return w.fs.WriteFile(file, out)
+	return result, w.fs.WriteFile(file, out)
 }
 
 // A plugin directory needs its own control view: the same directory may also
 // emit ordinary resource data. Snapshot the whole tree to preserve parent paths;
 // only a view containing rewritten remote inputs replaces the declared edge.
-func (w *inputWalk) pluginDirectory(ctx context.Context, dir, owner string) (string, bool, error) {
+func (w *inputWalk) pluginDirectory(ctx context.Context, dir, owner string) (string, inputResult, error) {
 	canonical, _, err := w.fs.CleanedAbs(dir)
 	if err != nil {
-		return "", false, err
+		return "", inputResult{}, err
 	}
 	selected := canonical.String()
+	var injected bool
 	if file, ok := kustomizationFileIn(w.fs, selected); ok {
 		key := w.location(controlLocation{file: file, root: selected, pluginRoot: owner})
 		if prior, ok := w.visited[key]; ok {
 			if string(prior) != key.root {
 				selected = string(prior)
-				w.injected = true
+				injected = true
 			}
 		} else {
 			snapshot, err := w.fs.upper.Build()
 			if err != nil {
-				return "", false, err
+				return "", inputResult{}, err
 			}
 			w.fs.upper = tree.NewBuilder(snapshot)
 			name := remoteResourcePrefix + manifest.Fingerprint([]string{key.file, key.root, key.pluginRoot})
 			if err := w.fs.upper.Mount(name, snapshot); err != nil {
-				return "", false, err
+				return "", inputResult{}, err
 			}
 			w.fs.mark(name)
 			mount := filepath.Join(w.fs.root, name)
 			w.mounts = append(w.mounts, mount)
 			rel, err := filepath.Rel(w.fs.root, key.root)
 			if err != nil {
-				return "", false, err
+				return "", inputResult{}, err
 			}
 			selected = filepath.Join(mount, rel)
-			previous := w.injected
-			w.injected = false
-			err = w.directory(ctx, selected, owner)
-			changed := w.injected
-			w.injected = previous || changed
+			result, err := w.directory(ctx, selected, owner)
 			if err != nil {
-				return "", false, err
+				return "", inputResult{}, err
 			}
-			if !changed {
+			if !result.injected {
 				selected = canonical.String()
 			}
 			w.visited[key] = []byte(selected)
 		}
 	}
 	rel, err := filepath.Rel(owner, selected)
-	return "./" + filepath.ToSlash(rel), selected != canonical.String(), err
+	result := replaced(selected != canonical.String())
+	result.injected = result.injected || injected
+	return "./" + filepath.ToSlash(rel), result, err
 }
 
 func (w *inputWalk) location(loc controlLocation) controlLocation {
@@ -200,31 +215,31 @@ func (w *inputWalk) location(loc controlLocation) controlLocation {
 	return loc
 }
 
-func (w *inputWalk) fields(ctx context.Context, loc controlLocation, doc *yaml.Node, fields []inputField) (bool, error) {
-	changed := false
+func (w *inputWalk) fields(ctx context.Context, loc controlLocation, doc *yaml.Node, fields []inputField) (inputResult, error) {
+	var result inputResult
 	for _, field := range fields {
 		c, err := w.selectField(ctx, loc, doc, field)
 		if err != nil {
-			return false, err
+			return inputResult{}, err
 		}
-		changed = changed || c
+		result = result.merge(c)
 	}
-	return changed, nil
+	return result, nil
 }
 
-func (w *inputWalk) selectField(ctx context.Context, loc controlLocation, node *yaml.Node, field inputField) (bool, error) {
+func (w *inputWalk) selectField(ctx context.Context, loc controlLocation, node *yaml.Node, field inputField) (inputResult, error) {
 	if node == nil {
-		return false, nil
+		return inputResult{}, nil
 	}
 	if field.path == "" {
 		if node.Kind != yaml.ScalarNode || node.Value == "" {
-			return false, nil
+			return inputResult{}, nil
 		}
-		changed, err := w.operand(ctx, loc, node, field.kind)
+		result, err := w.operand(ctx, loc, node, field.kind)
 		if err != nil {
-			return false, fmt.Errorf("%s %s %q (line %d): %w", loc.file, loc.field, node.Value, node.Line, err)
+			return inputResult{}, fmt.Errorf("%s %s %q (line %d): %w", loc.file, loc.field, node.Value, node.Line, err)
 		}
-		return changed, nil
+		return result, nil
 	}
 	part, rest, _ := strings.Cut(field.path, "/")
 	field.path = rest
@@ -232,153 +247,193 @@ func (w *inputWalk) selectField(ctx context.Context, loc controlLocation, node *
 		loc.field += "." + part
 		return w.selectField(ctx, loc, findMappingValue(node, part), field)
 	}
-	changed := false
+	var result inputResult
 	if node.Kind == yaml.SequenceNode {
 		for i, child := range node.Content {
 			next := loc
 			next.field += fmt.Sprintf("[%d]", i)
 			c, err := w.selectField(ctx, next, child, field)
 			if err != nil {
-				return false, err
+				return inputResult{}, err
 			}
-			changed = changed || c
+			result = result.merge(c)
 		}
 	}
-	return changed, nil
+	return result, nil
 }
 
-func (w *inputWalk) operand(ctx context.Context, loc controlLocation, node *yaml.Node, kind inputKind) (bool, error) {
-	raw := node.Value
-	if kind == strategicInput || kind == pluginInput {
-		if rm, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes([]byte(raw)); err == nil {
-			if kind == strategicInput {
-				return false, nil
-			}
-			out, changed, err := w.plugins(ctx, loc, []byte(raw), rm)
-			if changed {
-				node.Value = string(out)
-			}
-			return changed, err
-		}
+func (w *inputWalk) operand(ctx context.Context, loc controlLocation, node *yaml.Node, kind inputKind) (inputResult, error) {
+	switch kind {
+	case resourceInput:
+		return w.resourceOperand(ctx, loc, node)
+	case pluginInput:
+		return w.pluginOperand(ctx, loc, node)
+	case generatorInput:
+		return w.generatorOperand(ctx, loc, node)
+	case strategicInput:
+		return w.strategicOperand(ctx, loc, node)
+	default:
+		return w.fileOperand(ctx, loc, node)
 	}
-	key := ""
-	if kind == generatorInput {
-		if strings.Count(raw, "=") > 1 {
-			return false, nil // Upstream MUST retain its invalid file-source grammar.
-		}
-		var explicit bool
-		key, raw, explicit = strings.Cut(raw, "=")
-		if !explicit {
-			raw, key = key, filepath.Base(key)
-		} else if key == "" || raw == "" {
-			return false, nil
-		}
+}
+
+func (w *inputWalk) fileOperand(ctx context.Context, loc controlLocation, node *yaml.Node) (inputResult, error) {
+	path, err := w.filePath(ctx, loc, node.Value)
+	result := replaced(path.replacement != "")
+	if err == nil && result.rewritten {
+		setPlainScalar(node, path.replacement)
 	}
-	root := loc.root
-	if kind == resourceInput || kind == pluginInput {
-		if spec, ok := isGitRemoteBase(raw); ok {
-			spec.dir = root
-			dest, err := fetchGitBase(ctx, w.cache, w.fs, spec)
-			if err != nil {
-				return false, err
-			}
-			w.injected = true
-			if kind == pluginInput {
-				file, _, err := w.pluginDirectory(ctx, filepath.Join(root, dest), root)
-				if err != nil {
-					return false, err
-				}
-				setPlainScalar(node, file)
-				return true, nil
-			}
-			setPlainScalar(node, dest)
-			return true, w.directory(ctx, filepath.Join(root, dest), loc.pluginRoot)
-		}
+	return result, err
+}
+
+func (w *inputWalk) generatorOperand(ctx context.Context, loc controlLocation, node *yaml.Node) (inputResult, error) {
+	if strings.Count(node.Value, "=") > 1 {
+		return inputResult{}, nil // Upstream MUST retain its invalid file-source grammar.
 	}
+	key, raw, explicit := strings.Cut(node.Value, "=")
+	if !explicit {
+		raw, key = key, filepath.Base(key)
+	} else if key == "" || raw == "" {
+		return inputResult{}, nil
+	}
+	file := *node
+	file.Value = raw
+	result, err := w.fileOperand(ctx, loc, &file)
+	if result.rewritten {
+		setPlainScalar(node, key+"="+file.Value)
+	}
+	return result, err
+}
+
+func (w *inputWalk) strategicOperand(ctx context.Context, loc controlLocation, node *yaml.Node) (inputResult, error) {
+	if _, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes([]byte(node.Value)); err == nil {
+		return inputResult{}, nil
+	}
+	return w.fileOperand(ctx, loc, node)
+}
+
+func (w *inputWalk) resourceOperand(ctx context.Context, loc controlLocation, node *yaml.Node) (inputResult, error) {
+	path, err := w.resourcePath(ctx, loc, node.Value)
+	if err != nil {
+		return inputResult{}, err
+	}
+	result := replaced(path.replacement != "")
+	if path.directory {
+		if result.rewritten {
+			setPlainScalar(node, path.replacement)
+		}
+		child, err := w.directory(ctx, path.file, loc.pluginRoot)
+		result.injected = result.injected || child.injected
+		return result, err
+	}
+	if loc.pluginRoot != "" {
+		loc.root = loc.pluginRoot
+		return w.pluginFile(ctx, loc, node, path)
+	}
+	if result.rewritten {
+		setPlainScalar(node, path.replacement)
+	}
+	return result, nil
+}
+
+func (w *inputWalk) pluginOperand(ctx context.Context, loc controlLocation, node *yaml.Node) (inputResult, error) {
+	if rm, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes([]byte(node.Value)); err == nil {
+		out, result, err := w.plugins(ctx, loc, []byte(node.Value), rm)
+		if result.rewritten {
+			node.Value = string(out)
+		}
+		return result, err
+	}
+	path, err := w.resourcePath(ctx, loc, node.Value)
+	if err != nil {
+		return inputResult{}, err
+	}
+	if !path.directory {
+		return w.pluginFile(ctx, loc, node, path)
+	}
+	dir, result, err := w.pluginDirectory(ctx, path.file, loc.root)
+	result.rewritten = result.rewritten || path.replacement != ""
+	result.injected = result.injected || path.replacement != ""
+	if err == nil && result.rewritten {
+		setPlainScalar(node, dir)
+	}
+	return result, err
+}
+
+func (w *inputWalk) filePath(ctx context.Context, loc controlLocation, raw string) (inputPath, error) {
 	file := raw
 	if !filepath.IsAbs(file) {
-		file = filepath.Join(root, file)
+		file = filepath.Join(loc.root, file)
 	}
-	remote := false
-	if _, _, ok := cutHTTPScheme(raw); ok {
-		body, err := w.cache.FetchRemote(ctx, raw, w.fs.retry)
-		if err != nil {
-			return false, err
-		}
-		file, err = w.mount(body)
-		if err != nil {
-			return false, err
-		}
-		remote = true
-		w.injected = true
-	} else if (kind == resourceInput || kind == pluginInput) && w.fs.IsDir(file) {
-		if kind == pluginInput {
-			dir, changed, err := w.pluginDirectory(ctx, file, root)
-			if changed {
-				setPlainScalar(node, dir)
-			}
-			return changed, err
-		}
-		return false, w.directory(ctx, file, loc.pluginRoot)
+	if _, _, ok := cutHTTPScheme(raw); !ok {
+		return inputPath{file: file}, nil
 	}
-	if kind == pluginInput || kind == resourceInput && loc.pluginRoot != "" {
-		body, err := w.fs.ReadFile(file)
-		if err != nil {
-			return false, err
-		}
-		pluginLoc := controlLocation{file: file, root: root, remote: remote}
-		if loc.pluginRoot != "" && kind == resourceInput {
-			pluginLoc.root = loc.pluginRoot
-		}
-		out, changed, err := w.plugins(ctx, pluginLoc, body, nil)
-		if err != nil {
-			return false, err
-		}
-		if changed {
-			file, err = w.mount(out)
-			if err != nil {
-				return false, err
-			}
-			remote = true
-			w.injected = true
-		}
+	body, err := w.cache.FetchRemote(ctx, raw, w.fs.retry)
+	if err != nil {
+		return inputPath{}, err
 	}
-	if !remote {
-		return false, nil
-	}
-	if kind == generatorInput {
-		file = key + "=" + file
-	}
-	setPlainScalar(node, file)
-	return true, nil
+	file, err = w.mount(body)
+	return inputPath{file: file, replacement: file}, err
 }
 
-func (w *inputWalk) plugins(ctx context.Context, loc controlLocation, body []byte, resources []*resource.Resource) ([]byte, bool, error) {
+func (w *inputWalk) resourcePath(ctx context.Context, loc controlLocation, raw string) (inputPath, error) {
+	if spec, ok := isGitRemoteBase(raw); ok {
+		spec.dir = loc.root
+		dest, err := fetchGitBase(ctx, w.cache, w.fs, spec)
+		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true}, err
+	}
+	path, err := w.filePath(ctx, loc, raw)
+	path.directory = err == nil && path.replacement == "" && w.fs.IsDir(path.file)
+	return path, err
+}
+
+func (w *inputWalk) pluginFile(ctx context.Context, loc controlLocation, node *yaml.Node, path inputPath) (inputResult, error) {
+	loc = controlLocation{file: path.file, root: loc.root, remote: path.replacement != ""}
+	body, err := w.fs.ReadFile(path.file)
+	if err != nil {
+		return inputResult{}, err
+	}
+	out, result, err := w.plugins(ctx, loc, body, nil)
+	if err != nil {
+		return inputResult{}, err
+	}
+	if result.rewritten {
+		path.replacement, err = w.mount(out)
+	}
+	result.rewritten = path.replacement != ""
+	result.injected = result.injected || result.rewritten
+	if err == nil && result.rewritten {
+		setPlainScalar(node, path.replacement)
+	}
+	return result, err
+}
+
+func (w *inputWalk) plugins(ctx context.Context, loc controlLocation, body []byte, resources []*resource.Resource) ([]byte, inputResult, error) {
 	key := w.location(loc)
 	key.field = manifest.Fingerprint(body)
 	if out, ok := w.visited[key]; ok {
-		return out, out != nil, nil
+		return out, replaced(out != nil), nil
 	}
 	if resources == nil {
 		var err error
 		resources, err = provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes(body)
 		if err != nil {
 			if !loc.remote {
-				return body, false, nil
+				return body, inputResult{}, nil
 			}
-			return nil, false, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
+			return nil, inputResult{}, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
 		}
 	}
 	var out bytes.Buffer
 	encoder := yaml.NewEncoder(&out)
-	changed := false
+	var result inputResult
 	for _, resource := range resources {
 		doc := resource.YNode()
 		if err := yaml.NewRNode(doc).DeAnchor(); err != nil {
 			if !loc.remote {
-				return body, false, nil
+				return body, inputResult{}, nil
 			}
-			return nil, false, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
+			return nil, inputResult{}, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
 		}
 		var fields []inputField
 		api, kind := findMappingValue(doc, "apiVersion"), findMappingValue(doc, "kind")
@@ -398,22 +453,22 @@ func (w *inputWalk) plugins(ctx context.Context, loc controlLocation, body []byt
 		}
 		c, err := w.fields(ctx, loc, doc, fields)
 		if err != nil {
-			return nil, false, err
+			return nil, inputResult{}, err
 		}
-		changed = changed || c
+		result = result.merge(c)
 		if err := encoder.Encode(doc); err != nil {
-			return nil, false, err
+			return nil, inputResult{}, err
 		}
 	}
 	if err := encoder.Close(); err != nil {
-		return nil, false, err
+		return nil, inputResult{}, err
 	}
-	if !changed {
+	if !result.rewritten {
 		w.visited[key] = nil
-		return body, false, nil
+		return body, inputResult{}, nil
 	}
 	w.visited[key] = out.Bytes()
-	return out.Bytes(), true, nil
+	return out.Bytes(), result, nil
 }
 
 func (w *inputWalk) mount(body []byte) (string, error) {

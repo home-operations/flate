@@ -1109,7 +1109,7 @@ spec:
 // TestOrchestrator_AllowMissingSecretsHRSkipsBeforePull locks the
 // silent-anonymous-pull regression the iter-17 edge-case review
 // flagged: an HR with chartRef → OCIRepository whose auth Secret is
-// missing MUST propagate the skip BEFORE helm.TemplateDocs runs.
+// missing MUST propagate the skip BEFORE helm.Template runs.
 // Without the pre-check, the source-controller's soft-skip leaves
 // no on-disk artifact but the helm client's locateOCIChart would
 // still try an oras-pull against the registry — succeeding silently
@@ -1155,7 +1155,7 @@ spec:
 
 	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
 	if _, failed := res.Failed[hrID]; failed {
-		t.Errorf("HR must propagate skip before helm.TemplateDocs runs; got %v", res.Failed[hrID])
+		t.Errorf("HR must propagate skip before helm.Template runs; got %v", res.Failed[hrID])
 	}
 	hrInfo, ok := o.Store().GetStatus(hrID)
 	if !ok || !store.IsSkipped(hrInfo) {

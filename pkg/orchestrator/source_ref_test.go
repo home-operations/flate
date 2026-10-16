@@ -57,7 +57,11 @@ func TestRun_DefaultGitCache(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(o.Stop)
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +131,11 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(o.Stop)
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}

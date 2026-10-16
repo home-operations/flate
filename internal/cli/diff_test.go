@@ -676,7 +676,11 @@ spec:
 			}
 			c := commonFlags{path: currentScan, pathOrig: origScan}
 			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer cleanup()
+			defer func() {
+				if err := cleanup(); err != nil {
+					t.Errorf("baseline cleanup: %v", err)
+				}
+			}()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -726,7 +730,11 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 			testutil.WriteFile(t, orig, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n")
 			c := commonFlags{path: current, pathOrig: orig}
 			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer cleanup()
+			defer func() {
+				if err := cleanup(); err != nil {
+					t.Errorf("baseline cleanup: %v", err)
+				}
+			}()
 			if err != nil {
 				t.Fatal(err)
 			}

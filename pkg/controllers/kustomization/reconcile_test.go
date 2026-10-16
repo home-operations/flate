@@ -54,6 +54,7 @@ data: {greeting: hi}
 	assert.NoError(t, err)
 	t.Cleanup(func() { _ = owner.Close() })
 	cache := kustomize.NewTreeCache(owner, nil)
+	t.Cleanup(cache.Close)
 
 	tasks := task.NewBounded(2)
 	c := New(s, tasks, cache, true)

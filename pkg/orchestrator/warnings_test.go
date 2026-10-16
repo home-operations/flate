@@ -31,7 +31,11 @@ func TestRender_ScanAndPathWarnings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer o.Stop()
+			defer func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			}()
 			res, err := o.Render(t.Context())
 			if err != nil {
 				t.Fatal(err)

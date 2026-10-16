@@ -1,8 +1,8 @@
 package kustomize
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -48,13 +48,6 @@ func remoteFiles(t *testing.T, fsys filesys.FileSystem, dir string) []string {
 	return out
 }
 
-// newPreflightCache returns a fresh TreeCache so each test gets its own
-// remote-fetch dedup table (no cross-test cache hits).
-func newPreflightCache(t *testing.T) *TreeCache {
-	t.Helper()
-	return NewTreeCache(newTestCache(t, ""), nil)
-}
-
 // TestPreflightRemoteResources_RewritesSuccessfulFetch confirms the happy
 // path: a kustomization listing an HTTP resource → flate fetches it → the
 // kustomization gets the URL replaced with the local file → the fetched body
@@ -67,7 +60,7 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/foo.yaml\n"})
-	if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -107,7 +100,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/missing.yaml\n"})
-	_, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
+	_, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error on 404; got nil (preflight would silently swallow the failure)")
 	}
@@ -124,7 +117,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
-	if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	got, _ := fsys.ReadFile("kustomization.yaml")
@@ -146,7 +139,7 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 		"kustomization.yaml":              "resources:\n  - ./components/x\n",
 		"components/x/kustomization.yaml": "resources:\n  - " + srv.URL + "/nested.yaml\n",
 	})
-	if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	body, _ := fsys.ReadFile("components/x/kustomization.yaml")
@@ -171,7 +164,7 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := RenderFlux(context.Background(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -206,7 +199,7 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 	for _, name := range []string{"kustomization.yml", "Kustomization"} {
 		t.Run(name, func(t *testing.T) {
 			fsys := memFSWith(t, map[string]string{name: "resources:\n  - " + srv.URL + "/x.yaml\n"})
-			if _, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, "."); err != nil {
+			if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 				t.Fatalf("preflight: %v", err)
 			}
 			body, _ := fsys.ReadFile(name)
@@ -240,7 +233,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 		"c/kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n",
 	})
 
-	cache := newPreflightCache(t)
+	cache := newTestTreeCache(t, "")
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -266,18 +259,14 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 // more than remoteFetchMaxBytes must fail fast rather than reading the whole
 // body into memory.
 func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
-	huge := strings.Repeat("a", remoteFetchMaxBytes+1024)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(huge))
-	}))
-	t.Cleanup(srv.Close)
-
-	_, err := newPreflightCache(t).httpGetURL(context.Background(), srv.URL+"/big.yaml", io.Discard)
-	if err == nil {
-		t.Fatalf("expected oversized-body error, got nil")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("expected 'exceeds ... cap' error, got %q", err.Error())
+	c := newTestTreeCache(t, "")
+	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
+		body := remoteBody{Reader: remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), close: func() error { return nil }}
+		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
+	})
+	_, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized-body error=%v", err)
 	}
 }
 
@@ -298,7 +287,7 @@ resources:
 namespace: my-app
 `
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": original})
-	if _, err := preflightRemoteResources(t.Context(), newPreflightCache(t), fsys, "."); err != nil {
+	if _, err := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -336,20 +325,14 @@ namespace: my-app
 // cap must succeed. Guards against off-by-one in the LimitReader+overflow
 // pattern.
 func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
-	atCap := strings.Repeat("b", remoteFetchMaxBytes)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(atCap))
-	}))
-	t.Cleanup(srv.Close)
-
-	var buf bytes.Buffer
-	_, err := newPreflightCache(t).httpGetURL(context.Background(), srv.URL+"/atcap.yaml", &buf)
-	body := buf.Bytes()
-	if err != nil {
-		t.Fatalf("body exactly at cap should succeed, got: %v", err)
-	}
-	if len(body) != remoteFetchMaxBytes {
-		t.Errorf("expected %d bytes, got %d", remoteFetchMaxBytes, len(body))
+	c := newTestTreeCache(t, "")
+	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
+		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), remoteFetchMaxBytes)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(reader), Header: make(http.Header)}, nil
+	})
+	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/atcap.yaml", io.Discard)
+	if err != nil || desc.Size != remoteFetchMaxBytes {
+		t.Fatalf("body exactly at cap: size=%d, error=%v", desc.Size, err)
 	}
 }
 
@@ -370,7 +353,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			t.Cleanup(srv.Close)
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
-			cache := NewTreeCache(newTestCache(t, ""), nil)
+			cache := newTestTreeCache(t, "")
 			cache.httpClient = srv.Client()
 			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 			if err != nil || !strings.Contains(string(out), "name: remote") {
@@ -484,7 +467,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				files[name] = strings.ReplaceAll(body, "$URL", url)
 			}
 			root := writeTree(t, files)
-			cache := newPreflightCache(t)
+			cache := newTestTreeCache(t, "")
 			if tc.gitFiles != nil {
 				gitFiles := make(map[string]string, len(tc.gitFiles))
 				for name, body := range tc.gitFiles {
@@ -529,6 +512,39 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 			}
 			if matches, _ := filepath.Glob(filepath.Join(root, remoteResourcePrefix+"*")); len(matches) != 0 {
 				t.Fatalf("overlay escaped to disk: %v", matches)
+			}
+		})
+	}
+}
+
+func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
+	readErr, closeErr := errors.New("body read"), errors.New("body close")
+	for _, outcome := range []string{"success", "status", "read", "limit"} {
+		t.Run(outcome, func(t *testing.T) {
+			c := newTestTreeCache(t, "")
+			closes := 0
+			c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
+				var reader io.Reader = strings.NewReader("complete")
+				status := http.StatusOK
+				switch outcome {
+				case "status":
+					status = http.StatusNotFound
+				case "read":
+					reader = remoteRead(func([]byte) (int, error) { return 0, readErr })
+				case "limit":
+					reader = remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil })
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error { closes++; return closeErr }}}, nil
+			})
+			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", io.Discard)
+			if !errors.Is(err, closeErr) || closes != 1 || strings.Count(err.Error(), closeErr.Error()) != 1 {
+				t.Fatalf("body cleanup: %v closes=%d", err, closes)
+			}
+			if outcome == "read" && !errors.Is(err, readErr) || outcome == "status" && !isHTTPClientError(err) || outcome == "limit" && !strings.Contains(err.Error(), "exceeds") {
+				t.Fatalf("operation identity: %v", err)
+			}
+			if outcome != "success" && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
+				t.Fatalf("operation must precede cleanup: %v", err)
 			}
 		})
 	}

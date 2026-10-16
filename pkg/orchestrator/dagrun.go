@@ -82,7 +82,6 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 // registered by Run (shared with the event path), so preflight cycle failures
 // are recorded before any node runs.
 func (o *Orchestrator) runDAG(ctx context.Context) error {
-	defer o.Stop()
 	sched := schedule.New(o.tasks, dagDispatcher{o})
 
 	// Start the controllers. This registers lifecycle state + the HR producer

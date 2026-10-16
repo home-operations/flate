@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"testing/synctest"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -235,41 +236,66 @@ func TestAcquire_ExpandedCapCountsIgnoredDuplicates(t *testing.T) {
 
 func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
-		for _, root := range []string{"", t.TempDir()} {
-			c := newCache(t, root)
-			started, release := make(chan struct{}), make(chan struct{})
-			var calls atomic.Int32
-			fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-				if calls.Add(1) == 1 {
-					close(started)
+		for _, backing := range []string{"memory", "disk"} {
+			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
 				}
-				<-release
-				return producer(archive(t, "file", "data"), ocispec.Descriptor{})(ctx, w)
-			}
-			var wg sync.WaitGroup
-			for range concurrency {
-				wg.Go(func() {
-					if _, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-concurrent"}, Policy{MaxAge: time.Hour}, fill); err != nil {
+				c := newCache(t, root)
+				data := archive(t, "file", "data")
+				synctest.Test(t, func(t *testing.T) {
+					started, release := make(chan struct{}), make(chan struct{})
+					var calls atomic.Int32
+					fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+						if calls.Add(1) == 1 {
+							close(started)
+						}
+						<-release
+						return producer(data, ocispec.Descriptor{})(ctx, w)
+					}
+					var wg sync.WaitGroup
+					for range concurrency {
+						wg.Go(func() {
+							input, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "source-test-concurrent"}, Policy{MaxAge: time.Hour}, fill)
+							if err != nil {
+								t.Error(err)
+								return
+							}
+							if content, err := fs.ReadFile(input, "file"); err != nil || string(content) != "data" {
+								t.Errorf("shared archive=%q, error=%v", content, err)
+							}
+						})
+					}
+					<-started
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					canceled := make(chan error, concurrency)
+					for range concurrency {
+						go func() {
+							_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-test-concurrent"}, Policy{MaxAge: time.Hour}, fill)
+							canceled <- err
+						}()
+					}
+					synctest.Wait()
+					cancel()
+					for range concurrency {
+						if err := <-canceled; !errors.Is(err, context.Canceled) {
+							t.Errorf("key-lock wait: %v", err)
+						}
+					}
+					if r, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-unrelated"}, Policy{MaxAge: time.Hour}, producer([]byte("blob"), ocispec.Descriptor{})); err != nil {
+						t.Error(err)
+					} else if err := r.Close(); err != nil {
 						t.Error(err)
 					}
+					close(release)
+					wg.Wait()
+					if calls.Load() != 1 {
+						t.Errorf("calls=%d", calls.Load())
+					}
 				})
-			}
-			<-started
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			if _, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-test-concurrent"}, Policy{MaxAge: time.Hour}, fill); !errors.Is(err, context.Canceled) {
-				t.Errorf("wait: %v", err)
-			}
-			if r, _, err := c.Blob(t.Context(), BlobKey{ID: "blob-unrelated"}, Policy{MaxAge: time.Hour}, producer([]byte("blob"), ocispec.Descriptor{})); err != nil {
-				t.Error(err)
-			} else {
-				_ = r.Close()
-			}
-			close(release)
-			wg.Wait()
-			if calls.Load() != 1 {
-				t.Fatalf("concurrency=%d calls=%d", concurrency, calls.Load())
-			}
+			})
 		}
 	}
 }
@@ -569,53 +595,89 @@ func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
 	}
 }
 
+type archiveCancelContext struct {
+	context.Context
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *archiveCancelContext) Err() error {
+	err := c.Context.Err()
+	// The callback's second Err call pauses it between the two pipe closes.
+	if err != nil && c.calls.Add(1) == 2 {
+		close(c.entered)
+		<-c.release
+	}
+	return err
+}
+
 func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
-	for _, backing := range []string{"memory", "disk"} {
-		t.Run(backing, func(t *testing.T) {
-			root := ""
-			if backing == "disk" {
-				root = t.TempDir()
-			}
-			c := newCache(t, root)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			started, halt := make(chan struct{}), make(chan struct{})
-			go func() { <-started; cancel() }()
-			done := make(chan error, 1)
-			go func() {
-				_, _, err := c.Acquire(ctx, ArchiveKey{ID: "source-ignore-context"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-					tw := tar.NewWriter(w)
-					if err := tw.WriteHeader(&tar.Header{Name: "file", Size: 1 << 30, Mode: 0o600}); err != nil {
-						return ocispec.Descriptor{}, err
-					}
-					close(started)
-					ticker := time.NewTicker(time.Millisecond)
-					defer ticker.Stop()
-					var chunk [512]byte
-					for {
-						select {
-						case <-halt:
-							return ocispec.Descriptor{}, errors.New("producer stopped")
-						case <-ticker.C:
-							if _, err := tw.Write(chunk[:]); err != nil {
+	for _, concurrency := range []int{2, 4} {
+		for _, backing := range []string{"memory", "disk"} {
+			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c := newCache(t, root)
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					started, write := make(chan struct{}), make(chan struct{})
+					done := make(chan error, concurrency)
+					callbacks := make([]*archiveCancelContext, concurrency)
+					for i := range concurrency {
+						callbacks[i] = &archiveCancelContext{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
+						go func() {
+							_, _, err := c.Acquire(callbacks[i], ArchiveKey{ID: fmt.Sprintf("source-ignore-context-%d", i)}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+								tw := tar.NewWriter(w)
+								if err := tw.WriteHeader(&tar.Header{Name: "file", Size: 1 << 30, Mode: 0o600}); err != nil {
+									return ocispec.Descriptor{}, err
+								}
+								started <- struct{}{}
+								<-write
+								var chunk [512]byte
+								_, err := tw.Write(chunk[:])
 								return ocispec.Descriptor{}, err
+							})
+							done <- err
+						}()
+					}
+					for range concurrency {
+						<-started
+					}
+					cancel()
+					for _, callback := range callbacks {
+						<-callback.entered
+					}
+					close(write)
+					synctest.Wait()
+					completed := 0
+					select {
+					case <-done:
+						completed++
+						t.Error("acquisition returned before both callback pipe closes")
+					default:
+					}
+					for _, callback := range callbacks {
+						close(callback.release)
+					}
+					for range concurrency - completed {
+						if err := <-done; !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
+							t.Errorf("cancellation: %v", err)
+						}
+					}
+					if backing == "disk" {
+						for i := range concurrency {
+							if _, err := c.store.Resolve(t.Context(), fmt.Sprintf("source-ignore-context-%d", i)); !errors.Is(err, errdef.ErrNotFound) {
+								t.Errorf("interrupted archive published: %v", err)
 							}
 						}
 					}
 				})
-				done <- err
-			}()
-			select {
-			case err := <-done:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("cancellation: %v", err)
-				}
-			case <-time.After(5 * time.Second):
-				close(halt)
-				<-done
-				t.Fatal("canceled acquisition did not stop the producer")
-			}
-		})
+			})
+		}
 	}
 }
 

@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
-	"testing/fstest"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -23,6 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // writeCluster lays out a two-app Flux cluster under dir: app-a renders
@@ -342,75 +345,125 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 }
 
 type joinedTreeFS struct {
-	fs.FS
-	entered chan struct{}
-	release <-chan struct{}
 	once    sync.Once
+	acquire func() error
+	err     error
 }
 
-func (f *joinedTreeFS) Open(name string) (fs.File, error) {
-	f.once.Do(func() {
-		close(f.entered)
-		<-f.release
-	})
-	return f.FS.Open(name)
+func (f *joinedTreeFS) Open(_ string) (fs.File, error) {
+	f.once.Do(func() { f.err = f.acquire() })
+	return nil, f.err
 }
 
 func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	release := make(chan struct{})
-	defer func() {
-		select {
-		case <-release:
-		default:
-			close(release)
+	for _, workers := range []int{2, 4} {
+		for _, tc := range []struct {
+			backing  string
+			injected bool
+		}{{"memory", true}, {"disk", true}, {"disk", false}} {
+			t.Run(fmt.Sprintf("%d/%s/injected_%t", workers, tc.backing, tc.injected), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					root := ""
+					if tc.backing == "disk" {
+						root = t.TempDir()
+					}
+					owner, err := sourcecache.New(t.Context(), root)
+					assert.NoError(t, err)
+					externalShare := true
+					t.Cleanup(func() {
+						if externalShare {
+							assert.NoError(t, owner.Close())
+						}
+					})
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					release := make(chan struct{})
+					defer close(release)
+					entered, canceled, completed := make(chan struct{}, 2), make(chan struct{}, 2), make(chan struct{}, 2)
+					inputs := [2]*store.SourceArtifact{}
+					for i := range inputs {
+						input := &joinedTreeFS{}
+						input.acquire = func() error {
+							reader, _, err := owner.Blob(ctx, sourcecache.BlobKey{ID: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
+								func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+									entered <- struct{}{}
+									<-ctx.Done()
+									canceled <- struct{}{}
+									<-release
+									completed <- struct{}{}
+									return ocispec.Descriptor{}, ctx.Err()
+								})
+							if reader != nil {
+								err = errors.Join(err, reader.Close())
+							}
+							return err
+						}
+						inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
+					}
+					cfg := orchestrator.Config{CacheDir: root, Concurrency: workers, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
+					if tc.injected {
+						cfg.Cache = owner
+					}
+					done := make(chan error, 1)
+					go func() {
+						_, _, err := orchestrator.RenderTrees(ctx,
+							orchestrator.Tree{RepoRoot: inputs[0].LocalPath}, orchestrator.Tree{RepoRoot: inputs[1].LocalPath},
+							cfg)
+						done <- err
+					}()
+					for range 2 {
+						<-entered
+					}
+					if !tc.injected {
+						assert.NoError(t, owner.Close())
+						externalShare = false
+					}
+					cancel()
+					for range 2 {
+						<-canceled
+					}
+					synctest.Wait()
+					select {
+					case err := <-done:
+						t.Fatalf("render returned before acquisition cleanup: %v", err)
+					default:
+					}
+					if root != "" {
+						res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+						if err == nil && len(res.Errors) == 0 {
+							t.Fatal("backing released before held acquisitions joined")
+						}
+					}
+					key := sourcecache.BlobKey{ID: "backing-survives"}
+					reader, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+						_, err := io.WriteString(w, "live")
+						return ocispec.Descriptor{}, err
+					})
+					assert.NoError(t, err)
+					assert.NoError(t, reader.Close())
+					release <- struct{}{}
+					release <- struct{}{}
+					if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "base tree:") != 1 || strings.Count(err.Error(), "head tree:") != 1 {
+						t.Fatalf("joined cancellation lost a side: %v", err)
+					}
+					for range 2 {
+						<-completed
+					}
+					if tc.injected {
+						reader, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+						assert.NoError(t, err)
+						assert.NoError(t, reader.Close())
+						assert.NoError(t, owner.Close())
+						externalShare = false
+					}
+					if root != "" {
+						res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+						if err != nil || len(res.Errors) != 0 {
+							t.Fatalf("joined render retained owner: %+v %v", res, err)
+						}
+					}
+				})
+			})
 		}
-	}()
-	inputs := [2]*store.SourceArtifact{}
-	gates := [2]*joinedTreeFS{}
-	for i := range inputs {
-		gates[i] = &joinedTreeFS{FS: fstest.MapFS{"cm.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")}}, entered: make(chan struct{}), release: release}
-		inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: gates[i]}
-	}
-	root := t.TempDir()
-	done := make(chan error, 1)
-	go func() {
-		_, _, err := orchestrator.RenderTrees(ctx,
-			orchestrator.Tree{RepoRoot: inputs[0].LocalPath}, orchestrator.Tree{RepoRoot: inputs[1].LocalPath},
-			orchestrator.Config{CacheDir: root, Concurrency: 2, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)})
-		done <- err
-	}()
-	for _, gate := range gates {
-		select {
-		case <-gate.entered:
-		case err := <-done:
-			t.Fatalf("render ended before both readers started: %v", err)
-		case <-ctx.Done():
-			t.Fatal("both readers did not start")
-		}
-	}
-	cancel()
-	select {
-	case err := <-done:
-		t.Fatalf("render returned before its readers joined: %v", err)
-	default:
-	}
-	res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-	if err == nil && len(res.Errors) == 0 {
-		t.Fatal("cache owner released while readers were still running")
-	}
-	close(release)
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("render cancellation: %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("render did not join released readers")
-	}
-	res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-	if err != nil || len(res.Errors) != 0 {
-		t.Fatalf("joined render retained owner: result=%+v err=%v", res, err)
 	}
 }

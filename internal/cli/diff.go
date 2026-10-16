@@ -199,11 +199,10 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (or
 	if err != nil {
 		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
 	}
-	defer cleanup()
 	// RenderTrees compares each scan entry against the other tree's source root.
 	base, head, runErr := orchestrator.RenderTrees(ctx,
 		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
 		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs},
 		buildOrchCfg(*c, *h))
-	return base, head, runErr
+	return base, head, errors.Join(runErr, cleanup())
 }

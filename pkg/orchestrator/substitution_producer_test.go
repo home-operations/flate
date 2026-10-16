@@ -27,7 +27,11 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					t.Cleanup(o.Stop)
+					t.Cleanup(func() {
+						if err := o.Stop(); err != nil {
+							t.Errorf("Stop: %v", err)
+						}
+					})
 					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
 					if err := o.Bootstrap(ctx); err != nil {

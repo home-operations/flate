@@ -375,14 +375,19 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 	o.Store().AddObject(selected)
 	other := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "other"}
-	res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
-	t.Cleanup(o.Stop)
-	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed")} {
+	res := &orchestrator.Result{Manifests: map[manifest.NamedResource][]map[string]any{selected.Named(): {{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}}}, Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
+	cleanupErr := errors.New("backing close failed")
+	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed"), cleanupErr, errors.Join(context.Canceled, cleanupErr)} {
 		t.Run(fatal.Error(), func(t *testing.T) {
 			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
 			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
 				[]manifest.NamedResource{{Kind: manifest.KindKustomization, Name: selected.Name}}, nil)
-			if len(selection) != 1 {
+			if len(selection) != 1 || len(selection[0].Manifests[selected.Named()]) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
@@ -390,6 +395,10 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) || !strings.Contains(out.String(), "unrelated failure") {
 				t.Fatalf("warning-only footer hid fatal cause: %v %s", got, out.String())
 			}
+			if errors.Is(fatal, cleanupErr) && (!errors.Is(got, cleanupErr) || strings.Count(out.String(), cleanupErr.Error()) != 1) {
+				t.Fatalf("cleanup failure lost or duplicated: %v %s", got, out.String())
+			}
+
 		})
 	}
 }
@@ -521,7 +530,11 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 	id := func(name string) manifest.NamedResource {
 		return manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
@@ -926,7 +939,11 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(o.Stop)
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			id := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "failed"}
 			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
@@ -1075,7 +1092,11 @@ func TestFailureModel(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(o.Stop)
+				t.Cleanup(func() {
+					if err := o.Stop(); err != nil {
+						t.Errorf("Stop: %v", err)
+					}
+				})
 				selected, err, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: result}},
 					&orchestrator.FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Kind: manifest.KindKustomization}}, nil)
 				if len(selected) != 1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", tc.want.Blocked)) {

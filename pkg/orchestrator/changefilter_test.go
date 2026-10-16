@@ -121,7 +121,11 @@ data:
 	if err != nil {
 		t.Fatalf("orchestrator.New: %v", err)
 	}
-	defer o.Stop()
+	defer func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	}()
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}

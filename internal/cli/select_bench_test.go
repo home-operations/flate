@@ -30,7 +30,11 @@ func completedScopeFixture(b *testing.B, count int, failures, cycle bool) orches
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(o.Stop)
+	b.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			b.Errorf("Stop: %v", err)
+		}
+	})
 	if err := o.Bootstrap(b.Context()); err != nil {
 		b.Fatal(err)
 	}

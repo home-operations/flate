@@ -351,7 +351,11 @@ func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 	return o, o.Store()
 }
 

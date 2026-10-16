@@ -146,7 +146,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	const gitURL = "https://github.com/o/r//overlays/prod?ref=v1"
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + gitURL + "\n"})
 
-	cache := newPreflightCache(t)
+	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
@@ -195,7 +195,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 	// A git URL (carries ?ref=) pointing at the HTML server.
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/o/r?ref=v1\n"})
 
-	cache := newPreflightCache(t)
+	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
@@ -226,7 +226,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 		"kustomization.yaml": "resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n",
 	})
 
-	cache := NewTreeCache(newTestCache(t, ""), nil)
+	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
@@ -255,7 +255,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	original := "resources:\n  - https://example.com/o/r?ref=v1\n"
 	src := writeTree(t, map[string]string{"kustomization.yaml": original})
 
-	cache := NewTreeCache(newTestCache(t, ""), nil)
+	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
 	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
@@ -283,7 +283,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 // base surfaces a clear error rather than silently HTTP-GETting the URL.
 func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://github.com/o/r?ref=v1\n"})
-	_, err := preflightRemoteResources(context.Background(), newPreflightCache(t), fsys, ".")
+	_, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error when no git fetcher is wired")
 	}
@@ -314,7 +314,7 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	})
 
 	var calls atomic.Int32
-	cache := newPreflightCache(t)
+	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, &calls)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
@@ -372,7 +372,7 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 	}
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n"})
-	cache := newPreflightCache(t)
+	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
@@ -452,7 +452,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = sources.Close() })
 			fetcher := &sourcegit.Fetcher{Cache: sources}
-			c := NewTreeCache(newTestCache(t, ""), nil)
+			c := newTestTreeCache(t, "")
 			var requests []GitBaseRequest
 			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 				requests = append(requests, request)
@@ -534,7 +534,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 					_, _ = io.WriteString(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retried}\n")
 				}))
 				defer srv.Close()
-				c := NewTreeCache(newTestCache(t, ""), nil)
+				c := newTestTreeCache(t, "")
 				entered := make(chan int, concurrency)
 				release := make(chan struct{})
 				released := false

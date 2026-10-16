@@ -3,6 +3,7 @@ package kustomize
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -459,7 +460,7 @@ func (e *httpStatusError) Error() string {
 }
 
 // httpGetURL preserves per-attempt bounds beneath FetchRemote's shared acquisition.
-func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) (ocispec.Descriptor, error) {
+func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) (result ocispec.Descriptor, resultErr error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
@@ -470,7 +471,7 @@ func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) 
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return ocispec.Descriptor{}, &httpStatusError{Code: resp.StatusCode}
 	}

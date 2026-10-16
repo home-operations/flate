@@ -325,8 +325,12 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, produce func(context.C
 func produceArchive(ctx context.Context, key ArchiveKey, index *tarFS, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (fs.FS, ocispec.Descriptor, error) {
 	pr, pw := io.Pipe()
 	g, gctx := errgroup.WithContext(ctx)
-	stop := context.AfterFunc(ctx, func() { _ = pr.CloseWithError(ctx.Err()); _ = pw.CloseWithError(ctx.Err()) })
-	defer stop()
+	cancelDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = pr.CloseWithError(ctx.Err())
+		_ = pw.CloseWithError(ctx.Err())
+		close(cancelDone)
+	})
 	var upstream ocispec.Descriptor
 	var input fs.FS
 	var producerFailure, readerFailure error
@@ -366,6 +370,9 @@ func produceArchive(ctx context.Context, key ArchiveKey, index *tarFS, produce f
 		return err
 	})
 	err := g.Wait()
+	if !stop() {
+		<-cancelDone
+	}
 	if err != nil && ctx.Err() != nil {
 		return input, upstream, ctx.Err()
 	}

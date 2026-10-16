@@ -93,7 +93,11 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				cfg.ExternalChanges = change.NewSet([]string{"ks-a.yaml"})
 				o, err := orchestrator.New(t.Context(), cfg)
 				assert.NoError(t, err)
-				t.Cleanup(o.Stop)
+				t.Cleanup(func() {
+					if err := o.Stop(); err != nil {
+						t.Errorf("Stop: %v", err)
+					}
+				})
 				o.WithFetcher(manifest.KindGitRepository, nil)
 				source := &manifest.GitRepository{Name: "unavailable", Namespace: "flux-system"}
 				o.Store().AddObject(source)

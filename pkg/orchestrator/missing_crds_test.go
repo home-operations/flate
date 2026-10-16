@@ -176,7 +176,11 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					t.Cleanup(o.Stop)
+					t.Cleanup(func() {
+						if err := o.Stop(); err != nil {
+							t.Errorf("Stop: %v", err)
+						}
+					})
 					res, err := o.Render(t.Context())
 					if (mode == "absent" || mode == "unreferenced") && !enabled {
 						if err == nil || !strings.Contains(err.Error(), "dependency not found") {
@@ -393,7 +397,11 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(o.Stop)
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			res, err := o.Render(t.Context())
 			if err != nil {
 				t.Fatal(err)

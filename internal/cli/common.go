@@ -234,9 +234,9 @@ func (c commonFlags) helmOptions(h helmFlags) helm.Options {
 
 // resolveBaseline admits --base inputs through the command's cache owner.
 // autoFallback selects automatic baseline resolution for diff commands.
-// Callers MUST defer cleanup until both orchestrators' readers have joined.
-func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (func(), error) {
-	noop := func() {}
+// Callers MUST run cleanup after both orchestrators' readers have joined.
+func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (func() error, error) {
+	noop := func() error { return nil }
 	c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs = "", "", nil
 	if c.pathOrig != "" && c.base != "" {
 		return noop, errors.New("--path-orig and --base are mutually exclusive")
@@ -268,13 +268,11 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	}
 	res, err := baseline.AutoResolve(ctx, c.path, c.base, owner)
 	if err != nil {
-		_ = owner.Close()
-		return noop, err
+		return noop, errors.Join(err, owner.Close())
 	}
 	rel, err := filepath.Rel(res.Source.LocalPath, c.path)
 	if err != nil {
-		_ = owner.Close()
-		return noop, err
+		return noop, errors.Join(err, owner.Close())
 	}
 	c.owner, c.input, c.baseInput, c.changes = owner, res.Source, res.BaseInput, res.Changes
 	c.pathOrig = filepath.Join(res.BaseInput.LocalPath, rel)
@@ -283,7 +281,7 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	c.pathOrigSelfURLs = res.SelfURLs
 	c.selfURLs = res.SelfURLs
 	slog.Debug("baseline", "source", res.Source.Metadata["baseline-selection"], "rev", res.Rev, "path_orig", c.pathOrig)
-	return func() { _ = owner.Close() }, nil
+	return owner.Close, nil
 }
 
 func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
@@ -334,8 +332,8 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	if err != nil {
 		return nil, nil, err
 	}
-	defer cleanup()
-	return runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+	o, res, runErr := runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+	return o, res, errors.Join(runErr, cleanup())
 }
 
 // validatePathFlag rejects a flag value that doesn't point at a real

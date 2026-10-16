@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -205,8 +207,12 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 				if stage == "input-failure" && !errors.Is(o.Bootstrap(t.Context()), manifest.ErrInput) {
 					t.Fatal("expected Bootstrap input failure")
 				}
-				o.Stop()
-				o.Stop()
+				if err := o.Stop(); err != nil {
+					t.Fatalf("Stop: %v", err)
+				}
+				if err := o.Stop(); err != nil {
+					t.Fatalf("Stop: %v", err)
+				}
 				if injected {
 					if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 						t.Fatalf("Stop allocated independent cache backing: %v", err)
@@ -251,7 +257,11 @@ spec:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 	o.WithFetcher(manifest.KindOCIRepository, source.ExistenceFetcher{})
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
@@ -303,7 +313,11 @@ data: {k: v}
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -1339,7 +1353,11 @@ data:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -1412,7 +1430,11 @@ spec:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap (1st): %v", err)
@@ -1486,7 +1508,11 @@ data: {k: v}
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(o.Stop)
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
 
 	res1, err := o.Render(context.Background())
 	if err != nil {
@@ -1531,15 +1557,7 @@ data: {k: v}
 	}
 }
 
-// TestOrchestrator_RenderErrorPathStopsCleanly pins the A.5 invariant:
-// when Render returns (nil, err) the orchestrator's Stop has already
-// fired, so the staging cache + helm client + controller listeners
-// don't survive in memory until process exit.
-//
-// Detects the bug by probing o.stopOnce: if Render fired Stop, our
-// follow-up stopOnce.Do is a no-op (sync.Once already triggered).
-// Pre-fix the deferred Stop didn't exist, so the probe would still
-// run and flip `probeFired` to true — flagging the leak.
+// Fatal Bootstrap failure must finish teardown before Render returns.
 func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
 	// Non-existent path forces Bootstrap -> discovery.Run -> fs.Stat
 	// to fail, which is the canonical (nil, err) embed path.
@@ -1556,20 +1574,15 @@ func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
 		t.Errorf("Render returned non-nil Result on Bootstrap error: %+v", res)
 	}
 
-	// Probe: if Render's deferred Stop fired, stopOnce is already
-	// triggered and this Do is a no-op. Pre-fix the deferred Stop
-	// didn't exist, the orchestrator's staging cache + helm client
-	// would survive in memory, and probeFired would flip true.
 	probeFired := false
 	o.stopOnce.Do(func() { probeFired = true })
 	if probeFired {
 		t.Fatal("Render error path did not fire Stop; staging cache + helm client leaked")
 	}
 
-	// And a separate Stop call must still be a true no-op — the
-	// sync.Once guard composes safely with the deferred Stop above
-	// and any explicit caller Stop. No panic from double-Close.
-	o.Stop()
+	if err := o.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
 }
 
 func writeDigestTrackingRelease(t *testing.T, root, rel, text string) {
@@ -1626,7 +1639,11 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					t.Cleanup(o.Stop)
+					t.Cleanup(func() {
+						if err := o.Stop(); err != nil {
+							t.Errorf("Stop: %v", err)
+						}
+					})
 					if err := o.Bootstrap(t.Context()); err != nil {
 						t.Fatal(err)
 					}
@@ -1683,8 +1700,13 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(o.Stop)
-			if err := o.Bootstrap(t.Context()); err == nil {
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
+			firstErr := o.Bootstrap(t.Context())
+			if firstErr == nil {
 				t.Fatal("expected Bootstrap failure")
 			}
 			owner, client, trees := o.cache, o.hrc.Helm, o.ksc.Trees
@@ -1700,17 +1722,28 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				o.cfg.PathOrig = ""
+				cfg.PathOrig = ""
 			}
-			if err := o.Bootstrap(t.Context()); err != nil {
-				t.Fatal(err)
+			if got := o.Bootstrap(t.Context()); got != firstErr {
+				t.Fatalf("terminal Bootstrap error changed: first=%v next=%v", firstErr, got)
 			}
-			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees {
-				t.Fatal("Bootstrap retry replaced the selected owner or renderer memos")
+			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees || o.bootstrapped {
+				t.Fatal("failed Bootstrap reopened its owner or rediscovered input")
 			}
-			assert.Equal(t, o.bootstrapped, true)
-			assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
-			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
+			if _, err := trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				t.Fatalf("failed Bootstrap left TreeCache open: %v", err)
+			}
+			fresh, err := New(t.Context(), cfg)
+			assert.NoError(t, err)
+			t.Cleanup(func() {
+				if err := fresh.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
+			assert.NoError(t, fresh.Bootstrap(t.Context()))
+			assert.Equal(t, fresh.bootstrapped, true)
+			assert.Equal(t, fresh.cfg.DisableChartDigestTracking == nil, true)
+			assert.Equal(t, fresh.hrc.Options.DisableChartDigestTracking, false)
 		})
 	}
 }
@@ -1753,7 +1786,11 @@ spec:
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(o.Stop)
+				t.Cleanup(func() {
+					if err := o.Stop(); err != nil {
+						t.Errorf("Stop: %v", err)
+					}
+				})
 				if err := o.Bootstrap(t.Context()); err != nil {
 					t.Fatal(err)
 				}
@@ -1785,7 +1822,9 @@ spec:
 					assert.Equal(t, string(output), string(previous))
 				}
 				previous = output
-				o.Stop()
+				if err := o.Stop(); err != nil {
+					t.Fatalf("Stop: %v", err)
+				}
 			}
 		})
 	}
@@ -1837,12 +1876,20 @@ func TestOrchestrator_ChartDigestTrackingCallerOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(first.Stop)
+			t.Cleanup(func() {
+				if err := first.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			second, err := New(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(second.Stop)
+			t.Cleanup(func() {
+				if err := second.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			requested = !disabled
 			for _, o := range []*Orchestrator{first, second} {
 				if err := o.Bootstrap(t.Context()); err != nil {
@@ -1868,7 +1915,11 @@ func TestOrchestrator_BootstrapChartDigestTrackingInputOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(o.Stop)
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -1904,7 +1955,8 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				_ = reader.Close()
 				baseDir, headDir := t.TempDir(), t.TempDir()
 				for _, dir := range []string{baseDir, headDir} {
-					testutil.WriteFile(t, dir, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
+					writeSubstitutionCluster(t, dir, "values", "value")
+					testutil.WriteFile(t, dir, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
 				}
 				configuredRoot := t.TempDir()
 				base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
@@ -1928,6 +1980,20 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				if err != nil || string(data) != "held" || calls != 1 {
 					t.Fatalf("caller cache after both sides stop: data=%q calls=%d err=%v", data, calls, err)
 				}
+				assert.NoError(t, os.Remove(filepath.Join(baseDir, "app/cm.yaml")))
+				base, head, err = RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir}, Config{Cache: c, Concurrency: workers})
+				if _, ok := errors.AsType[*FailuresError](err); !ok || base.Result == nil || len(base.Result.Failed) == 0 || head.Result == nil || len(head.Result.Manifests) == 0 || head.Err != nil {
+					t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
+				}
+				for _, side := range []Rendered{base, head} {
+					if _, err := side.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+						t.Fatalf("partial side left TreeCache open: %v", err)
+					}
+				}
+				reader, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+				assert.NoError(t, err)
+				assert.NoError(t, reader.Close())
+
 			})
 		}
 	}
@@ -1967,7 +2033,12 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 				t.Fatalf("seed: %v", err)
 			}
 			for i, side := range []Rendered{base, head} {
-				_, err := side.ksc.Trees.FetchRemote(t.Context(), fmt.Sprintf("%s/%d", srv.URL, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+				if _, err := side.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("returned side %d is not terminal: %v", i, err)
+				}
+				trees := kustomize.NewTreeCache(c, side.cfg.Network)
+				t.Cleanup(trees.Close)
+				_, err := trees.FetchRemote(t.Context(), fmt.Sprintf("%s/%d", srv.URL, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
 				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 				if !ok || terminal.Attempted || !errors.Is(err, cause) {
 					t.Fatalf("side %d: %v", i, err)
@@ -1983,10 +2054,166 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			if next.cfg.Network == network || other.cfg.Network != next.cfg.Network {
 				t.Fatal("Network leaked across invocations sharing Cache")
 			}
-			body, err := next.ksc.Trees.FetchRemote(t.Context(), srv.URL+"/0", sourcecache.RetryConfig{})
+			for _, side := range []Rendered{next, other} {
+				if _, err := side.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("fresh returned side is not terminal: %v", err)
+				}
+			}
+			trees := kustomize.NewTreeCache(c, next.cfg.Network)
+			t.Cleanup(trees.Close)
+			body, err := trees.FetchRemote(t.Context(), srv.URL+"/0", sourcecache.RetryConfig{})
 			if err != nil || string(body) != "new run" || hits.Load() != 1 {
 				t.Fatalf("fresh run: %q %v hits=%d", body, err, hits.Load())
 			}
 		})
+	}
+}
+
+func TestOrchestrator_StopErrorPropagation(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		for _, boundary := range []string{"stop", "bootstrap-error", "bootstrap-cancel", "run", "run-error", "run-cancel", "render", "render-error"} {
+			t.Run(fmt.Sprintf("%d/%s", workers, boundary), func(t *testing.T) {
+				owner, err := sourcecache.New(t.Context(), "")
+				assert.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+				root := t.TempDir()
+				writeSubstitutionCluster(t, root, "values", "value")
+				testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
+				testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
+				testutil.WriteFile(t, root, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
+				o, err := New(t.Context(), Config{Path: root, Cache: owner, Concurrency: workers})
+				assert.NoError(t, err)
+				cleanupErr := errors.New("backing close failed")
+				o.stopErr = cleanupErr
+				t.Cleanup(func() {
+					if got := o.Stop(); got != cleanupErr {
+						t.Errorf("cached Stop error = %v", got)
+					}
+				})
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				var result *Result
+				switch boundary {
+				case "stop":
+					err = o.Stop()
+				case "bootstrap-error", "bootstrap-cancel":
+					if boundary == "bootstrap-error" {
+						o.cfg.Input = &store.SourceArtifact{}
+					} else {
+						cancel()
+					}
+					err = o.Bootstrap(ctx)
+					if next := o.Bootstrap(t.Context()); next != err {
+						t.Fatalf("Bootstrap lost terminal error identity: %v", next)
+					}
+					if _, next := o.Render(t.Context()); next != err {
+						t.Fatalf("Render changed Bootstrap error: %v", next)
+					}
+					cause := manifest.ErrInput
+					if boundary == "bootstrap-cancel" {
+						cause = context.Canceled
+					}
+					if !errors.Is(err, cause) {
+						t.Fatalf("Bootstrap operation error lost: %v", err)
+					}
+				default:
+					if strings.HasSuffix(boundary, "error") {
+						assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
+					}
+					if strings.HasPrefix(boundary, "run") {
+						assert.NoError(t, o.Bootstrap(ctx))
+						if boundary == "run-cancel" {
+							cancel()
+						}
+						err = o.Run(ctx)
+					} else {
+						result, err = o.Render(ctx)
+						next, nextErr := o.Render(t.Context())
+						if result == nil || len(result.Manifests) == 0 || next != result || nextErr != err {
+							t.Fatalf("Render lost cached partial result/error: %v %v", result, err)
+						}
+					}
+					if strings.HasSuffix(boundary, "error") {
+						if _, ok := errors.AsType[*FailuresError](err); !ok || strings.Index(err.Error(), "backing close failed") == 0 {
+							t.Fatalf("operation must precede cleanup: %v", err)
+						}
+					}
+					if boundary == "run-cancel" && !errors.Is(err, context.Canceled) {
+						t.Fatalf("Run cancellation lost: %v", err)
+					}
+				}
+				if !errors.Is(err, cleanupErr) || strings.Count(err.Error(), cleanupErr.Error()) != 1 {
+					t.Fatalf("cleanup must occur once: %v", err)
+				}
+				stops := make(chan error, workers)
+				for range workers {
+					go func() { stops <- o.Stop() }()
+				}
+				for range workers {
+					if got := <-stops; got != cleanupErr {
+						t.Fatalf("Stop changed cached error: %v", got)
+					}
+				}
+
+				if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("TreeCache not terminal: %v", err)
+				}
+				if result != nil && len(o.Store().ListObjects(manifest.KindKustomization)) == 0 {
+					t.Fatal("Stop discarded readable store")
+				}
+			})
+		}
+	}
+}
+
+func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		for _, backing := range []string{"memory", "disk"} {
+			t.Run(fmt.Sprintf("%d/%s", workers, backing), func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: root, Concurrency: workers})
+				assert.NoError(t, err)
+				entered, completed := make(chan struct{}), make(chan struct{})
+				srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					close(entered)
+					<-r.Context().Done()
+					close(completed)
+				}))
+				t.Cleanup(srv.Close)
+				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+				callers := make(chan error, workers)
+				for range workers {
+					go func() {
+						_, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{})
+						callers <- err
+					}()
+				}
+				<-entered
+				result, err := o.Render(t.Context())
+				assert.NoError(t, err)
+				if result == nil {
+					t.Fatal("cleanup discarded successful result")
+				}
+				for range workers {
+					if err := <-callers; !errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed) {
+						t.Fatalf("remote caller after Stop: %v", err)
+					}
+				}
+				<-completed
+				if _, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("run left TreeCache live: %v", err)
+				}
+				if root != "" {
+					res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+					if err != nil || len(res.Errors) != 0 {
+						t.Fatalf("run retained backing: %+v %v", res, err)
+					}
+				}
+			})
+		}
 	}
 }

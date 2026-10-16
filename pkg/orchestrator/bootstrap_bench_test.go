@@ -34,7 +34,9 @@ spec:
 					b.Fatal(err)
 				}
 				err = o.Bootstrap(b.Context())
-				o.Stop()
+				if err == nil {
+					err = o.Stop()
+				}
 				if err != nil {
 					b.Fatal(err)
 				}

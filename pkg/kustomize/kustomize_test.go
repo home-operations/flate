@@ -17,7 +17,7 @@ import (
 // and SecureBuild don't take ctx themselves, so flate checks at
 // coarse boundaries — this guards that those checks fire.
 func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
-	cache := NewTreeCache(newTestCache(t, ""), nil)
+	cache := newTestTreeCache(t, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -128,7 +128,7 @@ func TestRenderFlux_HonorsCommonMetadata(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels:\n    app: x\n  annotations:\n    note: y\ndata:\n  k: v\n")
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 
-	cache := NewTreeCache(newTestCache(t, ""), nil)
+	cache := newTestTreeCache(t, "")
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -188,7 +188,7 @@ func TestRenderFlux_CommonMetadataOverridesOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n")
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
-	cache := NewTreeCache(newTestCache(t, ""), nil)
+	cache := newTestTreeCache(t, "")
 
 	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -232,7 +232,7 @@ func TestRenderFlux_InjectsOwnerLabels(t *testing.T) {
 	testutil.WriteFile(t, src, "cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\ndata:\n  k: v\n")
 	testutil.WriteFile(t, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
-	cache := NewTreeCache(newTestCache(t, ""), nil)
+	cache := newTestTreeCache(t, "")
 
 	obj, _, _, err := manifest.ParseDoc(map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
@@ -273,7 +273,7 @@ func TestRenderFlux_OwnerLabels_ClusterScoped(t *testing.T) {
 	})
 	spec := ksDoc(nil)
 	spec["metadata"] = map[string]any{"name": "infra"}
-	out, err := RenderFlux(t.Context(), NewTreeCache(newTestCache(t, ""), nil), RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
+	out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

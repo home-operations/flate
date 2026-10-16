@@ -225,10 +225,11 @@ type Orchestrator struct {
 	// commits it into rsExtensions.
 	rsRawSink rsRawSink
 
-	// bootstrapped flips true once Bootstrap returns. Read by
+	// bootstrapped records successful Bootstrap completion. Read by
 	// WithFetcher to refuse late fetcher swaps that would silently
 	// miss any source CR discovery already reconciled.
 	bootstrapped bool
+	bootstrapErr error
 
 	// renderOnce serializes the Run + Result-collection phase so a
 	// second Render returns the cached Result/err pair instead of
@@ -247,6 +248,7 @@ type Orchestrator struct {
 	// manual Stop and Run's deferred Stop don't double-close the
 	// staging cache / controller unsubs.
 	stopOnce sync.Once
+	stopErr  error
 }
 
 // Result is the structured output of Orchestrator.Render: the rendered
@@ -354,6 +356,11 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	}
 	client.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	trees := kustomize.NewTreeCache(owner, cfg.Network)
+	defer func() {
+		if err != nil {
+			trees.Close()
+		}
+	}()
 	ts := task.NewBounded(cfg.Concurrency)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
@@ -512,12 +519,21 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 // Delegates the load / expand / alias phase to pkg/discovery; the
 // remainder is dependency validation + change-filter construction.
 //
-// Idempotent: a second call returns nil without re-running discovery.
-// Store listeners and runtime filter state MUST survive subsequent calls.
-func (o *Orchestrator) Bootstrap(ctx context.Context) error {
+// Successful calls are idempotent. Failure is terminal and includes teardown;
+// recovery requires a fresh New instance. Bootstrap MUST NOT race Run or Stop.
+func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
+	if o.bootstrapErr != nil {
+		return o.bootstrapErr
+	}
 	if o.bootstrapped {
 		return nil
 	}
+	defer func() {
+		if err != nil {
+			o.bootstrapErr = errors.Join(err, o.Stop())
+			err = o.bootstrapErr
+		}
+	}()
 	if o.cfg.Input == nil {
 		input, path, err := baseline.AdmitDirectory(ctx, o.cfg.Path, o.cfg.RepoRoot)
 		if err != nil {

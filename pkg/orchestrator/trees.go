@@ -138,24 +138,18 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 		}
 		return nil
 	})
-	if e := g.Wait(); e != nil {
-		return base, head, e
-	}
+	_ = g.Wait()
 	return base, head, joinTreeErrors(base.Err, head.Err)
 }
 
-// renderOne runs one orchestrator end to end: New → Render → Stop. Stop
-// fires unconditionally so background loops are released even on the
-// failure paths; the Store stays readable afterward. A nil Result (fatal
-// Bootstrap error) drops the orchestrator so callers gate on it cleanly,
-// mirroring the CLI's single-tree runner.
+// renderOne preserves partial results after Render has joined teardown. A fatal
+// Bootstrap error drops the orchestrator, matching the CLI's single-tree runner.
 func renderOne(ctx context.Context, cfg Config) (*Orchestrator, *Result, error) {
 	o, err := New(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	res, err := o.Render(ctx)
-	o.Stop()
 	if res == nil {
 		return nil, nil, err
 	}

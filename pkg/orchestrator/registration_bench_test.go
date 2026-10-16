@@ -79,7 +79,6 @@ spec:
 					b.Fatal(err)
 				}
 				if err := o.Bootstrap(b.Context()); err != nil {
-					o.Stop()
 					b.Fatal(err)
 				}
 				var actualRenders atomic.Int64
@@ -90,7 +89,6 @@ spec:
 				}, false)
 				err = o.Run(b.Context())
 				unsubRender()
-				o.Stop()
 				if err != nil {
 					b.Fatal(err)
 				}

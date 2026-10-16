@@ -231,7 +231,11 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 			}
 			c := commonFlags{path: path, pathOrig: scan, pathOrigSelfURLs: []string{"stale"}}
 			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer cleanup()
+			defer func() {
+				if err := cleanup(); err != nil {
+					t.Errorf("baseline cleanup: %v", err)
+				}
+			}()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -257,8 +261,12 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	testutil.WriteFile(t, root, ".git/config", "[invalid\n")
 	c := commonFlags{path: root, pathRoot: "stale",
 		pathOrigRoot: "stale", pathOrigSelfURLs: []string{"stale"}}
-	cleanup, err := resolveBaseline(t.Context(), &c, false)
-	defer cleanup()
+	noopCleanup, err := resolveBaseline(t.Context(), &c, false)
+	defer func() {
+		if err := noopCleanup(); err != nil {
+			t.Errorf("baseline cleanup: %v", err)
+		}
+	}()
 	assert.Equal(t, err, nil)
 	assert.Equal(t, c.pathRoot, "")
 	assert.Equal(t, c.pathOrigRoot, "")
@@ -268,8 +276,12 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
 	assert.Equal(t, err, nil)
 	c.base = "HEAD"
-	cleanup, err = resolveBaseline(t.Context(), &c, false)
-	defer cleanup()
+	cleanup, err := resolveBaseline(t.Context(), &c, false)
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("baseline cleanup: %v", err)
+		}
+	}()
 	assert.Equal(t, err, nil)
 	assert.Equal(t, c.pathRoot, root)
 	assert.Equal(t, c.baseInput.LocalPath, filepath.Join(root, ".flate-base", c.baseInput.Revision))
@@ -317,7 +329,11 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 			}
 			c := commonFlags{path: current, pathOrig: orig, pathOrigSelfURLs: []string{"stale"}}
 			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer cleanup()
+			defer func() {
+				if err := cleanup(); err != nil {
+					t.Errorf("baseline cleanup: %v", err)
+				}
+			}()
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("error = %v, want wrapped %q error", err, tc.want)
 			}

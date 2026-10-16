@@ -125,7 +125,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 		"cm.yaml":                     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
 	})
 	cacheDir := t.TempDir()
-	cache := NewTreeCache(newTestCache(t, cacheDir), nil)
+	cache := newTestTreeCache(t, cacheDir)
 	ctx := t.Context()
 
 	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoRawSpec}, sourcecache.RetryConfig{})
@@ -147,10 +147,11 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	if eligible {
 		publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
 	}
+	cache.Close()
 	if err := cache.owner.Close(); err != nil {
 		t.Fatal(err)
 	}
-	cache = NewTreeCache(newTestCache(t, cacheDir), nil)
+	cache = newTestTreeCache(t, cacheDir)
 	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
@@ -194,10 +195,11 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	if err != nil || !strings.Contains(string(out4), "value.txt: v2") {
 		t.Fatalf("local plugin directory lost its source read set: %s, %v", out4, err)
 	}
+	cache.Close()
 	if err := cache.owner.Close(); err != nil {
 		t.Fatal(err)
 	}
-	cache = NewTreeCache(newTestCache(t, cacheDir), nil)
+	cache = newTestTreeCache(t, cacheDir)
 	_, persisted, hit := readTestRenderFrame(t, cache, key)
 	if hit != eligible || hit && !bytes.Equal(persisted, out4) {
 		t.Fatalf("replacement after reopen = %s, %v; eligible = %v", persisted, hit, eligible)
@@ -217,7 +219,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 		".sourceignore": "# excludes nothing yet\n",
 	})
 	cacheDir := t.TempDir()
-	cache := NewTreeCache(newTestCache(t, cacheDir), nil)
+	cache := newTestTreeCache(t, cacheDir)
 	ctx := context.Background()
 
 	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
@@ -234,7 +236,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cache = NewTreeCache(newTestCache(t, cacheDir), nil)
+	cache = newTestTreeCache(t, cacheDir)
 	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("second render: %v", err)
@@ -256,14 +258,14 @@ func TestRenderFlux_MemoryOwnerUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	rootA := writeTree(t, files)
-	plain := NewTreeCache(newTestCache(t, ""), nil)
+	plain := newTestTreeCache(t, "")
 	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Source: localSource(t, rootA), Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("plain render: %v", err)
 	}
 
 	rootB := writeTree(t, files)
-	cached := NewTreeCache(newTestCache(t, t.TempDir()), nil)
+	cached := newTestTreeCache(t, t.TempDir())
 	outCached, err := RenderFlux(ctx, cached, RenderRequest{Source: localSource(t, rootB), Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("cached render: %v", err)
@@ -377,7 +379,7 @@ func TestRenderFlux_RemoteNotCached(t *testing.T) {
 			for _, v := range []int64{1, 2} {
 				version.Store(v)
 				remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
-				cache := NewTreeCache(newTestCache(t, cacheDir), nil)
+				cache := newTestTreeCache(t, cacheDir)
 				remote := memoryTree(t, remoteFiles)
 				cache.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 					if req.URL != gitURL {
@@ -413,7 +415,7 @@ func TestRenderKey_VersionedSalt(t *testing.T) {
 	for _, origin := range []string{"disk", "artifact"} {
 		t.Run(origin, func(t *testing.T) {
 			cacheDir := t.TempDir()
-			cache := NewTreeCache(newTestCache(t, cacheDir), nil)
+			cache := newTestTreeCache(t, cacheDir)
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 			key := oldKey
 			if origin == "artifact" {
@@ -421,7 +423,7 @@ func TestRenderKey_VersionedSalt(t *testing.T) {
 				key = manifest.Fingerprint([]string{oldKey, "pin"})
 			}
 			publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key, PersistOnly: true}, testRenderFrame(t, readSetSnapshot{}, []byte("STALE")))
-			cache = NewTreeCache(newTestCache(t, cacheDir), nil)
+			cache = newTestTreeCache(t, cacheDir)
 			out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 			if err != nil || !strings.Contains(string(out), "name: fresh") {
 				t.Fatalf("persisted old key reused: %s, %v", out, err)
@@ -435,7 +437,7 @@ func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
 		"kustomization.yaml": existingKustomization("cm.yaml"),
 		"cm.yaml":            cmYAML("fresh"),
 	})
-	cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
+	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 	key := renderKey(demoRawSpec, root, ".", "")
 	publishTestFrame(t, cache.owner, sourcecache.BlobKey{ID: key}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
@@ -469,7 +471,7 @@ func TestRenderFlux_CacheFrames(t *testing.T) {
 				"cm.yaml":            cmYAML("fresh"),
 			})
 			cacheDir := t.TempDir()
-			cache := NewTreeCache(newTestCache(t, cacheDir), nil)
+			cache := newTestTreeCache(t, cacheDir)
 			source := localSource(t, root)
 			key := renderKey(demoRawSpec, root, ".", "")
 			if tc.immutable {
@@ -498,10 +500,11 @@ func TestRenderFlux_CacheFrames(t *testing.T) {
 			} else if !strings.Contains(string(out), "name: fresh") {
 				t.Fatalf("candidate prevented a fresh render: %s", out)
 			}
+			cache.Close()
 			if err := cache.owner.Close(); err != nil {
 				t.Fatal(err)
 			}
-			cache = NewTreeCache(newTestCache(t, cacheDir), nil)
+			cache = newTestTreeCache(t, cacheDir)
 			_, stored, hit := readTestRenderFrame(t, cache, key)
 			if hit != eligible || hit && !bytes.Equal(stored, out) {
 				t.Fatalf("completed frame = %s, %v; eligible = %v", stored, hit, eligible)
@@ -529,7 +532,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 		t.Run(fmt.Sprintf("validation_%t", validate), func(t *testing.T) {
 			eligible := renderPersistenceEligible(t)
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
-			cache := NewTreeCache(newTestCache(t, t.TempDir()), nil)
+			cache := newTestTreeCache(t, t.TempDir())
 			key := sourcecache.BlobKey{ID: renderKey(demoRawSpec, root, ".", ""), PersistOnly: true}
 			frame := testRenderFrame(t, readSetSnapshot{Files: []fileEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}}}, []byte("VALIDATED\n"))
 			if validate {
@@ -626,7 +629,7 @@ func TestRenderFlux_CacheStorageFailures(t *testing.T) {
 		t.Run(fault, func(t *testing.T) {
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
 			cacheDir := t.TempDir()
-			cache := NewTreeCache(newTestCache(t, cacheDir), nil)
+			cache := newTestTreeCache(t, cacheDir)
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
 			if fault == "lookup" {
 				if _, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{}); err != nil {

@@ -34,7 +34,11 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer o.Stop()
+			defer func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			}()
 			delete(o.src.Fetchers, manifest.KindExternalArtifact)
 			if tc.fetcher {
 				o.src.Fetchers[manifest.KindExternalArtifact] = source.ExistenceFetcher{}
@@ -173,7 +177,9 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		}
 		assert.Diff(t, art.Manifests[0]["data"], map[string]any{"k": "v"})
 	})
-	o.Stop()
+	if err := o.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
 }
 
 func TestDAG_RedispatchErrorPropagates(t *testing.T) {

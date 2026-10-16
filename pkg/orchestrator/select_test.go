@@ -256,6 +256,42 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			}
 		})
 	}
+	for _, order := range [][2]int{{0, 1}, {1, 0}} {
+		t.Run(fmt.Sprint(order), func(t *testing.T) {
+			causes := [2]error{errors.New("base operation"), errors.New("head operation")}
+			runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
+			gates := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			finished := make(chan int)
+			for i := range runs {
+				go func() {
+					<-gates[i]
+					runs[i].Err = causes[i]
+					finished <- i
+				}()
+			}
+			for _, i := range order {
+				close(gates[i])
+				if got := <-finished; got != i {
+					t.Fatalf("completion = %d, want %d", got, i)
+				}
+			}
+			raw := errors.Join(joinTreeErrors(runs[0].Err, runs[1].Err), closeErr)
+			selected, err, remainder := Select(runs, raw, []manifest.NamedResource{{Kind: manifest.KindKustomization}}, nil)
+			if len(selected) != 2 {
+				t.Fatalf("lost partial sides: %v", selected)
+			}
+			for _, got := range []error{raw, err, remainder} {
+				previous := -1
+				for _, cause := range []error{causes[0], causes[1], closeErr} {
+					position := strings.Index(got.Error(), cause.Error())
+					if !errors.Is(got, cause) || strings.Count(got.Error(), cause.Error()) != 1 || position <= previous {
+						t.Fatalf("base/head/backing ordering or identity lost: %v", got)
+					}
+					previous = position
+				}
+			}
+		})
+	}
 	if joinTreeErrors(errors.New("base"), errors.New("head")).Error() != "both trees had reconcile failures\nbase tree: base\nhead tree: head" {
 		t.Fatal("raw tree aggregate wording changed")
 	}

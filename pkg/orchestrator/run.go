@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"maps"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -52,7 +53,8 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 // then aggregates and returns any failures. The post-drain reporting
 // + error-string assembly lives in finalize so Run reads as a clean
 // start → drain → finalize sequence.
-func (o *Orchestrator) Run(ctx context.Context) error {
+func (o *Orchestrator) Run(ctx context.Context) (err error) {
+	defer func() { err = errors.Join(err, o.Stop()) }()
 	o.configureControllers()
 	// Re-detect dependsOn cycles when render-emitted children land.
 	// Bootstrap's one-shot pass only sees file-loaded resources; a
@@ -154,11 +156,7 @@ func (o *Orchestrator) configureControllers() {
 // An error from Bootstrap (the load phase) is fatal and returns
 // (nil, err); errors from Run yield (result, err).
 //
-// On any returned error, render defers Stop so embedders that receive
-// (nil, err) — Bootstrap failure paths in particular — don't leak the
-// staging cache tempdir and helm client until process exit. Stop is
-// sync.Once-guarded so the deferred call composes safely with Run's
-// own deferred Stop and any explicit caller Stop.
+// Render joins run teardown before returning, including on Bootstrap failure.
 //
 // Idempotent: a second call returns the cached Result/err pair from
 // the first. The controllers' Configure hooks panic if invoked after
@@ -173,13 +171,8 @@ func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
 	return o.renderResult, o.renderErr
 }
 
-func (o *Orchestrator) render(ctx context.Context) (result *Result, err error) {
-	defer func() {
-		if err != nil {
-			o.Stop()
-		}
-	}()
-	if err = o.Bootstrap(ctx); err != nil {
+func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
+	if err := o.Bootstrap(ctx); err != nil {
 		return nil, err
 	}
 	runErr := o.Run(ctx)
@@ -262,21 +255,20 @@ func (o *Orchestrator) collectManifests(failed map[manifest.NamedResource]store.
 	return out
 }
 
-// Stop shuts the controllers down in reverse-construction order. Safe to call
-// multiple times: each controller's Close is idempotent (drains the unsub slice
-// once and nils it). Wrapped in sync.Once so the bookkeeping reads cleanly even
-// if a caller's defer runs after Run's defer.
-//
-// Renderers borrow the selected cache. Only an internally created owner is
-// released here, after every controller has stopped.
-func (o *Orchestrator) Stop() {
+// Stop unsubscribes controllers and joins remote workers before releasing owned
+// backing. Repeated calls return the same cleanup error; Store stays readable.
+// Callers MUST cancel and join any active Run before Stop. An injected Cache
+// remains caller-owned.
+func (o *Orchestrator) Stop() error {
 	o.stopOnce.Do(func() {
 		o.rsc.Close()
 		o.hrc.Close()
 		o.ksc.Close()
 		o.src.Close()
+		o.ksc.Trees.Close()
 		if o.cfg.Cache == nil && o.cache != nil {
-			_ = o.cache.Close()
+			o.stopErr = o.cache.Close()
 		}
 	})
+	return o.stopErr
 }

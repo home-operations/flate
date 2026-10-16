@@ -360,32 +360,44 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 }
 
 func TestAcquire_RetryCancellation(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		c := newCache(t, "")
-		ctx, cancel := context.WithCancel(t.Context())
-		done := make(chan error, 1)
-		calls := 0
-		go func() {
-			_, _, err := c.Blob(ctx, BlobKey{ID: "cancel"}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-				calls++
-				return ocispec.Descriptor{}, connReset()
+	for _, concurrency := range []int{2, 4} {
+		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := newCache(t, "")
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, concurrency)
+				calls := make([]int, concurrency)
+				for i := range concurrency {
+					go func() {
+						_, _, err := c.Blob(ctx, BlobKey{ID: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							calls[i]++
+							return ocispec.Descriptor{}, connReset()
+						})
+						done <- err
+					}()
+				}
+				synctest.Wait()
+				cancel()
+				for range concurrency {
+					err := <-done
+					terminal, ok := errors.AsType[*TerminalError](err)
+					if !ok || !terminal.Attempted || !errors.Is(err, context.Canceled) || !errors.Is(err, syscall.ECONNRESET) || !errors.Is(err, manifest.ErrFlux) {
+						t.Errorf("retry cancellation: %v", err)
+					}
+				}
+				for i := range concurrency {
+					_, _, err := c.Blob(ctx, BlobKey{ID: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						calls[i]++
+						return ocispec.Descriptor{}, nil
+					})
+					if calls[i] != 1 || !errors.Is(err, context.Canceled) {
+						t.Errorf("pre-cancel calls=%d, error=%v", calls[i], err)
+					}
+				}
 			})
-			done <- err
-		}()
-		synctest.Wait()
-		cancel()
-		err := <-done
-		if calls != 1 || !errors.Is(err, context.Canceled) || !errors.Is(err, syscall.ECONNRESET) {
-			t.Fatalf("calls=%d, error=%v", calls, err)
-		}
-		_, _, err = c.Blob(ctx, BlobKey{ID: "cancel"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-			calls++
-			return ocispec.Descriptor{}, nil
 		})
-		if calls != 1 || !errors.Is(err, context.Canceled) {
-			t.Fatalf("pre-cancel calls=%d, error=%v", calls, err)
-		}
-	})
+	}
 }
 
 func TestBackoff_NormalizationAndSaturation(t *testing.T) {
@@ -457,16 +469,57 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 }
 
 func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
-	c := newCache(t, "")
-	calls := 0
-	_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: "invalid"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		calls++
-		_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
-		<-ctx.Done()
-		return ocispec.Descriptor{}, errors.Join(ctx.Err(), connReset())
-	})
-	if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, tar.ErrHeader) || calls != 1 {
-		t.Fatalf("reader error=%v, calls=%d", err, calls)
+	for _, concurrency := range []int{2, 4} {
+		for _, backing := range []string{"memory", "disk"} {
+			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c := newCache(t, root)
+				synctest.Test(t, func(t *testing.T) {
+					canceled, release := make(chan struct{}), make(chan struct{})
+					done := make(chan error, concurrency)
+					calls := make([]int, concurrency)
+					for i := range concurrency {
+						go func() {
+							_, _, err := c.Acquire(t.Context(), ArchiveKey{ID: fmt.Sprintf("invalid-%d", i)}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+								calls[i]++
+								_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
+								<-ctx.Done()
+								canceled <- struct{}{}
+								<-release
+								return ocispec.Descriptor{}, errors.Join(ctx.Err(), connReset())
+							})
+							done <- err
+						}()
+					}
+					for range concurrency {
+						<-canceled
+					}
+					synctest.Wait()
+					completed := 0
+					select {
+					case <-done:
+						completed++
+						t.Error("reader failure returned before producer completion")
+					default:
+					}
+					close(release)
+					for range concurrency - completed {
+						err := <-done
+						if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, tar.ErrHeader) {
+							t.Errorf("reader error=%v", err)
+						}
+					}
+					for i, count := range calls {
+						if count != 1 {
+							t.Errorf("producer %d: calls=%d", i, count)
+						}
+					}
+				})
+			})
+		}
 	}
 }
 
@@ -497,35 +550,76 @@ func TestAcquire_BackoffResets(t *testing.T) {
 }
 
 func TestAcquire_CleanupFailureStopsRetry(t *testing.T) {
-	for _, git := range []bool{false, true} {
-		t.Run(fmt.Sprint(git), func(t *testing.T) {
-			c, err := New(t.Context(), t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := c.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-					t.Error(err)
+	for _, concurrency := range []int{2, 4} {
+		for _, kind := range []string{"blob", "archive", "git"} {
+			t.Run(fmt.Sprintf("%d/%s", concurrency, kind), func(t *testing.T) {
+				started, release := make(chan struct{}), make(chan struct{})
+				done := make(chan error, concurrency)
+				calls := make([]int, concurrency)
+				failure := connReset()
+				for i := range concurrency {
+					c, err := New(t.Context(), t.TempDir())
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						if err := c.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+							t.Error(err)
+						}
+					})
+					go func() {
+						fail := func() error {
+							calls[i]++
+							started <- struct{}{}
+							<-release
+							return errors.Join(failure, c.root.Close())
+						}
+						var err error
+						switch kind {
+						case "git":
+							_, err = c.Git(t.Context(), GitKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
+								return plumbing.ZeroHash, fail()
+							})
+						case "archive":
+							_, _, err = c.Acquire(t.Context(), ArchiveKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+								return ocispec.Descriptor{}, fail()
+							})
+						case "blob":
+							_, _, err = c.Blob(t.Context(), BlobKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+								return ocispec.Descriptor{}, fail()
+							})
+						}
+						done <- err
+					}()
+				}
+				for range concurrency {
+					<-started
+				}
+				close(release)
+				for range concurrency {
+					err := <-done
+					cacheErr, ok := errors.AsType[*CacheError](err)
+					if !ok || !errors.Is(err, failure) || !errors.Is(err, os.ErrClosed) || !errors.Is(err, manifest.ErrFlux) {
+						t.Errorf("cleanup error=%v", err)
+						continue
+					}
+					joined, ok := cacheErr.Err.(interface{ Unwrap() []error })
+					if !ok || len(joined.Unwrap()) < 2 || !errors.Is(joined.Unwrap()[0], failure) {
+						t.Errorf("operation must precede cleanup: %v", err)
+					} else {
+						for _, cleanup := range joined.Unwrap()[1:] {
+							if errors.Is(cleanup, failure) {
+								t.Errorf("operation duplicated in cleanup: %v", err)
+							}
+						}
+					}
+				}
+				for i, count := range calls {
+					if count != 1 {
+						t.Errorf("producer %d retried after cleanup failure: %d", i, count)
+					}
 				}
 			})
-			calls := 0
-			fail := func() error {
-				calls++
-				if err := c.root.Close(); err != nil {
-					t.Fatal(err)
-				}
-				return connReset()
-			}
-			if git {
-				_, err = c.Git(t.Context(), GitKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
-					return plumbing.ZeroHash, fail()
-				})
-			} else {
-				_, _, err = c.Blob(t.Context(), BlobKey{ID: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, fail() })
-			}
-			if _, ok := errors.AsType[*CacheError](err); !ok || calls != 1 || !errors.Is(err, syscall.ECONNRESET) || !errors.Is(err, os.ErrClosed) {
-				t.Fatalf("calls=%d, error=%v", calls, err)
-			}
-		})
+		}
 	}
 }

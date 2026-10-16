@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -49,12 +50,18 @@ type nameID struct {
 // byName indexes exact group/kind buckets by namespace/name.
 // Kind-only sharding keeps every bucket for one kind on the same shard.
 type shard struct {
+	retired    map[manifest.NamedResource]bool
+	rooted     map[manifest.NamedResource]bool
 	mu         sync.RWMutex
 	objects    map[manifest.NamedResource]manifest.BaseManifest
 	conditions map[manifest.NamedResource]conditionRecord
 	artifacts  map[manifest.NamedResource]Artifact
 
-	byName map[kindID]map[nameID]manifest.BaseManifest
+	byName  map[kindID]map[nameID]manifest.BaseManifest
+	static  map[manifest.NamedResource]manifest.BaseManifest
+	hidden  map[manifest.NamedResource]bool
+	members map[manifest.NamedResource][]membership
+	slots   map[manifest.NamedResource]*producerSlot
 }
 
 func newShard() *shard {
@@ -63,6 +70,12 @@ func newShard() *shard {
 		conditions: make(map[manifest.NamedResource]conditionRecord),
 		artifacts:  make(map[manifest.NamedResource]Artifact),
 		byName:     make(map[kindID]map[nameID]manifest.BaseManifest),
+		static:     make(map[manifest.NamedResource]manifest.BaseManifest),
+		retired:    make(map[manifest.NamedResource]bool),
+		rooted:     make(map[manifest.NamedResource]bool),
+		hidden:     make(map[manifest.NamedResource]bool),
+		members:    make(map[manifest.NamedResource][]membership),
+		slots:      make(map[manifest.NamedResource]*producerSlot),
 	}
 }
 
@@ -111,8 +124,8 @@ func newShard() *shard {
 type Store struct {
 	shards [shardCount]*shard
 
-	emittedMu      sync.RWMutex
-	emittedParents map[manifest.NamedResource]manifest.NamedResource
+	index    atomic.Pointer[manifest.DiscoveryIndex]
+	coverage map[manifest.NamedResource]*contributor
 
 	// listeners is indexed by EventKind (1-based; index 0 unused). A
 	// fixed-size array beats a map here: the set of kinds is closed,
@@ -138,7 +151,7 @@ type Store struct {
 
 // New constructs an empty Store.
 func New() *Store {
-	s := &Store{emittedParents: make(map[manifest.NamedResource]manifest.NamedResource)}
+	s := &Store{}
 	for i := range s.shards {
 		s.shards[i] = newShard()
 	}
@@ -223,16 +236,39 @@ func (s *Store) AddObject(obj manifest.BaseManifest) {
 	if manifest.KindOf(obj).Tracked {
 		sh.mu.RLock()
 		prev, exists := sh.objects[id]
+		hidden := sh.hidden[id]
+		hasStatic := sh.static[id] != nil
+		needsRoot := len(sh.members[id]) > 0 && !sh.rooted[id]
 		sh.mu.RUnlock()
-		if exists && objectEqual(prev, obj) {
+		if hidden {
+			s.addAnchor(obj)
+			return
+		}
+		if exists && hasStatic && !needsRoot && objectEqual(prev, obj) {
 			return
 		}
 	}
 	sh.mu.Lock()
+	if sh.hidden[id] {
+		sh.mu.Unlock()
+		s.addAnchor(obj)
+		return
+	}
+	if sh.retired[id] || len(sh.members[id]) > 0 {
+		sh.rooted[id] = true
+		sh.retired[id] = false
+	}
 	// A concurrent writer may have inserted equal content after the read check.
 	if cur, ok := sh.objects[id]; ok && objectEqual(cur, obj) {
+		if sh.static[id] == nil {
+			sh.static[id] = obj
+		}
 		sh.mu.Unlock()
 		return
+	}
+	sh.static[id] = obj
+	if slot := sh.slots[id]; slot != nil {
+		slot.visible.Store(true)
 	}
 	sh.setLocked(id, obj)
 	dispatch := fireUnderLock(s, EventObjectAdded, id, obj)
@@ -251,32 +287,69 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	if len(objs) == 0 {
 		return
 	}
-	// Bucket inputs by shard index so each shard locks at most once.
 	var buckets [shardCount][]manifest.BaseManifest
 	for _, obj := range objs {
 		idx := kindShardIndex(obj.Named().Kind)
 		buckets[idx] = append(buckets[idx], obj)
 	}
-	dispatches := make([]func(), 0, len(objs))
-	for i := range buckets {
-		if len(buckets[i]) == 0 {
+	var anchors []manifest.BaseManifest
+	dispatches := make([]eventDispatch, 0, len(objs))
+	for i, bucket := range buckets {
+		if len(bucket) == 0 {
 			continue
 		}
 		sh := s.shards[i]
 		sh.mu.Lock()
-		for _, obj := range buckets[i] {
+		for _, obj := range bucket {
 			id := obj.Named()
-			if cur, ok := sh.objects[id]; ok && objectEqual(cur, obj) {
+			if sh.hidden[id] {
+				anchors = append(anchors, obj)
 				continue
 			}
+			if sh.retired[id] || len(sh.members[id]) > 0 {
+				sh.rooted[id] = true
+				sh.retired[id] = false
+			}
+			if cur := sh.objects[id]; cur != nil && objectEqual(cur, obj) {
+				if sh.static[id] == nil {
+					sh.static[id] = obj
+				}
+				continue
+			}
+			sh.static[id] = obj
+			if slot := sh.slots[id]; slot != nil {
+				slot.visible.Store(true)
+			}
 			sh.setLocked(id, obj)
-			dispatches = append(dispatches, fireUnderLock(s, EventObjectAdded, id, obj))
+			dispatches = append(dispatches, eventDispatch{id, fireUnderLock(s, EventObjectAdded, id, obj)})
 		}
 		sh.mu.Unlock()
 	}
-	for _, dispatch := range dispatches {
-		dispatch()
+	if len(anchors) > 0 {
+		s.lockAll()
+		changed := map[manifest.NamedResource]struct{}{}
+		for _, obj := range anchors {
+			id := obj.Named()
+			sh := s.shardFor(id)
+			sh.static[id] = obj
+			sh.rooted[id] = true
+			sh.retired[id] = false
+			sh.setLocked(id, obj)
+			changed[id] = struct{}{}
+		}
+		region := s.affectedLocked(changed)
+		s.reachabilityLocked(region)
+		for id := range region {
+			sh := s.shardFor(id)
+			obj := sh.objectLocked(id)
+			if obj != nil {
+				sh.setLocked(id, obj)
+			}
+			dispatches = append(dispatches, eventDispatch{id, fireUnderLock(s, EventObjectAdded, id, obj)})
+		}
+		s.unlockAll()
 	}
+	dispatchEvents(dispatches)
 }
 
 // setLocked keeps the primary objects map and secondary byName index in sync.
@@ -300,6 +373,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		return false
 	}
 	delete(sh.objects, id)
+	delete(sh.static, id)
+	delete(sh.rooted, id)
 	delete(sh.conditions, id)
 	delete(sh.artifacts, id)
 	// delete is a no-op on a missing secondary bucket.
@@ -331,8 +406,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 func (s *Store) Refire(id manifest.NamedResource) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
-	obj, ok := sh.objects[id]
-	if !ok {
+	obj := sh.objectLocked(id)
+	if obj == nil {
 		sh.mu.Unlock()
 		return
 	}
@@ -387,7 +462,7 @@ func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	return sh.objects[id]
+	return sh.objectLocked(id)
 }
 
 // Snapshot returns the manifest and conditions for id captured under
@@ -404,7 +479,10 @@ func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Co
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	obj := sh.objects[id]
+	obj := sh.objectLocked(id)
+	if sh.hidden[id] {
+		return nil, nil
+	}
 	conds := sh.conditions[id].conditions
 	if len(conds) == 0 {
 		return obj, nil
@@ -418,8 +496,36 @@ func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Co
 func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	return sh.deleteLocked(id)
+	if sh.static[id] == nil {
+		sh.mu.Unlock()
+		return false
+	}
+	if len(sh.members[id]) == 0 && sh.slots[id] == nil {
+		removed := sh.deleteLocked(id)
+		sh.mu.Unlock()
+		return removed
+	}
+	sh.mu.Unlock()
+	s.lockAll()
+	if sh.static[id] == nil {
+		s.unlockAll()
+		return false
+	}
+	sh.deleteLocked(id)
+	region := s.affectedLocked(map[manifest.NamedResource]struct{}{id: {}})
+	s.reachabilityLocked(region)
+	dispatches := make([]eventDispatch, 0, len(region))
+	for target := range region {
+		part := s.shardFor(target)
+		obj := part.objectLocked(target)
+		if obj != nil {
+			part.setLocked(target, obj)
+		}
+		dispatches = append(dispatches, eventDispatch{target, fireUnderLock(s, EventObjectAdded, target, obj)})
+	}
+	s.unlockAll()
+	dispatchEvents(dispatches)
+	return true
 }
 
 // ListObjects returns objects in the exact group/kind bucket, sorted by
@@ -433,7 +539,9 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 		inner := sh.byName[kindID{group, kind}]
 		out := make([]manifest.BaseManifest, 0, len(inner))
 		for _, obj := range inner {
-			out = append(out, obj)
+			if obj = sh.objectLocked(obj.Named()); obj != nil {
+				out = append(out, obj)
+			}
 		}
 		sh.mu.RUnlock()
 		// Group and kind are identical within this bucket.
@@ -451,8 +559,10 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 	}
 	out := make([]manifest.BaseManifest, 0, total)
 	for _, sh := range s.shards {
-		for _, obj := range sh.objects {
-			out = append(out, obj)
+		for id := range sh.objects {
+			if obj := sh.objectLocked(id); obj != nil {
+				out = append(out, obj)
+			}
 		}
 	}
 	s.rUnlockAll()
@@ -460,4 +570,26 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 		return a.Named().Compare(b.Named())
 	})
 	return out
+}
+
+func (s *Store) addAnchor(obj manifest.BaseManifest) {
+	s.lockAll()
+	id := obj.Named()
+	sh := s.shardFor(id)
+	sh.rooted[id] = true
+	sh.static[id] = obj
+	sh.setLocked(id, obj)
+	region := s.affectedLocked(map[manifest.NamedResource]struct{}{id: {}})
+	s.reachabilityLocked(region)
+	dispatches := make([]eventDispatch, 0, len(region))
+	for target := range region {
+		sh := s.shardFor(target)
+		effective := sh.objectLocked(target)
+		if effective != nil {
+			sh.setLocked(target, effective)
+		}
+		dispatches = append(dispatches, eventDispatch{target, fireUnderLock(s, EventObjectAdded, target, effective)})
+	}
+	s.unlockAll()
+	dispatchEvents(dispatches)
 }

@@ -42,10 +42,16 @@ func completedScopeFixture(b *testing.B, count int, failures, cycle bool) orches
 	for i, id := range ids {
 		o.Store().UpdateStatus(id, store.StatusReady, "")
 		if i%64 != 0 {
-			o.Store().RecordEmitted(ids[i-1], []manifest.NamedResource{id})
+			_, next := o.Store().GetEmission(ids[i-1])
+			next.Children, next.Complete = []store.Child{{Obj: o.Store().GetObject(id)}}, true
+			o.Store().RecordEmitted(ids[i-1], &next)
+			next.Finish()
 		}
 		if cycle && (i%64 == 63 || i == len(ids)-1) {
-			o.Store().RecordEmitted(id, []manifest.NamedResource{ids[i-i%64]})
+			_, next := o.Store().GetEmission(id)
+			next.Children, next.Complete = []store.Child{{Obj: o.Store().GetObject(ids[i-i%64])}}, true
+			o.Store().RecordEmitted(id, &next)
+			next.Finish()
 		}
 		res.Manifests[id] = []map[string]any{{
 			"apiVersion": "apps/v1", "kind": "Deployment",

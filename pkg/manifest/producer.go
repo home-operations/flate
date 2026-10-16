@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"maps"
 	"slices"
-	"sync"
 )
 
 // ProducerTarget is one in-cluster object a producer will generate live: its
@@ -33,7 +32,7 @@ type ProducerTarget struct {
 	DeclaredKeys []string
 }
 
-// ProducerTargets returns the in-cluster objects raw will generate live — each
+// ProducerTargets returns the in-cluster objects obj will generate live — each
 // carrying the output keys it statically declares — or nil when raw is not a
 // recognised producer kind. It is the single source of truth for producer
 // classification: extending coverage to a new generator kind means adding one
@@ -70,11 +69,13 @@ type ProducerTarget struct {
 // these), so producer-inference misses a transformed target and the consumer
 // falls back to fail-loud or --allow-missing-secrets. Degraded-but-safe: never
 // a false match.
-func ProducerTargets(raw *RawObject) []ProducerTarget {
-	spec := specView{raw.Spec}
+func ProducerTargets(obj BaseManifest) []ProducerTarget { return obj.producerTargets() }
+
+func (r *RawObject) producerTargets() []ProducerTarget {
+	spec := specView{r.Spec}
 	switch {
-	case raw.Kind == "ExternalSecret" && apiGroup(raw.APIVersion) == "external-secrets.io":
-		name := cmp.Or(spec.child("target").str("name"), raw.Name)
+	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":
+		name := cmp.Or(spec.child("target").str("name"), r.Name)
 		// A target.template fully defines the output keys; without one they are
 		// each data[].secretKey. (Slices aren't comparable, so this fallback
 		// can't fold into a cmp.Or the way the name above does.)
@@ -82,12 +83,12 @@ func ProducerTargets(raw *RawObject) []ProducerTarget {
 		if keys == nil {
 			keys = spec.entryKeys("data", "secretKey")
 		}
-		return []ProducerTarget{raw.secret(name, keys)}
-	case raw.Kind == "SealedSecret" && apiGroup(raw.APIVersion) == "bitnami.com":
-		name := cmp.Or(spec.child("template").child("metadata").str("name"), raw.Name)
-		return []ProducerTarget{raw.secret(name, spec.mapKeys("encryptedData"))}
-	case raw.Kind == "ObjectBucketClaim" && apiGroup(raw.APIVersion) == "objectbucket.io":
-		return []ProducerTarget{raw.secret(raw.Name, nil), raw.target(KindConfigMap, raw.Name, nil)}
+		return []ProducerTarget{r.secret(name, keys)}
+	case r.Kind == "SealedSecret" && apiGroup(r.APIVersion) == "bitnami.com":
+		name := cmp.Or(spec.child("template").child("metadata").str("name"), r.Name)
+		return []ProducerTarget{r.secret(name, spec.mapKeys("encryptedData"))}
+	case r.Kind == "ObjectBucketClaim" && apiGroup(r.APIVersion) == "objectbucket.io":
+		return []ProducerTarget{r.secret(r.Name, nil), r.target(KindConfigMap, r.Name, nil)}
 	default:
 		return nil
 	}
@@ -156,41 +157,15 @@ func (s specView) entryKeys(listKey, field string) []string {
 	return slices.Compact(keys)
 }
 
-// ProducerIndex maps a target resource — the Secret an ExternalSecret /
-// SealedSecret declares it will materialize live in-cluster — to the producer
-// that declares it. It lets consumers (HelmRelease valuesFrom, source auth)
-// distinguish a secret that is *intended* to exist live (skip it, the producer
-// is positive in-repo evidence) from one that is simply missing (fail loud).
-//
-// Two writers populate it: a discovery-time scan of in-repo ES/SS files (seeded
-// before any fetch, so source auth — which runs early — can consult it) and the
-// HelmRelease controller's render-time EventObjectAdded listener (which sees
-// post-kustomize-transform names, the accurate signal for valuesFrom). Both
-// write the same target→producer mapping for the same producer, so concurrent
-// writes are idempotent — last-write-wins needs no conflict handling.
-//
-// Nil-safe: a zero/absent index (stripped-down tests, no orchestrator) reports
-// no producers, so consumers degrade to their pre-feature behavior.
-type ProducerIndex struct {
-	m sync.Map // NamedResource -> NamedResource
-}
-
-// Record notes that producer generates target. Idempotent; nil-safe.
-func (p *ProducerIndex) Record(target, producer NamedResource) {
-	if p == nil {
-		return
-	}
-	p.m.Store(target, producer)
-}
-
-// Producer returns the producer declaring target, or (zero, false). Nil-safe.
-func (p *ProducerIndex) Producer(target NamedResource) (NamedResource, bool) {
-	if p == nil {
-		return NamedResource{}, false
-	}
-	v, ok := p.m.Load(target)
-	if !ok {
-		return NamedResource{}, false
-	}
-	return v.(NamedResource), true
-}
+func (*Kustomization) producerTargets() []ProducerTarget            { return nil }
+func (*HelmRelease) producerTargets() []ProducerTarget              { return nil }
+func (*HelmRepository) producerTargets() []ProducerTarget           { return nil }
+func (*HelmChartSource) producerTargets() []ProducerTarget          { return nil }
+func (*GitRepository) producerTargets() []ProducerTarget            { return nil }
+func (*OCIRepository) producerTargets() []ProducerTarget            { return nil }
+func (*ExternalArtifact) producerTargets() []ProducerTarget         { return nil }
+func (*Bucket) producerTargets() []ProducerTarget                   { return nil }
+func (*ResourceSet) producerTargets() []ProducerTarget              { return nil }
+func (*ResourceSetInputProvider) producerTargets() []ProducerTarget { return nil }
+func (*ConfigMap) producerTargets() []ProducerTarget                { return nil }
+func (*Secret) producerTargets() []ProducerTarget                   { return nil }

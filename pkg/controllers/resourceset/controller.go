@@ -1,7 +1,7 @@
 // Package resourceset reconciles flux-operator ResourceSets as
 // first-class DAG nodes: wait on dependsOn / inputsFrom RSIPs / the
 // structural parent KS, render the RS via the resourceset package, and
-// emit every child through the standard two-pass emit path. A RS with a
+// emit every child through the shared emission transaction. A RS with a
 // selector-only inputsFrom (no nameable RSIP to park on) asks the
 // scheduler to re-run it at the structural fixpoint so it expands
 // against the now-complete RSIP set.
@@ -18,16 +18,8 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// RawSink receives every non-Flux (RawObject) child a ResourceSet emits:
-// the emitting RS (owner), the RS's structural-parent Kustomization
-// (the grouping key), and the rendered doc. The orchestrator installs it
-// to preserve the post-run output grouping — RS RawObject
-// children surface under their parent KS in `flate build` output — using
-// owner for deterministic cross-RS dedup. Nil is fine — no-op.
-type RawSink func(owner, parentKS manifest.NamedResource, doc map[string]any)
-
 // Controller orchestrates ResourceSet reconciliation. Reconcile-shaping
-// state (Filter, ParentOf, …) flows in via Configure exactly once before
+// state (Filter, Index, Existence) flows in via Configure exactly once before
 // StartLifecycle — the same "config is read-only after StartLifecycle" invariant the KS
 // and HR controllers carry, encoded in the embedded *base.Controller.
 type Controller struct {
@@ -36,21 +28,6 @@ type Controller struct {
 	// WipeSecrets controls whether Secret cleartext is wiped when parsing
 	// emitted children (forwarded to base.Controller.Emit).
 	WipeSecrets bool
-
-	// rawSink, when set, receives each RawObject child this RS emits so the
-	// orchestrator can group it under the RS's parent KS for output.
-	rawSink RawSink
-}
-
-// Options carries the post-bootstrap state the orchestrator wires onto the
-// controller before StartLifecycle. base.Options holds the config common to every
-// render controller (Filter / ParentOf — here gating the RS render on its
-// structural parent KS, which may re-emit the RS with a substituted
-// name/namespace; Existence / PreflightFailure); RawSink is
-// ResourceSet-specific.
-type Options struct {
-	base.Options
-	RawSink RawSink
 }
 
 // New constructs a ResourceSet controller.
@@ -59,14 +36,6 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 		Controller:  base.New(s, t, "resourceset"),
 		WipeSecrets: wipeSecrets,
 	}
-}
-
-// Configure installs the post-bootstrap state. Panics if called after
-// StartLifecycle — encodes the invariant that reconcile-shaping config is
-// read-only once the controller is dispatching.
-func (c *Controller) Configure(opts Options) {
-	c.Controller.Configure(opts.Options)
-	c.rawSink = opts.RawSink
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the
@@ -109,11 +78,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 		return err
 	}
 
-	// A fingerprint hit MUST not replay emission: KeepEmitted / Store.RecordEmitted /
-	// rawSink bookkeeping is cumulative and already complete. AddObject
-	// independently suppresses equal RawObject arrivals. Changed inputs require
-	// a fresh render; fp is reused for SetArtifact.
-	fp, handled, err := c.FingerprintDedup(id, resourceSetContent(rs, c.Store), func([]map[string]any) {})
+	fp, handled, err := c.FingerprintDedup(id, resourceSetContent(rs, c.Store))
 	if handled {
 		return err
 	}
@@ -123,46 +88,28 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return err
 	}
-	docs = c.emit(id, docs, true)
-
-	c.Store.SetArtifact(id, &store.ResourceSetArtifact{Manifests: docs, Fingerprint: fp})
+	_, attempt := c.Store.GetEmission(id)
+	defer attempt.Finish()
+	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: id.Namespace})
+	attempt.Fingerprint, attempt.Complete = fp, true
+	c.Emit(id, &attempt)
 	return nil
-}
-
-// emit lands the RS-rendered children through the shared two-pass emit
-// helper (so Flux-kind children reconcile / land in the store) and, on
-// the fresh-render path, additionally routes RawObject children to the
-// orchestrator's output sink keyed by the RS's parent KS. The sink is
-// fed only when publishing (the dedup replay would double-feed it
-// otherwise — the cached docs were already sunk by the render that set
-// the artifact).
-func (c *Controller) emit(id manifest.NamedResource, docs []map[string]any, publish bool) []map[string]any {
-	children, docs := c.Emit(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: id.Namespace}, publish)
-	if !publish || c.rawSink == nil {
-		return docs
-	}
-	parentKS, ok := c.LookupParent(id)
-	if !ok {
-		return docs
-	}
-	// Route the RawObject (non-Flux) children to the orchestrator's output sink,
-	// reusing the shared parse so raw output groups under the parent KS.
-	for _, child := range children {
-		if !manifest.KindOf(child.Obj).Tracked {
-			c.rawSink(id, parentKS, child.Doc)
-		}
-	}
-	return docs
 }
 
 // collectDeps gates explicit dependencies, named inputs and the structural parent.
 // Authored dependsOn Ready=false still requests readiness here. Selector-only inputs
 // use the drain rerun because their producers have no nameable gate.
 func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
-	parent, hasParent := c.LookupParent(rs.Named())
+	var parents []manifest.NamedResource
+	for p := range c.Store.Productions(rs.Named(), nil) {
+		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
+			parents = append(parents, p.Owner)
+		}
+	}
+	hasParent := len(parents) > 0
 	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
 	if hasParent {
-		capacity++
+		capacity += len(parents)
 	}
 	deps := make([]manifest.DependencyRef, capacity)
 	n := 0
@@ -173,8 +120,10 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 		}
 	}
 	if hasParent {
-		deps[n] = manifest.DependencyRef{NamedResource: parent}
-		n++
+		for _, parent := range parents {
+			deps = append(deps[:n], manifest.DependencyRef{NamedResource: parent})
+			n++
+		}
 	}
 	return deps[:n]
 }

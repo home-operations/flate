@@ -149,10 +149,17 @@ func (c *Controller) shouldOmitValuesRef(
 			return manifest.NamedResource{}, false, false
 		}
 	}
-	if c.valuesRefExists(id) || c.IsFileIndexed(id) {
+	if c.valuesRefExists(id) {
 		return manifest.NamedResource{}, false, false
 	}
-	producer, hasProducer = c.producers.Producer(id)
+	for p := range c.Store.Productions(id, nil) {
+		if p.Declaration == (manifest.NamedResource{}) && (p.Owner != (manifest.NamedResource{}) || p.Path != "") {
+			return manifest.NamedResource{}, false, false
+		}
+		if p.Declaration != (manifest.NamedResource{}) {
+			producer, hasProducer = p.Declaration, true
+		}
+	}
 	if requireProducer && !hasProducer {
 		return producer, hasProducer, false
 	}

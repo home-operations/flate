@@ -21,7 +21,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -143,8 +142,7 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			if got := renderersForTest(result.Index, cm); !slices.Equal(got, []manifest.NamedResource{parent}) {
 				t.Fatalf("self-produce = %v, want [%s]", got, parent)
 			}
-			f := change.NewFilter(change.NewSet([]string{"flux/unrelated.yaml"}), result.Index, st)
-			if got := f.ProducersFor(cm); !slices.Equal(got, []manifest.NamedResource{parent}) {
+			if got := testutil.Owners(st.Productions(cm, result.Index)); !slices.Equal(got, []manifest.NamedResource{parent}) {
 				t.Fatalf("producers = %v, want [%s]", got, parent)
 			}
 		})
@@ -378,7 +376,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				st.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, URL: tc.url, LocalPath: t.TempDir()})
 			}
 			l := loader.New(st)
-			l.FinalizeIndex(root, nil)
+			l.FinalizeIndex(root)
 			child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
 			owners, _ := l.Index.OwnersOfFile("apps/release.yaml")
 			parent := manifest.NamedResource{}

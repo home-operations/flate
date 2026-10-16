@@ -107,7 +107,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 			l := loaderFixture(store.New(), nil)
 			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "stray"}
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
-			rendererFixture(t, l, dir, nil)
+			rendererFixture(t, l, dir)
 			if got := l.Index.Records[id].Excluded; got != tc.want {
 				t.Errorf("Excluded(%q) = %v, want %v", tc.file, got, tc.want)
 			}
@@ -124,7 +124,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(root, nil)
+			l.FinalizeIndex(root)
 			if len(l.Index.Errors) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "selected"}) == nil {
 				t.Fatalf("unlisted input affected selected source: errors=%v", l.Index.Errors)
 			}

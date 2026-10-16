@@ -39,17 +39,17 @@ func admitForTest(s *store.Store, root string) {
 	s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 }
 
-func rendererFixture(t *testing.T, l *Loader, root string, producers *manifest.ProducerIndex) *manifest.DiscoveryIndex {
+func rendererFixture(t *testing.T, l *Loader, root string) *manifest.DiscoveryIndex {
 	t.Helper()
 	admitForTest(l.Store, root)
 	l.documents.mountSources(l.Store)
-	l.FinalizeIndex(root, producers)
+	l.FinalizeIndex(root)
 	return l.Index
 }
 
 func renderers(index *manifest.DiscoveryIndex, id manifest.NamedResource) []manifest.NamedResource {
 	r, _ := index.Lookup(id)
-	return r.Renderers
+	return testutil.ProductionOwners(r)
 }
 
 func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]string {
@@ -67,7 +67,7 @@ func ownersForTest(index *manifest.DiscoveryIndex, file string) []manifest.Named
 
 func declarationOwnersForTest(index *manifest.DiscoveryIndex, id manifest.NamedResource) []manifest.NamedResource {
 	r, _ := index.Lookup(id)
-	return slices.Clone(r.DeclarationOwners)
+	return slices.Clone(testutil.ProductionOwners(r))
 }
 
 func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifest.NamedResource, bool) {
@@ -79,18 +79,17 @@ func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifes
 	return manifest.NamedResource{}, false
 }
 
-func TestFinalizeIndex_DataOwners(t *testing.T) {
+func TestFinalizeIndex_Productions(t *testing.T) {
 	for _, tc := range []struct {
 		name, namespace, kind string
-		owners                bool
 	}{
-		{"raw namespace bridge", "", manifest.KindConfigMap, true},
-		{"file-backed explicit identity", "apps", manifest.KindConfigMap, true},
-		{"projected renderer only", "other", manifest.KindConfigMap, false},
-		{"secret raw namespace bridge", "", manifest.KindSecret, true},
-		{"secret explicit identity", "apps", manifest.KindSecret, true},
-		{"secret projected renderer only", "other", manifest.KindSecret, false},
-		{"non-data identity", "apps", manifest.KindHelmRelease, false},
+		{"raw namespace bridge", "", manifest.KindConfigMap},
+		{"file-backed explicit identity", "apps", manifest.KindConfigMap},
+		{"projected renderer only", "other", manifest.KindConfigMap},
+		{"secret raw namespace bridge", "", manifest.KindSecret},
+		{"secret explicit identity", "apps", manifest.KindSecret},
+		{"secret projected renderer only", "other", manifest.KindSecret},
+		{"non-data identity", "apps", manifest.KindHelmRelease},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -104,30 +103,21 @@ func TestFinalizeIndex_DataOwners(t *testing.T) {
 			st.AddObject(overlay)
 			id := manifest.NamedResource{Kind: tc.kind, Name: "input", Namespace: tc.namespace}
 			l := loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
-			rendererFixture(t, l, root, nil)
+			rendererFixture(t, l, root)
 			if st.GetObject(id) != nil {
 				t.Fatal("indexed data must remain absent from the store")
 			}
 			projected := id
 			projected.Namespace = "apps"
 			r, _ := l.Index.Lookup(projected)
-			wantRenderers := []manifest.NamedResource{overlay.Named()}
-			if tc.kind == manifest.KindHelmRelease {
-				wantRenderers = nil
+			want := []manifest.NamedResource{overlay.Named()}
+			if got := testutil.ProductionOwners(r); !slices.Equal(got, want) {
+				t.Fatalf("projected materializers: %v", got)
 			}
-			if !slices.Equal(r.Renderers, wantRenderers) {
-				t.Fatalf("projected renderers = %v", r.Renderers)
+			if len(r.Productions) == 0 || r.Productions[0].Authored != id || r.Productions[0].Path == "" {
+				t.Fatalf("missing authored-file proof: %+v", r)
 			}
-			want := []manifest.NamedResource{overlay.Named(), raw.Named()}
-			if !tc.owners {
-				want = nil
-			}
-			if !slices.Equal(r.Owners, want) {
-				t.Fatalf("materialized data owners = %v, want %v", r.Owners, want)
-			}
-			if got := l.Index.DataOwners(projected); !slices.Equal(got, want) {
-				t.Fatalf("data owners = %v, want %v", got, want)
-			}
+
 		})
 	}
 }

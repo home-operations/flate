@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
-	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -26,8 +26,12 @@ type orchestratorExistence struct {
 }
 
 func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
-	record, _ := e.index.Lookup(id)
-	return loader.Promote(e.store, id, record, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit})
+	for p := range e.store.Productions(id, e.index) {
+		if loader.Promote(e.store, id, p, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit}) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
@@ -95,7 +99,6 @@ func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
-		Producers:           o.producers,
 	}, o.cfg.SourceRetry)
 	// existence bundles the file-existence lookups depwait needs:
 	// Promote lazy-loads a file-indexed dep into the Store the
@@ -117,32 +120,22 @@ func (o *Orchestrator) configureControllers() {
 	// built once; each Configure adds its controller-specific fields.
 	common := base.Options{
 		Filter:           o.filter,
-		ParentOf:         o.parentOf,
+		Index:            o.index,
 		Existence:        existence,
 		PreflightFailure: o.preflightFailure,
 		AllowMissingCRDs: o.cfg.AllowMissingCRDs,
 	}
 	o.ksc.Configure(kustomization.Options{
-		Options: common, Index: o.index,
+		Options:        common,
 		SubstituteFrom: o.substitutionSources, Substitute: o.cfg.Substitute,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
 	}, o.cfg.SourceRetry)
 	o.hrc.Configure(helmrelease.ReconcileOptions{
 		Options:             common,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
-		Producers:           o.producers,
 		SubstituteFrom:      o.substitutionSources,
 	})
-	// The RS controller feeds each RawObject child it renders into
-	// rsRawSink keyed by the RS's parent KS; render() commits the sink
-	// into rsExtensions for the Result.Manifests grouping. DedupKey is
-	// computed here so the sink stays orchestrator-internal.
-	o.rsc.Configure(resourcesetctrl.Options{
-		Options: common,
-		RawSink: func(owner, parentKS manifest.NamedResource, doc map[string]any) {
-			o.rsRawSink.Record(owner, parentKS, resourceset.DedupKey(doc), doc)
-		},
-	})
+	o.rsc.Configure(common)
 }
 
 // Render is the structured embed-friendly entry point: Bootstrap +
@@ -176,12 +169,6 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 	runErr := o.Run(ctx)
-	// ResourceSets now expand in-DAG (the RS controller renders them as
-	// first-class nodes), feeding each RawObject child into rsRawSink as
-	// it goes. Commit the sink into rsExtensions so the Result.Manifests
-	// merge below groups those non-Flux children under their owning
-	// parent KS — what `flate build` surfaces as the RS's offline output.
-	o.rsExtensions = o.rsRawSink.commit()
 	res := &Result{
 		Manifests: map[manifest.NamedResource][]map[string]any{},
 		Failed:    map[manifest.NamedResource]store.StatusInfo{},
@@ -194,11 +181,9 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 		// empty scan, …). Nil when none, sorted deterministically by the store.
 		Warnings: o.store.Warnings(),
 	}
-	// failed is computed once and reused for both the manifest harvest (which
-	// drops the orphaned children of FAILED HelmReleases — see collectManifests)
-	// and res.Failed below, so the two stay consistent.
+	// Completed inventory survives a failed successor; diagnostics remain attached to its input.
 	failed := o.store.FailedResources()
-	res.Manifests = o.collectManifests(failed)
+	res.Manifests = o.collectManifests()
 	// Same projection logResourceFailures + aggregateFailures use —
 	// see sanitizeFailed for the contract. Centralizing in one
 	// helper keeps the three readers in sync if the strip rule
@@ -221,34 +206,57 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 // reach the artifact unfiltered (the Store must hold the full set for downstream
 // valuesFrom/substituteFrom resolution), so the skip-kind drop happens here, at
 // the embed boundary, leaving the Store whole.
-//
-// A FAILED HelmRelease contributes no children: its artifact may be a stale
-// transient render — the parent KS's postBuild.substituteFrom not yet applied,
-// so ${…} vars were still literal and passed schema — that the canonical
-// substituted render later rejects. Failed status is sticky (base.Controller
-// never downgrades it), so dropping it here is deterministic regardless of which
-// render won the cold-cache scheduling race.
-func (o *Orchestrator) collectManifests(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource][]map[string]any {
+// Accepted completed output remains available after a failed successor.
+func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[string]any {
 	skip := o.cfg.HelmOptions.SkipResourceKinds()
-	out := map[manifest.NamedResource][]map[string]any{}
+	var objects []manifest.BaseManifest
 	for _, info := range reconcilableKinds {
-		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
-			id := obj.Named()
-			var docs []map[string]any
-			// Take the rendered artifact unless this is a FAILED HelmRelease
-			// (whose artifact may be a stale transient render — see above).
-			if _, failedResource := failed[id]; !manifest.KindOf(obj).Includes("transient-output") || !failedResource {
-				if art, ok := o.store.GetArtifact(id).(store.RenderedArtifact); ok {
-					docs = art.RenderedManifests()
+		objects = append(objects, o.store.ListObjects(info.Group, info.Kind)...)
+	}
+	objects = append(objects, o.store.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSet)...)
+	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
+	attempts := make(map[manifest.NamedResource]store.Emission, len(objects))
+	rawOwners := map[manifest.NamedResource]manifest.NamedResource{}
+	for _, obj := range objects {
+		id := obj.Named()
+		_, attempt := o.store.GetEmission(id)
+		_, rawOnly := obj.(*manifest.ResourceSet)
+		for _, child := range attempt.Children {
+			target := child.Obj.Named()
+			if rawOnly {
+				if owner, ok := rawOwners[target]; !ok || id.Compare(owner) < 0 {
+					rawOwners[target] = id
 				}
 			}
-			// ResourceSet children attach to their owning Kustomization (the RS
-			// doc itself stays in the parent's kustomize output).
-			if manifest.KindOf(obj).Includes("structural") {
-				docs = append(docs, o.rsExtensions[id]...)
+		}
+		attempt.Finish()
+		attempts[id] = attempt
+	}
+	out := map[manifest.NamedResource][]map[string]any{}
+	for _, obj := range objects {
+		id := obj.Named()
+		attempt, ok := attempts[id]
+		if !ok {
+			continue
+		}
+		parent := id
+		_, rawOnly := obj.(*manifest.ResourceSet)
+		if rawOnly {
+			parent, ok = o.parentOf(id)
+			if !ok {
+				continue
 			}
-			if docs = manifest.DropKinds(docs, skip); len(docs) > 0 {
-				out[id] = docs
+		}
+		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
+		for _, child := range attempt.Children {
+			if child.Doc != nil {
+				target := child.Obj.Named()
+				selected[resourceset.DedupKey(child.Doc)] = !rawOnly || !manifest.KindOf(child.Obj).Tracked && rawOwners[target] == id
+			}
+		}
+		for _, doc := range manifest.DropKinds(attempt.Manifests, skip) {
+			if chosen, tracked := selected[resourceset.DedupKey(doc)]; chosen || !tracked && !rawOnly {
+				out[parent] = append(out[parent], doc)
 			}
 		}
 	}

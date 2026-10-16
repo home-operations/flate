@@ -106,7 +106,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				}
 				provider := &substitutionProvider{
 					sources:  map[manifest.NamedResource]manifest.BaseManifest{source.Named(): source},
-					fallback: values.NewStoreProvider(store.New()),
+					fallback: values.NewStoreProvider(store.New(), true),
 				}
 				prepared, err := kustomize.Prepare(ks, provider, nil)
 				if err != nil {
@@ -133,7 +133,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	ks.PostBuild = &kustomizev1.PostBuild{}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}}}
-	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st), nil)
+	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +170,6 @@ func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil, "test")
-	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content, func([]map[string]any) {})
+	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
 	return fp
 }

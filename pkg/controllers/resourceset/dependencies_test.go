@@ -9,6 +9,7 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -46,8 +47,11 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 		t.Run(fmt.Sprint(hasParent), func(t *testing.T) {
 			c := New(store.New(), task.NewBounded(2), true)
 			parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
-			calls := 0
-			c.Configure(Options{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { calls++; return parent, hasParent }})
+			parents := map[manifest.NamedResource]manifest.NamedResource{}
+			if hasParent {
+				parents[manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "app", Namespace: "apps"}] = parent
+			}
+			c.Configure(base.Options{Index: parentIndexForTest(parents)})
 			dependency := &manifest.Kustomization{Name: "pending", Namespace: "apps"}
 			c.Store.AddObject(dependency)
 			c.Store.UpdateStatus(dependency.Named(), store.StatusPending, "working")
@@ -66,7 +70,6 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			}
 			deps := c.collectDeps(rs)
 			assert.Diff(t, deps, want)
-			assert.Equal(t, calls, 1)
 			w := &depwait.Waiter{Store: c.Store}
 			assert.Equal(t, rs.DependsOn[0].Ready, false)
 			assert.Equal(t, w.Classify(deps[0], manifest.DrainNone).Kind, depwait.ClassBlocked)

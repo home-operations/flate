@@ -46,7 +46,7 @@ spec: {}
 `)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	idx := loader.New(store.New())
-	idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
+	idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), Productions: []manifest.Production{{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}}}
 	st := store.New()
 	idx.Store = st
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
@@ -109,6 +109,7 @@ spec: {url: https://example.test/excluded.git}
 		if id == selected {
 			record.Authored.Namespace = "authored"
 		}
+		record.Productions = []manifest.Production{{Authored: record.Authored, Path: record.Path}}
 		idx.Index.Records[id] = record
 	}
 	idx.Store = st

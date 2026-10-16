@@ -1,41 +1,906 @@
 package store
 
-import "github.com/home-operations/flate/pkg/manifest"
+import (
+	"bytes"
+	"cmp"
+	"encoding/json"
+	"iter"
+	"maps"
+	"slices"
+	"sync/atomic"
 
-// RecordEmitted records a complete ownership batch before children become
-// visible to listeners. Self-edges are excluded and the first emitter wins.
-// Ownership lasts for the run, including after DeleteObject.
-func (s *Store) RecordEmitted(parent manifest.NamedResource, children []manifest.NamedResource) {
-	if len(children) == 0 {
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+// Child retains an admitted object and its authoritative sanitized document.
+type Child struct {
+	Obj         manifest.BaseManifest
+	Doc         map[string]any
+	Productions []manifest.Production
+}
+
+// Emission is an immutable accepted inventory. Maps and objects are borrowed read-only.
+type Emission struct {
+	Children    []Child
+	Manifests   []map[string]any
+	Fingerprint string
+	Unreadable  []manifest.NamedResource
+	Complete    bool
+	Render      []byte
+
+	input    manifest.BaseManifest
+	inputDoc map[string]any
+	// Copies share atomic storage; each prepared proposal owns a fresh memo.
+	validated      *atomic.Pointer[manifest.BaseManifest]
+	documentOwners []manifest.NamedResource
+	previous       *Emission
+	entries        []admission
+	coverage       []footprint
+	binding        sourceBinding
+	shadowed       []sourceBinding
+}
+
+func (*Emission) artifact() {}
+
+// Finish releases predecessor inventory borrowed by an attempt.
+func (e *Emission) Finish() { e.previous = nil }
+
+// Footprint yields the source-qualified discovery evidence bound to this inventory.
+func (e *Emission) Footprint() iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
+	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+		for _, f := range e.coverage {
+			if !yield(f.id, f.record) {
+				return
+			}
+		}
+	}
+}
+
+type contributor struct {
+	slot    *producerSlot
+	records []footprint
+	binding sourceBinding
+}
+
+type footprint struct {
+	id     manifest.NamedResource
+	record manifest.DiscoveryRecord
+}
+type sourceBinding struct {
+	source    manifest.NamedResource
+	key, root string
+	mutable   *SourceArtifact
+}
+type admission struct {
+	child   Child
+	targets []manifest.ProducerTarget
+	binding sourceBinding
+}
+type producerSlot struct {
+	id      manifest.NamedResource
+	current atomic.Pointer[Emission]
+	visible atomic.Bool
+	hidden  atomic.Bool
+}
+type membership struct {
+	slot        *producerSlot
+	position    int
+	declaration bool
+}
+
+// GetEmission borrows the accepted inventory and binds an attempt to its current input.
+func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, Emission) {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	view := sh.representativeLocked(id)
+	obj := view.Obj
+	var prev *Emission
+	if slot := sh.slots[id]; slot != nil {
+		prev = slot.current.Load()
+	}
+	sh.mu.RUnlock()
+	e := Emission{input: obj, inputDoc: view.Doc, previous: prev}
+	if obj == nil {
+		return nil, e
+	}
+	if c := s.coverage[id]; c != nil {
+		e.coverage = c.records
+	}
+	for ref := range manifest.References(obj) {
+		if ref.Use == "source" {
+			e.binding.source = ref.NamedResource
+			if a, ok := s.GetArtifact(ref.NamedResource).(*SourceArtifact); ok {
+				e.binding.key, e.binding.root = a.Key, a.LocalPath
+				if a.Key == "" {
+					e.binding.mutable = a
+				}
+			}
+			break
+		}
+	}
+	if e.binding.source.Name == "" && s.contributionBinding(id).source == manifest.BootstrapSourceID {
+		e.binding.source = manifest.BootstrapSourceID
+		if a, ok := s.GetArtifact(manifest.BootstrapSourceID).(*SourceArtifact); ok {
+			e.binding.key, e.binding.root = a.Key, a.LocalPath
+			if a.Key == "" {
+				e.binding.mutable = a
+			}
+		}
+	}
+	if prev != nil {
+		e.Fingerprint = prev.Fingerprint
+		e.Children = slices.Clone(prev.Children)
+		e.Manifests = slices.Clone(prev.Manifests)
+		e.Unreadable = slices.Clone(prev.Unreadable)
+		e.Render = prev.Render
+	}
+	return obj, e
+}
+
+// MetadataViews yields all accepted original metadata views for a supported identity.
+func (s *Store) MetadataViews(id manifest.NamedResource) iter.Seq[manifest.BaseManifest] {
+	type view struct {
+		owner manifest.NamedResource
+		obj   manifest.BaseManifest
+	}
+	var views []view
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	if !sh.hidden[id] {
+		if obj := sh.static[id]; obj != nil && sh.staticActiveLocked(id) {
+			views = append(views, view{obj: obj})
+		}
+		for _, m := range sh.members[id] {
+			if !m.declaration && m.slot.visible.Load() {
+				e := m.slot.current.Load()
+				views = append(views, view{m.slot.id, e.entries[m.position].child.Obj})
+			}
+		}
+	}
+	sh.mu.RUnlock()
+	slices.SortFunc(views, func(a, b view) int { return a.owner.Compare(b.owner) })
+	return func(yield func(manifest.BaseManifest) bool) {
+		for _, v := range views {
+			if !yield(v.obj) {
+				return
+			}
+		}
+	}
+}
+
+// Productions merges immutable discovery evidence with accepted reverse memberships.
+func (s *Store) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) iter.Seq[manifest.Production] {
+	if index == nil {
+		index = s.index.Load()
+	}
+	record, _ := index.Lookup(id)
+	provisional := bootstrapSeed(record)
+	evidence := record.Productions
+	promotable := slices.ContainsFunc(evidence, func(p manifest.Production) bool { return p.Path != "" })
+	if !promotable && id.Namespace != "" {
+		bare := id
+		bare.Namespace = ""
+		raw, _ := index.Lookup(bare)
+		for _, p := range raw.Productions {
+			if p.Path == "" || p.Authored.Namespace != "" {
+				continue
+			}
+			if len(evidence) == 0 || slices.ContainsFunc(evidence, func(e manifest.Production) bool {
+				return e.Source == p.Source && sameProductionContext(s.coverage, e, p)
+			}) {
+				evidence = append(slices.Clone(evidence), p)
+			}
+		}
+	}
+	var out []manifest.Production
+	add := func(p manifest.Production) {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	if !sh.hidden[id] {
+		if sh.static[id] != nil && sh.retired[id] && provisional {
+			evidence = nil
+		}
+		for _, p := range evidence {
+			if c := s.coverage[p.Owner]; c != nil {
+				accepted := c.slot.current.Load()
+				if c.slot.hidden.Load() || accepted != nil && slices.Contains(accepted.shadowed, c.binding) {
+					continue
+				}
+			}
+			add(p)
+		}
+		for _, m := range sh.members[id] {
+			if !m.slot.visible.Load() {
+				continue
+			}
+			e := m.slot.current.Load()
+			entry := e.entries[m.position]
+			if m.declaration {
+				add(manifest.Production{Owner: m.slot.id, Declaration: entry.child.Obj.Named(), Source: entry.binding.source})
+				continue
+			}
+			if !slices.ContainsFunc(entry.child.Productions, func(p manifest.Production) bool { return p.Owner == m.slot.id }) {
+				add(manifest.Production{Owner: m.slot.id, Source: entry.binding.source})
+			}
+			for _, p := range entry.child.Productions {
+				add(p)
+			}
+		}
+	}
+	sh.mu.RUnlock()
+	slices.SortFunc(out, compareProduction)
+	return func(yield func(manifest.Production) bool) {
+		for _, p := range out {
+			if !yield(p) {
+				return
+			}
+		}
+	}
+}
+
+func sameProductionContext(coverage map[manifest.NamedResource]*contributor, a, b manifest.Production) bool {
+	if a.Source != b.Source {
+		return false
+	}
+	ac, bc := coverage[a.Owner], coverage[b.Owner]
+	return ac == nil || bc == nil || ac.binding == bc.binding
+}
+
+func compareProduction(a, b manifest.Production) int {
+	return cmp.Or(a.Owner.Compare(b.Owner), a.Declaration.Compare(b.Declaration),
+		a.Source.Compare(b.Source), a.Authored.Compare(b.Authored),
+		cmp.Compare(a.Path, b.Path), cmp.Compare(a.File, b.File))
+}
+
+// SetDiscoveryIndex installs frozen source-qualified evidence before reconciliation.
+// Discovery is never rebuilt on the render path.
+func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
+	if index == nil || s.index.Load() == index {
 		return
 	}
-	s.emittedMu.Lock()
-	defer s.emittedMu.Unlock()
-	for _, child := range children {
-		if parent == child {
+	coverage := map[manifest.NamedResource]*contributor{}
+	for id, r := range index.Records {
+		for _, p := range r.Productions {
+			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+				continue
+			}
+			c := coverage[p.Owner]
+			if c == nil {
+				c = &contributor{binding: sourceBinding{source: p.Source}}
+				coverage[p.Owner] = c
+			}
+			if !slices.ContainsFunc(c.records, func(f footprint) bool { return f.id == id }) {
+				c.records = append(c.records, footprint{id, r})
+			}
+			if a, ok := s.GetArtifact(p.Source).(*SourceArtifact); ok {
+				c.binding.key, c.binding.root = a.Key, a.LocalPath
+				if a.Key == "" {
+					c.binding.mutable = a
+				}
+			}
+		}
+	}
+	for _, contributor := range coverage {
+		slices.SortFunc(contributor.records, func(a, b footprint) int { return a.id.Compare(b.id) })
+	}
+	s.lockAll()
+	if s.index.Load() == nil {
+		for owner, c := range coverage {
+			sh := s.shardFor(owner)
+			slot := sh.slots[owner]
+			if slot == nil {
+				slot = &producerSlot{id: owner}
+				slot.visible.Store(sh.objectLocked(owner) != nil)
+				slot.hidden.Store(sh.hidden[owner])
+				sh.slots[owner] = slot
+			}
+			c.slot = slot
+		}
+		s.coverage = coverage
+		s.index.Store(index)
+	}
+	s.unlockAll()
+}
+func (s *Store) contributionBinding(id manifest.NamedResource) sourceBinding {
+	if c := s.coverage[id]; c != nil {
+		return c.binding
+	}
+	return sourceBinding{}
+}
+
+// Bootstrap promotion alone supplies no independent authority against accepted output.
+func bootstrapSeed(r manifest.DiscoveryRecord) bool {
+	return len(r.Productions) > 0 && !slices.ContainsFunc(r.Productions, func(p manifest.Production) bool {
+		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) || p.Source != manifest.BootstrapSourceID
+	})
+}
+
+// RecordEmitted atomically accepts completed work, replacing complete inventories and
+// merging incomplete progress. The greatest producer identity supplies shared content.
+func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission) {
+	prepared := make([]admission, 0, len(next.Children))
+	for _, c := range next.Children {
+		if c.Obj == nil || c.Obj.Named() == id {
 			continue
 		}
-		if _, exists := s.emittedParents[child]; !exists {
-			s.emittedParents[child] = parent
+		c.Productions = slices.Clone(c.Productions)
+		prepared = append(prepared, admission{child: c, targets: manifest.ProducerTargets(c.Obj), binding: next.binding})
+	}
+	ps := s.shardFor(id)
+	for {
+		ps.mu.RLock()
+		slot := ps.slots[id]
+		var prev *Emission
+		if slot != nil {
+			prev = slot.current.Load()
+		}
+		ps.mu.RUnlock()
+		proposal := prepareEmission(next, prev, prepared)
+		stable := prev != nil && sameMembership(prev, proposal)
+		var seeds []manifest.NamedResource
+		for _, entry := range proposal.entries {
+			target := entry.child.Obj.Named()
+			record, _ := s.index.Load().Lookup(target)
+			if !bootstrapSeed(record) {
+				continue
+			}
+			sh := s.shardFor(target)
+			sh.mu.RLock()
+			if sh.static[target] != nil && !sh.rooted[target] && !sh.retired[target] {
+				seeds = append(seeds, target)
+			}
+			sh.mu.RUnlock()
+		}
+		unchanged := proposal.sameContent(prev)
+		if unchanged && !proposal.Complete && prev.Complete {
+			proposal.Complete = true
+		}
+		unchanged = unchanged && prev.Complete == proposal.Complete
+		if stable && len(seeds) == 0 {
+			if s.commitStable(slot, prev, proposal, unchanged) {
+				return
+			}
+		} else if s.commitReplacement(id, prev, proposal, seeds) {
+			return
 		}
 	}
 }
 
-// EmittedParent returns the first render emitter of child.
-func (s *Store) EmittedParent(child manifest.NamedResource) (manifest.NamedResource, bool) {
-	s.emittedMu.RLock()
-	defer s.emittedMu.RUnlock()
-	parent, ok := s.emittedParents[child]
-	return parent, ok
+func (e *Emission) sameContent(other *Emission) bool {
+	return other != nil &&
+		slices.EqualFunc(other.entries, e.entries, admissionEqual) &&
+		slices.EqualFunc(other.Manifests, e.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) }) &&
+		other.Fingerprint == e.Fingerprint &&
+		slices.Equal(other.documentOwners, e.documentOwners) &&
+		other.binding == e.binding && objectEqual(other.input, e.input) &&
+		slices.Equal(other.Unreadable, e.Unreadable) && slices.Equal(other.Render, e.Render) &&
+		slices.Equal(other.shadowed, e.shadowed) &&
+		slices.EqualFunc(other.coverage, e.coverage, func(a, b footprint) bool {
+			return a.id == b.id && slices.Equal(a.record.Productions, b.record.Productions)
+		})
 }
 
-// EmittedChildrenByParent returns an independent snapshot of render ownership.
-func (s *Store) EmittedChildrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
-	s.emittedMu.RLock()
-	defer s.emittedMu.RUnlock()
-	children := map[manifest.NamedResource][]manifest.NamedResource{}
-	for child, parent := range s.emittedParents {
-		children[parent] = append(children[parent], child)
+func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, unchanged bool) bool {
+	id := slot.id
+	ps := s.shardFor(id)
+	ps.mu.Lock()
+	if slot.current.Load() != prev {
+		ps.mu.Unlock()
+		return false
 	}
-	return children
+	if unchanged {
+		ps.mu.Unlock()
+		return true
+	}
+	slot.current.Store(proposal)
+	var dispatch func()
+	if slot.visible.Load() {
+		ps.artifacts[id] = proposal
+		dispatch = fireUnderLock(s, EventArtifactUpdated, id, Artifact(proposal))
+	}
+	visible := slot.visible.Load()
+	ps.mu.Unlock()
+	if !visible {
+		return true
+	}
+	for i, a := range proposal.entries {
+		if objectEqual(a.child.Obj, prev.entries[i].child.Obj) && specValueEqual(a.child.Doc, prev.entries[i].child.Doc) {
+			continue
+		}
+		s.fireObject(a.child.Obj.Named())
+		for _, t := range a.targets {
+			s.fireObject(t.NamedResource)
+		}
+	}
+	if dispatch != nil {
+		dispatch()
+	}
+	return true
+}
+
+func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emission, seeds []manifest.NamedResource) bool {
+	ps := s.shardFor(id)
+	s.lockAll()
+	slot := ps.slots[id]
+	var current *Emission
+	if slot != nil {
+		current = slot.current.Load()
+	}
+	if current != prev {
+		s.unlockAll()
+		return false
+	}
+
+	if slot == nil {
+		slot = &producerSlot{id: id}
+		ps.slots[id] = slot
+		slot.visible.Store(ps.objectLocked(id) != nil)
+		slot.hidden.Store(ps.hidden[id])
+	}
+	changed := changedTargets(prev, proposal)
+	if slices.Contains(proposal.shadowed, s.contributionBinding(id)) {
+		for _, f := range proposal.coverage {
+			changed[f.id] = struct{}{}
+		}
+	}
+	direct := maps.Clone(changed)
+	region := s.affectedLocked(changed)
+	type publication struct {
+		before, after Child
+		visible       bool
+		dispatch      func()
+	}
+	publications := make(map[manifest.NamedResource]publication, len(region))
+	for target := range region {
+		sh := s.shardFor(target)
+		publications[target] = publication{
+			before:  sh.representativeLocked(target),
+			visible: !sh.hidden[target] && (sh.static[target] != nil || len(sh.members[target]) > 0),
+		}
+	}
+	for target := range changed {
+		sh := s.shardFor(target)
+		sh.members[target] = slices.DeleteFunc(sh.members[target], func(m membership) bool { return m.slot == slot })
+	}
+	for _, target := range seeds {
+		sh := s.shardFor(target)
+		if !sh.rooted[target] {
+			sh.retired[target] = true
+		}
+	}
+	slot.current.Store(proposal)
+	if !slot.visible.Load() {
+		ps.hidden[id] = true
+		slot.hidden.Store(true)
+	}
+	for position, a := range proposal.entries {
+		target := a.child.Obj.Named()
+		sh := s.shardFor(target)
+		sh.members[target] = append(sh.members[target], membership{slot: slot, position: position})
+		sh.objects[target] = a.child.Obj
+		for _, t := range a.targets {
+			sh := s.shardFor(t.NamedResource)
+			sh.members[t.NamedResource] = append(sh.members[t.NamedResource], membership{slot: slot, position: position, declaration: true})
+		}
+	}
+	s.reachabilityLocked(region)
+	for target := range region {
+		sh := s.shardFor(target)
+		change := publications[target]
+		change.after = sh.representativeLocked(target)
+		obj := change.after.Obj
+		if obj != nil {
+			sh.setLocked(target, obj)
+		} else {
+			delete(sh.byName[kindID{target.Group, target.Kind}], nameID{target.Namespace, target.Name})
+		}
+		if _, touched := direct[target]; (touched || change.before.Obj != obj) && (obj != nil || change.visible || !sh.hidden[target]) {
+			change.dispatch = fireUnderLock(s, EventObjectAdded, target, obj)
+		}
+		publications[target] = change
+	}
+	var artifactDispatch func()
+	if slot.visible.Load() {
+		ps.artifacts[id] = proposal
+		artifactDispatch = fireUnderLock(s, EventArtifactUpdated, id, Artifact(proposal))
+	}
+	s.unlockAll()
+	dispatches := make([]eventDispatch, 0, len(region)+1)
+	for target, change := range publications {
+		if change.dispatch != nil && (change.before.Obj == nil || change.after.Obj == nil || !objectEqual(change.before.Obj, change.after.Obj) || !specValueEqual(change.before.Doc, change.after.Doc)) {
+			dispatches = append(dispatches, eventDispatch{target, change.dispatch})
+		}
+	}
+	if artifactDispatch != nil {
+		dispatches = append(dispatches, eventDispatch{id, artifactDispatch})
+	}
+	dispatchEvents(dispatches)
+	return true
+}
+
+func changedTargets(prev, proposal *Emission) map[manifest.NamedResource]struct{} {
+	changed := map[manifest.NamedResource]struct{}{}
+	for _, inventory := range []*Emission{prev, proposal} {
+		if inventory == nil {
+			continue
+		}
+		for _, entry := range inventory.entries {
+			changed[entry.child.Obj.Named()] = struct{}{}
+			for _, target := range entry.targets {
+				changed[target.NamedResource] = struct{}{}
+			}
+		}
+	}
+	return changed
+}
+
+func prepareEmission(next, prev *Emission, prepared []admission) *Emission {
+	e := *next
+	e.validated = new(atomic.Pointer[manifest.BaseManifest])
+	e.shadowed = nil
+	if prev != nil {
+		e.shadowed = slices.Clone(prev.shadowed)
+	}
+	if next.Complete && !slices.Contains(e.shadowed, next.binding) {
+		e.shadowed = append(e.shadowed, next.binding)
+	}
+	e.previous = nil
+	e.entries = nil
+	e.Children = nil
+	e.Manifests = slices.Clone(next.Manifests)
+	e.Render = slices.Clone(next.Render)
+	e.Unreadable = slices.Clone(next.Unreadable)
+	byID := map[manifest.NamedResource]admission{}
+	for _, a := range prepared {
+		byID[a.child.Obj.Named()] = a
+	}
+	// Stable positions retain reverse membership offsets independently of document order.
+	if prev != nil {
+		for _, old := range prev.entries {
+			id := old.child.Obj.Named()
+			if a, ok := byID[id]; ok {
+				e.entries = append(e.entries, a)
+				delete(byID, id)
+			} else if !next.Complete {
+				e.entries = append(e.entries, old)
+			}
+		}
+	}
+	for _, a := range prepared {
+		id := a.child.Obj.Named()
+		if _, ok := byID[id]; ok {
+			e.entries = append(e.entries, a)
+			delete(byID, id)
+		}
+	}
+	for _, a := range e.entries {
+		e.Children = append(e.Children, a.child)
+	}
+	inherited := prev != nil && slices.EqualFunc(next.Manifests, prev.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) })
+	if inherited && (!next.Complete || slices.EqualFunc(prev.entries, e.entries, func(a, b admission) bool { return a.child.Obj.Named() == b.child.Obj.Named() })) {
+		e.documentOwners = prev.documentOwners
+	} else {
+		e.documentOwners = bindDocuments(next.Manifests, prepared)
+	}
+	if !next.Complete && prev != nil {
+		if !inherited {
+			visited := make(map[manifest.NamedResource]struct{}, len(prepared))
+			for _, entry := range prepared {
+				visited[entry.child.Obj.Named()] = struct{}{}
+			}
+			available := make(map[manifest.NamedResource][]int, len(e.Manifests))
+			for i, doc := range e.Manifests {
+				key := documentIdentity(doc)
+				available[key] = append(available[key], i)
+			}
+			used := make([]bool, len(e.Manifests))
+			for i, doc := range prev.Manifests {
+				owner := prev.documentOwners[i]
+				if _, replaced := visited[owner]; owner != (manifest.NamedResource{}) && replaced {
+					continue
+				}
+				present := false
+				for _, j := range available[documentIdentity(doc)] {
+					if !used[j] && specValueEqual(doc, e.Manifests[j]) {
+						used[j], present = true, true
+						break
+					}
+				}
+				if !present {
+					e.Manifests = append(e.Manifests, doc)
+					e.documentOwners = append(e.documentOwners, owner)
+				}
+			}
+		}
+		e.coverage = slices.Clone(e.coverage)
+		for _, old := range prev.coverage {
+			if !slices.ContainsFunc(e.coverage, func(f footprint) bool {
+				return f.id == old.id && slices.Equal(f.record.Productions, old.record.Productions)
+			}) {
+				e.coverage = append(e.coverage, old)
+			}
+		}
+	}
+	return &e
+}
+func documentIdentity(doc map[string]any) manifest.NamedResource {
+	name, namespace := manifest.DocMetadata(doc)
+	raw := manifest.RawObject{APIVersion: manifest.DocAPIVersion(doc), Kind: manifest.DocKind(doc), Name: name, Namespace: namespace}
+	return raw.Named()
+}
+func bindDocuments(docs []map[string]any, entries []admission) []manifest.NamedResource {
+	byDocument := make(map[manifest.NamedResource][]admission, len(entries))
+	for _, entry := range entries {
+		if entry.child.Doc != nil {
+			key := documentIdentity(entry.child.Doc)
+			byDocument[key] = append(byDocument[key], entry)
+		}
+	}
+	owners := make([]manifest.NamedResource, len(docs))
+	for i, doc := range docs {
+		for _, entry := range byDocument[documentIdentity(doc)] {
+			if specValueEqual(doc, entry.child.Doc) {
+				owners[i] = entry.child.Obj.Named()
+				break
+			}
+		}
+	}
+	return owners
+}
+func sameMembership(a, b *Emission) bool {
+	if len(a.entries) != len(b.entries) || !slices.Equal(a.shadowed, b.shadowed) || a.binding != b.binding {
+		return false
+	}
+	for i, x := range a.entries {
+		y := b.entries[i]
+		if x.child.Obj.Named() != y.child.Obj.Named() || !slices.EqualFunc(x.targets, y.targets, func(a, b manifest.ProducerTarget) bool {
+			return a.NamedResource == b.NamedResource
+		}) {
+			return false
+		}
+	}
+	return true
+}
+func admissionEqual(a, b admission) bool {
+	return a.binding == b.binding && objectEqual(a.child.Obj, b.child.Obj) && specValueEqual(a.child.Doc, b.child.Doc) && slices.Equal(a.child.Productions, b.child.Productions)
+}
+func semanticEqual(a, b Child) bool {
+	if a.Doc == nil || b.Doc == nil {
+		if objectEqual(a.Obj, b.Obj) {
+			return true
+		}
+		type metadata interface {
+			GetLabels() map[string]string
+			GetAnnotations() map[string]string
+		}
+		am, aok := a.Obj.(metadata)
+		bm, bok := b.Obj.(metadata)
+		if !aok || !bok {
+			return false
+		}
+		if !maps.Equal(am.GetAnnotations(), bm.GetAnnotations()) {
+			return false
+		}
+		if !mapEqualExcept(am.GetLabels(), bm.GetLabels(), ownershipLabel) {
+			return false
+		}
+		ad, aerr := json.Marshal(a.Obj)
+		bd, berr := json.Marshal(b.Obj)
+		return aerr == nil && berr == nil && bytes.Equal(ad, bd)
+	}
+	if len(a.Doc) != len(b.Doc) {
+		return false
+	}
+	for key, value := range a.Doc {
+		other, ok := b.Doc[key]
+		if !ok {
+			return false
+		}
+		if key != "metadata" {
+			if !specValueEqual(value, other) {
+				return false
+			}
+			continue
+		}
+		am, aok := value.(map[string]any)
+		bm, bok := other.(map[string]any)
+		if !aok || !bok {
+			return specValueEqual(value, other)
+		}
+		if !mapEqualExcept(am, bm, func(key string) bool { return key == "labels" }) {
+			return false
+		}
+		al, _ := am["labels"].(map[string]any)
+		bl, _ := bm["labels"].(map[string]any)
+		if !mapEqualExcept(al, bl, ownershipLabel) {
+			return false
+		}
+	}
+	return true
+}
+func mapEqualExcept[V any](a, b map[string]V, excluded func(string) bool) bool {
+	for key, value := range a {
+		if excluded(key) {
+			continue
+		}
+		other, ok := b[key]
+		if !ok || !specValueEqual(value, other) {
+			return false
+		}
+	}
+	for key := range b {
+		if !excluded(key) {
+			if _, ok := a[key]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func ownershipLabel(key string) bool {
+	switch key {
+	case "kustomize.toolkit.fluxcd.io/name", "kustomize.toolkit.fluxcd.io/namespace", "helm.toolkit.fluxcd.io/name", "helm.toolkit.fluxcd.io/namespace", "resourceset.fluxcd.controlplane.io/name", "resourceset.fluxcd.controlplane.io/namespace":
+		return true
+	}
+	return false
+}
+func (s *Store) fireObject(id manifest.NamedResource) {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	obj := sh.objectLocked(id)
+	dispatch := fireUnderLock(s, EventObjectAdded, id, obj)
+	sh.mu.RUnlock()
+	dispatch()
+}
+
+func (sh *shard) staticActiveLocked(id manifest.NamedResource) bool {
+	return sh.static[id] != nil && !sh.hidden[id] && !sh.retired[id]
+}
+func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
+	return sh.representativeLocked(id).Obj
+}
+func (sh *shard) representativeLocked(id manifest.NamedResource) Child {
+	if sh.hidden[id] {
+		return Child{}
+	}
+	if sh.rooted[id] && sh.static[id] != nil {
+		return Child{Obj: sh.static[id]}
+	}
+	var chosen *membership
+	for i := range sh.members[id] {
+		m := &sh.members[id][i]
+		if !m.declaration && m.slot.visible.Load() && (chosen == nil || m.slot.id.Compare(chosen.slot.id) > 0) {
+			chosen = m
+		}
+	}
+	if chosen != nil {
+		return chosen.slot.current.Load().entries[chosen.position].child
+	}
+	if sh.rooted[id] || !sh.retired[id] {
+		return Child{Obj: sh.static[id]}
+	}
+	return Child{}
+}
+func (s *Store) affectedLocked(changed map[manifest.NamedResource]struct{}) map[manifest.NamedResource]struct{} {
+	queue := slices.Collect(maps.Keys(changed))
+	for i := 0; i < len(queue); i++ {
+		id := queue[i]
+		sh := s.shardFor(id)
+		if slot := sh.slots[id]; slot != nil {
+			if e := slot.current.Load(); e != nil {
+				for _, a := range e.entries {
+					targets := []manifest.NamedResource{a.child.Obj.Named()}
+					for _, t := range a.targets {
+						targets = append(targets, t.NamedResource)
+					}
+					for _, target := range targets {
+						if _, seen := changed[target]; !seen {
+							changed[target] = struct{}{}
+							queue = append(queue, target)
+						}
+					}
+				}
+				if slices.Contains(e.shadowed, s.contributionBinding(id)) {
+					for _, f := range e.coverage {
+						if _, seen := changed[f.id]; !seen {
+							changed[f.id] = struct{}{}
+							queue = append(queue, f.id)
+						}
+					}
+				}
+			}
+		}
+	}
+	return changed
+}
+func (s *Store) staticAnchorLocked(id manifest.NamedResource) bool {
+	sh := s.shardFor(id)
+	if sh.rooted[id] && sh.static[id] != nil {
+		return true
+	}
+	if sh.static[id] == nil {
+		return false
+	}
+	index := s.index.Load()
+	r, ok := index.Lookup(id)
+	if !ok {
+		return true
+	}
+	if sh.retired[id] && bootstrapSeed(r) {
+		return false
+	}
+	covered := false
+	for _, p := range r.Productions {
+		if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
+			return true
+		}
+		slot := s.shardFor(p.Owner).slots[p.Owner]
+		if slot != nil && slot.hidden.Load() {
+			covered = true
+			continue
+		}
+		if slot == nil || slot.current.Load() == nil || !slices.Contains(slot.current.Load().shadowed, s.contributionBinding(p.Owner)) {
+			return true
+		}
+		covered = true
+	}
+	return !covered
+}
+func (s *Store) reachabilityLocked(region map[manifest.NamedResource]struct{}) {
+	anchored := map[manifest.NamedResource]bool{}
+	queue := []manifest.NamedResource{}
+	for id := range region {
+		sh := s.shardFor(id)
+		live := s.staticAnchorLocked(id)
+		if !live {
+			for _, m := range sh.members[id] {
+				if _, inside := region[m.slot.id]; !inside && m.slot.visible.Load() {
+					live = true
+					break
+				}
+			}
+		}
+		if live {
+			anchored[id] = true
+			queue = append(queue, id)
+		}
+	}
+	for i := 0; i < len(queue); i++ {
+		id := queue[i]
+		if slot := s.shardFor(id).slots[id]; slot != nil {
+			if e := slot.current.Load(); e != nil {
+				for _, a := range e.entries {
+					targets := []manifest.NamedResource{a.child.Obj.Named()}
+					for _, t := range a.targets {
+						targets = append(targets, t.NamedResource)
+					}
+					for _, target := range targets {
+						if _, inside := region[target]; inside && !anchored[target] {
+							anchored[target] = true
+							queue = append(queue, target)
+						}
+					}
+				}
+			}
+		}
+	}
+	for id := range region {
+		sh := s.shardFor(id)
+		sh.retired[id] = !s.staticAnchorLocked(id)
+		was := sh.hidden[id]
+		sh.hidden[id] = !anchored[id]
+		if slot := sh.slots[id]; slot != nil {
+			slot.visible.Store(anchored[id])
+			slot.hidden.Store(!anchored[id])
+		}
+		if was && anchored[id] {
+			delete(sh.conditions, id)
+			delete(sh.artifacts, id)
+		}
+	}
 }

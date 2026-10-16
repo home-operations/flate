@@ -33,6 +33,7 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cluster-settings}\n")
+			testutil.WriteFile(t, root, "flux/nested/raw.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: loose, namespace: apps}\n")
 			st := store.New()
 			ks := &manifest.Kustomization{
 				Name: "root", Namespace: "flux-system", Path: tc.path,
@@ -41,13 +42,16 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 			st.AddObject(ks)
 			l := loaderFixture(st, nil)
 			l.Options.WipeSecrets = false
-			idx := rendererFixture(t, l, root, nil)
+			idx := rendererFixture(t, l, root)
 			var want []manifest.NamedResource
 			if tc.produces {
 				want = []manifest.NamedResource{ks.Named()}
 			}
 			if got := renderers(idx, cmID("apps")); !slices.Equal(got, want) {
 				t.Fatalf("ProducedBy = %v, want %v", got, want)
+			}
+			if got := renderers(idx, manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "loose"}); !slices.Equal(got, want) {
+				t.Fatalf("loose manifest producers = %v, want %v", got, want)
 			}
 			if got := ownersForTest(idx, "apps/cm.yaml"); !slices.Equal(got, want) {
 				t.Fatalf("OwnersOfFile = %v, want %v", got, want)
@@ -107,7 +111,7 @@ spec:
 			if _, err := l.Load(t.Context(), filepath.Join(dir, "kubernetes/apps/bare")); err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(dir, nil)
+			l.FinalizeIndex(dir)
 			idx := l.Index
 			for _, id := range []manifest.NamedResource{
 				{Kind: manifest.KindConfigMap, Name: "foreign-config"},
@@ -194,7 +198,7 @@ func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
 	if got := renderers(idx, cmID("flux-system")); len(got) != 0 {
 		t.Errorf("ProducedBy = %v, want empty (KS produces no cluster-settings)", got)
 	}
@@ -242,7 +246,7 @@ func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 				want = append(want, ks.Named())
 			}
 
-			idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+			idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
 			for _, file := range []string{
 				"apps/homelab/kustomization.yaml",
@@ -279,7 +283,7 @@ func TestFinalizeIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
 	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
 		t.Errorf("OwnersOfFile(escaped file cluster.yaml) = %v, want to contain apps", got)
@@ -302,7 +306,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
 	s.AddObject(ks)
 
-	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
 	if got := ownersForTest(idx, "apps/base/postgres/cluster.yaml"); !slices.Contains(got, ks.Named()) {
 		t.Errorf("OwnersOfFile(dangling cluster.yaml) = %v, want to contain apps", got)
@@ -329,7 +333,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 	s.AddObject(ks)
 	s.AddObject(other)
 
-	idx := rendererFixture(t, loaderFixture(s, nil), dir, nil)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
 	for _, file := range []string{
 		"apps/base/postgres/kustomization.yaml",
@@ -381,7 +385,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
 	}
-	rendererFixture(t, l, dir, nil)
+	rendererFixture(t, l, dir)
 	idx := l.Index
 
 	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
@@ -426,8 +430,7 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 		Path: "./apps",
 	})
 
-	producers := &manifest.ProducerIndex{}
-	rendererFixture(t, loaderFixture(s, nil), dir, producers)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
 	want := map[manifest.NamedResource]string{ // target → producer name
 		secretID("secure", "app-values"): "app-creds",
@@ -438,11 +441,12 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 		{Kind: manifest.KindConfigMap, Namespace: "secure", Name: "media-bucket"}: "media-bucket",
 	}
 	for target, prodName := range want {
-		got, ok := producers.Producer(target)
-		if !ok {
+		declarations := testutil.Declarations(s.Productions(target, idx))
+		if len(declarations) != 1 {
 			t.Errorf("Producer(%v) missing; want %q", target, prodName)
 			continue
 		}
+		got := declarations[0]
 		if got.Name != prodName || got.Namespace != target.Namespace {
 			t.Errorf("Producer(%v).Name = %q, want %q", target, got.Name, prodName)
 		}
@@ -467,15 +471,14 @@ func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
 		Path: "./apps",
 	})
 
-	producers := &manifest.ProducerIndex{}
-	rendererFixture(t, loaderFixture(s, nil), dir, producers)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
-	if _, ok := producers.Producer(secretID("secure", "app-values")); !ok {
+	if declarations := testutil.Declarations(s.Productions(secretID("secure", "app-values"), idx)); len(declarations) == 0 {
 		t.Error("producer not recorded under its raw target name")
 	}
 	// The materialized Secret would be prod-app-values; the scan does NOT
 	// record that — pinning the documented namePrefix coverage gap.
-	if _, ok := producers.Producer(secretID("secure", "prod-app-values")); ok {
+	if declarations := testutil.Declarations(s.Productions(secretID("secure", "prod-app-values"), idx)); len(declarations) > 0 {
 		t.Error("scan unexpectedly followed namePrefix; the caveat test is stale")
 	}
 }
@@ -509,7 +512,7 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
 	s.AddObject(existing)
 
-	rendererFixture(t, loaderFixture(s, nil), dir, &manifest.ProducerIndex{})
+	rendererFixture(t, loaderFixture(s, nil), dir)
 
 	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
 	if got == nil {
@@ -551,7 +554,7 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 		Path: "./apps",
 	})
 
-	rendererFixture(t, loaderFixture(s, nil), dir, &manifest.ProducerIndex{})
+	rendererFixture(t, loaderFixture(s, nil), dir)
 
 	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
 	if got == nil {
@@ -583,7 +586,7 @@ func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
 
 	l := loaderFixture(s, nil)
 	l.Options.WipeSecrets = false
-	rendererFixture(t, l, dir, &manifest.ProducerIndex{})
+	rendererFixture(t, l, dir)
 
 	if obj := s.GetObject(secretID("secure", "app-secret")); obj != nil {
 		t.Errorf("wipeSecrets=false must suppress synthesis; got %#v", obj)
@@ -604,8 +607,7 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 			}
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [producer.yaml]\n")
 			testutil.WriteFile(t, root, "shared/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: '"+namespace+"'}\nspec:\n  target: {name: values}\n  dataFrom: [{extract: {key: values}}]\n")
-			producers := &manifest.ProducerIndex{}
-			idx := rendererFixture(t, loaderFixture(s, nil), root, producers)
+			idx := rendererFixture(t, loaderFixture(s, nil), root)
 			slices.SortFunc(want, manifest.NamedResource.Compare)
 			for _, ns := range []string{namespace, "effective"} {
 				id := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: ns, Name: "producer"}
@@ -644,11 +646,10 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 			s.AddObject(ks)
 			testutil.WriteFile(t, root, "values/kustomization.yaml", "namespace: apps\nresources: [bucket.yaml]\n")
 			testutil.WriteFile(t, root, "values/bucket.yaml", "apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\nmetadata: {name: bucket, namespace: '"+namespace+"'}\nspec: {generateBucketName: bucket, storageClassName: bucket}\n")
-			producers := &manifest.ProducerIndex{}
-			idx := rendererFixture(t, loaderFixture(s, nil), root, producers)
+			idx := rendererFixture(t, loaderFixture(s, nil), root)
 			for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 				target := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "bucket"}
-				if _, ok := producers.Producer(target); !ok {
+				if declarations := testutil.Declarations(s.Productions(target, idx)); len(declarations) == 0 {
 					t.Fatalf("missing %s target", kind)
 				}
 			}
@@ -730,8 +731,8 @@ data: {value: fixture}
 					t.Fatal(err)
 				}
 			}
-			producers := &manifest.ProducerIndex{}
-			l.FinalizeIndex(root, producers)
+			l.FinalizeIndex(root)
+			idx := l.Index
 			owner := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
 			child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 			values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
@@ -742,11 +743,11 @@ data: {value: fixture}
 				t.Fatalf("child parent = %s, want %s", record.Parent, owner)
 			}
 			if mode == "mixed_producer" {
-				if _, ok := producers.Producer(secretID("apps", "values")); !ok {
+				if declarations := testutil.Declarations(l.Store.Productions(secretID("apps", "values"), idx)); len(declarations) == 0 {
 					t.Fatal("mixed-file raw producer is missing")
 				}
-			} else if record, _ := l.Index.Lookup(values); !slices.Contains(record.Renderers, owner) {
-				t.Fatalf("mixed-file data renderers = %v, want %s", record.Renderers, owner)
+			} else if record, _ := l.Index.Lookup(values); !slices.Contains(testutil.ProductionOwners(record), owner) {
+				t.Fatalf("mixed-file data renderers = %v, want %s", testutil.ProductionOwners(record), owner)
 			}
 		})
 	}

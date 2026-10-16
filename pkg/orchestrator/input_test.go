@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -133,9 +134,9 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				assert.Equal(t, ns, "")
 				obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
 				assert.NoError(t, err)
-				parent, ok := rendered.Store().EmittedParent(obj.Named())
-				if !ok || parent != changed {
-					t.Fatalf("side %d emitted owner = %s, want %s", side, parent, changed)
+				owners := testutil.Owners(rendered.Store().Productions(obj.Named(), nil))
+				if !slices.Contains(owners, changed) {
+					t.Fatalf("side %d owners=%v want %s", side, owners, changed)
 				}
 				if value := docs[0]["data"].(map[string]any)["k"]; value != []string{"A", "B"}[side] {
 					t.Fatalf("side %d read %v, want selected source bytes", side, value)

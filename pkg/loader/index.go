@@ -7,8 +7,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// FinalizeIndex records immutable ownership facts and seeds the runtime producer registry.
-func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerIndex) {
+// FinalizeIndex freezes source-qualified graph contributions before reconciliation.
+func (l *Loader) FinalizeIndex(repoRoot string) {
 	l.mountSources()
 	if l.scopes == nil || !l.scopes.complete {
 		l.ensureScopes()
@@ -64,13 +64,12 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 		l.Index.Records[id] = r
 	}
 	// Graph traversal supplies readers before file-backed data ownership is frozen.
-	l.buildRenderers(repoRoot, producers)
-	l.fillOwners()
+	l.buildProductions(repoRoot)
+	l.fillProductions()
+	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes = nil
 	for id, r := range l.Index.Records {
-		slices.SortFunc(r.Renderers, manifest.NamedResource.Compare)
-		slices.SortFunc(r.DeclarationOwners, manifest.NamedResource.Compare)
-		slices.SortFunc(r.Owners, manifest.NamedResource.Compare)
+		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
 		l.Index.Records[id] = r
 	}
 	for _, ids := range l.Index.Claims {
@@ -81,20 +80,10 @@ func (l *Loader) FinalizeIndex(repoRoot string, producers *manifest.ProducerInde
 	}
 }
 
-func (l *Loader) fillOwners() {
+func (l *Loader) fillProductions() {
 	for id, r := range l.Index.Files() {
-		if id.KindInfo().Includes("data") {
-			r.Owners, _ = l.Index.OwnersOfFile(r.File)
-			l.Index.Records[id] = r
-		}
-	}
-	for id, r := range l.Index.Records {
-		if id.KindInfo().Includes("data") && id.Namespace != "" {
-			raw := id
-			raw.Namespace = ""
-			for _, owner := range l.Index.Records[raw].Owners {
-				r.Owners = appendUniqueProducer(r.Owners, owner)
-			}
+		if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
+			r.Productions = []manifest.Production{{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}}
 			l.Index.Records[id] = r
 		}
 	}

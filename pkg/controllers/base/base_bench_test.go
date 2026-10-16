@@ -52,7 +52,7 @@ func BenchmarkEmit_Children(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace}, true)
+				publishDocuments(b, c, parent, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
 			}
 		})
 	}

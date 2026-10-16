@@ -33,7 +33,7 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 				o.index.Records[id] = manifest.DiscoveryRecord{Parent: structural}
 			}
 			if tc.rendered {
-				o.store.RecordEmitted(rendered, []manifest.NamedResource{id})
+				publishFixture(t, o.store, rendered, []manifest.NamedResource{id})
 			}
 			got, ok := o.parentOf(id)
 			want := rendered
@@ -155,7 +155,8 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 			clone.ValuesFrom[0].Optional = false
 			o.store.AddObject(clone)
 			o.store.UpdateStatus(id, store.StatusFailed, "required input missing")
-			if o.store.GetArtifact(id) != artifact || o.store.FailedResources()[id].Status != store.StatusFailed {
+			_, retained := o.store.GetEmission(id)
+			if o.store.GetArtifact(id) != nil || len(retained.Manifests) != len(artifact.(*store.Emission).Manifests) || o.store.FailedResources()[id].Status != store.StatusFailed {
 				t.Fatal("stale artifact weakened selected failure")
 			}
 			if got := o.requiredDataDependencies(id); !slices.Equal(got, []manifest.NamedResource{want}) {
@@ -228,8 +229,8 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	}
 	parent, other, first, second := id("parent"), id("other"), id("a"), id("b")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
-	o.store.RecordEmitted(parent, []manifest.NamedResource{second})
-	o.store.RecordEmitted(other, []manifest.NamedResource{first})
+	publishFixture(t, o.store, parent, []manifest.NamedResource{second})
+	publishFixture(t, o.store, other, []manifest.NamedResource{first})
 	got := o.childrenByParent()
 	if !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
 		!slices.Equal(got[other], []manifest.NamedResource{first}) {
@@ -255,7 +256,7 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 	input := manifest.NamedResource{Kind: "Secret", Namespace: "apps", Name: "input"}
 	structural, rendered := ksID("structural"), ksID("rendered")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{input: structural})
-	o.store.RecordEmitted(rendered, []manifest.NamedResource{input})
+	publishFixture(t, o.store, rendered, []manifest.NamedResource{input})
 	want := []manifest.NamedResource{input, structural, rendered}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	if got := o.requiredDataDependencies(hr.Named()); !slices.Equal(got, want) {
@@ -277,21 +278,24 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	testutil.WriteFile(t, root, "values/kustomization.yaml", "resources: [input.yaml]\n")
 	testutil.WriteFile(t, root, "values/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {values.yaml: 'greeting: hello'}\n")
+	admitted, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	assert.NoError(t, err)
+	o.store.SetArtifact(manifest.BootstrapSourceID, admitted)
 	l := loader.New(o.store)
 	l.Index = indexForTest(map[manifest.NamedResource]string{input: "values/input.yaml", hr.Named(): "consumer.yaml"})
-	l.FinalizeIndex(root, nil)
+	l.FinalizeIndex(root)
 	o.index = l.Index
 	foreign := input
 	foreign.Group = "example.test"
 	foreignOwner := &manifest.Kustomization{Name: "foreign-owner", Namespace: "flux-system", Path: "./foreign"}
 	o.store.AddObject(foreignOwner)
-	o.index.Records[foreign] = manifest.DiscoveryRecord{File: "foreign/input.yaml", Owners: []manifest.NamedResource{foreignOwner.Named()}}
+	o.index.Records[foreign] = manifest.DiscoveryRecord{File: "foreign/input.yaml", Productions: testutil.ProductionEvidence([]manifest.NamedResource{foreignOwner.Named()})}
 	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), o.index, o.store)
-	assert.Diff(t, o.filter.ProducersFor(input), []manifest.NamedResource{owner.Named()})
+	assert.Diff(t, testutil.Owners(o.store.Productions(input, o.index)), []manifest.NamedResource{owner.Named()})
 	want := []manifest.NamedResource{input, owner.Named()}
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	assert.Diff(t, o.requiredDataDependencies(hr.Named()), want)
-	assert.Diff(t, o.filter.ProducersFor(foreign), []manifest.NamedResource{foreignOwner.Named()})
+	assert.Diff(t, testutil.Owners(o.store.Productions(foreign, o.index)), []manifest.NamedResource{foreignOwner.Named()})
 }
 
 func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testing.T) {
@@ -304,7 +308,7 @@ func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testin
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}
 	st.AddObject(producer)
 	l := loader.New(st)
-	l.FinalizeIndex(root, nil)
+	l.FinalizeIndex(root)
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
 	l.Index.Records[input] = manifest.DiscoveryRecord{File: "missing/nested/input.yaml"}
 	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}

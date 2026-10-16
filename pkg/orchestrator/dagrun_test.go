@@ -30,6 +30,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 				t.Run(fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers), func(t *testing.T) {
 					root := t.TempDir()
 					gate, child := ksID("gate"), ksID("child")
+					testutil.WriteFile(t, root, "unused/kustomization.yaml", "resources: [child.yaml]\n")
 					testutil.WriteFile(t, root, "flux/gate.yaml", strings.Replace(ksYAML("gate", "unused", ""), "spec:\n", "spec:\n  suspend: true\n", 1))
 					for _, name := range []string{"child", "dependent", "independent"} {
 						dep := ""
@@ -39,13 +40,17 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						case "dependent":
 							dep = "child"
 						}
-						testutil.WriteFile(t, root, "flux/"+name+".yaml", ksYAML(name, name, dep))
+						file := "flux/" + name + ".yaml"
+						if name == "child" {
+							file = "unused/child.yaml"
+						}
+						testutil.WriteFile(t, root, file, ksYAML(name, name, dep))
 						testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
 						testutil.WriteFile(t, root, name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\ndata: {value: active}\n")
 					}
 					cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers}
 					if changedOnly {
-						cfg.ExternalChanges = change.NewSet([]string{"flux/gate.yaml", "flux/child.yaml", "dependent/cm.yaml", "independent/cm.yaml"})
+						cfg.ExternalChanges = change.NewSet([]string{"flux/gate.yaml", "unused/child.yaml", "dependent/cm.yaml", "independent/cm.yaml"})
 					}
 					o, err := New(t.Context(), cfg)
 					if err != nil {
@@ -76,12 +81,11 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						t.Fatalf("dependent must first wait on child: outcome=%v blocked=%v", outcome, blocked)
 					}
 					retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: "retained"}
-					var artifact *store.KustomizationArtifact
+					var artifact *store.Emission
 					if retained {
 						doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": retainedID.Name, "namespace": retainedID.Namespace}, "data": map[string]any{"value": "prior"}}
-						o.ksc.Emit(child, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace}, true)
-						artifact = &store.KustomizationArtifact{Manifests: []map[string]any{doc}, Fingerprint: "prior"}
-						o.store.SetArtifact(child, artifact)
+						publishDocuments(t, o.ksc.Controller, child, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace})
+						artifact = o.store.GetArtifact(child).(*store.Emission)
 					}
 					var publication, arrivals atomic.Int64
 					unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -94,14 +98,14 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 							t.Error(err)
 							return
 						}
-						o.ksc.Emit(gate, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: gate.Namespace}, true)
+						publishDocuments(t, o.ksc.Controller, gate, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: gate.Namespace})
 					}, false)
 					t.Cleanup(unsub)
 					unsubArrivals := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 						if id == child {
-							owner, owned := o.store.EmittedParent(child)
-							if !owned || owner != gate || changedOnly && !o.filter.ShouldReconcile(child) {
-								t.Errorf("child arrived before ownership and selection: owner=%s owned=%t", owner, owned)
+							owners := testutil.Owners(o.store.Productions(child, nil))
+							if !slices.Contains(owners, gate) || changedOnly && !o.filter.ShouldReconcile(child) {
+								t.Errorf("child arrived before evidence/selection: %v", owners)
 							}
 						}
 						if id == retainedID || id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: child.Name}) {
@@ -118,17 +122,18 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if publication.Load() != 1 || arrivals.Load() != 0 || !store.IsSuspended(info) || !fresh.Suspend || original.Suspend {
 						t.Fatalf("late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v", publication.Load(), arrivals.Load(), info, original, fresh)
 					}
-					if owner, ok := o.store.EmittedParent(child); !ok || owner != gate {
-						t.Fatalf("child owner=%s, found=%t", owner, ok)
+					if owners := testutil.Owners(o.store.Productions(child, nil)); !slices.Contains(owners, gate) {
+						t.Fatalf("missing independent contributor: %v", owners)
 					}
 					if !slices.Contains(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), child) {
 						t.Fatal("suspension lost the child's file read tracking")
 					}
+					_, inventory := o.store.GetEmission(child)
 					if retained {
-						if o.store.GetArtifact(child) != artifact || o.store.GetObject(retainedID) == nil || len(o.store.EmittedChildrenByParent()[child]) != 1 {
+						if len(artifact.Manifests) != 1 || o.store.GetArtifact(child) != nil || o.store.GetObject(retainedID) == nil || len(inventory.Children) != 1 {
 							t.Fatal("suspension pruned retained artifact or emission")
 						}
-					} else if o.store.GetArtifact(child) != nil || len(o.store.EmittedChildrenByParent()[child]) != 0 {
+					} else if o.store.GetArtifact(child) != nil || len(inventory.Children) != 0 {
 						t.Fatal("suspended child produced output")
 					}
 					for _, name := range []string{"dependent", "independent"} {
@@ -213,7 +218,7 @@ data:
 			if !ok || cm.Data["greeting"] != "hello" {
 				t.Fatalf("shared values were not rendered: %+v", cm)
 			}
-			ksArt := o.store.GetArtifact(ksID("apps")).(*store.KustomizationArtifact)
+			ksArt := o.store.GetArtifact(ksID("apps")).(*store.Emission)
 			var childDoc map[string]any
 			for _, doc := range ksArt.Manifests {
 				if manifest.DocKind(doc) == manifest.KindHelmRelease {
@@ -229,7 +234,7 @@ data:
 			}
 			hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
 			childBefore := manifest.DeepCopyMap(childDoc)
-			hrArt := o.store.GetArtifact(hrID).(*store.HelmReleaseArtifact)
+			hrArt := o.store.GetArtifact(hrID).(*store.Emission)
 			retained := make([]map[string]any, len(hrArt.Manifests))
 			for i, doc := range hrArt.Manifests {
 				retained[i] = manifest.DeepCopyMap(doc)
@@ -242,8 +247,8 @@ data:
 				t.Fatal("bare chart child lost release namespace identity")
 			}
 			o.store.DeleteObject(bare)
-			o.ksc.Emit(ksID("apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"}, false)
-			_, replay := o.hrc.Emit(hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace}, false)
+			publishDocuments(t, o.ksc.Controller, ksID("apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"})
+			_, replay := publishDocuments(t, o.hrc.Controller, hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace})
 			if o.store.GetObject(bare) == nil {
 				t.Fatal("replay lost release namespace identity")
 			}

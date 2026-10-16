@@ -1,6 +1,7 @@
 package change
 
 import (
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -56,7 +57,8 @@ func (f filterFixture) index() *manifest.DiscoveryIndex {
 	}
 	for id, r := range index.Records {
 		if id.Kind == manifest.KindConfigMap || id.Kind == manifest.KindSecret {
-			r.Owners, _ = index.OwnersOfFile(r.File)
+			owners, _ := index.OwnersOfFile(r.File)
+			r.Productions = testutil.ProductionEvidence(owners)
 			index.Records[id] = r
 		}
 	}

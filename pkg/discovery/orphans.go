@@ -39,7 +39,7 @@ func (d *discoverer) promoteOrphans(standaloneSecrets []manifest.NamedResource) 
 		if owned(id, record.File) {
 			continue
 		}
-		if !loader.Promote(d.cfg.Store, id, record, loader.PromoteOptions{WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
+		if !loader.Promote(d.cfg.Store, id, manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, loader.PromoteOptions{WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}

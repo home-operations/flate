@@ -85,7 +85,7 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	st := store.New()
 	st.AddObject(cm)
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
-	provider := NewStoreProvider(st)
+	provider := NewStoreProvider(st, true)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
@@ -112,7 +112,7 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 			st := store.New()
 			st.AddObject(obj)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}}}
-			assert.NoError(t, ExpandValueReferences(hr, NewStoreProvider(st), nil))
+			assert.NoError(t, ExpandValueReferences(hr, NewStoreProvider(st, true), nil))
 			if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
 				t.Errorf("replicaCount = %v, want 3", got)
 			}
@@ -130,7 +130,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 				st := store.New()
 				st.AddObject(obj)
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
-				err := ExpandValueReferences(hr, NewStoreProvider(st), nil)
+				err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
 				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "Data[values.yaml]") {
 					t.Fatalf("malformed requested key must fail with its name: %v", err)
 				}
@@ -266,7 +266,7 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 				}
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"existing": "kept"},
 					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional}}}
-				err := ExpandValueReferences(hr, NewStoreProvider(st), nil)
+				err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
 				if optional && tc.kind != "Deployment" {
 					assert.NoError(t, err)
 					assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})
@@ -422,7 +422,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
 	st.AddObject(&manifest.Secret{Name: "secret-vars", Namespace: cm.Namespace, StringData: map[string]any{"TOKEN": "core"}})
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindSecret, Name: "secret-vars", Namespace: cm.Namespace})
-	provider := NewStoreProvider(st)
+	provider := NewStoreProvider(st, true)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Contents: map[string]any{"spec": map[string]any{}},

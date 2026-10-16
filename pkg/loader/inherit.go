@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"io/fs"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -63,7 +62,7 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 		clear(l.scopes.visits)
 		l.scopes.roots = nil
 		for _, dir := range l.standaloneRoots(repoRoot, kss) {
-			l.visitScope(graphVisit{root: repoRoot, dir: dir})
+			l.visitScope(graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID})
 		}
 		var local []*manifest.Kustomization
 		for _, ks := range kss {
@@ -80,7 +79,10 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 			}
 			local = append(local, ks)
 			v := graphVisit{root: root, dir: l.documents.claimBase(root, ks.Path),
-				namespace: ks.TargetNamespace, fallback: ks.TargetNamespace, owner: ks.Named()}
+				namespace: ks.TargetNamespace, fallback: ks.TargetNamespace, owner: ks.Named(), source: ks.SourceID()}
+			if v.source.Name == "" || v.source.Kind == "" {
+				v.source = manifest.BootstrapSourceID
+			}
 			if root != repoRoot {
 				prefix, err := filepath.Rel(repoRoot, root)
 				if err != nil {
@@ -108,19 +110,7 @@ func (l *Loader) visitScope(root graphVisit) []graphVisit {
 			visits = append(visits, v)
 			return true
 		}
-		if d, _ := l.documents.read(filepath.Join(root.root, root.dir)); d != nil {
-			w.walk(root, collect)
-		} else {
-			input, name := l.documents.input(filepath.Join(root.root, root.dir))
-			entries, _ := fs.ReadDir(input, name)
-			for _, entry := range entries {
-				if entry.IsDir() {
-					child := root
-					child.dir = filepath.ToSlash(filepath.Join(root.dir, entry.Name()))
-					w.walk(child, collect)
-				}
-			}
-		}
+		w.walk(root, collect)
 		l.scopes.walks[root.graphContext] = visits
 	}
 	for _, v := range visits {
@@ -259,7 +249,7 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []string {
 	var scopes []graphVisit
 	for _, v := range l.scopes.visits[r.Path] {
-		if l.selfClaim(v.owner, r.Authored) {
+		if v.generated || l.selfClaim(v.owner, r.Authored) {
 			continue
 		}
 		scopes = append(scopes, v)

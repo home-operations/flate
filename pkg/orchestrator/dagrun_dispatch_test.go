@@ -3,10 +3,13 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -25,7 +28,7 @@ func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
 	s := store.New()
 	tasks := task.NewBounded(2)
 	c := resourceset.New(s, tasks, true)
-	c.Configure(resourceset.Options{})
+	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(c.Close)
 	rs := &manifest.ResourceSet{Name: "dedup", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
@@ -56,7 +59,7 @@ func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 				s := store.New()
 				tasks := task.NewBounded(2)
 				c := resourceset.New(s, tasks, true)
-				c.Configure(resourceset.Options{})
+				c.Configure(base.Options{})
 				c.StartLifecycle()
 				rs := &manifest.ResourceSet{Name: "matrix", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
@@ -71,9 +74,9 @@ data: {key: fixed}
 				if out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone); rerun != selector || out != schedule.OutcomeTerminal || len(blocked) != 0 {
 					t.Fatalf("fresh setup failed: %v %v", out, blocked)
 				}
-				before := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+				before := s.GetArtifact(rs.Named()).(*store.Emission)
 				c.Close()
-				opts := resourceset.Options{}
+				opts := base.Options{}
 				want := schedule.OutcomeTerminal
 				fresh := *rs
 				switch name {
@@ -86,7 +89,7 @@ data: {key: fixed}
 					s.DeleteObject(rs.Named())
 					s.AddObject(rs)
 				case "empty fingerprint":
-					s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{Manifests: before.Manifests})
+					s.SetArtifact(rs.Named(), &store.Emission{Manifests: before.Manifests})
 				case "blocked gate", "failed gate":
 					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
 					s.AddObject(&fresh)
@@ -149,7 +152,7 @@ data: {key: fixed}
 					t.Fatalf("no-op emitted %d arrivals", arrivals.Load())
 				}
 				if name == "fresh fingerprint identical docs" {
-					after := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
+					after := s.GetArtifact(rs.Named()).(*store.Emission)
 					if before == after || before.Fingerprint == after.Fingerprint {
 						t.Fatal("fresh fingerprint must replace artifact identity")
 					}
@@ -165,7 +168,8 @@ data: {key: fixed}
 				}
 				if name == "suspended" || name == "refresh suspended" {
 					info, _ := s.GetStatus(rs.Named())
-					if !store.IsSuspended(info) || s.GetArtifact(rs.Named()) != before || outputArrivals.Load() != 0 {
+					_, retained := s.GetEmission(rs.Named())
+					if !store.IsSuspended(info) || s.GetArtifact(rs.Named()) != nil || !slices.EqualFunc(retained.Manifests, before.Manifests, func(a, b map[string]any) bool { return cmp.Equal(a, b) }) || outputArrivals.Load() != 0 {
 						t.Fatalf("suspension replayed or pruned output: status=%+v arrivals=%d", info, outputArrivals.Load())
 					}
 				}
@@ -180,7 +184,7 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	s := store.New()
 	tasks := task.NewBounded(2)
 	c := resourceset.New(s, tasks, true)
-	c.Configure(resourceset.Options{})
+	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(c.Close)
 	rs := &manifest.ResourceSet{Name: "concurrent", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
@@ -242,5 +246,92 @@ data: {key: initial}
 	cm, ok := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})
 	if !ok || cm.Data["key"] != "newest" {
 		t.Fatalf("latest concurrent content was lost: %+v", cm)
+	}
+}
+
+type withdrawalDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
+
+func (d withdrawalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+	return d(ctx, id, level)
+}
+
+func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		for _, lateFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("workers=%d/lateFirst=%t", workers, lateFirst), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					s := store.New()
+					tasks := task.NewBounded(workers)
+					p, k, consumer := ksID("publisher"), ksID("child"), ksID("consumer")
+					s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+					child := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
+					s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
+					_, late := s.GetEmission(k)
+					doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "late", "namespace": "apps"}, "data": map[string]any{"value": "private"}}
+					late.Children, late.Manifests = base.ParseChildren(k, []map[string]any{doc}, manifest.ParseDocOptions{})
+					late.Complete = true
+					publishRelease, entered, deliveryRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
+					consumerStarted, woken := make(chan struct{}), make(chan struct{})
+					var calls atomic.Int64
+					publishLate := func() {
+						s.RecordEmitted(k, &late)
+					}
+					dispatch := withdrawalDispatcher(func(_ context.Context, id schedule.NodeID, _ manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+						if id == consumer {
+							if calls.Add(1) == 1 {
+								close(consumerStarted)
+								return schedule.OutcomeBlocked, []schedule.NodeID{k}, false
+							}
+							if s.GetObject(k) != nil {
+								t.Error("withdrawal wake observed child still live")
+							}
+							close(woken)
+							return schedule.OutcomeTerminal, nil, false
+						}
+						tasks.YieldSlot(func() { <-publishRelease })
+						if lateFirst {
+							publishLate()
+						}
+						s.RecordEmitted(p, &store.Emission{Complete: true})
+						if !lateFirst {
+							publishLate()
+						}
+						return schedule.OutcomeTerminal, nil, false
+					})
+					scheduler := schedule.New(tasks, dispatch)
+					o := &Orchestrator{store: s}
+					unsubscribe := o.watchDAG(scheduler)
+					defer unsubscribe()
+					unsubBarrier := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+						if id == k && payload == nil {
+							close(entered)
+							tasks.YieldSlot(func() { <-deliveryRelease })
+						}
+					}, false)
+					defer unsubBarrier()
+					scheduler.Seed([]schedule.NodeID{p, consumer})
+					done := make(chan error, 1)
+					go func() { done <- scheduler.Run(t.Context()) }()
+					<-consumerStarted
+					synctest.Wait()
+					close(publishRelease)
+					<-entered
+					<-woken
+					synctest.Wait()
+					select {
+					case err := <-done:
+						t.Fatalf("drain sealed while notification was outstanding: %v", err)
+					default:
+					}
+					close(deliveryRelease)
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+					if calls.Load() != 2 || tasks.Failures() != 0 || s.GetObject(k) != nil || s.GetObject(late.Children[0].Obj.Named()) != nil {
+						t.Fatal("withdrawal lost wake or late publication manufactured support")
+					}
+				})
+			})
+		}
 	}
 }

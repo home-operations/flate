@@ -38,7 +38,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	testutil.WriteFile(t, artifactDir, "apps/kustomization.yaml", "configMapGenerator:\n- name: pinned\n  literals: [value=pinned]\n")
 	l.documents.read(filepath.Join(root, "apps"))
 	l.documents.read(filepath.Join(artifactDir, "apps"))
-	l.FinalizeIndex(root, nil)
+	l.FinalizeIndex(root)
 	objects := s.ListAs[*manifest.ConfigMap]("", manifest.KindConfigMap)
 	if len(objects) != 1 || objects[0].Name != "pinned" || objects[0].Namespace != "apps" || objects[0].Data["value"] != "pinned" {
 		t.Fatalf("expected only the artifact generator: %+v", objects)
@@ -120,7 +120,7 @@ spec:
 			_, err := l.Load(t.Context(), filepath.Join(sourceRoot, parent.Path))
 			assert.NoError(t, err)
 			l.ApplyNamespaces(root)
-			l.FinalizeIndex(root, nil)
+			l.FinalizeIndex(root)
 			for _, child := range []struct {
 				name string
 				want bool

@@ -1,6 +1,7 @@
 package change
 
 import (
+	"iter"
 	"log/slog"
 	"slices"
 	"sync"
@@ -101,24 +102,20 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	return ok
 }
 
-// ProducersFor returns Flux Kustomizations that render the data resource id.
-// Populated only for Enabled filters; used by the orchestrator to include
-// unchanged substitution data producers in changed-only dependency closures.
-// Returns a copy so callers can append without aliasing the discovery index.
-func (f *Filter) ProducersFor(id manifest.NamedResource) []manifest.NamedResource {
-	if !f.Enabled() {
-		return nil
-	}
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return slices.Clone(f.producersFor(id))
-}
-
 func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResource {
-	if f == nil {
+	if f == nil || !id.KindInfo().Includes("data") {
 		return nil
 	}
-	return f.index.DataProducers(id)
+	var out []manifest.NamedResource
+	if f.objs == nil {
+		return nil
+	}
+	for p := range f.objs.Productions(id, f.index) {
+		if p.Owner != (manifest.NamedResource{}) && !slices.Contains(out, p.Owner) {
+			out = append(out, p.Owner)
+		}
+	}
+	return out
 }
 
 // AddEmitted extends the keep set with child when emitter is a
@@ -463,8 +460,7 @@ func (f *Filter) resolve() {
 			//
 			// Read discovery data owners via the unlocked producersFor:
 			// resolve() runs pre-publication (f.keep / f.primary not yet set),
-			// so the public
-			// ProducersFor's RLock contract is not established here.
+			// before the keep-set lock is used by concurrent readers.
 			for _, producer := range f.producersFor(d) {
 				if producer == queue[head] {
 					continue
@@ -565,6 +561,7 @@ func (f *Filter) KeepNamespaces() map[string]struct{} {
 
 // ObjectLister is the Store surface filter resolution needs.
 type ObjectLister interface {
+	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) iter.Seq[manifest.Production]
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	ListObjects(group, kind string) []manifest.BaseManifest
 }

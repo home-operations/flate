@@ -160,9 +160,9 @@ spec:
 					if !ok {
 						t.Fatalf("side %d lost effective consumer identity", i)
 					}
-					owner, emitted := rendered.Store().EmittedParent(consumer)
-					if !emitted || owner != (manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}) {
-						t.Fatalf("side %d consumer owner = %s, emitted=%t", i, owner, emitted)
+					owners := testutil.Owners(rendered.Store().Productions(consumer, nil))
+					if !slices.Contains(owners, manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}) {
+						t.Fatalf("side %d owners=%v", i, owners)
 					}
 					_, ns := manifest.DocMetadata(obj.Contents)
 					assert.Equal(t, ns, "flux-system")

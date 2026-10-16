@@ -42,13 +42,6 @@ type Controller struct {
 	// skip (StatusReady with reason starting "skipped: "). Wired from
 	// Config.AllowMissingSecrets via Configure.
 	allowMissingSecrets bool
-
-	// producers is the orchestrator-owned producer index (shared with the
-	// HR controller). When a source's auth Secret is missing but an in-repo
-	// ExternalSecret / SealedSecret declares it, the fetch is skipped even
-	// without allowMissingSecrets — the producer is positive evidence the
-	// Secret materializes live. Nil-safe. See manifest.ProducerIndex.
-	producers *manifest.ProducerIndex
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
@@ -57,11 +50,6 @@ type Controller struct {
 type FetchOptions struct {
 	Filter              *change.Filter
 	AllowMissingSecrets bool
-	// Producers is the orchestrator-owned producer index (ExternalSecret /
-	// SealedSecret target → producer), shared with the HR controller. A
-	// missing auth Secret with a declared producer is skipped even without
-	// AllowMissingSecrets. Nil is OK — no producer is ever known.
-	Producers *manifest.ProducerIndex
 }
 
 // New constructs a source controller. Register fetchers on the
@@ -76,10 +64,9 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle.
 func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
-	c.SetFilter(opts.Filter)
+	c.Controller.Configure(base.Options{Filter: opts.Filter})
 	c.retry = retry
 	c.allowMissingSecrets = opts.AllowMissingSecrets
-	c.producers = opts.Producers
 }
 
 // Owns reports whether id is a node this controller reconciles — the dag
@@ -194,6 +181,10 @@ func (c *Controller) producerBacked(err error) bool {
 	if !ok {
 		return false
 	}
-	_, ok = c.producers.Producer(mse.Secret)
-	return ok
+	for p := range c.Store.Productions(mse.Secret, nil) {
+		if p.Declaration != (manifest.NamedResource{}) {
+			return true
+		}
+	}
+	return false
 }

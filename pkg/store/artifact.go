@@ -13,20 +13,6 @@ type Artifact interface {
 	artifact()
 }
 
-// RenderedArtifact is satisfied by artifacts that carry a rendered
-// manifest set — KustomizationArtifact and HelmReleaseArtifact. CLI
-// emitters use it to collect rendered output without caring which
-// controller produced it.
-type RenderedArtifact interface {
-	Artifact
-	RenderedManifests() []map[string]any
-	// RenderedFingerprint is the stable hash of the inputs that produced
-	// RenderedManifests (named distinctly from the Fingerprint field). The
-	// controllers' shared dedup short-circuit (base.Controller.FingerprintDedup)
-	// compares it to skip a re-render whose inputs are byte-identical.
-	RenderedFingerprint() string
-}
-
 // SourceArtifact is the unified working-tree artifact produced by
 // source fetchers (GitRepository, OCIRepository, Bucket, ExternalArtifact, …).
 // Kind identifies which CR kind produced it so consumers that care
@@ -65,101 +51,10 @@ type SourceArtifact struct {
 
 func (*SourceArtifact) artifact() {}
 
-// KustomizationArtifact is the rendered output of a Kustomization build.
-//
-// Fingerprint mirrors HelmReleaseArtifact: a stable hash of the inputs
-// that determine the rendered output (path, inline contents, spec,
-// expanded substitutions, resolved source root). The KS controller
-// compares it on every reconcile and skips re-running kustomize when
-// a re-AddObject event arrives with the same effective spec — the
-// same wasted-work pattern HR had before PR #219, just for KS.
-type KustomizationArtifact struct {
-	Path        string
-	Manifests   []map[string]any
-	Fingerprint string
-}
-
-func (*KustomizationArtifact) artifact() {}
-
-// RenderedManifests implements RenderedArtifact.
-func (a *KustomizationArtifact) RenderedManifests() []map[string]any { return a.Manifests }
-
-// RenderedFingerprint implements RenderedArtifact.
-func (a *KustomizationArtifact) RenderedFingerprint() string { return a.Fingerprint }
-
-// HelmReleaseArtifact is the rendered output of a HelmRelease template.
-//
-// Fingerprint is a stable hash of the inputs that determine the
-// rendered output (chart identity, expanded values, install/upgrade
-// flags). The HR controller compares it on every reconcile and
-// skips the helm render — which is by far the hot path — when a
-// re-AddObject event arrives with the same effective spec. Typical
-// trigger: the parent Kustomization's render re-emits the HR with
-// `kustomize.toolkit.fluxcd.io/{name,namespace}` ownership labels
-// stamped on metadata, which fails AddObject's reflect-DeepEqual
-// gate even though the rendered output would be byte-identical.
-type HelmReleaseArtifact struct {
-	Manifests   []map[string]any
-	Fingerprint string
-}
-
-func (*HelmReleaseArtifact) artifact() {}
-
-// RenderedManifests implements RenderedArtifact.
-func (a *HelmReleaseArtifact) RenderedManifests() []map[string]any { return a.Manifests }
-
-// RenderedFingerprint implements RenderedArtifact.
-func (a *HelmReleaseArtifact) RenderedFingerprint() string { return a.Fingerprint }
-
-// ResourceSetArtifact is the rendered output of a ResourceSet expansion.
-//
-// Fingerprint mirrors KustomizationArtifact: a stable hash of the inputs
-// that determine the rendered output (the RS spec plus the resolved
-// inputsFrom provider set). The RS controller compares it on every
-// reconcile and skips re-running resourceset.Render when a re-dispatch
-// (a parent KS re-emit, or a drain-rerun whose inputs converged) arrives
-// with the same effective inputs — the same wasted-work short-circuit
-// KS and HR carry.
-type ResourceSetArtifact struct {
-	Manifests   []map[string]any
-	Fingerprint string
-}
-
-func (*ResourceSetArtifact) artifact() {}
-
-// RenderedManifests implements RenderedArtifact.
-func (a *ResourceSetArtifact) RenderedManifests() []map[string]any { return a.Manifests }
-
-// RenderedFingerprint implements RenderedArtifact.
-func (a *ResourceSetArtifact) RenderedFingerprint() string { return a.Fingerprint }
-
 // --- Store operations on artifacts ---
 
-// SetArtifact stores an artifact for id and dispatches an
-// ArtifactUpdated event. Re-setting with a content-equal value is a
-// no-op.
-//
-// Equality cascade, cheapest-first:
-//
-//  1. Pointer identity (prev == artifact): trivially equal, no-op.
-//     Source-controller refresh loops cache their own SourceArtifact
-//     and re-publish the same pointer on every tick; the short-
-//     circuit avoids reflection entirely for that case.
-//  2. Pinned source payloads are compared by family and generation metadata.
-//     Distinct mutable views replace each other. Filesystems MUST NOT be compared
-//     or traversed under the shard lock.
-//  3. reflect.DeepEqual fallback for distinct-pointer dedup. Phase 1
-//     evaluated hashing here (FNV64a via both json.Marshal and a
-//     hand-rolled walker) and benched it against DeepEqual on the
-//     realistic KS / HR re-emit shape (20-200 docs, fresh maps every
-//     reconcile, no aliased sub-pointers). Result: DeepEqual was
-//     ≥2× faster than either hash variant because the FNV walker
-//     pays full per-leaf write cost on every call, while DeepEqual
-//     short-circuits on the first leaf mismatch and is hand-tuned by
-//     the runtime for nested map / slice shapes. The plan
-//     acknowledged this outcome ("if JSON encode is slower than
-//     DeepEqual on the artifact size you have, this is a wash. Bench
-//     it."). The pointer-identity short-circuit is the residual win.
+// SetArtifact stores fetched content or a rendered inventory and notifies live readers.
+// Equal payloads are deduplicated; hidden writes remain private.
 func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
@@ -173,6 +68,10 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 		return
 	}
 	sh.artifacts[id] = artifact
+	if sh.hidden[id] {
+		sh.mu.Unlock()
+		return
+	}
 	dispatch := fireUnderLock(s, EventArtifactUpdated, id, artifact)
 	sh.mu.Unlock()
 	dispatch()
@@ -182,8 +81,21 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	return sh.artifacts[id]
+	if sh.hidden[id] {
+		sh.mu.RUnlock()
+		return nil
+	}
+	artifact := sh.artifacts[id]
+	e, emitted := artifact.(*Emission)
+	var input Child
+	if emitted && e.input != nil {
+		input = sh.representativeLocked(id)
+	}
+	sh.mu.RUnlock()
+	if emitted && !emissionCurrent(e, input) {
+		return nil
+	}
+	return artifact
 }
 
 // Family and generation metadata pin payload identity; never walk a filesystem under the shard lock.
@@ -199,4 +111,24 @@ func sameArtifact(prev, next Artifact) bool {
 	ac, bc := *a, *b
 	ac.FS, bc.FS = nil, nil
 	return reflect.DeepEqual(ac, bc)
+}
+
+func emissionCurrent(e *Emission, input Child) bool {
+	if e.input == nil || e.input == input.Obj {
+		return true
+	}
+	if e.validated != nil {
+		if validated := e.validated.Load(); validated != nil && *validated == input.Obj {
+			return true
+		}
+	}
+	if !semanticEqual(Child{Obj: e.input, Doc: e.inputDoc}, input) {
+		return false
+	}
+	if e.validated != nil {
+		validated := new(manifest.BaseManifest)
+		*validated = input.Obj
+		e.validated.Store(validated)
+	}
+	return true
 }

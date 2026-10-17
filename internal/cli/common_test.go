@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -404,4 +405,43 @@ func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
 	assert.Equal(t, got.DisableChartDigestTracking == nil, true)
 	got = buildOrchCfg(commonFlags{}, helmFlags{disableChartDigestTracking: new(true)})
 	assert.Equal(t, *got.DisableChartDigestTracking, true)
+}
+
+func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
+	const url = "ssh://git@github.com/example/home-ops.git"
+	current, original := writeCustomSourceDiffFixture(t, url)
+	writeBaselineGit(t, current, url)
+	writeBaselineGit(t, original, url)
+	testutil.WriteFile(t, original, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: before}\n")
+	currentScan, originalScan := filepath.Join(current, "flux"), filepath.Join(original, "flux")
+	currentLink, originalLink := filepath.Join(t.TempDir(), "current"), filepath.Join(t.TempDir(), "original")
+	assert.NoError(t, os.Symlink(currentScan, currentLink))
+	assert.NoError(t, os.Symlink(originalScan, originalLink))
+	c := commonFlags{path: currentLink, pathOrig: originalLink, cacheDir: t.TempDir(), concurrency: 2}
+	cleanup, err := resolveBaseline(t.Context(), &c, false)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, cleanup()) })
+	cfg := buildOrchCfg(c, helmFlags{})
+	assert.Equal(t, cfg.Input, c.input)
+	assert.Equal(t, cfg.BaseInput, c.baseInput)
+	assert.Equal(t, cfg.Path, currentScan)
+	assert.Equal(t, c.pathOrig, originalScan)
+	assert.Equal(t, cfg.RepoRoot, current)
+	assert.Equal(t, cfg.PathOrig, original)
+	for _, input := range []*gittree.FS{c.input.FS.(*gittree.FS), c.baseInput.FS.(*gittree.FS)} {
+		location := input.Location()
+		assert.Diff(t, location.URLs, []string{url})
+		assert.NoError(t, os.Remove(filepath.Join(location.RepositoryRoot, ".git", "config")))
+	}
+	base, head, err := orchestrator.RenderTrees(t.Context(),
+		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
+		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs}, cfg)
+	assert.NoError(t, err)
+	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "gitops-system", Name: "apps"}
+	for i, side := range []orchestrator.Rendered{base, head} {
+		docs := side.Result.Manifests[id]
+		if len(docs) != 1 || docs[0]["data"].(map[string]any)["greeting"] != []string{"before", "hi"}[i] {
+			t.Fatalf("side %d lost admitted source identity: %v", i, side.Result.Manifests)
+		}
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -41,30 +42,21 @@ type entryResolution struct {
 
 // Admission supplies bytes and remote metadata; only publishEntrySource publishes identities.
 func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
-	admitted, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
-	root := d.cfg.RepoRoot
-	if admitted != nil {
-		root = cmp.Or(admitted.LocalRoot, admitted.LocalPath)
-	}
-	urls := d.cfg.SelfURLs
-	if root == "" || len(urls) == 0 {
-		abs, err := ResolveScanPath(cmp.Or(root, d.cfg.Path))
-		if err != nil {
-			return nil, err
-		}
-		located, repo, _ := gitrepo.Locate(abs)
-		if root == "" {
-			root = cmp.Or(located, abs)
-		}
-		if len(urls) == 0 && repo != nil {
-			urls, _ = gitrepo.RemoteURLs(repo)
-		}
+	admitted := d.cfg.Input
+	if admitted == nil {
+		admitted, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 	}
 	if admitted == nil {
 		var err error
-		admitted, d.cfg.Path, err = baseline.AdmitDirectory(ctx, d.cfg.Path, root)
+		admitted, d.cfg.Path, err = baseline.AdmitDirectory(ctx, d.cfg.Path, d.cfg.RepoRoot)
 		if err != nil {
 			return nil, err
+		}
+	}
+	urls := d.cfg.SelfURLs
+	if len(urls) == 0 {
+		if input, ok := admitted.FS.(*gittree.FS); ok && input.Location() != nil {
+			urls = input.Location().URLs
 		}
 	}
 	if admitted.FS == nil || admitted.LocalPath == "" {
@@ -174,7 +166,11 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		candidates[id] = candidate
 	}
 	lookupRoot := cmp.Or(bootstrap.LocalRoot, bootstrap.LocalPath)
-	artifacts, err := git.ResolveLocal(ctx, lookupRoot, pinned, bootstrap.Revision)
+	var location *gitrepo.Location
+	if input, ok := bootstrap.FS.(*gittree.FS); ok {
+		location = input.Location()
+	}
+	artifacts, err := git.ResolveLocal(ctx, location, pinned, bootstrap.Revision)
 	if err != nil {
 		return 0, err
 	}
@@ -266,12 +262,12 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 		}
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
-	viewKey := manifest.Fingerprint(struct {
+	label, viewKey := gittree.Label(gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
 		Root, Subtree, Origin, Key, Revision, Digest string
 		Ignore                                       string
 		Sparse                                       []string `json:",omitempty"`
 		Recurse                                      bool
-	}{repoRoot, subtree, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Revision, bootstrap.Digest, ignore, sparse, recurse})
+	}{repoRoot, subtree, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Revision, bootstrap.Digest, ignore, sparse, recurse}})
 	input := d.aliasViews[viewKey]
 	var err error
 	if input != nil {
@@ -297,7 +293,7 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 	artifact := *bootstrap
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+filepath.Join(repoRoot, subtree), input
 	artifact.InputAlias, artifact.Key = true, ""
-	artifact.LocalPath = filepath.Join(filepath.Dir(repoRoot), ".flate-sources", viewKey, id.Namespace, id.Name)
+	artifact.LocalPath = label
 	artifact.LocalRoot = filepath.Join(repoRoot, subtree)
 	return &artifact, nil
 }
@@ -329,78 +325,33 @@ func (d *discoverer) warnBootstrapAliases(repoRoot string) {
 		"count", len(names), "ids", names, "localPath", repoRoot)
 }
 
-// normalizeGitURL reduces git URL variants to a canonical
-// host/owner/repo key suitable for cross-syntax equality. Strips
-// scheme, userinfo, port, query, fragment, trailing .git/`/`, and
-// lowercases the result (GitHub/GitLab paths are case-insensitive
-// in practice). IPv6 hosts are returned bare (no brackets).
-//
-// Examples normalize to "github.com/owner/repo":
-//
-//	ssh://git@github.com/Owner/Repo.git
-//	git@github.com:owner/repo.git
-//	https://github.com/owner/repo
-//	https://user:pass@github.com/owner/repo.git
-//	https://github.com/owner/repo?deploy_key=prod#section
-//	https://github.com:443/owner/repo.git/
-//
-// Returns "" for inputs that don't describe a remote (file://,
-// local paths, empty) — those don't participate in bootstrap-alias
-// matching.
 func normalizeGitURL(raw string) string {
 	raw = strings.TrimSpace(raw)
-	host, path, ok := parseGitURL(raw)
-	if !ok || host == "" || path == "" {
+	endpoint, err := transport.NewEndpoint(raw)
+	if err != nil {
 		return ""
 	}
-	path = strings.TrimSuffix(path, "/")
-	path = strings.TrimSuffix(path, ".git")
-	path = strings.TrimPrefix(path, "/")
-	if path == "" {
+	switch strings.ToLower(endpoint.Protocol) {
+	case "http", "https", "ssh", "git":
+	default:
 		return ""
 	}
-	return strings.ToLower(host + "/" + path)
-}
-
-// parseGitURL extracts the host and path components of a remote git
-// URL, handling both URL-form (scheme://...) and scp-style
-// (user@host:path). Returns ok=false for non-remote shapes (file://,
-// local paths, malformed input). Userinfo, port, query, and fragment
-// are dropped — net/url handles the URL-form parsing including
-// bracketed IPv6 hosts.
-func parseGitURL(raw string) (host, path string, ok bool) {
+	host, remotePath := strings.Trim(endpoint.Host, "[]"), endpoint.Path
 	if strings.Contains(raw, "://") {
-		u, err := url.Parse(raw)
+		parsed, err := url.Parse(raw)
 		if err != nil {
-			return "", "", false
+			return ""
 		}
-		switch strings.ToLower(u.Scheme) {
-		case "http", "https", "ssh", "git":
-			// supported remote schemes
-		default:
-			// file://, ftp://, anything else — not a remote we
-			// can compare against a working-tree clone.
-			return "", "", false
-		}
-		// url.Hostname strips both port and IPv6 brackets correctly.
-		return u.Hostname(), u.Path, true
+		host, remotePath = parsed.Hostname(), parsed.Path
 	}
-	// scp-style: user@host:owner/repo (or host:owner/repo without
-	// user). The first `:` after the first `@` (or after the start
-	// when no `@`) separates host from path. Anything that doesn't
-	// match this shape is treated as a local path and rejected.
-	rest := raw
-	if _, after, ok := strings.Cut(rest, "@"); ok {
-		rest = after
+	if host == "" || strings.ContainsAny(host, "/\\") || remotePath == "" {
+		return ""
 	}
-	host, path, ok = strings.Cut(rest, ":")
-	if !ok || host == "" {
-		return "", "", false
+	remotePath = strings.TrimSuffix(remotePath, "/")
+	remotePath = strings.TrimSuffix(remotePath, ".git")
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	if remotePath == "" {
+		return ""
 	}
-	if strings.ContainsAny(host, "/\\") {
-		// Looks like a relative path containing a colon, not
-		// host:path. Reject.
-		return "", "", false
-	}
-	return host, "/" + path, true
+	return strings.ToLower(host + "/" + remotePath)
 }

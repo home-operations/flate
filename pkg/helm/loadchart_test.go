@@ -25,8 +25,8 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -43,8 +43,11 @@ func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
 				testutil.WriteFile(t, root, "mychart/templates/cm.yaml", "kind: ConfigMap\n")
 				testutil.WriteFile(t, root, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
 				owner := newTestCache(t, "")
-				input, err := source.NewLocalFS(t.Context(), root)
+				local, err := gitrepo.Locate(t.Context(), root, root)
 				assert.NoError(t, err)
+				admitted, err := gittree.AdmitDirectory(t.Context(), local)
+				assert.NoError(t, err)
+				input := admitted.FS
 				location := "mychart"
 				if archive {
 					sub, err := fs.Sub(input, "mychart")

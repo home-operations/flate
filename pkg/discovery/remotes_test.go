@@ -9,12 +9,13 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
-	for _, identity := range []string{"ancestor", "explicit", "inferred"} {
+	for _, identity := range []string{"ancestor", "explicit", "inferred", "retained"} {
 		t.Run(identity, func(t *testing.T) {
 			parent := discoveryRefFixture(t)
 			testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/parent/repo.git\n")
@@ -31,6 +32,12 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
 				d.cfg.SelfURLs = []string{"git@github.com:Owner/Repo.git", "not-a-remote"}
 				want = "github.com/owner/repo"
+			}
+			if identity == "retained" {
+				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+				assert.Equal(t, err, nil)
+				d.cfg.Store.SetArtifact(manifest.BootstrapSourceID, input)
+				testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/replaced/repo.git\n")
 			}
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, err, nil)
@@ -84,12 +91,6 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 	}
 }
 
-// TestNormalizeGitURL_CanonicalForms exercises every URL shape the
-// bootstrap-alias URL-match heuristic needs to recognize as the same
-// remote. All four inputs below describe the same GitHub repository
-// in different syntaxes; they must collapse to one key so a file-
-// loaded GitRepository.spec.url written in any of them matches the
-// working tree's `.git/config` regardless of style.
 func TestNormalizeGitURL_CanonicalForms(t *testing.T) {
 	want := "github.com/owner/repo"
 	cases := []string{
@@ -106,11 +107,6 @@ func TestNormalizeGitURL_CanonicalForms(t *testing.T) {
 	}
 }
 
-// TestNormalizeGitURL_RejectsNonRemoteShapes locks the negative
-// contract: file:// URLs and local paths are not remote sources and
-// must not participate in URL-match aliasing — otherwise a working
-// tree containing its own file://-aliased GitRepository would alias
-// against itself recursively.
 func TestNormalizeGitURL_RejectsNonRemoteShapes(t *testing.T) {
 	cases := []string{
 		"",
@@ -125,11 +121,6 @@ func TestNormalizeGitURL_RejectsNonRemoteShapes(t *testing.T) {
 	}
 }
 
-// TestNormalizeGitURL_TrailingSlashAndDotGit_NormalizeIdentically
-// guards the cosmetic-differences vector. A GitRepository.spec.url
-// might be written with or without trailing `.git` or `/`; the local
-// `.git/config` typically omits the trailing slash but keeps `.git`.
-// Both must reduce to the same key.
 func TestNormalizeGitURL_TrailingSlashAndDotGit(t *testing.T) {
 	a := normalizeGitURL("https://github.com/owner/repo.git/")
 	b := normalizeGitURL("https://github.com/owner/repo")
@@ -138,11 +129,6 @@ func TestNormalizeGitURL_TrailingSlashAndDotGit(t *testing.T) {
 	}
 }
 
-// TestNormalizeGitURL_StripsQueryAndFragment covers the round-6
-// hardening: deploy-key URLs from cloud providers often carry
-// query strings (?deploy_key=prod) or fragments, and the local
-// .git/config typically stores the clean URL. Both must reduce to
-// the same key so URL-match aliasing fires.
 func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
 	want := "github.com/owner/repo"
 	cases := []string{
@@ -155,13 +141,16 @@ func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
 			t.Errorf("normalizeGitURL(%q) = %q, want %q", in, got, want)
 		}
 	}
+	for _, tc := range []struct{ input, want string }{
+		{"git@example.com:owner/repo?literal#name", "example.com/owner/repo?literal#name"},
+		{"https://example.com/owner/repo%3Fliteral%23name?query#fragment", "example.com/owner/repo?literal#name"},
+		{"ssh://git@[2001:db8::1]:2222/owner/repo%3Fname?query#fragment", "2001:db8::1/owner/repo?name"},
+	} {
+		assert.Equal(t, normalizeGitURL(tc.input), tc.want)
+	}
+
 }
 
-// TestNormalizeGitURL_IPv6Host covers the round-6 hardening:
-// self-hosted Git instances on IPv6 (private-network setups,
-// pre-DNS bootstrap clusters) use bracketed-host URLs. The
-// previous string-splitting path corrupted the host; net/url
-// handles bracketed IPv6 correctly.
 func TestNormalizeGitURL_IPv6Host(t *testing.T) {
 	got := normalizeGitURL("https://[2001:db8::1]:8080/owner/repo.git")
 	want := "2001:db8::1/owner/repo"
@@ -170,10 +159,6 @@ func TestNormalizeGitURL_IPv6Host(t *testing.T) {
 	}
 }
 
-// TestNormalizeGitURL_RejectsRelativeScpStyle locks the negative
-// branch: scp-style strings that look like a path with a colon
-// (e.g. `foo:bar`) are rejected so an accidental colon in a local
-// kustomization-resource doesn't trip URL-match.
 func TestNormalizeGitURL_RejectsRelativeScpStyle(t *testing.T) {
 	cases := []string{
 		":onlypath",
@@ -187,16 +172,14 @@ func TestNormalizeGitURL_RejectsRelativeScpStyle(t *testing.T) {
 	}
 }
 
-// TestNormalizeGitURL_HostOrPathMissing rejects inputs that look
-// remote-shaped but lack one of the two halves we need to build a
-// key. Equally important as the positive cases — without these
-// guards a degenerate URL would produce a key like "github.com/"
-// that could spuriously match another degenerate entry.
 func TestNormalizeGitURL_HostOrPathMissing(t *testing.T) {
 	cases := []string{
 		"https://github.com",
 		"https://github.com/",
 		"https://",
+		"https:///owner/repo",
+		"ssh:///owner/repo",
+		"git@bad\\host:owner/repo",
 		"git@github.com:",
 	}
 	for _, in := range cases {

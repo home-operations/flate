@@ -28,6 +28,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/transactional"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
 )
@@ -46,8 +47,10 @@ const (
 
 // ViewOptions shapes a commit view without changing its object backing.
 type ViewOptions struct {
+	policy *localPolicy
 	// Content carries source coordinates without filesystem or routing state.
 	Content  any
+	Location *gitrepo.Location
 	Mode     ViewMode
 	Sparse   []string
 	Ignore   string
@@ -59,7 +62,56 @@ type ViewOptions struct {
 }
 
 // FS is an admitted filesystem. Its representation is selected once by New.
-type FS struct{ view }
+type FS struct {
+	view
+	location *gitrepo.Location
+	policy   *sourceignore.Matcher
+	snapshot *localPolicy
+}
+
+// Location returns the resolved disk identity retained by admission.
+func (g *FS) Location() *gitrepo.Location { return g.location }
+
+// PolicyEvidence returns the ordered ignore-file content used to shape the view.
+// Policy evidence MUST NOT be used as immutable source acquisition authority.
+func (g *FS) PolicyEvidence() any {
+	if g.policy == nil {
+		return nil
+	}
+	files := g.policy.Evidence()
+	content := make([]struct {
+		Path string
+		Data []byte
+	}, 0, len(files))
+	for _, file := range files {
+		content = append(content, struct {
+			Path string
+			Data []byte
+		}{file.Path, []byte(file.Data)})
+	}
+	return content
+}
+
+// SourcePolicy returns the admission's captured Flux policy without reshaping its files.
+func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if g.policy != nil {
+		return g.policy, nil
+	}
+	return g.snapshot.load(g)
+}
+
+// OperationView creates private local observations while retaining admitted membership.
+func (g *FS) OperationView() *FS {
+	if local, ok := g.view.(*localView); ok {
+		input := newLocal(local.root, true, g.snapshot)
+		input.location = g.location
+		return input
+	}
+	return g
+}
 
 type view interface {
 	fs.ReadFileFS
@@ -124,12 +176,26 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	direct, source := opts.Mode == Direct, opts.Mode == Source
 	reuse := direct && commit == plumbing.ZeroHash
 	identity := ""
-	var local *localView
+	var matcher *sourceignore.Matcher
 	current, _ := opts.Current.(*FS)
 	if current != nil {
+		if opts.Location == nil {
+			opts.Location = current.location
+		}
 		switch v := current.view.(type) {
 		case *localView:
-			local, current = v, newLocal(v.root)
+			current = current.OperationView()
+			current.location = opts.Location
+			if source && commit == plumbing.ZeroHash {
+				var err error
+				matcher, err = current.SourcePolicy(ctx)
+				if err != nil {
+					return nil, "", err
+				}
+				if opts.Ignore != "" {
+					matcher = matcher.WithExtra(opts.Ignore)
+				}
+			}
 		case *gitView:
 			if v.refresh != nil {
 				refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
@@ -139,7 +205,23 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 				current, v = refreshed, refreshed.view.(*gitView)
 			}
 			identity = v.identity
+			if commit == plumbing.ZeroHash {
+				matcher = current.policy
+			}
+			if source && matcher != nil && opts.Ignore != "" {
+				matcher = matcher.WithExtra(opts.Ignore)
+			}
 			reuse = reuse || commit == plumbing.ZeroHash && source && v.mode == Source && opts.Ignore == "" && len(opts.Sparse) == 0
+		}
+		if source && commit == plumbing.ZeroHash && matcher == nil {
+			var err error
+			matcher, err = current.SourcePolicy(ctx)
+			if err != nil {
+				return nil, "", err
+			}
+			if opts.Ignore != "" {
+				matcher = matcher.WithExtra(opts.Ignore)
+			}
 		}
 		opts.Current = current
 	}
@@ -150,8 +232,11 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		input := &struct {
 			FS
 			directView
+			policyState localPolicy
 		}{directView: directView{FS: opts.Current}}
 		input.view = &input.directView
+		input.location = opts.Location
+		input.snapshot = &input.policyState
 		return &input.FS, "", nil
 	}
 	if direct && opts.Current == nil && opts.Worktree != nil {
@@ -159,21 +244,18 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		if _, err := os.Stat(root); err != nil {
 			return nil, "", err
 		}
-		return newLocal(root), "", nil
+		input := newLocal(root, false, &localPolicy{})
+		input.location = opts.Location
+		return input, "", nil
 	}
 	input, err := newTree(ctx, backing, commit, opts)
 	if err != nil {
 		if source && errors.Is(err, fs.ErrPermission) {
-			if local != nil {
-				// Flux reads .sourceignore before listing each directory; retain its diagnostic.
-				if _, ignoreErr := sourceignore.New(local.root, nil, true); ignoreErr != nil {
-					return nil, "", ignoreErr
-				}
-			}
 			return nil, "", fmt.Errorf("sourceignore load: %w", err)
 		}
 		return nil, "", err
 	}
+	input.policy = matcher
 	g := input.view.(*gitView)
 	if commit != plumbing.ZeroHash {
 		identity = ""
@@ -190,7 +272,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			return nil, "", fmt.Errorf("%w: git view content cannot be fingerprinted", manifest.ErrInput)
 		}
 	}
-	if err := g.shape(opts); err != nil {
+	if err := g.shape(ctx, opts, input); err != nil {
 		return nil, "", err
 	}
 	return input, g.identity, nil
@@ -210,9 +292,15 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	combined := &struct {
 		FS
 		gitView
+		policyState localPolicy
 	}{commit: commit, mode: opts.Mode, worktree: opts.Worktree, backing: backing, current: opts.Current, nodes: map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}}}
 	input := &combined.gitView
+	combined.snapshot = opts.policy
+	if combined.snapshot == nil {
+		combined.snapshot = &combined.policyState
+	}
 	combined.view = input
+	combined.location = opts.Location
 	input.storers.New = func() any {
 		upper := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 		if native && current.backing != nil {
@@ -251,17 +339,18 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	return &combined.FS, nil
 }
 
-func (g *gitView) shape(opts ViewOptions) error {
+func (g *gitView) shape(ctx context.Context, opts ViewOptions, input *FS) error {
 	mutable := g.identity == "" && (opts.Current != nil || opts.Worktree != nil)
 	routed := g.commit != plumbing.ZeroHash && opts.Current != nil
 	if mutable || routed {
 		refresh := opts
+		refresh.policy = input.snapshot
 		refresh.Sparse, refresh.Changes = slices.Clone(opts.Sparse), slices.Clone(opts.Changes)
 		g.refresh = &refresh
 	}
 	names := slices.Sorted(maps.Keys(g.nodes))
 	visible := ViewOptions.visible
-	var matcher *sourceignore.Matcher
+	matcher := input.policy
 	var links *tree.Builder
 	var err error
 	switch opts.Mode {
@@ -269,7 +358,13 @@ func (g *gitView) shape(opts ViewOptions) error {
 		visible = ViewOptions.directVisible
 	case Source:
 		visible = ViewOptions.sourceVisible
-		matcher, err = sourceignore.NewFS(g, nil, opts.Ignore, true)
+		if matcher == nil {
+			matcher, err = input.SourcePolicy(ctx)
+			if err == nil && opts.Ignore != "" {
+				matcher = matcher.WithExtra(opts.Ignore)
+			}
+		}
+		input.policy = matcher
 	case RemoteBase:
 		links, err = g.resolveLinks(names)
 	}
@@ -317,8 +412,7 @@ func (o ViewOptions) sourceVisible(name string, mode fs.FileMode, matcher *sourc
 
 func (o ViewOptions) visible(name string, _ fs.FileMode, _ *sourceignore.Matcher) bool {
 	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-		base := path.Base(parent)
-		if base == "node_modules" || strings.HasPrefix(base, ".") {
+		if sourceignore.PruneDir(path.Base(parent), false) {
 			return false
 		}
 	}

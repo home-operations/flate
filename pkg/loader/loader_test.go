@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -94,7 +96,11 @@ spec:
   path: ./apps/test
   sourceRef: {kind: GitRepository, name: cluster}
 `)
-				input, err := gittree.AdmitDirectory(t.Context(), root)
+				location, err := gitrepo.Locate(t.Context(), root, root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, err := gittree.AdmitDirectory(t.Context(), location)
 				assert.NoError(t, err)
 				st.SetArtifact(manifest.BootstrapSourceID, input)
 				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
@@ -1163,6 +1169,93 @@ brokenPointer: [ unclosed
 }
 
 func TestLoader_IndependentRoots(t *testing.T) {
+	t.Run("retained native views", func(t *testing.T) {
+		root := t.TempDir()
+		for _, name := range []string{"first", "second"} {
+			testutil.WriteFile(t, root, name+"/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+name+"}\nspec: {path: ./apps}\n")
+		}
+		location, err := gitrepo.Locate(t.Context(), root, root)
+		assert.NoError(t, err)
+		artifact, err := gittree.AdmitDirectory(t.Context(), location)
+		assert.NoError(t, err)
+		s := store.New()
+		s.SetArtifact(manifest.BootstrapSourceID, artifact)
+		l := New(s)
+		n, err := l.Load(t.Context(), filepath.Join(root, "first"))
+		assert.NoError(t, err)
+		assert.Equal(t, n, 1)
+		view := l.documents.views[root]
+		observed, err := fs.Stat(view, "first")
+		assert.NoError(t, err)
+		if view == artifact.FS {
+			t.Fatal("loader did not retain a private operation view")
+		}
+		_, err = fs.ReadDir(view, "second")
+		assert.NoError(t, err)
+		_, err = fs.Stat(view, "second/late.yaml")
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("uncreated file error = %v, want not exist", err)
+		}
+		testutil.WriteFile(t, root, "second/late.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: late}\nspec: {path: ./apps}\n")
+		n, err = l.Load(t.Context(), filepath.Join(root, "second"))
+		assert.NoError(t, err)
+		if n != 1 {
+			t.Fatalf("second graph loaded %d objects, want one from retained directory observations", n)
+		}
+		if l.documents.views[root] != view {
+			t.Fatal("unchanged artifact replaced the private view")
+		}
+		retained, err := fs.Stat(l.documents.views[root], "first")
+		assert.NoError(t, err)
+		if retained != observed {
+			t.Fatal("load discarded retained directory observations")
+		}
+		for _, name := range []string{"first", "second"} {
+			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: name}
+			record, indexed := l.Index.Lookup(id)
+			if !indexed || record.Path != filepath.Join(root, name, "ks.yaml") || s.GetObject(id) == nil {
+				t.Fatalf("%s graph was not loaded and indexed: %+v", name, record)
+			}
+		}
+		if _, err := fs.Stat(l.documents.views[root], "second/late.yaml"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("load discarded the retained miss: %v", err)
+		}
+		other := New(s)
+		_, err = other.Load(t.Context(), filepath.Join(root, "second"))
+		assert.NoError(t, err)
+		if other.documents.views[root] == view || other.documents.views[root] == artifact.FS {
+			t.Fatal("loaders shared their operation views")
+		}
+		if _, err := fs.Stat(other.documents.views[root], "second/late.yaml"); err != nil {
+			t.Fatalf("second loader inherited a private miss: %v", err)
+		}
+		if s.GetArtifact(manifest.BootstrapSourceID) != artifact {
+			t.Fatal("loader replaced the source artifact")
+		}
+		if _, err := fs.Stat(artifact.FS, "second/late.yaml"); err != nil {
+			t.Fatalf("loader mutated the artifact's observations: %v", err)
+		}
+	})
+	t.Run("admitted membership", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "first.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: first}\nspec: {path: ./apps}\n")
+		location, err := gitrepo.Locate(t.Context(), root, root)
+		assert.NoError(t, err)
+		admitted, err := gittree.AdmitDirectory(t.Context(), location)
+		assert.NoError(t, err)
+		input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: admitted.FS})
+		assert.NoError(t, err)
+		testutil.WriteFile(t, root, "second.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: second}\nspec: {path: ./apps}\n")
+		s := store.New()
+		s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+		n, err := New(s).Load(t.Context(), root)
+		assert.NoError(t, err)
+		assert.Equal(t, n, 1)
+		objects := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+		if len(objects) != 1 || objects[0].Name != "first" {
+			t.Fatalf("admitted objects = %v, want first only", objects)
+		}
+	})
 	for _, tc := range []struct {
 		name    string
 		bounded bool
@@ -1191,8 +1284,12 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			if _, err := l.Load(t.Context(), roots[0]); err != nil {
 				t.Fatal(err)
 			}
-			bootstrap := l.Store.GetArtifact(manifest.BootstrapSourceID)
+			if l.Store.GetArtifact(manifest.BootstrapSourceID) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
+				t.Fatal("standalone load published bootstrap identity")
+			}
 			view := l.documents.views[roots[0]]
+			observed, err := fs.Stat(view, ".")
+			assert.NoError(t, err)
 			for _, root := range []string{roots[1], roots[0]} {
 				_, err := l.Load(t.Context(), root)
 				if tc.bounded && root == roots[1] {
@@ -1208,8 +1305,13 @@ func TestLoader_IndependentRoots(t *testing.T) {
 				} else if err != nil {
 					t.Fatal(err)
 				}
-				if l.Store.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
-					t.Fatal("independent load replaced the first bootstrap artifact")
+				retained, err := fs.Stat(l.documents.views[roots[0]], ".")
+				assert.NoError(t, err)
+				if retained != observed {
+					t.Fatal("standalone binding discarded operation observations")
+				}
+				if l.Store.GetArtifact(manifest.BootstrapSourceID) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
+					t.Fatal("independent load published bootstrap identity")
 				}
 				if tc.nested {
 					input, file := l.documents.input(filepath.Join(roots[0], "ks.yaml"))

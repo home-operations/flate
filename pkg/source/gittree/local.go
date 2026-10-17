@@ -1,6 +1,7 @@
 package gittree
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -10,36 +11,56 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
-
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5/plumbing"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// AdmitDirectory constructs the direct input artifact at a normalized local root.
+// AdmitDirectory constructs the direct input artifact at the resolved local root.
 // Synthetic source labels MUST use their already admitted filesystem instead.
-func AdmitDirectory(ctx context.Context, root string) (*store.SourceArtifact, error) {
-	input, _, err := New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())})
-	if err != nil {
+func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.SourceArtifact, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	root := location.ContentRoot
+	if _, err := os.Stat(root); err != nil {
+		return nil, err
+	}
+	input := newLocal(root, false, &localPolicy{})
+	input.location = location
 	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + root, LocalPath: root, LocalRoot: root, FS: input}, nil
 }
 
 type localView struct {
-	root        string
-	directories sync.Map
+	root         string
+	operation    bool
+	observations sync.Map
+}
+
+type localPolicy struct {
+	once    sync.Once
+	matcher *sourceignore.Matcher
+	err     error
+}
+
+func (p *localPolicy) load(input fs.FS) (*sourceignore.Matcher, error) {
+	p.once.Do(func() {
+		p.matcher, p.err = sourceignore.NewFS(input, nil, "", true)
+	})
+	return p.matcher, p.err
 }
 
 // The public wrapper and mounted state MUST share one allocation on loader paths.
-func newLocal(root string) *FS {
+func newLocal(root string, operation bool, policy *localPolicy) *FS {
 	input := &struct {
 		FS
 		localView
-	}{root: root}
+	}{root: root, operation: operation}
 	input.view = &input.localView
+	input.snapshot = policy
 	return &input.FS
 }
 
@@ -68,9 +89,21 @@ func (g *localView) OpenRegular(name string) (fs.File, error) {
 	return os.Open(abs) //nolint:gosec // Callers MUST supply a regular file admitted from the stable checkout.
 }
 
-type localDirectory struct {
-	listed bool
-	stat   func() (fs.FileInfo, error)
+type localObservation struct {
+	listed  atomic.Bool
+	once    sync.Once
+	info    fs.FileInfo
+	err     error
+	entries []fs.DirEntry
+	listErr error
+}
+
+func (o *localObservation) list(readDir func() ([]fs.DirEntry, error)) ([]fs.DirEntry, error) {
+	o.once.Do(func() {
+		o.entries, o.listErr = readDir()
+		o.listed.Store(true)
+	})
+	return o.entries, o.listErr
 }
 
 func (g *localView) Lstat(name string) (fs.FileInfo, error) {
@@ -89,12 +122,15 @@ func (g *localView) ReadDir(name string) ([]fs.DirEntry, error) {
 	if err := g.admitDirectory(name, abs); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(abs)
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".git" {
-			g.directories.LoadOrStore(filepath.Join(abs, entry.Name()), &localDirectory{listed: true, stat: sync.OnceValues(entry.Info)})
-		}
+	if !g.operation {
+		return g.readDir(abs)
 	}
+	cached, _ := g.observations.Load(abs)
+	return cached.(*localObservation).list(func() ([]fs.DirEntry, error) { return g.readDir(abs) })
+}
+
+func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
+	entries, err := os.ReadDir(abs)
 	return slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
 		return entry.Name() == ".git" || !entry.Type().IsRegular() && !entry.IsDir()
 	}), err
@@ -149,56 +185,56 @@ func (g *localView) mounted(name string) (string, error) {
 	return filepath.Join(g.root, filepath.FromSlash(name)), nil
 }
 
-// Directory admission belongs to one view; readers MUST retain its snapshot
-// assumption until a new view is constructed for the next operation.
+// Directory admission belongs to one operation; descriptors retain no observations.
 func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 	var info fs.FileInfo
 	var err error
-	if cached, ok := g.directories.Load(abs); ok {
-		info, err = cached.(*localDirectory).stat()
+	if cached, ok := g.observations.Load(abs); g.operation && ok {
+		observation := cached.(*localObservation)
+		info, err = observation.info, observation.err
 	} else {
-		if parent := path.Dir(name); parent != "." {
-			parentPath := parentPath(name, abs)
-			if err := g.admitDirectory(parent, parentPath); err != nil {
+		info, err = g.statPath(name, abs)
+		if g.operation && (err != nil || info.IsDir()) {
+			candidate := &localObservation{info: info, err: err}
+			cached, _ := g.observations.LoadOrStore(abs, candidate)
+			observation := cached.(*localObservation)
+			info, err = observation.info, observation.err
+		}
+	}
+	if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+	}
+	return info, err
+}
+
+func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
+	if g.operation && name != "." {
+		if cached, ok := g.observations.Load(filepath.Dir(abs)); ok && cached.(*localObservation).listed.Load() {
+			entries, err := cached.(*localObservation).list(func() ([]fs.DirEntry, error) {
+				return g.readDir(filepath.Dir(abs))
+			})
+			if err != nil {
 				return nil, err
 			}
+			i, found := slices.BinarySearchFunc(entries, path.Base(name), func(entry fs.DirEntry, base string) int {
+				return cmp.Compare(entry.Name(), base)
+			})
+			if !found {
+				return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+			}
+			return entries[i].Info()
 		}
-		info, err = os.Lstat(abs)
-		if err == nil && info.IsDir() {
-			g.directories.LoadOrStore(abs, &localDirectory{stat: func() (fs.FileInfo, error) { return info, nil }})
+	}
+	if parent := path.Dir(name); parent != "." {
+		if err := g.admitDirectory(parent, parentPath(name, abs)); err != nil {
+			return nil, err
 		}
 	}
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() && !info.IsDir() {
-		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
-	}
-	return info, nil
+	return os.Lstat(abs)
 }
 
 func (g *localView) admitDirectory(name, abs string) error {
-	cached, ok := g.directories.Load(abs)
-	if !ok {
-		candidate := &localDirectory{stat: sync.OnceValues(func() (fs.FileInfo, error) {
-			if parent := path.Dir(name); parent != "." {
-				parentPath := parentPath(name, abs)
-				if err := g.admitDirectory(parent, parentPath); err != nil {
-					return nil, err
-				}
-			}
-			return os.Lstat(abs)
-		})}
-		cached, _ = g.directories.LoadOrStore(abs, candidate)
-	}
-	directory := cached.(*localDirectory)
-	if directory.listed {
-		return nil
-	}
-	info, err := directory.stat()
+	info, err := g.localStat(name, abs)
 	if err != nil {
 		return err
 	}

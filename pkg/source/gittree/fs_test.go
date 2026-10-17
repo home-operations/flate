@@ -3,10 +3,14 @@ package gittree
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -17,9 +21,13 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
@@ -28,6 +36,20 @@ func mustInit(t *testing.T, dir string) *git.Repository {
 	r, err := git.PlainInit(dir, false)
 	assert.NoError(t, err)
 	return r
+}
+
+func admitLocal(t *testing.T, root string) (*store.SourceArtifact, error) {
+	t.Helper()
+	location, err := gitrepo.Locate(t.Context(), root, root)
+	if err != nil {
+		return nil, err
+	}
+	return AdmitDirectory(t.Context(), location)
+}
+
+func operation(t *testing.T, input fs.FS, mode ViewMode) (*FS, string, error) {
+	t.Helper()
+	return New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: input})
 }
 
 func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) plumbing.Hash {
@@ -67,18 +89,501 @@ func (f admissionErrorFS) Open(name string) (fs.File, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: f.err}
 }
 
+type policyReadFS struct {
+	fs.FS
+	reads atomic.Int64
+}
+
+func (f *policyReadFS) ReadFile(name string) ([]byte, error) {
+	if filepath.Base(name) == ".sourceignore" {
+		f.reads.Add(1)
+	}
+	return fs.ReadFile(f.FS, name)
+}
+
 func TestNew_EntryPolicy(t *testing.T) {
+	t.Run("ownership labels", func(t *testing.T) {
+		root := t.TempDir()
+		content := struct{ Tree string }{"captured"}
+		key := manifest.Fingerprint(content)
+		for _, tc := range []struct {
+			name      string
+			opts      LabelOptions
+			want, key string
+		}{
+			{"baseline", LabelOptions{Root: root, Mode: Direct, Key: "revision"}, filepath.Join(root, ".flate-base", "revision"), "revision"},
+			{"local source", LabelOptions{Root: root, Mode: Source, Key: "content"}, filepath.Join(filepath.Dir(root), ".flate-sources", "content"), "content"},
+			{"alias", LabelOptions{Root: root, Mode: Source, Content: content, Source: manifest.NamedResource{Namespace: "flux-system", Name: "cluster"}}, filepath.Join(filepath.Dir(root), ".flate-sources", key, "flux-system", "cluster"), key},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				label, key := Label(tc.opts)
+				assert.Equal(t, label, tc.want)
+				assert.Equal(t, key, tc.key)
+			})
+		}
+	})
+
+	t.Run("local reads", func(t *testing.T) {
+		parent := t.TempDir()
+		root := filepath.Join(parent, "root")
+		testutil.WriteFile(t, root, "regular.txt", "content")
+		testutil.WriteFile(t, parent, "outside", "outside")
+		for name, target := range map[string]string{"file-link": "regular.txt", "dir-link": ".", "dangling": "missing", "escape": "../outside"} {
+			assert.Equal(t, os.Symlink(target, filepath.Join(root, name)), nil)
+		}
+		socket, err := net.Listen("unix", filepath.Join(root, "socket"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { assert.Equal(t, socket.Close(), nil) })
+		artifact, err := admitLocal(t, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := artifact.FS
+		view, pin, err := operation(t, input, Direct)
+		assert.Equal(t, pin, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, reader := range []struct {
+			name string
+			fs   fs.FS
+		}{{name: "descriptor", fs: input}, {name: "view", fs: view}} {
+			t.Run(reader.name, func(t *testing.T) {
+				entries, err := fs.ReadDir(reader.fs, ".")
+				if err != nil || len(entries) != 1 || entries[0].Name() != "regular.txt" {
+					t.Fatalf("admitted entries = %v, %v", entries, err)
+				}
+				for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "socket"} {
+					t.Run(name, func(t *testing.T) {
+						var want error
+						content := "content"
+						if name != "regular.txt" {
+							want, content = fs.ErrNotExist, ""
+						}
+						data, err := fs.ReadFile(reader.fs, name)
+						if !errors.Is(err, want) || string(data) != content {
+							t.Fatalf("read = %q, %v; want %q, %v", data, err, content, want)
+						}
+						if _, err := fs.Stat(reader.fs, name); !errors.Is(err, want) {
+							t.Fatalf("stat = %v; want %v", err, want)
+						}
+					})
+				}
+			})
+		}
+	})
+	t.Run("local operation observations", func(t *testing.T) {
+		t.Run("ignore_snapshot", func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, ".sourceignore", "root\n")
+			testutil.WriteFile(t, root, "nested/.sourceignore", "first\n")
+			testutil.WriteFile(t, root, ".git/.sourceignore", "excluded\n")
+			artifact, err := admitLocal(t, root)
+			assert.NoError(t, err)
+			input := artifact.FS
+			shaped, pin, err := operation(t, input, Source)
+			assert.NoError(t, err)
+			assert.Equal(t, pin, "")
+			content := shaped.PolicyEvidence()
+			want := []struct {
+				Path string
+				Data []byte
+			}{{".sourceignore", []byte("root\n")}, {"nested/.sourceignore", []byte("first\n")}}
+			assert.Diff(t, content, any(want))
+			testutil.WriteFile(t, root, "nested/.sourceignore", "other\n")
+			shaped, pin, err = operation(t, input, Source)
+			assert.Equal(t, pin, "")
+			retained := shaped.PolicyEvidence()
+			assert.NoError(t, err)
+			assert.Diff(t, retained, content)
+			artifact, err = admitLocal(t, root)
+			assert.NoError(t, err)
+			input = artifact.FS
+			shaped, pin, err = operation(t, input, Source)
+			assert.Equal(t, pin, "")
+			refreshed := shaped.PolicyEvidence()
+			assert.NoError(t, err)
+			want[1].Data = []byte("other\n")
+			assert.Diff(t, refreshed, any(want))
+			assert.NoError(t, os.Rename(filepath.Join(root, "nested"), filepath.Join(root, "renamed")))
+			artifact, err = admitLocal(t, root)
+			assert.NoError(t, err)
+			input = artifact.FS
+			shaped, pin, err = operation(t, input, Source)
+			assert.Equal(t, pin, "")
+			moved := shaped.PolicyEvidence()
+			assert.NoError(t, err)
+			want[1].Path = "renamed/.sourceignore"
+			assert.Diff(t, moved, any(want))
+			unfiltered, pin, err := operation(t, input, Direct)
+			assert.Equal(t, pin, "")
+			assert.NoError(t, err)
+			if unfiltered.PolicyEvidence() != nil {
+				t.Fatalf("unfiltered policy = %v", unfiltered)
+			}
+		})
+		t.Run("point_lookup_without_listing", func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "siblings")
+			for _, name := range []string{"a", "b"} {
+				testutil.WriteFile(t, dir, name, name)
+			}
+			assert.Equal(t, os.Chmod(dir, 0o111), nil)
+			t.Cleanup(func() { assert.Equal(t, os.Chmod(dir, 0o755), nil) })
+			if _, err := os.ReadDir(dir); err == nil {
+				t.Skip("filesystem permits listing a search-only directory")
+			} else if !errors.Is(err, fs.ErrPermission) {
+				t.Fatal(err)
+			}
+			artifact, err := admitLocal(t, root)
+			assert.Equal(t, err, nil)
+			input := artifact.FS
+			for _, name := range []string{"a", "b"} {
+				file := "siblings/" + name
+				data, readErr := fs.ReadFile(input, file)
+				_, statErr := fs.Stat(input, file)
+				if readErr != nil || statErr != nil || string(data) != name {
+					t.Fatalf("point lookup %s = %q, %v, %v", file, data, readErr, statErr)
+				}
+			}
+		})
+		root := t.TempDir()
+		testutil.WriteFile(t, root, ".sourceignore", "/*\n!/dir/arrived\n!/hidden/empty/\n")
+		testutil.WriteFile(t, root, "dir/excluded", "excluded")
+		assert.Equal(t, os.MkdirAll(filepath.Join(root, "hidden/empty"), 0o755), nil)
+		artifact, err := admitLocal(t, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := artifact.FS
+		observed, pin, err := operation(t, input, Direct)
+		assert.Equal(t, pin, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fs.ReadFile(observed, "dir/arrived"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("initial missing file = %v", err)
+		}
+		hidden, pin, err := operation(t, input, Source)
+		assert.NoError(t, err)
+		snapshot := hidden.PolicyEvidence()
+		assert.Equal(t, pin, "")
+		assert.Equal(t, snapshot == nil, false)
+		assert.Equal(t, err, nil)
+		if _, err := fs.Stat(hidden, "dir"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("directory without survivors = %v", err)
+		}
+		if _, err := fs.Stat(hidden, "hidden/empty"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("re-included empty directory below hidden ancestor = %v", err)
+		}
+		if _, err := fs.Stat(observed, "hidden/empty"); err != nil {
+			t.Fatalf("unfiltered empty directory = %v", err)
+		}
+		testutil.WriteFile(t, root, "dir/arrived", "arrived")
+		fresh, pin, err := operation(t, input, Source)
+		assert.Equal(t, pin, "")
+		assert.Diff(t, fresh.PolicyEvidence(), snapshot)
+		assert.Equal(t, err, nil)
+		testutil.WriteFile(t, root, ".sourceignore", "/*\n")
+		readmitted, err := admitLocal(t, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ignored, pin, err := operation(t, readmitted.FS, Source)
+		assert.Equal(t, pin, "")
+		if cmp.Equal(ignored.PolicyEvidence(), snapshot) {
+			t.Fatal("re-admission retained changed ignore bytes")
+		}
+		assert.Equal(t, err, nil)
+		plain, pin, err := operation(t, readmitted.FS, Direct)
+		assert.Equal(t, pin, "")
+		assert.Equal(t, err, nil)
+		memory := fstest.MapFS{"kept": {Data: []byte("content")}}
+		passthrough, pin, err := operation(t, memory, Direct)
+		assert.Equal(t, pin, "")
+		assert.Equal(t, err, nil)
+		memory["later"] = &fstest.MapFile{Data: []byte("same FS")}
+		for _, tc := range []struct {
+			name, path, content string
+			view                fs.FS
+			want                error
+		}{
+			{name: "retained directory observation", path: "dir/arrived", view: observed, want: fs.ErrNotExist},
+			{name: "fresh view", path: "dir/arrived", content: "arrived", view: fresh},
+			{name: "refreshed ignore policy", path: "dir/arrived", view: ignored, want: fs.ErrNotExist},
+			{name: "unfiltered plain read", path: "dir/arrived", content: "arrived", view: plain},
+			{name: "caller filesystem", path: "later", content: "same FS", view: passthrough},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				data, err := fs.ReadFile(tc.view, tc.path)
+				if !errors.Is(err, tc.want) || string(data) != tc.content {
+					t.Fatalf("view read = %q, %v; want %q, %v", data, err, tc.content, tc.want)
+				}
+			})
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Go(func() {
+				<-start
+				view, pin, err := operation(t, input, Source)
+				assert.Equal(t, pin, "")
+				assert.Diff(t, view.PolicyEvidence(), snapshot)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				for _, reader := range []fs.FS{input, view} {
+					data, err := fs.ReadFile(reader, "dir/arrived")
+					if err != nil || string(data) != "arrived" {
+						t.Errorf("concurrent fresh read = %q, %v", data, err)
+					}
+				}
+			})
+		}
+		close(start)
+		wg.Wait()
+		assert.Equal(t, os.RemoveAll(filepath.Join(root, "dir")), nil)
+		assert.Equal(t, os.Symlink(".", filepath.Join(root, "dir")), nil)
+		for _, name := range []string{"dir", "dir/arrived"} {
+			if _, err := fs.Stat(input, name); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("fresh lookup through directory link: %s: %v", name, err)
+			}
+		}
+
+	})
+	t.Run("concurrent first listing", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "dir/a", "a")
+		testutil.WriteFile(t, root, "dir/child", "content")
+		testutil.WriteFile(t, root, "dir/nested/file", "nested")
+		want, err := os.Lstat(filepath.Join(root, "dir/child"))
+		assert.NoError(t, err)
+		artifact, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		view, _, err := operation(t, artifact.FS, Direct)
+		assert.NoError(t, err)
+		start := make(chan struct{})
+		var ready, wg sync.WaitGroup
+		ready.Add(8)
+		for range 8 {
+			wg.Go(func() {
+				ready.Done()
+				<-start
+				entries, err := view.ReadDir("dir")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				var names []string
+				for _, entry := range entries {
+					names = append(names, entry.Name())
+				}
+				assert.Diff(t, names, []string{"a", "child", "nested"})
+				info, err := view.Lstat("dir/child")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				assert.Equal(t, info.Name(), want.Name())
+				assert.Equal(t, info.Mode(), want.Mode())
+				assert.Equal(t, info.Size(), want.Size())
+				assert.Equal(t, info.ModTime().Equal(want.ModTime()), true)
+			})
+		}
+		ready.Wait()
+		close(start)
+		wg.Wait()
+	})
+	t.Run("retained directory listing", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "dir/kept", "kept")
+		artifact, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		observed, _, err := operation(t, artifact.FS, Direct)
+		assert.NoError(t, err)
+		_, err = fs.ReadDir(observed, "dir")
+		assert.NoError(t, err)
+		testutil.WriteFile(t, root, "dir/arrived", "arrived")
+		_, err = fs.Stat(observed, "dir/arrived")
+		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+		fresh, pin, err := operation(t, observed, Direct)
+		assert.NoError(t, err)
+		assert.Equal(t, pin, "")
+		data, err := fs.ReadFile(fresh, "dir/arrived")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "arrived")
+	})
+	t.Run("local metadata", func(t *testing.T) {
+		for _, directory := range []bool{false, true} {
+			t.Run(fmt.Sprint(directory), func(t *testing.T) {
+				root := t.TempDir()
+				testutil.WriteFile(t, root, "file", "content")
+				for _, prefix := range []string{"", "nested/"} {
+					name := prefix + ".git"
+					if directory {
+						name += "/config"
+					}
+					testutil.WriteFile(t, root, name, "metadata")
+				}
+				artifact, err := admitLocal(t, root)
+				assert.NoError(t, err)
+				input := artifact.FS.(*FS)
+				location := input.Location()
+				assert.Equal(t, location.ContentRoot, root)
+				for _, mode := range []ViewMode{Direct, Source, RemoteBase} {
+					view, pin, err := operation(t, input, mode)
+					assert.NoError(t, err)
+					assert.Equal(t, pin, "")
+					assert.Equal(t, view.Location() == location, true)
+					for _, reader := range []fs.FS{input, view} {
+						for _, name := range []string{".git", ".git/config", "nested/.git", "nested/.git/config"} {
+							_, err := fs.Stat(reader, name)
+							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+							_, err = fs.ReadFile(reader, name)
+							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+							_, err = reader.Open(name)
+							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+							_, err = fs.ReadDir(reader, name)
+							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+						}
+						assert.NoError(t, fs.WalkDir(reader, ".", func(name string, entry fs.DirEntry, err error) error {
+							assert.NoError(t, err)
+							if entry.Name() == ".git" {
+								t.Errorf("metadata survived traversal: %s", name)
+							}
+							return nil
+						}))
+					}
+				}
+				assert.NoError(t, os.RemoveAll(filepath.Join(root, ".git")))
+				testutil.WriteFile(t, root, ".git", "changed metadata")
+				fresh, _, err := operation(t, input, Direct)
+				assert.NoError(t, err)
+				assert.Equal(t, fresh.Location() == location, true)
+			})
+		}
+	})
+	t.Run("policy read once and extras", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, ".sourceignore", "discard\n")
+		testutil.WriteFile(t, root, "nested/.sourceignore", "hidden\n")
+		for _, name := range []string{"discard", "kept", "image.png", "nested/hidden"} {
+			testutil.WriteFile(t, root, name, name)
+		}
+		artifact, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		input := artifact.FS.(*FS)
+		counted := &policyReadFS{FS: input}
+		policy, err := input.snapshot.load(counted)
+		assert.NoError(t, err)
+		reads := counted.reads.Load()
+		assert.Equal(t, reads, int64(2))
+		assert.Equal(t, policy.Match("discard", false), true)
+		assert.Equal(t, policy.Match("nested/hidden", false), true)
+		want := []struct{ Path, Data string }{{".sourceignore", "discard\n"}, {"nested/.sourceignore", "hidden\n"}}
+		assert.Diff(t, policy.Evidence(), want)
+		content := []struct {
+			Path string
+			Data []byte
+		}{{".sourceignore", []byte("discard\n")}, {"nested/.sourceignore", []byte("hidden\n")}}
+		testutil.WriteFile(t, root, ".sourceignore", "kept\n")
+		shaped, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: "kept\n"})
+		assert.NoError(t, err)
+		assert.Equal(t, pin, "")
+		assert.Diff(t, shaped.PolicyEvidence(), any(content))
+		_, err = fs.Stat(shaped, "image.png")
+		assert.NoError(t, err)
+		for _, name := range []string{"discard", "kept", "nested/hidden"} {
+			_, err = fs.Stat(shaped, name)
+			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+		}
+		retained, pin, err := operation(t, shaped, Source)
+		assert.NoError(t, err)
+		assert.Equal(t, pin, "")
+		assert.Diff(t, retained.PolicyEvidence(), any(content))
+		_, err = fs.Stat(retained, "kept")
+		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+		_, err = input.snapshot.load(counted)
+		assert.NoError(t, err)
+		assert.Equal(t, counted.reads.Load(), reads)
+	})
+	t.Run("policy evidence preserves bytes", func(t *testing.T) {
+		root := t.TempDir()
+		var keys []string
+		for _, data := range []string{"#\xff\n", "#\xfe\n"} {
+			testutil.WriteFile(t, root, ".sourceignore", data)
+			artifact, err := admitLocal(t, root)
+			assert.NoError(t, err)
+			input, pin, err := operation(t, artifact.FS, Source)
+			assert.NoError(t, err)
+			assert.Equal(t, pin, "")
+			assert.Diff(t, input.PolicyEvidence(), any([]struct {
+				Path string
+				Data []byte
+			}{{".sourceignore", []byte(data)}}))
+			keys = append(keys, manifest.Fingerprint(input.PolicyEvidence()))
+		}
+		assert.Equal(t, keys[0] != keys[1], true)
+	})
+	t.Run("concurrent first policy and cancellation", func(t *testing.T) {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, ".sourceignore", "discard\n")
+		testutil.WriteFile(t, root, "discard", "discard")
+		testutil.WriteFile(t, root, "kept", "kept")
+		artifact, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Go(func() {
+				<-start
+				input, pin, err := operation(t, artifact.FS, Source)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				assert.Equal(t, pin, "")
+				assert.Diff(t, input.PolicyEvidence(), any([]struct {
+					Path string
+					Data []byte
+				}{{".sourceignore", []byte("discard\n")}}))
+				_, err = fs.Stat(input, "discard")
+				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+				data, err := fs.ReadFile(input, "kept")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), "kept")
+			})
+		}
+		close(start)
+		wg.Wait()
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err = AdmitDirectory(ctx, artifact.FS.(*FS).Location())
+		assert.Equal(t, err, context.Canceled)
+		for _, mode := range []ViewMode{Direct, Source} {
+			_, _, err = New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: artifact.FS})
+			assert.Equal(t, err, context.Canceled)
+		}
+	})
 	t.Run("identity", func(t *testing.T) {
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
 		current := fstest.MapFS{"file": {Data: []byte("dirty")}}
-		opts := ViewOptions{Content: struct{ Root string }{"root"}, Mode: Direct, Current: current, Changes: []string{"file"}}
+		location := &gitrepo.Location{ContentRoot: "root", Repository: repo}
+		opts := ViewOptions{Content: struct{ Root string }{"root"}, Location: location, Mode: Direct, Current: current, Changes: []string{"file"}}
 		input, identity, err := New(t.Context(), backing, commit, opts)
 		assert.NoError(t, err)
 		if identity == "" {
 			t.Fatal("committed baseline with current routing has no identity")
 		}
+		assert.Equal(t, input.Location() == location, true)
+		refreshed, _, err := operation(t, input, Direct)
+		assert.NoError(t, err)
+		assert.Equal(t, refreshed.Location() == location, true)
 		data, err := fs.ReadFile(input, "file")
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), "malicious")
@@ -164,7 +669,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			testutil.WriteFile(t, root, "old/file", "old")
 			testutil.WriteFile(t, root, ".sourceignore", "ignored/\n")
 			testutil.WriteFile(t, root, "ignored/file", "hidden")
-			local, err := AdmitDirectory(t.Context(), root)
+			local, err := admitLocal(t, root)
 			assert.NoError(t, err)
 			opts := ViewOptions{Mode: Source, Current: local.FS}
 			if live {
@@ -254,7 +759,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("direct arbitrary and wrapper reuse", func(t *testing.T) {
-		current := fstest.MapFS{"file": {Data: []byte("current")}}
+		current := fstest.MapFS{"file": {Data: []byte("current")}, ".git": {Data: []byte("gitfile")}, "nested/.git/config": {Data: []byte("config")}}
 		input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: current, Ignore: "file", Sparse: []string{"other"}})
 		assert.NoError(t, err)
 		assert.Equal(t, key, "")
@@ -263,7 +768,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, got == input, true)
 		assert.Equal(t, key, "")
-		for _, name := range []string{"file", "new"} {
+		for _, name := range []string{"file", "new", ".git", "nested/.git/config"} {
 			data, err := fs.ReadFile(got, name)
 			assert.NoError(t, err)
 			assert.Equal(t, string(data), string(current[name].Data))
@@ -291,7 +796,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		repo := mustInit(t, root)
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "new", Mode: filemode.Regular})
 		testutil.WriteFile(t, root, "old", "old")
-		local, err := AdmitDirectory(t.Context(), root)
+		local, err := admitLocal(t, root)
 		assert.NoError(t, err)
 		current, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: local.FS})
 		assert.NoError(t, err)
@@ -320,7 +825,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	t.Run("shaping", func(t *testing.T) {
 		root := t.TempDir()
 		repo := mustInit(t, root)
-		for _, name := range []string{"target", ".rootfile", ".hidden/file", "node_modules/file", "dir/file"} {
+		for _, name := range []string{"target", ".rootfile", ".hidden/file", "node_modules/file", "dir/file", "templates/file", "crds/file"} {
 			testutil.WriteFile(t, root, name, name)
 		}
 		for name, target := range map[string]string{
@@ -339,8 +844,9 @@ func TestNew_EntryPolicy(t *testing.T) {
 			files []string
 		}{
 			{"source", ViewOptions{Mode: Source, Sparse: []string{"target", ".root"}, Ignore: "target/\n"}, []string{".rootfile", "target"}},
-			{"direct", ViewOptions{Mode: Direct}, []string{".hidden/file", ".rootfile", "dir/file", "node_modules/file", "target"}},
-			{"remote", ViewOptions{Mode: RemoteBase}, []string{".rootfile", "alias", "dir/file", "target"}},
+			{"source directories", ViewOptions{Mode: Source}, []string{".hidden/file", ".rootfile", "crds/file", "dir/file", "node_modules/file", "target", "templates/file"}},
+			{"direct", ViewOptions{Mode: Direct}, []string{".hidden/file", ".rootfile", "crds/file", "dir/file", "node_modules/file", "target", "templates/file"}},
+			{"remote", ViewOptions{Mode: RemoteBase}, []string{".rootfile", "alias", "crds/file", "dir/file", "target", "templates/file"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				input, _, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, tc.opts)
@@ -472,7 +978,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		if _, err := os.ReadDir(denied); !errors.Is(err, fs.ErrPermission) {
 			t.Skipf("filesystem cannot enforce directory permission fixture: %v", err)
 		}
-		local, err := AdmitDirectory(t.Context(), root)
+		local, err := admitLocal(t, root)
 		assert.NoError(t, err)
 		_, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: local.FS})
 		assert.Equal(t, errors.Is(err, fs.ErrPermission), true)

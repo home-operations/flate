@@ -508,7 +508,7 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 		}
 	}
 	artifact := localSource(t, root)
-	lower, _, err := source.ReadView(t.Context(), artifact.FS, false)
+	lower, _, err := source.OperationView(t.Context(), artifact.FS)
 	if err != nil {
 		t.Fatal(err)
 	}

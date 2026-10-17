@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -77,7 +78,9 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${MISSING}'}\n")
 	st := store.New()
-	input, err := gittree.AdmitDirectory(t.Context(), root)
+	location, err := gitrepo.Locate(t.Context(), root, "")
+	assert.NoError(t, err)
+	input, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner, err := sourcecache.New(t.Context(), "")

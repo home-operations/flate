@@ -10,10 +10,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // allowlistIgnore is the mono-repo .sourceignore shape from #936: exclude
@@ -168,44 +171,68 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 // recorded through: a probe of a hidden path is recorded as absent and must
 // still read as absent on replay, or every such render would miss forever.
 func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
-	root := writeTree(t, map[string]string{
-		".sourceignore": "b.yaml\n",
-		"a.yaml":        cmYAML("a"),
-		"b.yaml":        cmYAML("b"),
-	})
-	cache := newTestTreeCache(t, t.TempDir())
-	ctx := context.Background()
+	for _, explicit := range []bool{false, true} {
+		name := "file patterns"
+		if explicit {
+			name = "pre-shaped explicit patterns"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := writeTree(t, map[string]string{
+				".sourceignore": "b.yaml\n",
+				"a.yaml":        cmYAML("a"),
+				"b.yaml":        cmYAML("b"),
+			})
+			if explicit {
+				if err := os.WriteFile(filepath.Join(root, ".sourceignore"), []byte("# file policy empty\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			admit := func() *store.SourceArtifact {
+				artifact := localSource(t, root)
+				if explicit {
+					input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: "b.yaml\n"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					artifact.FS = input
+				}
+				return artifact
+			}
+			cache := newTestTreeCache(t, t.TempDir())
+			ctx := context.Background()
 
-	out1, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("first render: %v", err)
-	}
-	if strings.Contains(string(out1), "name: b") {
-		t.Fatalf("b.yaml should be excluded; got %s", out1)
-	}
-	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}
-	input, err := cache.sourceRootFor(ctx, req.Source, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := renderKey(req, root, input.ignore)
-	snap, _, ok := readTestRenderFrame(t, cache, key)
-	eligible := renderPersistenceEligible(t)
-	if ok != eligible {
-		t.Fatalf("persisted render = %v, want %v", ok, eligible)
-	}
-	if eligible {
-		publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
-	}
-	out2, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("second render: %v", err)
-	}
-	if eligible && string(out2) != "SENTINEL\n" {
-		t.Errorf("expected a cache hit against the filtered view; got a re-render:\n%s", out2)
-	}
-	if !eligible && string(out2) != string(out1) {
-		t.Errorf("ineligible owner changed filtered output: %s", out2)
+			out1, err := RenderFlux(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatalf("first render: %v", err)
+			}
+			if strings.Contains(string(out1), "name: b") {
+				t.Fatalf("b.yaml should be excluded; got %s", out1)
+			}
+			req := RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}
+			input, err := cache.sourceRootFor(ctx, req.Source, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := renderKey(req, root, input.ignore)
+			snap, _, ok := readTestRenderFrame(t, cache, key)
+			eligible := renderPersistenceEligible(t)
+			if ok != eligible {
+				t.Fatalf("persisted render = %v, want %v", ok, eligible)
+			}
+			if eligible {
+				publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
+			}
+			out2, err := RenderFlux(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatalf("second render: %v", err)
+			}
+			if eligible && string(out2) != "SENTINEL\n" {
+				t.Errorf("expected a cache hit against the filtered view; got a re-render:\n%s", out2)
+			}
+			if !eligible && string(out2) != string(out1) {
+				t.Errorf("ineligible owner changed filtered output: %s", out2)
+			}
+		})
 	}
 }
 
@@ -214,11 +241,15 @@ func TestRenderFlux_SourceignoreConfigMapGenerator(t *testing.T) {
 	cases := []struct {
 		name    string
 		ignore  *string
+		extra   string
+		shaped  bool
 		wantErr bool
 	}{
 		{name: "user patterns preserve image", ignore: new("*.tmp\n")},
 		{name: "no sourceignore excludes image", wantErr: true},
 		{name: "empty sourceignore excludes image", ignore: new(""), wantErr: true},
+		{name: "pre-shaped explicit patterns preserve image", extra: "*.tmp\n", shaped: true},
+		{name: "pre-shaped defaults exclude image", shaped: true, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,7 +267,15 @@ configMapGenerator:
 				files[".sourceignore"] = *tc.ignore
 			}
 			root := writeTree(t, files)
-			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "app", Spec: ksDoc(map[string]any{"path": "./app"})}, sourcecache.RetryConfig{})
+			artifact := localSource(t, root)
+			if tc.shaped {
+				input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: tc.extra})
+				if err != nil {
+					t.Fatal(err)
+				}
+				artifact.FS = input
+			}
+			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: artifact, Label: root, ApplyIgnore: true, SubPath: "app", Spec: ksDoc(map[string]any{"path": "./app"})}, sourcecache.RetryConfig{})
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "logo.png") {
 					t.Fatalf("expected excluded image to fail the build, got %v", err)

@@ -22,6 +22,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
 func TestResolveLocal_References(t *testing.T) {
@@ -74,7 +75,7 @@ func TestResolveLocal_References(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := localSource(tc.ref)
 
-			artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, "")
+			artifacts, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 			if tc.fail {
 				if !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("expected domain error, got %v", err)
@@ -97,12 +98,12 @@ func TestResolveLocal_References(t *testing.T) {
 			if artifact.FS == nil || (artifact.Key == "") != (tc.want == b) {
 				t.Fatalf("FS/Key state did not distinguish HEAD from committed content: %+v", artifact)
 			}
-			view, pin, err := source.ReadView(t.Context(), artifact.FS, false)
+			view, pin, err := source.OperationView(t.Context(), artifact.FS)
 			assert.NoError(t, err)
 			if artifact.Key == "" {
-				assert.Equal(t, pin, any(nil))
+				assert.Equal(t, pin, "")
 			} else {
-				assert.Equal(t, pin, any(artifact.Key))
+				assert.Equal(t, pin, artifact.Key)
 			}
 			data, err := fs.ReadFile(view, "value.txt")
 			assert.NoError(t, err)
@@ -116,6 +117,49 @@ func TestResolveLocal_References(t *testing.T) {
 			}
 		})
 	}
+	for _, metadata := range []string{"directory", "gitfile"} {
+		t.Run("metadata "+metadata, func(t *testing.T) {
+			root, _, _, head := localFixture(t)
+			metadataRoot := filepath.Join(root, ".git")
+			if metadata == "gitfile" {
+				metadataRoot = filepath.Join(t.TempDir(), "repository")
+				assert.Equal(t, os.Rename(filepath.Join(root, ".git"), metadataRoot), nil)
+				testutil.WriteFile(t, root, ".git", "gitdir: "+metadataRoot+"\n")
+			}
+			testutil.WriteFile(t, metadataRoot, "config", "[remote \"origin\"]\nurl = https://fixture.invalid/original\n")
+			testutil.WriteFile(t, root, "nested/.git", "gitdir: absent\n")
+			location := localLocation(t, root)
+			assert.Equal(t, os.Remove(filepath.Join(metadataRoot, "config")), nil)
+			artifacts, err := ResolveLocal(t.Context(), location, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})}, "")
+			assert.Equal(t, err, nil)
+			artifact := artifacts[localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"}).Named()]
+			if artifact == nil || artifact.Revision != head.String() {
+				t.Fatal("retained repository did not resolve HEAD")
+			}
+			assert.Diff(t, location.URLs, []string{"https://fixture.invalid/original"})
+			for _, name := range []string{".git", ".git/config", "nested/.git"} {
+				_, err := fs.Stat(artifact.FS, name)
+				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+				f, err := artifact.FS.Open(name)
+				if f != nil {
+					f.Close()
+				}
+				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+				_, err = fs.ReadFile(artifact.FS, name)
+				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+			}
+			for _, name := range []string{".", "nested"} {
+				entries, err := fs.ReadDir(artifact.FS, name)
+				assert.Equal(t, err, nil)
+				for _, entry := range entries {
+					if entry.Name() == ".git" {
+						t.Fatalf("ReadDir(%q) exposes Git metadata", name)
+					}
+				}
+			}
+		})
+	}
+
 }
 
 func TestValidateCommitBranch_UnavailableCommit(t *testing.T) {
@@ -148,7 +192,7 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 		t.Errorf("incomplete history did not become unavailable: %v", err)
 	}
 	repository := localSource(manifest.GitRepositoryRef{Commit: a.String(), Branch: "master"})
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, "")
+	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("incomplete history did not fall back: %v, %v", got, err)
 	}
@@ -159,7 +203,7 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 		{Commit: "abc"}, {Name: "bad name"}, {Tag: "bad tag"}, {Branch: "bad branch"}, {SemVer: "invalid"},
 	} {
 		t.Run(manifest.GitRefString(ref), func(t *testing.T) {
-			if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{localSource(ref)}, ""); !errors.Is(err, manifest.ErrInput) {
+			if _, err := ResolveLocal(t.Context(), localLocation(t, t.TempDir()), []*manifest.GitRepository{localSource(ref)}, ""); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected invalid spec, got %v", err)
 			}
 		})
@@ -168,22 +212,22 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	child := filepath.Join(parent, "exported")
 	assert.Equal(t, os.Mkdir(child, 0o750), nil)
 	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
-	got, err := ResolveLocal(t.Context(), child, []*manifest.GitRepository{repository}, "")
+	got, err := ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
 	testutil.WriteFile(t, parent, ".git/config", "[invalid\n")
-	got, err = ResolveLocal(t.Context(), child, []*manifest.GitRepository{repository}, "")
+	got, err = ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
 	assert.Equal(t, os.RemoveAll(filepath.Join(parent, ".git")), nil)
 	assert.Equal(t, os.Symlink(".git", filepath.Join(parent, ".git")), nil)
-	got, err = ResolveLocal(t.Context(), child, []*manifest.GitRepository{repository}, "")
+	got, err = ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
 }
 
 func TestResolveLocal_RejectsNilSource(t *testing.T) {
-	if _, err := ResolveLocal(t.Context(), t.TempDir(), []*manifest.GitRepository{nil}, ""); !errors.Is(err, manifest.ErrInput) {
+	if _, err := ResolveLocal(t.Context(), localLocation(t, t.TempDir()), []*manifest.GitRepository{nil}, ""); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("nil source = %v", err)
 	}
 }
@@ -198,7 +242,7 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	ignored.Name = "ignored"
 	ignore := "/extra.txt\n"
 	ignored.Ignore = &ignore
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{first, second, ignored}, "")
+	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{first, second, ignored}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,14 +257,14 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 		t.Fatalf("dirty content leaked: %q, %v", content, err)
 	}
 	otherRoot, _, _, _ := localFixture(t)
-	other, err := ResolveLocal(t.Context(), otherRoot, []*manifest.GitRepository{first}, "")
+	other, err := ResolveLocal(t.Context(), localLocation(t, otherRoot), []*manifest.GitRepository{first}, "")
 	if err != nil || other[first.Named()].Key == key {
 		t.Fatalf("repository identities share artifacts: %v, %v", other, err)
 	}
 	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), b)); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{first}, "")
+	moved, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{first}, "")
 	if err != nil || moved[first.Named()].LocalPath != root || moved[first.Named()].Revision != b.String() {
 		t.Fatalf("moved tag used stale resolution: %v, %v", moved, err)
 	}
@@ -234,7 +278,7 @@ func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := localSource(manifest.GitRepositoryRef{SemVer: ">=1.0.0 <2.0.0"})
-	artifacts, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, "")
+	artifacts, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +330,7 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range paths {
 		wg.Go(func() {
-			got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, "")
+			got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 			if err != nil {
 				t.Error(err)
 				return
@@ -307,7 +351,7 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := ResolveLocal(ctx, root, []*manifest.GitRepository{repository}, ""); !errors.Is(err, context.Canceled) {
+	if _, err := ResolveLocal(ctx, localLocation(t, root), []*manifest.GitRepository{repository}, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation = %v", err)
 	}
 }
@@ -350,7 +394,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 			repository := localSource(ref)
 			repository.RecurseSubmodules = kind == "recursive-tree-tag"
 			repository.SparseCheckout = []string{"apps"}
-			if got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, ""); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || got != nil {
+			if got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, ""); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || got != nil {
 				t.Fatalf("corruption became fallback: %v, %v", got, err)
 			}
 		})
@@ -368,7 +412,7 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 				} else {
 					repository.RecurseSubmodules = true
 				}
-				got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, "")
+				got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 				if err != nil || (len(got) != 0) != (tag == "v2.0.0" || option == "sparse") {
 					t.Fatalf("%s %s = %v, %v", option, tag, got, err)
 				}
@@ -380,7 +424,7 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.WriteFile(t, root, ".git", "gitdir: "+gitdir+"\n")
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})}, "")
+	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})}, "")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("gitdir indirection = %v, %v", got, err)
 	}
@@ -411,7 +455,7 @@ func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := localSource(manifest.GitRepositoryRef{Commit: hash.String()})
-	got, err := ResolveLocal(t.Context(), root, []*manifest.GitRepository{repository}, "")
+	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,4 +573,11 @@ func localFixture(tb testing.TB) (string, *git.Repository, plumbing.Hash, plumbi
 	}
 	testutil.WriteFile(tb, root, "value.txt", "dirty")
 	return root, repo, hashes[0], hashes[1]
+}
+
+func localLocation(tb testing.TB, root string) *gitrepo.Location {
+	tb.Helper()
+	location, err := gitrepo.Locate(tb.Context(), root, root)
+	assert.Equal(tb, err, nil)
+	return location
 }

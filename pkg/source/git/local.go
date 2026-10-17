@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path/filepath"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/go-git/go-git/v5"
@@ -13,23 +12,23 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ResolveLocal resolves matching authored sources against root's own repository.
-// An empty sideRevision permits working-tree edits; an immutable side may alias
-// HEAD only when its revision matches. A committed artifact's
-// FS supplies its bytes and LocalPath labels ownership. Missing entries require
-// normal fetching. Invalid input, unusable objects and view-construction failures
-// return domain errors.
-func ResolveLocal(ctx context.Context, root string, repositories []*manifest.GitRepository, sideRevision string) (map[manifest.NamedResource]*store.SourceArtifact, error) {
+// ResolveLocal resolves authored refs from an admitted location's own repository.
+// Only matching mutable HEAD inputs may expose working-tree edits; committed
+// artifacts retain their own object storage and use LocalPath solely for ownership.
+func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories []*manifest.GitRepository, sideRevision string) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
 	}
 	var repo *git.Repository
+	root := ""
+	if location != nil {
+		root = location.ContentRoot
+	}
 	var local fs.FS
 	var head plumbing.Hash
 	opened := false
@@ -55,16 +54,13 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		}
 		if !opened {
 			opened = true
-			absoluteRoot, err := filepath.Abs(root)
-			if err != nil {
-				return nil, localError(repository, err)
-			}
-			located, locatedRepo, err := gitrepo.Locate(absoluteRoot)
-			if err != nil {
-				return nil, localError(repository, err)
-			}
-			if located == absoluteRoot {
-				repo = locatedRepo
+			if location != nil {
+				if location.LookupErr != nil {
+					return nil, localError(repository, location.LookupErr)
+				}
+				if location.RepositoryRoot == root {
+					repo = location.Repository
+				}
 			}
 			if repo != nil {
 				headRef, err := repo.Head()
@@ -93,11 +89,11 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 		}
 		if r.hash == head && (sideRevision == "" || sideRevision == r.hash.String()) {
 			if local == nil {
-				input, err := source.NewLocalFS(ctx, root)
+				input, err := gittree.AdmitDirectory(ctx, location)
 				if err != nil {
 					return nil, localError(repository, err)
 				}
-				local = input
+				local = input.FS
 			}
 			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String(), FS: local}
 			continue
@@ -108,23 +104,16 @@ func ResolveLocal(ctx context.Context, root string, repositories []*manifest.Git
 			}
 			continue
 		}
-		identity, err := filepath.EvalSymlinks(root)
-		if err != nil {
-			return nil, localError(repository, err)
-		}
-		identity, err = filepath.Abs(identity)
-		if err != nil {
-			return nil, localError(repository, err)
-		}
 		ignore := ""
 		if repository.Ignore != nil {
 			ignore = *repository.Ignore
 		}
-		input, key, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Content: struct{ Root string }{identity}, Sparse: repository.SparseCheckout, Ignore: ignore})
+		input, key, err := gittree.New(ctx, repo.Storer.(*filesystem.Storage).Filesystem(), r.hash, gittree.ViewOptions{Location: location, Content: struct{ Root string }{root}, Sparse: repository.SparseCheckout, Ignore: ignore})
 		if err != nil {
 			return nil, localError(repository, err)
 		}
-		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: filepath.Join(filepath.Dir(identity), ".flate-sources", key), Revision: r.hash.String(), Key: key, FS: input}
+		label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Source, Key: key})
+		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: label, Revision: r.hash.String(), Key: key, FS: input}
 		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil

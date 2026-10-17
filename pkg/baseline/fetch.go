@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -245,10 +246,13 @@ func copyMetadata(ctx context.Context, source storage.Storer, upper storage.Stor
 }
 
 // originURL is the checkout's origin remote URL, when it has one.
-func originURL(repo *git.Repository) (string, bool) {
-	remote, err := repo.Remote("origin")
-	if err != nil || len(remote.Config().URLs) == 0 {
+func originURL(cfg *config.Config) (string, bool) {
+	if cfg == nil {
 		return "", false
 	}
-	return remote.Config().URLs[0], true
+	remote, ok := cfg.Remotes[git.DefaultRemoteName]
+	if !ok || len(remote.URLs) == 0 {
+		return "", false
+	}
+	return remote.URLs[0], true
 }

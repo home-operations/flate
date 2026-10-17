@@ -206,12 +206,8 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	}
 }
 
-// TestRenderFlux_SourceignoreContentInvalidates is the regression for the
-// adversarially-found stale hit: .sourceignore is loaded off-disk (outside the
-// recording overlay), so an in-place edit that changes which resources an
-// auto-generated kustomization includes must still invalidate the cache. The
-// ignore matcher is memoized per root for the life of a TreeCache (one run), so
-// the edit is made between two runs sharing the on-disk render cache.
+// TestRenderFlux_SourceignoreContentInvalidates verifies policy content and path
+// changes invalidate persisted renders after re-admission.
 func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"a.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n",
@@ -236,8 +232,6 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 		t.Fatalf("first render should include both a and b; got %s", out1)
 	}
 
-	// Edit .sourceignore IN PLACE to exclude b.yaml — filenames and every .yaml's
-	// content are unchanged, so only the off-overlay .sourceignore bytes differ.
 	if err := os.WriteFile(filepath.Join(root, ".sourceignore"), []byte("b.yaml\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +242,8 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renderKey(req, root, input.ignore) == key {
+	changedKey := renderKey(req, root, input.ignore)
+	if changedKey == key {
 		t.Fatal("re-admitted ignore bytes reused the render key")
 	}
 	out2, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{})
@@ -260,6 +255,23 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	}
 	if !strings.Contains(string(out2), "name: a") {
 		t.Errorf("re-render should still include a; got %s", out2)
+	}
+	if err := os.Remove(filepath.Join(root, ".sourceignore")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, root, "app/.sourceignore", "b.yaml\n")
+	cache = newTestTreeCache(t, cacheDir)
+	req.Source = localSource(t, root)
+	input, err = cache.sourceRootFor(ctx, req.Source, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renderKey(req, root, input.ignore) == changedKey {
+		t.Fatal("moved ignore file reused the render key")
+	}
+	out3, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{})
+	if err != nil || !strings.Contains(string(out3), "name: a") || !strings.Contains(string(out3), "name: b") {
+		t.Fatalf("nested policy reused root policy membership: %s, %v", out3, err)
 	}
 }
 

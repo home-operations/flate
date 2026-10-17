@@ -18,6 +18,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -326,20 +327,37 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 }
 
 func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
-	root := t.TempDir()
-	writeCluster(t, root, "same", "same")
-	alias := filepath.Join(t.TempDir(), "linked")
-	assert.NoError(t, os.Symlink(root, alias))
-	base, head, err := orchestrator.RenderTrees(t.Context(),
-		orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: alias},
-		orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2})
-	assert.NoError(t, err)
-	for _, rendered := range []orchestrator.Rendered{base, head} {
-		if names := configMapNames(rendered.Result); !names["cfg-a"] || !names["cfg-b"] {
-			t.Fatalf("same-directory comparison lost full render: %v", names)
-		}
-		if len(rendered.Result.Warnings) != 1 || rendered.Result.Warnings[0].Category != manifest.WarnPathConfig {
-			t.Fatalf("same-directory warning changed: %v", rendered.Result.Warnings)
+	for _, admitted := range []bool{false, true} {
+		for _, external := range []bool{false, true} {
+			t.Run(fmt.Sprintf("admitted_%t/external_%t", admitted, external), func(t *testing.T) {
+				root := t.TempDir()
+				writeCluster(t, root, "same", "same")
+				alias := filepath.Join(t.TempDir(), "linked")
+				assert.NoError(t, os.Symlink(root, alias))
+				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
+				if admitted {
+					resolved, err := baseline.ResolvePaths(t.Context(), alias, root)
+					assert.NoError(t, err)
+					cfg.BaseInput, cfg.Input = resolved.BaseInput, resolved.Source
+				}
+				if external {
+					cfg.ExternalChanges = change.NewSet([]string{"apps/app-a/cm.yaml"})
+				}
+				base, head, err := orchestrator.RenderTrees(t.Context(),
+					orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: alias}, cfg)
+				assert.NoError(t, err)
+				for _, rendered := range []orchestrator.Rendered{base, head} {
+					names := configMapNames(rendered.Result)
+					if !names["cfg-a"] || names["cfg-b"] == external {
+						t.Fatalf("same-directory selection changed: %v", names)
+					}
+					if external {
+						assert.Equal(t, len(rendered.Result.Warnings), 0)
+					} else if len(rendered.Result.Warnings) != 1 || rendered.Result.Warnings[0].Category != manifest.WarnPathConfig {
+						t.Fatalf("same-directory warning changed: %v", rendered.Result.Warnings)
+					}
+				}
+			})
 		}
 	}
 }

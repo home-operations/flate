@@ -74,6 +74,7 @@ data:
 `)
 
 	st := store.New()
+	admitForTest(st, dir)
 	l := loaderFixture(st, nil)
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -122,6 +123,7 @@ data:
   KEY: value
 `)
 	st := store.New()
+	admitForTest(st, dir)
 	l := loaderFixture(st, nil)
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -165,6 +167,7 @@ data:
   TOKEN: dG9rZW4=
 `)
 	st := store.New()
+	admitForTest(st, dir)
 	l := loaderFixture(st, nil)
 	if _, err := l.Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)

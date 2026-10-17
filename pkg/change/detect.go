@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -180,15 +181,16 @@ func scanTree(ctx context.Context, input, opposite *store.SourceArtifact) (map[s
 	if err != nil {
 		return nil, err
 	}
-	matcher, err := sourceignore.NewFS(scoped, files, "", true)
+	var matcher *sourceignore.Matcher
+	if admitted, ok := scoped.(*gittree.FS); ok {
+		matcher, err = admitted.SourcePolicy(ctx)
+	} else {
+		matcher, err = sourceignore.NewFS(scoped, files, "", true)
+	}
 	if err != nil {
 		return nil, err
 	}
-	for name := range out {
-		if matcher.Match(filepath.FromSlash(name), false) {
-			delete(out, name)
-		}
-	}
+	sourceignore.Select(matcher, out, files)
 	return out, nil
 }
 

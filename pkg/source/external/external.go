@@ -10,8 +10,9 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -38,7 +39,11 @@ func (*Fetcher) Fetch(ctx context.Context, ea *manifest.ExternalArtifact, _ sour
 			ea.Namespace, ea.Name, ea.ArtifactURL,
 		)
 	}
-	input, err := source.NewLocalFS(ctx, localPath)
+	location, err := gitrepo.Locate(ctx, localPath, localPath)
+	if err != nil {
+		return nil, err
+	}
+	input, err := gittree.AdmitDirectory(ctx, location)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +51,7 @@ func (*Fetcher) Fetch(ctx context.Context, ea *manifest.ExternalArtifact, _ sour
 		Kind:      manifest.KindExternalArtifact,
 		URL:       ea.ArtifactURL,
 		LocalPath: localPath,
-		FS:        input,
+		FS:        input.FS,
 		Revision:  ea.Revision,
 		Digest:    ea.Digest,
 	}, nil

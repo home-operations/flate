@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -77,7 +78,7 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 		defer func() { err = errors.Join(err, cfg.Cache.Close()) }()
 	}
 	inputs := [2]*store.SourceArtifact{cfg.BaseInput, cfg.Input}
-	directoryInputs := inputs[0] == nil && inputs[1] == nil
+	var directories [2]string
 	for i, side := range []*Tree{&baseTree, &headTree} {
 		if inputs[i] == nil {
 			path := cmp.Or(side.Path, side.RepoRoot)
@@ -93,8 +94,11 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 			return base, head, fmt.Errorf("%w: tree input content unavailable", manifest.ErrInput)
 		}
 		side.RepoRoot = inputs[i].LocalPath
+		if input, ok := inputs[i].FS.(*gittree.FS); ok && input.Location() != nil && inputs[i].Key == "" {
+			directories[i] = input.Location().ContentRoot
+		}
 	}
-	sameDirectory := directoryInputs && baseTree.RepoRoot == headTree.RepoRoot
+	sameDirectory := directories[0] != "" && directories[0] == directories[1]
 	if cfg.ExternalChanges == nil && !sameDirectory {
 		cfg.ExternalChanges, err = change.Detect(ctx, inputs[0], inputs[1])
 		if err != nil {

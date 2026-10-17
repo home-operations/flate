@@ -1,35 +1,38 @@
 package kustomize
 
 import (
-	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
+	"github.com/go-git/go-git/v5/plumbing"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func localSource(tb testing.TB, root string) *store.SourceArtifact {
 	tb.Helper()
-	input, err := source.NewLocalFS(tb.Context(), root)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return &store.SourceArtifact{LocalPath: root, FS: input}
+	location, err := gitrepo.Locate(tb.Context(), root, root)
+	assert.NoError(tb, err)
+	admitted, err := gittree.AdmitDirectory(tb.Context(), location)
+	assert.NoError(tb, err)
+	return &store.SourceArtifact{LocalPath: root, FS: admitted.FS}
 }
 
 func testTreeFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
-	input, _, err := source.ReadView(t.Context(), localSource(t, root).FS, false)
+	input, _, err := source.OperationView(t.Context(), localSource(t, root).FS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +41,7 @@ func testTreeFS(t *testing.T, root string) filesys.FileSystem {
 
 func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
-	input, _, err := source.ReadView(t.Context(), localSource(t, root).FS, true)
+	input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: localSource(t, root).FS})
 	if err != nil {
 		t.Fatal(err)
 	}

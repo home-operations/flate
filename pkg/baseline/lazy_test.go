@@ -14,7 +14,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestAutoResolve_LazyBaseReads(t *testing.T) {
@@ -93,9 +94,9 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				if tc.changed && tc.name != "executable_directory" {
 					testutil.WriteFile(t, root, "file", "live-mutated")
 				}
-				view, pin, err := source.ReadView(t.Context(), res.BaseInput.FS, false)
+				view, pin, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: res.BaseInput.FS})
 				assert.NoError(t, err)
-				assert.Equal(t, pin, any(res.BaseInput.Key))
+				assert.Equal(t, pin, res.BaseInput.Key)
 				data, err := fs.ReadFile(view, "unchanged.yaml")
 				assert.NoError(t, err)
 				assert.Equal(t, string(data), body)
@@ -110,6 +111,11 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 			for _, hash := range absent {
 				assert.Equal(t, errors.Is(repo.Storer.HasEncodedObject(hash), plumbing.ErrObjectNotFound), true)
 			}
+			testutil.WriteFile(t, root, ".sourceignore", "file\n")
+			view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: res.BaseInput.FS})
+			assert.NoError(t, err)
+			_, err = fs.Stat(view, "file")
+			assert.NoError(t, err)
 		})
 	}
 }
@@ -129,6 +135,14 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			res, err := AutoResolve(t.Context(), root, pin.String(), testOwner(t, ""))
 			assert.NoError(t, err)
 			assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
+			testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
+			for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
+				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+				assert.NoError(t, err)
+				_, err = fs.Stat(view, "apps/b.yaml")
+				wantVisible := behavior == "exclude" && side == 0 || behavior == "reinclude" && side == 1
+				assert.Equal(t, err == nil, wantVisible)
+			}
 		})
 	}
 }

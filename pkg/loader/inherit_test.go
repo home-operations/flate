@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -135,8 +136,13 @@ spec:
 			testutil.WriteFile(t, root, hrDir+"/hr.yaml", hrDoc)
 			l := loaderFixture(store.New(), nil)
 			l.SourceRoot = root
+			admitForTest(l.Store, root)
 			if tc.alias {
-				input, err := gittree.AdmitDirectory(t.Context(), root)
+				location, err := gitrepo.Locate(t.Context(), root, root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, err := gittree.AdmitDirectory(t.Context(), location)
 				assert.NoError(t, err)
 				l.Store.SetArtifact(manifest.BootstrapSourceID, input)
 				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
@@ -282,6 +288,7 @@ spec:
 		st := store.New()
 		l := loaderFixture(st, nil)
 		l.SourceRoot = root
+		admitForTest(st, root)
 		for _, dir := range []string{"flux", "kubernetes/apps"} {
 			if _, err := l.Load(t.Context(), filepath.Join(root, dir)); err != nil {
 				t.Fatal(err)

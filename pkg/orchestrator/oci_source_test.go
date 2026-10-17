@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -31,7 +32,11 @@ func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManife
 	if f.err != nil {
 		return nil, f.err
 	}
-	input, err := gittree.AdmitDirectory(ctx, f.root)
+	location, err := gitrepo.Locate(ctx, f.root, f.root)
+	if err != nil {
+		return nil, err
+	}
+	input, err := gittree.AdmitDirectory(ctx, location)
 	if err != nil {
 		return nil, err
 	}

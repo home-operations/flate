@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"path"
-	"path/filepath"
 	"slices"
 
 	"github.com/go-git/go-billy/v5"
@@ -28,12 +27,11 @@ import (
 )
 
 type selection struct {
-	repo     *git.Repository
-	base     *resolution
-	current  *gittree.FS
-	worktree billy.Filesystem
-	owner    *sourcecache.Cache
-	content  any
+	repo    *git.Repository
+	base    *resolution
+	current *gittree.FS
+	owner   *sourcecache.Cache
+	content any
 }
 
 func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, error) {
@@ -57,7 +55,7 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	if s.base.backing != nil {
 		backing = s.base.backing
 	}
-	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Content: s.content, Mode: gittree.Direct, Current: s.current, Changes: routing})
+	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Location: s.current.Location(), Content: s.content, Mode: gittree.Direct, Current: s.current, Changes: routing})
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -145,7 +143,7 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 			candidates[name], dirty[name] = true, true
 		}
 	}
-	err = walkCurrent(ctx, s.worktree, ".", func(name string) {
+	err = walkCurrent(ctx, s.current, ".", func(name string) {
 		if _, ok := headEntries[name]; !ok {
 			candidates[name], dirty[name] = true, true
 		}
@@ -294,37 +292,52 @@ func (s selection) compareCandidates(ctx context.Context, candidates, dirty map[
 }
 
 func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, routing []string, entries map[string]object.TreeEntry) (*change.Set, error) {
-	beforeIgnore, err := sourceignore.NewFS(baseline, nil, "", true)
+	beforeIgnore, err := baseline.SourcePolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	afterIgnore, err := sourceignore.NewFS(s.current, nil, "", true)
+	afterIgnore, err := s.current.SourcePolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	selected := make([]string, 0, len(routing))
+	before, after := make(map[string]bool, len(routing)), make(map[string]bool, len(routing))
 	for _, name := range routing {
-		_, existed := entries[name]
-		_, currentErr := s.current.Lstat(name)
-		if (existed && !beforeIgnore.Match(filepath.FromSlash(name), false)) || (currentErr == nil && !afterIgnore.Match(filepath.FromSlash(name), false)) {
-			selected = append(selected, name)
+		if _, existed := entries[name]; existed {
+			before[name] = true
+		}
+		if _, err := s.current.Lstat(name); err == nil {
+			after[name] = true
 		}
 	}
+	var membership []string
 	if slices.ContainsFunc(routing, func(name string) bool { return path.Base(name) == ".sourceignore" }) {
-		if err := walkCurrent(ctx, s.worktree, ".", func(name string) {
-			if _, existed := entries[name]; existed &&
-				beforeIgnore.Match(filepath.FromSlash(name), false) != afterIgnore.Match(filepath.FromSlash(name), false) {
-				selected = append(selected, name)
+		if err := walkCurrent(ctx, s.current, ".", func(name string) {
+			if _, existed := entries[name]; existed {
+				membership = append(membership, name)
+				before[name], after[name] = true, true
 			}
 		}); err != nil {
 			return nil, err
+		}
+	}
+	sourceignore.Select(beforeIgnore, before, nil)
+	sourceignore.Select(afterIgnore, after, nil)
+	selected := make([]string, 0, len(routing))
+	for _, name := range routing {
+		if before[name] || after[name] {
+			selected = append(selected, name)
+		}
+	}
+	for _, name := range membership {
+		if before[name] != after[name] {
+			selected = append(selected, name)
 		}
 	}
 	return change.NewSet(selected), nil
 }
 
 func (s selection) acquireBase(ctx context.Context) error {
-	url, ok := originURL(s.repo)
+	url, ok := originURL(s.current.Location().Config)
 	if !ok {
 		return fmt.Errorf("base %s is missing objects and no origin is configured", s.base.Hash)
 	}
@@ -358,24 +371,21 @@ func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.Tree
 	}
 }
 
-func walkCurrent(ctx context.Context, input billy.Filesystem, dir string, visit func(string)) error {
+func walkCurrent(ctx context.Context, input fs.ReadDirFS, dir string, visit func(string)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	entries, err := input.ReadDir(filepath.FromSlash(dir))
+	entries, err := input.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() == ".git" {
-			continue
-		}
 		name := path.Join(dir, entry.Name())
 		if entry.IsDir() {
 			if err := walkCurrent(ctx, input, name, visit); err != nil {
 				return err
 			}
-		} else if entry.Mode().IsRegular() {
+		} else if entry.Type().IsRegular() {
 			visit(name)
 		}
 	}

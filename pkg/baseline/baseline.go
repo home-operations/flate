@@ -5,33 +5,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 // Result retains admitted inputs and one selection for both render sides.
 type Result struct {
-	Source    *store.SourceArtifact
-	BaseInput *store.SourceArtifact
-	Changes   *change.Set
-	Rev       string
-	SelfURLs  []string
+	Source       *store.SourceArtifact
+	BaseInput    *store.SourceArtifact
+	ScanPath     string
+	BaseScanPath string
+	Changes      *change.Set
+	Rev          string
+	SelfURLs     []string
 }
 
 type resolution struct {
@@ -48,112 +49,98 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	if owner == nil {
 		return nil, fmt.Errorf("%w: baseline cache owner is required", manifest.ErrInput)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
-	}
-	root, repo, err := gitrepo.Locate(path)
+	location, err := gitrepo.Locate(ctx, path, "")
 	if err != nil {
 		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
 	}
+	if location.LookupErr != nil {
+		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, location.LookupErr)
+	}
+	repo := location.Repository
 	if repo == nil {
 		return nil, fmt.Errorf("%w: --path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", manifest.ErrInput, path)
 	}
-	if _, err := relToRepo(root, path); err != nil {
-		return nil, err
-	}
-	local := repo.Storer.(*filesystem.Storage).Filesystem()
-	worktree := osfs.New(root, osfs.WithBoundOS())
-	current, _, err := gittree.New(ctx, local, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: worktree})
+	root := location.ContentRoot
+	input, err := admitLocation(ctx, location)
 	if err != nil {
 		return nil, err
 	}
-	r, err := resolve(ctx, repo, base, owner)
+	current := input.FS.(*gittree.FS)
+	r, err := resolve(ctx, location, base, owner)
 	if err != nil {
 		return nil, err
 	}
-	urls, err := gitrepo.RemoteURLs(repo)
-	if err != nil {
-		urls = nil
-	}
+	urls := location.URLs
 	content := struct {
 		Root    string
 		Remotes []string
 	}{root, urls}
-	before, selected, identity, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, worktree: worktree, owner: owner, content: content})
+	before, selected, identity, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, owner: owner, content: content})
 	if err != nil {
 		return nil, err
 	}
-	label := filepath.Join(root, ".flate-base", r.Hash.String())
+	label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Direct, Key: r.Hash.String()})
+	rel, err := filepath.Rel(root, location.ScanPath)
+	if err != nil {
+		return nil, err
+	}
+	input.URL = ""
+	input.Metadata = map[string]string{"baseline-selection": r.Source}
 	return &Result{
-		Source:    &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: current, Metadata: map[string]string{"baseline-selection": r.Source}},
+		Source:    input,
 		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, FS: before},
-		Changes:   selected, Rev: shortRev(r.Hash), SelfURLs: urls,
+		ScanPath:  location.ScanPath, BaseScanPath: filepath.Join(label, rel),
+		Changes: selected, Rev: shortRev(r.Hash), SelfURLs: urls,
 	}, nil
 }
 
-// ResolvePaths selects source roots and the original tree's remote identity.
+// ResolvePaths admits both inputs and retains their canonical scan paths.
 // Only an absent original repository selects the current repository's identity.
 // The original path must be non-empty.
-func ResolvePaths(ctx context.Context, current, original string) (currentRoot, originalRoot string, selfURLs []string, err error) {
-	if err := ctx.Err(); err != nil {
-		return "", "", nil, fmt.Errorf("%w: baseline: resolve paths: %w", manifest.ErrInput, err)
-	}
-	originalRoot, err = filepath.Abs(original)
+func ResolvePaths(ctx context.Context, current, original string) (*Result, error) {
+	before, err := gitrepo.Locate(ctx, original, "")
 	if err != nil {
-		return "", "", nil, fmt.Errorf("%w: baseline: resolve baseline tree path: %w", manifest.ErrInput, err)
+		return nil, fmt.Errorf("%w: baseline: resolve baseline tree path: %w", manifest.ErrInput, err)
 	}
-	root, originalRepo, err := gitrepo.Locate(originalRoot)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("%w: baseline: locate baseline tree: %w", manifest.ErrInput, err)
+	if before.LookupErr != nil {
+		return nil, fmt.Errorf("%w: baseline: locate baseline tree: %w", manifest.ErrInput, before.LookupErr)
 	}
-	if root != "" {
-		originalRoot = root
+	if before.ConfigErr != nil {
+		return nil, fmt.Errorf("%w: baseline: read baseline tree remotes: %w", manifest.ErrInput, before.ConfigErr)
 	}
-	if originalRepo != nil {
-		selfURLs, err = gitrepo.RemoteURLs(originalRepo)
+	after := before
+	if current != original {
+		after, err = gitrepo.Locate(ctx, current, "")
 		if err != nil {
-			return "", "", nil, fmt.Errorf("%w: baseline: read baseline tree remotes: %w", manifest.ErrInput, err)
+			return nil, fmt.Errorf("%w: baseline: resolve working tree path: %w", manifest.ErrInput, err)
 		}
 	}
-	currentRoot, err = filepath.Abs(current)
+	urls := before.URLs
+	if before.Repository == nil {
+		if after.LookupErr != nil {
+			return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, after.LookupErr)
+		}
+		if after.ConfigErr != nil {
+			return nil, fmt.Errorf("%w: baseline: read working tree remotes: %w", manifest.ErrInput, after.ConfigErr)
+		}
+		urls = after.URLs
+	}
+	baseInput, err := admitLocation(ctx, before)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("%w: baseline: resolve working tree path: %w", manifest.ErrInput, err)
+		return nil, err
 	}
-	root, repo, err := gitrepo.Locate(currentRoot)
-	if err != nil && originalRepo == nil {
-		return "", "", nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
-	}
-	if root != "" {
-		currentRoot = root
-	}
-	if originalRepo == nil && repo != nil {
-		selfURLs, err = gitrepo.RemoteURLs(repo)
+	input := baseInput
+	if after.ContentRoot != before.ContentRoot {
+		input, err = admitLocation(ctx, after)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("%w: baseline: read working tree remotes: %w", manifest.ErrInput, err)
+			return nil, err
+		}
+	} else if after.ScanPath != before.ScanPath {
+		if _, err := os.Stat(after.ScanPath); err != nil {
+			return nil, fmt.Errorf("--path %q: %w", after.ScanPath, err)
 		}
 	}
-	return currentRoot, originalRoot, selfURLs, nil
-}
-
-// relToRepo returns path's location relative to repoRoot. Returns "."
-// when path equals repoRoot. Errors when path escapes the repo.
-func relToRepo(repoRoot, path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(repoRoot, abs)
-	if err != nil {
-		return "", err
-	}
-	// filepath.Rel returns a relative path on success (it errors
-	// otherwise, handled above), so no IsAbs check is needed — reject
-	// only the repo-escaping ".." and "../…" forms. A dir literally named
-	// "..foo" is in-repo and stays accepted.
-	if safepath.Escaped(rel) {
-		return "", fmt.Errorf("--path %q is outside the git repo at %q; pass --path-orig explicitly", path, repoRoot)
-	}
-	return rel, nil
+	return &Result{Source: input, BaseInput: baseInput, ScanPath: after.ScanPath, BaseScanPath: before.ScanPath, SelfURLs: urls}, nil
 }
 
 // resolve picks the baseline commit for the given repo. When base is
@@ -170,9 +157,10 @@ func relToRepo(repoRoot, path string) (string, error) {
 // "preview my dirty edits"). Shallow clones can't compute a merge-base
 // against any of these refs because the necessary commits are absent;
 // detect .git/shallow and emit a CI-friendly error.
-func resolve(ctx context.Context, repo *git.Repository, base string, owner *sourcecache.Cache) (*resolution, error) {
+func resolve(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
+	repo := location.Repository
 	if base != "" {
-		return resolveExplicit(ctx, repo, base, owner)
+		return resolveExplicit(ctx, location, base, owner)
 	}
 	head, err := repo.Head()
 	if err != nil {
@@ -189,7 +177,7 @@ func resolve(ctx context.Context, repo *git.Repository, base string, owner *sour
 	}
 
 	// go-git's ResolveRevision does not accept @{u}; read the branch config.
-	if up, ok := upstreamHash(repo, head); ok {
+	if up, ok := upstreamHash(repo, location.Config, head); ok {
 		if mb, err := mergeBase(repo, headCommit, up); err == nil {
 			return &resolution{Hash: mb, Source: "merge-base with @{u}", Repo: repo}, nil
 		}
@@ -228,7 +216,8 @@ func resolve(ctx context.Context, repo *git.Repository, base string, owner *sour
 // origin/<rev>, and finally by acquiring it from origin in private backing. The fetch is what makes a checkout without the
 // baseline's history work: a fetch-depth=1 clone of another branch, or
 // a tree written straight to disk over `git init` with only a remote.
-func resolveExplicit(ctx context.Context, repo *git.Repository, base string, owner *sourcecache.Cache) (*resolution, error) {
+func resolveExplicit(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
+	repo := location.Repository
 	if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
 		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
 	}
@@ -244,7 +233,7 @@ func resolveExplicit(ctx context.Context, repo *git.Repository, base string, own
 			return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
 		}
 	}
-	url, ok := originURL(repo)
+	url, ok := originURL(location.Config)
 	if !ok {
 		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from", base, base)
 	}
@@ -259,12 +248,11 @@ func resolveExplicit(ctx context.Context, repo *git.Repository, base string, own
 // config (branch.<name>.remote + branch.<name>.merge) and resolves it
 // to a commit. Returns ok=false when HEAD isn't on a branch (detached)
 // or no upstream is configured.
-func upstreamHash(repo *git.Repository, head *plumbing.Reference) (plumbing.Hash, bool) {
+func upstreamHash(repo *git.Repository, cfg *config.Config, head *plumbing.Reference) (plumbing.Hash, bool) {
 	if head.Name() == "" || !head.Name().IsBranch() {
 		return plumbing.ZeroHash, false
 	}
-	cfg, err := repo.Config()
-	if err != nil {
+	if cfg == nil {
 		return plumbing.ZeroHash, false
 	}
 	branch, ok := cfg.Branches[head.Name().Short()]

@@ -20,7 +20,8 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -349,9 +350,11 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 			assert.Equal(t, info.Size(), previousInfo.Size())
 			assert.Equal(t, info.ModTime().Equal(previousInfo.ModTime()), true)
 		}
-		input, err := source.NewLocalFS(t.Context(), tc.root)
+		location, err := gitrepo.Locate(t.Context(), tc.root, tc.root)
 		assert.NoError(t, err)
-		st.SetArtifact(id, &store.SourceArtifact{LocalRoot: tc.root, LocalPath: ".", FS: input})
+		admitted, err := gittree.AdmitDirectory(t.Context(), location)
+		assert.NoError(t, err)
+		st.SetArtifact(id, &store.SourceArtifact{LocalRoot: tc.root, LocalPath: ".", FS: admitted.FS})
 		loaded, err := cli.loadChart(t.Context(), hr)
 		assert.NoError(t, err)
 		assert.Equal(t, loaded.chart.Metadata.Version, tc.version)

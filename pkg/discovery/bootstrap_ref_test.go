@@ -583,7 +583,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if st.GetArtifact(alias.Named()) != art {
 				t.Fatal("Template republished alias")
 			}
-			view, pin, err := source.ReadView(t.Context(), art.FS, false)
+			view, pin, err := source.OperationView(t.Context(), art.FS)
 			if err != nil || pin != "" {
 				t.Fatalf("alias admission: %q, %v", pin, err)
 			}

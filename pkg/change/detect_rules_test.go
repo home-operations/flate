@@ -2,10 +2,17 @@ package change
 
 import (
 	"fmt"
+	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"golang.org/x/sync/errgroup"
 
@@ -64,11 +71,21 @@ func TestDetect_FluxIgnoreRules(t *testing.T) {
 				if reverse {
 					left, right = after, before
 				}
-				got, err := Detect(t.Context(), testInput(left), testInput(right))
-				if err != nil {
-					t.Fatal(err)
+				for _, admitted := range []bool{false, true} {
+					inputs := []*store.SourceArtifact{testInput(left), testInput(right)}
+					if admitted {
+						for _, input := range inputs {
+							view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Worktree: osfs.New(input.LocalPath, osfs.WithBoundOS())})
+							assert.NoError(t, err)
+							input.FS = view
+						}
+					}
+					got, err := Detect(t.Context(), inputs[0], inputs[1])
+					if err != nil {
+						t.Fatal(err)
+					}
+					assert.Diff(t, got.Paths(), tc.want)
 				}
-				assert.Diff(t, got.Paths(), tc.want)
 			}
 		})
 	}
@@ -90,11 +107,21 @@ func TestDetect_GitlinkFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, roots := range [][2]string{{before, after}, {after, before}} {
-		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]))
-		if err != nil {
-			t.Fatal(err)
+		for _, wrapped := range []bool{false, true} {
+			inputs := []*store.SourceArtifact{testInput(roots[0]), testInput(roots[1])}
+			if wrapped {
+				for _, input := range inputs {
+					view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS})
+					assert.NoError(t, err)
+					input.FS = view
+				}
+			}
+			got, err := Detect(t.Context(), inputs[0], inputs[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, got.Len(), 0)
 		}
-		assert.Equal(t, got.Len(), 0)
 	}
 }
 
@@ -144,4 +171,57 @@ func TestDetect_Concurrent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDetect_CapturedSidePolicies(t *testing.T) {
+	var inputs [2]*store.SourceArtifact
+	var counts [2]*countedPolicyFS
+	for i, rules := range []string{"*.tmp\n", "discard.tmp\n"} {
+		files := fstest.MapFS{
+			".sourceignore":        {Data: []byte(rules)},
+			"discard.tmp":          {Data: []byte("same")},
+			"keep.tmp":             {Data: []byte("same")},
+			"nested/.sourceignore": {Data: []byte("hidden.yaml\n")},
+			"nested/hidden.yaml":   {Data: []byte("same")},
+		}
+		counts[i] = &countedPolicyFS{FS: files}
+		input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: counts[i]})
+		assert.NoError(t, err)
+		inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
+		assert.Equal(t, counts[i].reads.Load(), int64(0))
+	}
+	var g errgroup.Group
+	for range 2 {
+		g.Go(func() error {
+			got, err := Detect(t.Context(), inputs[0], inputs[1])
+			if err != nil {
+				return err
+			}
+			if !slices.Equal(got.Paths(), []string{".sourceignore", "keep.tmp"}) {
+				return fmt.Errorf("changed paths = %v", got.Paths())
+			}
+			return nil
+		})
+	}
+	assert.NoError(t, g.Wait())
+	for i, input := range inputs {
+		assert.Equal(t, counts[i].reads.Load(), int64(2))
+		shaped, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+		assert.NoError(t, err)
+		_, err = fs.Stat(shaped, "keep.tmp")
+		assert.Equal(t, err == nil, i == 1)
+		assert.Equal(t, counts[i].reads.Load(), int64(2))
+	}
+}
+
+type countedPolicyFS struct {
+	fs.FS
+	reads atomic.Int64
+}
+
+func (f *countedPolicyFS) ReadFile(name string) ([]byte, error) {
+	if filepath.Base(name) == ".sourceignore" {
+		f.reads.Add(1)
+	}
+	return fs.ReadFile(f.FS, name)
 }

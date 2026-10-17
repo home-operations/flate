@@ -42,6 +42,8 @@ type Result struct {
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
+	// Input is authoritative over a preseeded bootstrap artifact or disk admission.
+	Input *store.SourceArtifact
 	// Path is the scan entry point — the directory the file walker
 	// starts at (a Flux cluster's entry, e.g. kubernetes/flux/cluster).
 	Path string
@@ -297,23 +299,4 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, total *int) error {
 	}
 	*total += n
 	return nil
-}
-
-// ResolveScanPath normalizes a user-supplied --path / --path-orig:
-// absolute, with symlinks resolved. Without symlink resolution
-// filepath.WalkDir doesn't follow root-level symlinks, producing an
-// empty manifest set without any error indication — a footgun.
-func ResolveScanPath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return abs, nil
-		}
-		return "", fmt.Errorf("resolve --path %q: %w", p, err)
-	}
-	return resolved, nil
 }

@@ -2,7 +2,10 @@ package external_test
 
 import (
 	"context"
+	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,34 +16,66 @@ import (
 )
 
 func TestFetcher_FileURL(t *testing.T) {
-	f := &external.Fetcher{}
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "content.yaml", "from FS")
-	ea := &manifest.ExternalArtifact{
-		Name: "ea", Namespace: "apps",
-		ArtifactURL: "file://" + root,
-		Revision:    "v1@sha256:abc",
-		Digest:      "sha256:abc",
-	}
-	art, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	if art.Kind != manifest.KindExternalArtifact {
-		t.Errorf("Kind = %q, want %q", art.Kind, manifest.KindExternalArtifact)
-	}
-	if art.LocalPath != root {
-		t.Errorf("LocalPath = %q, want admitted root", art.LocalPath)
-	}
-	if art.FS == nil || art.Key != "" {
-		t.Fatal("file URL must admit mutable content even with a digest and revision")
-	}
-	data, err := fs.ReadFile(art.FS, "content.yaml")
-	if err != nil || string(data) != "from FS" {
-		t.Fatalf("admitted read = %q, %v", data, err)
-	}
-	if art.Revision != "v1@sha256:abc" {
-		t.Errorf("Revision = %q", art.Revision)
+	for _, metadata := range []string{"directory", "gitfile"} {
+		t.Run(metadata, func(t *testing.T) {
+			f := &external.Fetcher{}
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "content.yaml", "from FS")
+			if metadata == "directory" {
+				testutil.WriteFile(t, root, ".git/config", "metadata")
+				testutil.WriteFile(t, root, "nested/.git/config", "metadata")
+			} else {
+				testutil.WriteFile(t, root, ".git", "gitdir: missing\n")
+				testutil.WriteFile(t, root, "nested/.git", "gitdir: missing\n")
+			}
+			label := filepath.Join(t.TempDir(), "input")
+			if err := os.Symlink(root, label); err != nil {
+				t.Fatal(err)
+			}
+			ea := &manifest.ExternalArtifact{
+				Name: "ea", Namespace: "apps", ArtifactURL: "file://" + label,
+				Revision: "v1@sha256:abc", Digest: "sha256:abc",
+			}
+			art, err := f.Fetch(t.Context(), ea, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatalf("Fetch: %v", err)
+			}
+			if art.Kind != manifest.KindExternalArtifact || art.URL != ea.ArtifactURL || art.LocalPath != label || art.Revision != ea.Revision || art.Digest != ea.Digest {
+				t.Fatalf("artifact changed authored coordinates: %+v", art)
+			}
+			if art.FS == nil || art.Key != "" {
+				t.Fatal("file URL must admit mutable content even with a digest and revision")
+			}
+			data, err := fs.ReadFile(art.FS, "content.yaml")
+			if err != nil || string(data) != "from FS" {
+				t.Fatalf("admitted read = %q, %v", data, err)
+			}
+			for _, name := range []string{".git", ".git/config", "nested/.git", "nested/.git/config"} {
+				if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("Stat(%q) = %v", name, err)
+				}
+				if file, err := art.FS.Open(name); !errors.Is(err, fs.ErrNotExist) {
+					if file != nil {
+						file.Close()
+					}
+					t.Fatalf("Open(%q) = %v", name, err)
+				}
+				if _, err := fs.ReadFile(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("ReadFile(%q) = %v", name, err)
+				}
+			}
+			for _, name := range []string{".", "nested"} {
+				entries, err := fs.ReadDir(art.FS, name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, entry := range entries {
+					if entry.Name() == ".git" {
+						t.Fatalf("ReadDir(%q) exposes Git metadata", name)
+					}
+				}
+			}
+		})
 	}
 }
 

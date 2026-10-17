@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -21,7 +20,6 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -250,24 +248,18 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	if c.pathOrig == "" && c.base == "" && !autoFallback {
 		return noop, nil
 	}
-	current, original := c.path, c.pathOrig
-	for _, path := range []*string{&original, &current} {
-		if *path == "" {
-			continue
-		}
-		resolved, err := discovery.ResolveScanPath(*path)
+	if c.pathOrig != "" {
+		res, err := baseline.ResolvePaths(ctx, c.path, c.pathOrig)
 		if err != nil {
 			return noop, err
 		}
-		*path = resolved
-	}
-	if original != "" {
-		var err error
-		c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs, err = baseline.ResolvePaths(ctx, current, original)
-		return noop, err
+		c.input, c.baseInput = res.Source, res.BaseInput
+		c.path, c.pathOrig = res.ScanPath, res.BaseScanPath
+		c.pathRoot, c.pathOrigRoot = res.Source.LocalPath, res.BaseInput.LocalPath
+		c.pathOrigSelfURLs = res.SelfURLs
+		return noop, nil
 	}
 	ssrfguard.Restrict(c.restrictEgress)
-	c.path = current
 	owner, err := sourcecache.New(ctx, c.cacheDir)
 	if err != nil {
 		return noop, err
@@ -276,12 +268,8 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	if err != nil {
 		return noop, errors.Join(err, owner.Close())
 	}
-	rel, err := filepath.Rel(res.Source.LocalPath, c.path)
-	if err != nil {
-		return noop, errors.Join(err, owner.Close())
-	}
 	c.owner, c.input, c.baseInput, c.changes = owner, res.Source, res.BaseInput, res.Changes
-	c.pathOrig = filepath.Join(res.BaseInput.LocalPath, rel)
+	c.path, c.pathOrig = res.ScanPath, res.BaseScanPath
 	c.pathRoot = res.Source.LocalPath
 	c.pathOrigRoot = res.BaseInput.LocalPath
 	c.pathOrigSelfURLs = res.SelfURLs

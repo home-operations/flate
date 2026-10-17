@@ -1,13 +1,14 @@
 package sourceignore
 
 import (
+	"os"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-func TestNew_PatternDefaults(t *testing.T) {
+func TestNewFS_PatternDefaults(t *testing.T) {
 	defaultMatches := []string{".git/HEAD", ".github/workflows/ci.yml", "app/icons/logo.png", "app/.sops.yaml"}
 	defaultKeeps := []string{"app/keep.yaml", "app/cache.tmp", "other/cache.tmp"}
 	patternKeeps := []string{"app/keep.yaml", ".github/workflows/ci.yml", "app/icons/logo.png", "app/.sops.yaml"}
@@ -77,20 +78,34 @@ func TestNew_PatternDefaults(t *testing.T) {
 			for rel, body := range tc.files {
 				testutil.WriteFile(t, root, rel, body)
 			}
-			matcher, err := New(root, tc.extra, tc.withDefaults)
-			if err != nil {
-				t.Fatalf("New: %v", err)
+			extra := ""
+			if tc.extra != nil {
+				extra = *tc.extra
 			}
-			for _, rel := range tc.match {
-				t.Run("match/"+rel, func(t *testing.T) {
-					assert.Equal(t, matcher.Match(rel, false), true)
+			matcher, err := NewFS(os.DirFS(root), nil, extra, tc.withDefaults)
+			assert.NoError(t, err)
+			original, err := NewFS(os.DirFS(root), nil, "*.previous\n", tc.withDefaults)
+			assert.NoError(t, err)
+			for _, candidate := range []struct {
+				name   string
+				policy *Matcher
+			}{{"loaded", matcher}, {"replaced_extra", original.WithExtra(extra)}} {
+				t.Run(candidate.name, func(t *testing.T) {
+					policy := candidate.policy
+					for _, rel := range tc.match {
+						t.Run("match/"+rel, func(t *testing.T) {
+							assert.Equal(t, policy.Match(rel, false), true)
+						})
+					}
+					for _, rel := range tc.keep {
+						t.Run("keep/"+rel, func(t *testing.T) {
+							assert.Equal(t, policy.Match(rel, false), false)
+						})
+					}
+					assert.Equal(t, policy.Match("file.previous", false), false)
 				})
 			}
-			for _, rel := range tc.keep {
-				t.Run("keep/"+rel, func(t *testing.T) {
-					assert.Equal(t, matcher.Match(rel, false), false)
-				})
-			}
+			assert.Equal(t, original.Match("file.previous", false), true)
 		})
 	}
 }

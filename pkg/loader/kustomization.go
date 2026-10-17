@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -70,6 +71,9 @@ func (r *documentReader) mountSources(s *store.Store) []string {
 		r.views = map[string]fs.FS{}
 	}
 	for root, art := range mounted {
+		if r.artifacts[root] == art {
+			continue
+		}
 		r.views[root] = art.FS
 		if art.FS == nil {
 			r.views[root] = unavailableSource{}
@@ -96,6 +100,9 @@ func (l *Loader) mountSources() {
 		}
 	}
 	for _, root := range changed {
+		if native, ok := l.documents.views[root].(*gittree.FS); ok {
+			l.documents.views[root] = native.OperationView()
+		}
 		for id, r := range l.Index.Files() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
 				delete(l.Index.Records, id)

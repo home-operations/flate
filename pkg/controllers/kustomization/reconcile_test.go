@@ -20,15 +20,12 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// newControllerWithFixture wires a controller against a real on-disk
-// fixture so reconcile can drive kustomize end-to-end. Returns the
-// controller, a bootstrap GitRepository pointing at root, and the
-// repo root path so callers can seed downstream artifacts.
 func newControllerWithFixture(t *testing.T) (*Controller, *store.Store, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -47,7 +44,9 @@ data: {greeting: hi}
 		URL: "file://" + root,
 	}
 	s.AddObject(bootstrap)
-	input, err := gittree.AdmitDirectory(t.Context(), root)
+	location, err := gitrepo.Locate(t.Context(), root, "")
+	assert.NoError(t, err)
+	input, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
 	s.SetArtifact(bootstrap.Named(), input)
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")

@@ -36,7 +36,9 @@ import (
 	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -111,19 +113,18 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		return 0, err
 	}
 	if l.documents.mountedRoot(abs) == "" && (l.SourceRoot == "" || l.documents.mountedRoot(inputRoot) == "") {
-		input, err := gittree.AdmitDirectory(ctx, inputRoot)
+		location, err := gitrepo.Locate(ctx, inputRoot, inputRoot)
+		if err != nil {
+			return 0, err
+		}
+		input, err := gittree.AdmitDirectory(ctx, location)
 		if err != nil {
 			if l.IgnoreFile != "" && errors.Is(err, fs.ErrNotExist) {
 				return 0, nil
 			}
 			return 0, err
 		}
-		if l.Store.GetArtifact(manifest.BootstrapSourceID) == nil {
-			l.Store.SetArtifact(manifest.BootstrapSourceID, input)
-			l.mountSources()
-		} else {
-			l.documents.views[inputRoot] = input.FS
-		}
+		l.documents.views[inputRoot] = input.FS.(*gittree.FS).OperationView()
 	}
 	l.ensureScopes()
 	l.scopes.complete = false
@@ -768,28 +769,11 @@ func isManifestFile(path string) bool {
 	return false
 }
 
-// shouldSkipDir applies the ad-hoc walk's directory-prune rules.
-// Not used by walkKustomize — that path follows explicit resource
-// entries and trusts the user's kustomize manifests.
-//
-// Lives on walker so the final ignore check routes through the
-// per-Load matches cache — without it, every directory in the tree
-// re-runs filepath.Rel + gitignore.Match for the same path.
+// Explicit resources bypass scan pruning; negated descendants MUST remain reachable.
 func (w *walker) shouldSkipDir(name, full string) bool {
-	switch name {
-	case "node_modules":
-		return true
-	case "templates", "crds":
-		// These directories typically contain Helm template fragments
-		// with Go-template syntax that isn't valid YAML.
+	if sourceignore.PruneDir(name, true) {
 		return true
 	}
-	if strings.HasPrefix(name, ".") && name != "." {
-		return true
-	}
-	// With `!` re-includes in play, an ignored directory can still hold
-	// re-included files, so descend and let the per-file checks filter —
-	// matching sourceignore's per-file evaluation of spec.ignore.
 	if w.ignore != nil && w.ignore.hasNegation {
 		return false
 	}

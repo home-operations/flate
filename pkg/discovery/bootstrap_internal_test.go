@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -33,7 +34,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 	} {
 		t.Run(tc.kind+"/"+tc.group+"/"+tc.namespace+"/"+tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := t.TempDir()
+			root := filepath.Join(t.TempDir(), ".flate-base", "missing")
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {Data: []byte("input")}}})
 			ks := &manifest.Kustomization{Name: "apps", Namespace: tc.namespace, SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: tc.name}}
@@ -45,6 +46,56 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			}
 			if obj := st.GetObject(ks.SourceID()); tc.want && (obj == nil || obj.Named() != ks.SourceID()) {
 				t.Fatalf("identity = %v", obj)
+			}
+		})
+	}
+	for _, scenario := range []string{"supplied", "preseeded", "disk"} {
+		t.Run("input precedence/"+scenario, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), ".flate-base", "missing")
+			seedRoot := filepath.Join(t.TempDir(), "preseeded")
+			st := store.New()
+			supplied := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {Data: []byte("supplied")}}}
+			preseeded := &store.SourceArtifact{LocalPath: seedRoot, LocalRoot: seedRoot, FS: fstest.MapFS{"file": {Data: []byte("preseeded")}}}
+			cfg := Config{Path: root, Store: st, SelfURLs: []string{"https://example.test/cluster"}}
+			want := supplied
+			switch scenario {
+			case "supplied":
+				cfg.Input = supplied
+				st.SetArtifact(manifest.BootstrapSourceID, preseeded)
+			case "preseeded":
+				st.SetArtifact(manifest.BootstrapSourceID, preseeded)
+				cfg.Path, want = seedRoot, preseeded
+			case "disk":
+				cfg.Path = t.TempDir()
+				testutil.WriteFile(t, cfg.Path, "file", "disk")
+				want = nil
+			}
+			source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: cfg.SelfURLs[0]}
+			st.AddObject(source)
+			d := discoverer{cfg: cfg}
+			if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
+				t.Fatal(err)
+			}
+			got := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			if want != nil && got != want {
+				t.Fatalf("bootstrap = %+v, want authoritative %+v", got, want)
+			}
+			body, err := fs.ReadFile(got.FS, "file")
+			if err != nil || string(body) != scenario {
+				t.Fatalf("bootstrap bytes = %q, %v, want %s", body, err, scenario)
+			}
+			if st.GetObject(source.Named()) != source {
+				t.Fatal("authored source replaced")
+			}
+			alias := st.GetArtifact(source.Named()).(*store.SourceArtifact)
+			body, err = fs.ReadFile(alias.FS, "file")
+			if err != nil || string(body) != scenario || alias.Key != "" {
+				t.Fatalf("alias bytes = %q, %v; key = %q", body, err, alias.Key)
+			}
+			if want != nil {
+				if _, err := os.Stat(want.LocalPath); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("synthetic label unexpectedly exists: %v", err)
+				}
 			}
 		})
 	}

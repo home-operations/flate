@@ -26,10 +26,10 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
@@ -424,13 +424,13 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 			}
 			inputStore := store.New()
 			if tt.unreadable {
-				input, err := source.NewLocalFS(t.Context(), root)
+				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 				if err != nil {
 					t.Fatal(err)
 				}
 				obj := &manifest.GitRepository{Name: tt.sourceName, Namespace: "flux-system"}
 				inputStore.AddObject(obj)
-				inputStore.SetArtifact(obj.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
+				inputStore.SetArtifact(obj.Named(), &store.SourceArtifact{LocalPath: root, FS: input.FS})
 			}
 			secondLoader := loader.New(inputStore)
 			secondLoader.SourceRoot = root

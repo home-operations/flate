@@ -122,3 +122,14 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 		t.Fatalf("failed producer lost isolation: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
+
+func TestRun_PathOrigSameDirectory(t *testing.T) {
+	root := writeFixture(t)
+	alias := filepath.Join(t.TempDir(), "same")
+	assert.NoError(t, os.Symlink(root, alias))
+	stdout, stderr, code := runCLI(t, "build", "ks", "--path", root, "--path-orig", alias,
+		"--cache-dir", t.TempDir(), "--concurrency", "2")
+	if code != 0 || !strings.Contains(stdout, "name: hello") {
+		t.Fatalf("same-directory full render changed: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+}

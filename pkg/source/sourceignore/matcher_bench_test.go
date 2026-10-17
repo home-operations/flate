@@ -11,7 +11,7 @@ func BenchmarkNew_Defaults(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := New(root, nil, true); err != nil {
+		if _, err := NewFS(os.DirFS(root), nil, "", true); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -25,7 +25,7 @@ func BenchmarkNew_Patterns(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := New(root, nil, true); err != nil {
+		if _, err := NewFS(os.DirFS(root), nil, "", true); err != nil {
 			b.Fatal(err)
 		}
 	}

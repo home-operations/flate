@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -536,34 +535,25 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 			err = o.bootstrapErr
 		}
 	}()
-	if o.cfg.Input == nil {
-		input, path, err := baseline.AdmitDirectory(ctx, o.cfg.Path, o.cfg.RepoRoot)
-		if err != nil {
-			return err
-		}
-		if o.cfg.BaseInput == nil && o.cfg.PathOrig != "" && o.cfg.ExternalChanges == nil {
-			baseInput, _, err := baseline.AdmitDirectory(ctx, o.cfg.PathOrig, o.cfg.PathOrig)
-			if err != nil {
-				return err
-			}
-			if baseInput.LocalPath == input.LocalPath {
-				baseInput = input
-			}
-			o.cfg.BaseInput = baseInput
-		}
-		o.cfg.Input, o.cfg.Path = input, path
-	}
-	if o.cfg.Input.FS == nil || o.cfg.Input.LocalPath == "" {
-		return fmt.Errorf("%w: input content unavailable", manifest.ErrInput)
-	}
-	o.cfg.RepoRoot = o.cfg.Input.LocalPath
-	o.store.SetArtifact(manifest.BootstrapSourceID, o.cfg.Input)
+	admitFromDisk := o.cfg.Input == nil && o.store.GetArtifact(manifest.BootstrapSourceID) == nil
 	res, err := discovery.Run(ctx, discovery.Config{
-		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs,
+		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 	})
 	if err != nil {
 		return err
+	}
+	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	o.cfg.RepoRoot = res.RepoRoot
+	if admitFromDisk && o.cfg.BaseInput == nil && o.cfg.PathOrig != "" && o.cfg.ExternalChanges == nil {
+		baseInput, _, err := baseline.AdmitDirectory(ctx, o.cfg.PathOrig, o.cfg.PathOrig)
+		if err != nil {
+			return err
+		}
+		if baseInput.LocalPath == o.cfg.Input.LocalPath {
+			baseInput = o.cfg.Input
+		}
+		o.cfg.BaseInput = baseInput
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index

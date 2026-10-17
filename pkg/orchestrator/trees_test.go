@@ -16,14 +16,17 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -292,20 +295,202 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 }
 
 func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
-	root := t.TempDir()
-	writeCluster(t, root, "same", "same")
-	alias := filepath.Join(t.TempDir(), "linked")
-	assert.NoError(t, os.Symlink(root, alias))
-	base, head, err := orchestrator.RenderTrees(t.Context(),
-		orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: alias},
-		orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2})
-	assert.NoError(t, err)
-	for _, rendered := range []orchestrator.Rendered{base, head} {
-		if names := configMapNames(rendered.Result); !names["cfg-a"] || !names["cfg-b"] {
-			t.Fatalf("same-directory comparison lost full render: %v", names)
+	for _, workers := range []int{2, 4} {
+		for _, tc := range []struct {
+			name       string
+			base, head bool
+		}{
+			{name: "directories"},
+			{name: "supplied", base: true, head: true},
+			{name: "supplied_base", base: true},
+			{name: "supplied_head", head: true},
+		} {
+			for _, external := range []string{"automatic", "nonempty", "empty"} {
+				t.Run(fmt.Sprintf("%s/%s/workers_%d", tc.name, external, workers), func(t *testing.T) {
+					root := t.TempDir()
+					writeCluster(t, root, "same", "same")
+					alias := filepath.Join(t.TempDir(), "linked")
+					assert.NoError(t, os.Symlink(root, alias))
+					cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: workers}
+					if tc.base || tc.head {
+						resolved, err := baseline.ResolvePaths(t.Context(), alias, root)
+						assert.NoError(t, err)
+						if tc.base {
+							cfg.BaseInput = resolved.BaseInput
+						}
+						if tc.head {
+							cfg.Input = resolved.Source
+						}
+					}
+					switch external {
+					case "nonempty":
+						cfg.ExternalChanges = change.NewSet([]string{"apps/app-a/cm.yaml"})
+					case "empty":
+						cfg.ExternalChanges = change.NewSet(nil)
+					}
+					base, head, err := orchestrator.RenderTrees(t.Context(),
+						orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: alias}, cfg)
+					assert.NoError(t, err)
+					full := tc.base == tc.head && external == "automatic"
+					for side, rendered := range []orchestrator.Rendered{base, head} {
+						if rendered.Result == nil {
+							t.Fatalf("side %d has no result", side)
+						}
+						assert.NoError(t, rendered.Err)
+						assert.Equal(t, len(rendered.Result.Failed), 0)
+						names := configMapNames(rendered.Result)
+						assert.Equal(t, names["cfg-a"], full || external == "nonempty")
+						assert.Equal(t, names["cfg-b"], full)
+						warnings := rendered.Result.Warnings
+						if external == "nonempty" {
+							assert.Equal(t, len(warnings), 0)
+							continue
+						}
+						if len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig {
+							t.Fatalf("side %d warnings = %v", side, warnings)
+						}
+						message := "no changes detected"
+						if full {
+							message = "resolve to the same root"
+						}
+						assert.Equal(t, strings.Contains(warnings[0].Message, message), true)
+					}
+				})
+			}
 		}
-		if len(rendered.Result.Warnings) != 1 || rendered.Result.Warnings[0].Category != manifest.WarnPathConfig {
-			t.Fatalf("same-directory warning changed: %v", rendered.Result.Warnings)
+	}
+	t.Run("scan_paths", func(t *testing.T) {
+		for _, mode := range []string{"directories", "supplied"} {
+			t.Run(mode, func(t *testing.T) {
+				root := t.TempDir()
+				for _, name := range []string{"a", "b"} {
+					testutil.WriteFile(t, root, "scans/"+name+"/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app-`+name+`, namespace: flux-system}
+spec:
+  path: ./apps/`+name+`
+  sourceRef: {kind: GitRepository, name: flux-system}
+`)
+					testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+					testutil.WriteFile(t, root, "apps/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg-"+name+"}\n")
+				}
+				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
+				if mode == "supplied" {
+					input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+					assert.NoError(t, err)
+					cfg.BaseInput, cfg.Input = input, input
+				}
+				base, head, err := orchestrator.RenderTrees(t.Context(),
+					orchestrator.Tree{RepoRoot: root, Path: filepath.Join(root, "scans", "a")},
+					orchestrator.Tree{RepoRoot: root, Path: filepath.Join(root, "scans", "b")}, cfg)
+				assert.NoError(t, err)
+				for side, rendered := range []orchestrator.Rendered{base, head} {
+					if rendered.Result == nil {
+						t.Fatalf("side %d has no result", side)
+					}
+					assert.NoError(t, rendered.Err)
+					name, other := "a", "b"
+					if side == 1 {
+						name, other = other, name
+					}
+					assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-" + name: true})
+					foreign := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-" + other}
+					if rendered.Store().GetObject(foreign) != nil {
+						t.Fatalf("side %d admitted the other scan's Kustomization as an orphan", side)
+					}
+				}
+			})
+		}
+	})
+}
+
+func TestRenderTrees_SuppliedViews(t *testing.T) {
+	for _, workers := range []int{2, 4} {
+		for _, scenario := range []string{"differing_options", "filtered_addition", "filtered_deletion", "explicit_changes", "explicit_empty"} {
+			t.Run(fmt.Sprintf("%s/workers_%d", scenario, workers), func(t *testing.T) {
+				root := t.TempDir()
+				writeCluster(t, root, "same", "same")
+				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+				assert.NoError(t, err)
+				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: workers}
+				for side := range 2 {
+					current := input.FS
+					filtered := scenario == "filtered_addition" && side == 0 || scenario == "filtered_deletion" && side == 1
+					if filtered {
+						current, _, err = gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{
+							Mode: gittree.Source, Current: current, Ignore: "ks-a.yaml\napps/app-a/\n",
+							Sparse: []string{"ks-b.yaml", "apps/app-b"},
+						})
+						assert.NoError(t, err)
+					}
+					opts := gittree.ViewOptions{Mode: gittree.Direct, Current: current}
+					if scenario == "differing_options" && side == 1 {
+						opts.Ignore, opts.Sparse = "ks-a.yaml\napps/app-a/\n", []string{"ks-b.yaml", "apps/app-b"}
+					}
+					view, key, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, opts)
+					assert.NoError(t, err)
+					assert.Equal(t, key, "")
+					if view.Location() == nil || view.Location().ContentRoot == "" || view.Location().ContentRoot != input.LocalPath {
+						t.Fatalf("side %d location = %+v, want content root %s", side, view.Location(), input.LocalPath)
+					}
+					for _, name := range []string{"ks-a.yaml", "apps/app-a/kustomization.yaml", "apps/app-a/cm.yaml", "ks-b.yaml", "apps/app-b/cm.yaml"} {
+						body, readErr := fs.ReadFile(view, name)
+						if filtered && (name == "ks-a.yaml" || strings.HasPrefix(name, "apps/app-a/")) {
+							assert.Equal(t, errors.Is(readErr, fs.ErrNotExist), true)
+						} else {
+							assert.NoError(t, readErr)
+							want, err := os.ReadFile(filepath.Join(root, name))
+							assert.NoError(t, err)
+							assert.Equal(t, string(body), string(want))
+						}
+					}
+					artifact := *input
+					artifact.FS, artifact.Key = view, key
+					if side == 0 {
+						cfg.BaseInput = &artifact
+					} else {
+						cfg.Input = &artifact
+					}
+				}
+				switch scenario {
+				case "explicit_changes":
+					cfg.ExternalChanges = change.NewSet([]string{"apps/app-a/cm.yaml"})
+				case "explicit_empty":
+					cfg.ExternalChanges = change.NewSet(nil)
+				}
+				base, head, err := orchestrator.RenderTrees(t.Context(),
+					orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: root}, cfg)
+				assert.NoError(t, err)
+				for side, rendered := range []orchestrator.Rendered{base, head} {
+					if rendered.Result == nil {
+						t.Fatalf("side %d has no result", side)
+					}
+					assert.NoError(t, rendered.Err)
+					assert.Equal(t, len(rendered.Result.Failed), 0)
+					wantA := scenario == "explicit_changes" || scenario == "filtered_addition" && side == 1 || scenario == "filtered_deletion" && side == 0
+					names := configMapNames(rendered.Result)
+					assert.Equal(t, names["cfg-a"], wantA)
+					assert.Equal(t, names["cfg-b"], false)
+					filtered := scenario == "filtered_addition" && side == 0 || scenario == "filtered_deletion" && side == 1
+					if filtered {
+						id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
+						assert.Equal(t, rendered.Store().GetObject(id) == nil, true)
+						for _, obj := range rendered.Store().ListObjects("", manifest.KindConfigMap) {
+							if obj.Named().Name == "cfg-a" {
+								t.Fatal("filtered side admitted cfg-a as an orphan seed")
+							}
+						}
+					}
+					warnings := rendered.Result.Warnings
+					if scenario == "differing_options" || scenario == "explicit_empty" {
+						if len(warnings) != 1 || warnings[0].Category != manifest.WarnPathConfig || !strings.Contains(warnings[0].Message, "no changes detected") {
+							t.Fatalf("side %d warnings = %v", side, warnings)
+						}
+					} else {
+						assert.Equal(t, len(warnings), 0)
+					}
+				}
+			})
 		}
 	}
 }

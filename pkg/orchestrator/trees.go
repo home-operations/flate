@@ -94,8 +94,10 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 		}
 		side.RepoRoot = inputs[i].LocalPath
 	}
-	sameDirectory := directoryInputs && baseTree.RepoRoot == headTree.RepoRoot
-	if cfg.ExternalChanges == nil && !sameDirectory {
+	if directoryInputs && baseTree.RepoRoot == headTree.RepoRoot {
+		inputs[1] = inputs[0]
+	}
+	if cfg.ExternalChanges == nil && inputs[0] != inputs[1] {
 		cfg.ExternalChanges, err = change.Detect(ctx, inputs[0], inputs[1])
 		if err != nil {
 			return base, head, err
@@ -113,9 +115,6 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 	headCfg.PathOrig = baseTree.RepoRoot
 	headCfg.SelfURLs = headTree.SelfURLs
 	headCfg.Input, headCfg.BaseInput = inputs[1], inputs[0]
-	if sameDirectory {
-		baseCfg.BaseInput, headCfg.BaseInput = baseCfg.Input, headCfg.Input
-	}
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {

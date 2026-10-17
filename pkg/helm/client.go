@@ -132,11 +132,10 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 		return chartLoadResult{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
-	input, authority, err := source.ReadView(ctx, art.FS, false)
+	input, pin, err := source.OperationView(ctx, art.FS)
 	if err != nil {
 		return chartLoadResult{}, err
 	}
-	pin, _ := authority.(string)
 	selector := struct {
 		Pin, Path string
 		Auto      bool

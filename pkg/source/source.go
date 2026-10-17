@@ -15,9 +15,13 @@ package source
 import (
 	"context"
 	"fmt"
+	"io/fs"
+
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -116,3 +120,14 @@ func QualifiedName(kind, namespace, name string) string {
 // OCIRepository (auth + TLS), Bucket (auth + TLS).
 // The orchestrator wires it to the core Secret store lookup at construction time.
 type SecretGetter func(namespace, name string) *manifest.Secret
+
+// OperationView refreshes admitted mutable observations and retains cache acquisition identity.
+func OperationView(ctx context.Context, input fs.FS) (fs.FS, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	if current, ok := input.(*gittree.FS); ok {
+		return gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})
+	}
+	return input, sourcecache.AcquisitionIdentity(input), nil
+}

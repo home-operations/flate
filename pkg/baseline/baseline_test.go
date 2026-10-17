@@ -2,6 +2,7 @@ package baseline
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 // An explicit base bypasses the auto-detection ladder.
@@ -36,6 +38,7 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 		t.Errorf("Source = %q, want prefix 'explicit --base='", res.Source.Metadata["baseline-selection"])
 	}
 	assert.Equal(t, res.Source.LocalRoot, dir)
+	assert.Equal(t, res.Source.URL, "")
 	got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
 	if err != nil {
 		t.Fatalf("read materialized: %v", err)
@@ -90,11 +93,11 @@ func TestResolvePaths_AncestorLookupError(t *testing.T) {
 				current, original = original, current
 			}
 
-			currentRoot, originalRoot, selfURLs, err := ResolvePaths(t.Context(), current, original)
+			result, err := ResolvePaths(t.Context(), current, original)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, currentRoot, current)
-			assert.Equal(t, originalRoot, original)
-			assert.Equal(t, len(selfURLs), 0)
+			assert.Equal(t, result.Source.LocalPath, current)
+			assert.Equal(t, result.BaseInput.LocalPath, original)
+			assert.Equal(t, len(result.SelfURLs), 0)
 		})
 	}
 }
@@ -385,21 +388,22 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 	}
 }
 
-// TestAutoResolve_PathOrigMappedToSubdir: when --path is a subdir,
-// the synthetic PathOrig must be <tempdir>/<rel>, not just tempdir.
-// This is the load-bearing case the agents flagged in PR #348's
-// validation: real users point at cluster/, not the repo root.
 func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	dir := t.TempDir()
 	commit := initRepoWithFile(t, dir, "kubernetes/flux/cluster/cluster.yaml", "x")
 	cluster := filepath.Join(dir, "kubernetes", "flux", "cluster")
-	result, err := AutoResolve(t.Context(), cluster, commit.String(), testOwner(t, ""))
+	link := filepath.Join(t.TempDir(), "cluster")
+	assert.NoError(t, os.Symlink(cluster, link))
+	result, err := AutoResolve(t.Context(), link, commit.String(), testOwner(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Source.LocalPath != dir || result.BaseInput.LocalRoot != dir {
 		t.Fatalf("coordinates: %#v %#v", result.Source, result.BaseInput)
 	}
+	assert.Equal(t, result.ScanPath, cluster)
+	assert.Equal(t, result.BaseScanPath, filepath.Join(result.BaseInput.LocalPath, "kubernetes", "flux", "cluster"))
+	assert.Equal(t, result.BaseInput.FS.(*gittree.FS).Location(), result.Source.FS.(*gittree.FS).Location())
 	if data, err := fs.ReadFile(result.BaseInput.FS, "kubernetes/flux/cluster/cluster.yaml"); err != nil || string(data) != "x" {
 		t.Fatalf("baseline file: %q %v", data, err)
 	}
@@ -638,4 +642,89 @@ func testOwner(t *testing.T, root string) *sourcecache.Cache {
 		}
 	})
 	return owner
+}
+
+func TestResolve_RetainedConfiguration(t *testing.T) {
+	for _, route := range []string{"upstream", "origin"} {
+		t.Run(route, func(t *testing.T) {
+			root := t.TempDir()
+			base := initRepoWithFile(t, root, "a.yaml", "base")
+			repo := openHelper(t, root)
+			head, err := repo.Head()
+			assert.NoError(t, err)
+			var explicit string
+			if route == "upstream" {
+				setRef(t, repo, plumbing.NewRemoteReferenceName("upstream", "trunk"), base)
+				configureBranch(t, repo, &config.Branch{Name: head.Name().Short(), Remote: "upstream", Merge: plumbing.NewBranchReferenceName("trunk")})
+				writeAndCommit(t, root, "a.yaml", "head")
+			} else {
+				remote := t.TempDir()
+				base = initRepoWithFile(t, remote, "a.yaml", "remote")
+				setRef(t, openHelper(t, remote), plumbing.NewBranchReferenceName("trunk"), base)
+				addOrigin(t, root, filepath.Join(remote, ".git"))
+				explicit = "trunk"
+			}
+			input, _, err := AdmitDirectory(t.Context(), root, "")
+			assert.NoError(t, err)
+			location := input.FS.(*gittree.FS).Location()
+			assert.NoError(t, os.Remove(filepath.Join(root, ".git", "config")))
+			resolved, err := resolve(t.Context(), location, explicit, testOwner(t, ""))
+			assert.NoError(t, err)
+			assert.Equal(t, resolved.Hash, base)
+			if route == "upstream" {
+				assert.Equal(t, resolved.Source, "merge-base with @{u}")
+			} else if !strings.Contains(resolved.Source, "fetched from origin") {
+				t.Fatalf("origin selection = %q", resolved.Source)
+			}
+		})
+	}
+}
+
+func TestAdmitDirectory_ExplicitRootRetainsRepository(t *testing.T) {
+	root := t.TempDir()
+	initRepoWithFile(t, root, "cluster/a.yaml", "body")
+	const url = "https://example.invalid/cluster.git"
+	addOrigin(t, root, url)
+	content := filepath.Join(root, "cluster")
+	input, scan, err := AdmitDirectory(t.Context(), content, content)
+	assert.NoError(t, err)
+	location := input.FS.(*gittree.FS).Location()
+	assert.Equal(t, scan, content)
+	assert.Equal(t, input.LocalRoot, content)
+	assert.Equal(t, location.ContentRoot, content)
+	assert.Equal(t, location.RepositoryRoot, root)
+	assert.NoError(t, os.Remove(filepath.Join(root, ".git", "config")))
+	got, ok := originURL(location.Config)
+	assert.Equal(t, ok, true)
+	assert.Equal(t, got, url)
+	body, err := fs.ReadFile(input.FS, "a.yaml")
+	assert.NoError(t, err)
+	assert.Equal(t, string(body), "body")
+	_, _, err = AdmitDirectory(t.Context(), root, content)
+	if err == nil || !strings.Contains(err.Error(), "outside the source root") {
+		t.Fatalf("escaped scan was admitted: %v", err)
+	}
+}
+
+func TestResolvePaths_ReusesRoot(t *testing.T) {
+	root := t.TempDir()
+	initRepoWithFile(t, root, "current/a.yaml", "current")
+	testutil.WriteFile(t, root, "original/a.yaml", "original")
+	for _, sameScan := range []bool{false, true} {
+		t.Run(fmt.Sprintf("same_scan_%t", sameScan), func(t *testing.T) {
+			current, original := filepath.Join(root, "current"), filepath.Join(root, "original")
+			if sameScan {
+				original = current
+			}
+			result, err := ResolvePaths(t.Context(), current, original)
+			assert.NoError(t, err)
+			assert.Equal(t, result.Source, result.BaseInput)
+			assert.Equal(t, result.ScanPath, current)
+			assert.Equal(t, result.BaseScanPath, original)
+			_, err = ResolvePaths(t.Context(), filepath.Join(root, "missing"), original)
+			if !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("missing same-root scan was admitted: %v", err)
+			}
+		})
+	}
 }

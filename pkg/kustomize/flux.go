@@ -22,7 +22,6 @@ import (
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -219,15 +218,11 @@ func (c *TreeCache) sourceRootFor(ctx context.Context, artifact *store.SourceArt
 	}
 	// Shared admission belongs to the cache lifetime, not the first reader's cancellation.
 	load := sync.OnceValues(func() (*sourceRoot, error) {
-		_, ignore, err := source.ReadView(context.Background(), artifact.FS, true)
-		if err != nil {
-			return nil, err
-		}
 		input, _, err := gittree.New(context.Background(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS})
 		if err != nil {
 			return nil, err
 		}
-		return &sourceRoot{fs: input, ignore: ignore}, nil
+		return &sourceRoot{fs: input, ignore: input.PolicyEvidence()}, nil
 	})
 	actual, _ := c.sourceRoots.LoadOrStore(key, load)
 	return actual.(func() (*sourceRoot, error))()

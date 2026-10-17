@@ -24,7 +24,7 @@ import (
 )
 
 func TestRenderTrees_AdmittedViews(t *testing.T) {
-	for _, scenario := range []string{"equal_labels", "authored_pins", "unavailable_host_decoy"} {
+	for _, scenario := range []string{"equal_labels", "synthetic_labels", "authored_pins", "committed_detection", "unavailable_host_decoy"} {
 		t.Run(scenario, func(t *testing.T) {
 			baseRoot, headRoot := t.TempDir(), t.TempDir()
 			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
@@ -43,7 +43,24 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				assert.NoError(t, err)
 				cfg.Input.LocalPath, cfg.Input.LocalRoot = baseRoot, baseRoot
 				headRoot = baseRoot
-			case "authored_pins":
+			case "synthetic_labels":
+				for i, root := range []string{baseRoot, headRoot} {
+					writeCluster(t, root, []string{"A", "B"}[i], "same")
+					files := fstest.MapFS{}
+					for _, file := range []string{"ks-a.yaml", "ks-b.yaml", "apps/app-a/kustomization.yaml", "apps/app-a/cm.yaml", "apps/app-b/kustomization.yaml", "apps/app-b/cm.yaml"} {
+						body, err := os.ReadFile(filepath.Join(root, file))
+						assert.NoError(t, err)
+						files[file] = &fstest.MapFile{Data: body}
+					}
+					label := filepath.Join(root, ".flate-base", "synthetic")
+					input := &store.SourceArtifact{LocalPath: label, LocalRoot: label, FS: files}
+					if i == 0 {
+						cfg.BaseInput, baseRoot = input, label
+					} else {
+						cfg.Input, headRoot = input, label
+					}
+				}
+			case "authored_pins", "committed_detection":
 				headRoot = baseRoot
 				repo, err := git.PlainInit(headRoot, false)
 				assert.NoError(t, err)
@@ -76,7 +93,10 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				t.Cleanup(func() { _ = cfg.Cache.Close() })
 				selected, err := baseline.AutoResolve(t.Context(), headRoot, baseHash.String(), cfg.Cache)
 				assert.NoError(t, err)
-				cfg.BaseInput, cfg.Input, cfg.ExternalChanges = selected.BaseInput, selected.Source, selected.Changes
+				cfg.BaseInput, cfg.Input = selected.BaseInput, selected.Source
+				if scenario == "authored_pins" {
+					cfg.ExternalChanges = selected.Changes
+				}
 				baseRoot = selected.BaseInput.LocalPath
 			case "unavailable_host_decoy":
 				writeCluster(t, headRoot, "host-decoy", "same")
@@ -99,6 +119,11 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 					}
 				})
 				o.WithFetcher(manifest.KindGitRepository, nil)
+				o.Store().SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: headRoot, FS: os.DirFS(headRoot)})
+				assert.NoError(t, o.Bootstrap(t.Context()))
+				if o.Store().GetArtifact(manifest.BootstrapSourceID) != cfg.Input {
+					t.Fatal("preseeded input replaced supplied input")
+				}
 				source := &manifest.GitRepository{Name: "unavailable", Namespace: "flux-system"}
 				o.Store().AddObject(source)
 				o.Store().SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: headRoot})

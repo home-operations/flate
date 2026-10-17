@@ -1,9 +1,14 @@
 package loader
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -137,6 +142,7 @@ data: {env: `+env+`}
 `)
 		}
 		s := store.New()
+		admitForTest(s, dir)
 		l := New(s)
 		if _, err := l.Load(t.Context(), dir); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -213,6 +219,7 @@ data: {env: `+env+`}
 	envOf := func(t *testing.T, ignoreFile string) string {
 		t.Helper()
 		s := store.New()
+		admitForTest(s, dir)
 		l := loaderFixture(s, nil)
 		l.IgnoreFile = ignoreFile
 		if _, err := l.Load(t.Context(), dir); err != nil {
@@ -253,6 +260,49 @@ data: {env: `+env+`}
 		l.IgnoreFile = filepath.Join(dir, "nope.krmignore")
 		if _, err := l.Load(t.Context(), dir); err == nil {
 			t.Fatal("Load: expected error for missing IgnoreFile")
+		}
+	})
+}
+
+func TestLoader_KrmignoreNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		name, rules string
+		wantErr     error
+	}{
+		{name: "trimmed exclusion", rules: "  secret.yaml\n"},
+		{name: "trimmed inclusion", rules: "*\n  !keep.yaml\n"},
+		{name: "oversized line", rules: strings.Repeat("x", 65_536) + "\n", wantErr: bufio.ErrTooLong},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, ".krmignore", tc.rules)
+			for _, name := range []string{"secret", "keep"} {
+				testutil.WriteFile(t, root, name+".yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\n")
+			}
+			st := store.New()
+			l := New(st)
+			_, err := l.Load(t.Context(), root)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Load error = %v, want %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			for _, name := range []string{"secret", "keep"} {
+				_, indexed := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name})
+				want := name == "keep"
+				if indexed != want {
+					t.Fatalf("%s indexed = %t, want %t", name, indexed, want)
+				}
+			}
+			if st.GetArtifact(manifest.BootstrapSourceID) != nil || st.GetObject(manifest.BootstrapSourceID) != nil {
+				t.Fatal("standalone load published bootstrap identity")
+			}
+		})
+	}
+	t.Run("reader error", func(t *testing.T) {
+		if _, err := parseIgnore(iotest.ErrReader(fs.ErrPermission), t.TempDir()); !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("parseIgnore error = %v, want permission error", err)
 		}
 	})
 }

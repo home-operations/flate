@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
@@ -86,7 +85,7 @@ func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustom
 func buildIDs(memFS filesys.FileSystem, dir string) []string {
 	kustomizestate.BuildMutex.Lock()
 	defer kustomizestate.BuildMutex.Unlock()
-	rm, err := fluxkustomize.Build(memFS, dir)
+	rm, err := kustomizestate.Build(memFS, dir)
 	if err != nil {
 		return nil
 	}

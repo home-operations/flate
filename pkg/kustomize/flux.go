@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"github.com/go-git/go-git/v5/plumbing"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -140,7 +139,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	rm, err := func() (resmap.ResMap, error) {
 		kustomizestate.BuildMutex.Lock()
 		defer kustomizestate.BuildMutex.Unlock()
-		return fluxkustomize.Build(memFS, subDir)
+		return kustomizestate.Build(memFS, subDir)
 	}()
 	if err != nil {
 		built := fmt.Errorf("kustomize build %s: %w", subPath, err)

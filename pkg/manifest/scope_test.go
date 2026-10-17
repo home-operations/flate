@@ -9,7 +9,6 @@ import (
 	"time"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -192,7 +191,7 @@ func TestParseDoc_ScopeBuildIsolation(t *testing.T) {
 			}
 			rm, err := func() (resmap.ResMap, error) {
 				defer kustomize.BuildMutex.Unlock()
-				return fluxkustomize.Build(fs, dir)
+				return kustomize.Build(fs, dir)
 			}()
 			select {
 			case <-done:

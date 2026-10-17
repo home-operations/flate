@@ -60,8 +60,8 @@ kind: ResourceSet
 metadata: {name: late-provider, namespace: flux-system}
 spec:
   dependsOn:
-    - {kind: Kustomization, name: consumer}
-    - {kind: HelmRelease, name: consumer}
+    - {apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, name: consumer}
+    - {apiVersion: helm.toolkit.fluxcd.io/v2, kind: HelmRelease, name: consumer}
   resourcesTemplate: |
     apiVersion: fluxcd.controlplane.io/v1
     kind: ResourceSetInputProvider

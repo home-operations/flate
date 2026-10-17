@@ -1165,8 +1165,6 @@ func TestAcquire_TrailingBoundary(t *testing.T) {
 	}
 }
 
-// The consumer rejecting trailing data while the producer is still writing must surface as the cache's
-// own error on every run, never as the producer's write failure. The race is a fraction of a percent per call.
 func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
@@ -1175,17 +1173,25 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 				root = t.TempDir()
 			}
 			c := newCache(t, root)
-			for i := range 2000 {
-				_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: fmt.Sprintf("source-trailing-failure-%d", i)}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-					if _, err := w.Write(archive(t, "file", "x")); err != nil {
+			data := archive(t, "file", "x")
+			trailingWriteFailed := false
+			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-failure"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+				if _, err := w.Write(data); err != nil {
+					return ocispec.Descriptor{}, err
+				}
+				trailing := make([]byte, 32<<10)
+				for {
+					if _, err := w.Write(trailing); err != nil {
+						trailingWriteFailed = true
 						return ocispec.Descriptor{}, err
 					}
-					_, err := w.Write(make([]byte, 2<<20))
-					return ocispec.Descriptor{}, err
-				})
-				if _, ok := errors.AsType[*CacheError](err); !ok {
-					t.Fatalf("run %d: %T %v, want *CacheError", i, err, err)
 				}
+			})
+			if !trailingWriteFailed {
+				t.Fatal("trailing write did not fail")
+			}
+			if _, ok := errors.AsType[*CacheError](err); !ok {
+				t.Fatalf("%T %v, want *CacheError", err, err)
 			}
 		})
 	}

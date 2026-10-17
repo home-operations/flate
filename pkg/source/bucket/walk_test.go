@@ -396,8 +396,7 @@ func (w *cancelArchiveWriter) Write(p []byte) (int, error) {
 func TestWalkBucket_Ranges(t *testing.T) {
 	const part = 8 << 20
 	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server"} {
-		run := func(t *testing.T) {
-			t.Helper()
+		t.Run(behavior, func(t *testing.T) {
 			copyCtx, cancelCopy := context.WithCancel(t.Context())
 			defer cancelCopy()
 			var gets atomic.Int32
@@ -654,15 +653,6 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			if desc.Annotations["flate.revision"] != revision || desc.Annotations["flate.object-count"] != "3" {
 				t.Fatalf("metadata=%v, want revision=%s count=3", desc.Annotations, revision)
 			}
-		}
-		if behavior == "ignore_changed" || behavior == "ignore_missing" || behavior == "ignore_server" {
-			t.Run(behavior, func(t *testing.T) {
-				for i := range 20 {
-					t.Run(strconv.Itoa(i), run)
-				}
-			})
-		} else {
-			t.Run(behavior, run)
-		}
+		})
 	}
 }

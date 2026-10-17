@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
@@ -61,7 +63,7 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/foo.yaml\n"})
-	if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -101,7 +103,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/missing.yaml\n"})
-	_, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
+	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error on 404; got nil (preflight would silently swallow the failure)")
 	}
@@ -118,7 +120,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
-	if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	got, _ := fsys.ReadFile("kustomization.yaml")
@@ -138,12 +140,9 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 		"kustomization.yaml":              parent,
 		"components/x/kustomization.yaml": "resources:\n  - " + srv.URL + "/nested.yaml\n",
 	})
-	injected, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
+	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
 	if err != nil {
 		t.Fatalf("preflight: %v", err)
-	}
-	if !injected {
-		t.Fatal("nested remote input did not disable persistent caching")
 	}
 	if body, _ := fsys.ReadFile("kustomization.yaml"); string(body) != parent {
 		t.Fatalf("unchanged parent operand was rewritten: %q", body)
@@ -205,7 +204,7 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 	for _, name := range []string{"kustomization.yml", "Kustomization"} {
 		t.Run(name, func(t *testing.T) {
 			fsys := memFSWith(t, map[string]string{name: "resources:\n  - " + srv.URL + "/x.yaml\n"})
-			if _, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
+			if err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 				t.Fatalf("preflight: %v", err)
 			}
 			body, _ := fsys.ReadFile(name)
@@ -240,7 +239,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	})
 
 	cache := newTestTreeCache(t, "")
-	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 	if hits != 1 {
@@ -253,7 +252,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	// A second preflight against the same cache (production runs one preflight
 	// per RenderFlux) must NOT re-fetch.
 	fsys2 := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n"})
-	if _, err := preflightRemoteResources(context.Background(), cache, fsys2, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys2, "."); err != nil {
 		t.Fatalf("second preflight: %v", err)
 	}
 	if hits != 1 {
@@ -293,7 +292,7 @@ resources:
 namespace: my-app
 `
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": original})
-	if _, err := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, "."); err != nil {
+	if err := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -412,6 +411,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 		{name: "plugin-git-directory", control: base + "generators: ['https://example.invalid/o/r.git//plugins?ref=main']\n", gitFiles: map[string]string{"plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner"},
 		{name: "plugin-file", control: base + "generators: [conf/g.yaml]\n", files: map[string]string{"conf/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
 		{name: "plugin-inline-multidoc", control: base + "generators:\n- |\n  " + strings.ReplaceAll(plugin+"---\napiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: other}\nenvs: [$URL/env]\n", "\n", "\n  "), replies: map[string]string{"/file.txt": "contents", "/env": "marker=secret\n"}, want: "marker: c2VjcmV0"},
+		{name: "git-looking-file", control: base + "patches: [{path: $URL/repo.git//patch.yaml}]\n", replies: map[string]string{"/repo.git//patch.yaml": patch}, want: "marker: patched"},
 		{name: "plugin-inline", control: base + "generators:\n- |\n" + "  " + strings.ReplaceAll(plugin, "\n", "\n  "), replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
 		{name: "plugin-directory-owner", control: base + "generators: [plugins]\n", files: map[string]string{"plugins/kustomization.yaml": "resources: [conf/g.yaml]\n", "plugins/conf/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner"},
 		{name: "plugin-multidoc", control: base + "generators: [$URL/g.yaml]\n", replies: map[string]string{"/g.yaml": plugin + "---\napiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: other}\nenvs: [$URL/env]\n", "/file.txt": "contents", "/env": "marker=secret\n"}, want: "marker: c2VjcmV0"},
@@ -510,6 +510,29 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 			if marked.Load() != int32(len(tc.replies)) || bypass.Load() != 0 {
 				t.Fatalf("marked=%d want=%d, bypass=%d", marked.Load(), len(tc.replies), bypass.Load())
 			}
+			if tc.name == "git-looking-file" {
+				rec := newReadSet(root)
+				view := newTreeFS(localSource(t, root).FS, root, rec)
+				if err := preflightRemoteResources(t.Context(), cache, view, root); err != nil {
+					t.Fatal(err)
+				}
+				snap, _, err := decodeFrame(testRenderFrame(t, rec.snapshot(), out))
+				if err != nil || len(snap.Remotes) != 1 || snap.Remotes[0].Input.Operation != remoteHTTP {
+					t.Fatalf("admitted file operation: %+v, %v", snap, err)
+				}
+				replay := newTestTreeCache(t, "")
+				replay.httpClient = cache.httpClient
+				replay.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					t.Error("file replay reclassified the admitted HTTP operation")
+					return nil, manifest.ErrInput
+				})
+				if valid, err := snap.stillValid(t.Context(), replay, view, false); err != nil || !valid {
+					t.Fatalf("file frame replay: %t, %v", valid, err)
+				}
+				if marked.Load() != 2 || bypass.Load() != 0 {
+					t.Fatalf("HTTP initial/replay: marked=%d bypass=%d", marked.Load(), bypass.Load())
+				}
+			}
 			if manifest.Fingerprint(spec) != before {
 				t.Fatal("stored Flux specification mutated")
 			}
@@ -566,5 +589,59 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 				t.Fatalf("operation must precede cleanup: %v", err)
 			}
 		})
+	}
+}
+
+func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, "remote data")
+	}))
+	t.Cleanup(srv.Close)
+	url := srv.URL + "/repo.git//data"
+	const gitURL = "https://example.invalid/owner/repo.git"
+	remote := memoryTree(t, map[string]string{"kustomization.yaml": "configMapGenerator: [{name: nested, files: ['chosen=" + url + "']}]\n"})
+	c := newTestTreeCache(t, "")
+	gitCalls := 0
+	c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+		gitCalls++
+		if request.URL != gitURL || request.Ref != "main" {
+			t.Fatalf("Git request=%+v", request)
+		}
+		return &store.SourceArtifact{FS: remote, Key: "family", Revision: "revision"}, nil
+	})
+	rec := newReadSet("/src")
+	input := newTreeFS(memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + gitURL + "?ref=main']\nconfigMapGenerator: [{name: root, files: ['chosen=" + url + "', 'other=" + url + "']}]\n"}), "/src", rec)
+	err := preflightRemoteResources(t.Context(), c, input, "/src")
+	if err != nil {
+		t.Fatalf("preflight error=%v", err)
+	}
+	snap := rec.snapshot()
+	if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input != (remoteInput{Operation: remoteGit, URL: gitURL, Ref: "main"}) {
+		t.Fatalf("remote observations=%+v", snap.Remotes)
+	}
+	frame, err := encodeFrame(snap, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, _, err := decodeFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range decoded.Remotes {
+		acquired, identity, err := entry.Input.acquire(t.Context(), c, input)
+		if err != nil || identity != entry.Identity {
+			t.Fatalf("replayed identity=%+v observation=%+v error=%v", identity, entry, err)
+		}
+		if entry.Input.Operation == remoteHTTP {
+			body, err := fs.ReadFile(acquired, "content")
+			if err != nil || string(body) != "remote data" {
+				t.Fatalf("HTTP body=%q error=%v", body, err)
+			}
+		}
+	}
+	if hits.Load() != 1 || gitCalls != 2 {
+		t.Fatalf("HTTP requests=%d Git acquisitions=%d", hits.Load(), gitCalls)
 	}
 }

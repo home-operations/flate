@@ -1,11 +1,8 @@
 package kustomize
 
-// Read sets contain only source inputs observed through treeFS's root-relative
-// constraints. Generated overlay content belongs to the render key; injected
-// remote content prevents persistence because it has no local input identity.
-
 import (
 	"cmp"
+	"context"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -37,7 +34,7 @@ func diskKind(exists, isDir bool) nodeKind {
 }
 
 // hashEntries is the order-independent digest of a directory's child names. The
-// record side (recordDir) and the validate side (stillValidFS) must agree
+// record side (recordDir) and the validate side (stillValid) must agree
 // byte-for-byte, so both go through this one definition.
 func hashEntries(entries []string) string {
 	sorted := slices.Clone(entries)
@@ -48,12 +45,16 @@ func hashEntries(entries []string) string {
 // readSet accumulates a build's disk reads. Safe for the concurrent access a
 // single krusty build performs through the overlay.
 type readSet struct {
-	root string // source root; recorded paths are stored relative to it
+	root      string // source root; recorded paths are stored relative to it
+	immutable bool
 
 	mu    sync.Mutex
 	files map[string]string   // relpath -> sha256(content), or "" when the read errored
 	dirs  map[string]string   // relpath -> sha256(sorted child names)
 	nodes map[string]nodeKind // relpath -> kind, for paths only probed (not read/listed)
+
+	// Remote observations are collected only during serial preflight.
+	remotes map[remoteInput]remoteIdentity
 }
 
 func newReadSet(root string) *readSet {
@@ -110,6 +111,18 @@ func (rs *readSet) recordNode(abs string, kind nodeKind) {
 	rs.mu.Unlock()
 }
 
+func (rs *readSet) recordRemote(input remoteInput, identity remoteIdentity) {
+	if rs.remotes == nil {
+		rs.remotes = make(map[remoteInput]remoteIdentity)
+	}
+	rs.remotes[input] = identity
+}
+
+type remoteEntry struct {
+	Input    remoteInput    `json:"input"`
+	Identity remoteIdentity `json:"identity"`
+}
+
 // fileEntry / nodeEntry are the serialized, sorted snapshot the disk cache
 // stores beside a render's output. Slices (not maps) so the encoding is
 // deterministic.
@@ -124,19 +137,28 @@ type nodeEntry struct {
 
 // readSetSnapshot is the deterministic read set persisted beside the output.
 type readSetSnapshot struct {
-	Files []fileEntry `json:"files"`
-	Dirs  []fileEntry `json:"dirs"`
-	Nodes []nodeEntry `json:"nodes"`
+	Files   []fileEntry   `json:"files"`
+	Dirs    []fileEntry   `json:"dirs"`
+	Nodes   []nodeEntry   `json:"nodes"`
+	Remotes []remoteEntry `json:"remotes,omitempty"`
 }
 
 // snapshot freezes the recorder into its deterministic serialized form.
 func (rs *readSet) snapshot() readSetSnapshot {
+	var remotes []remoteEntry
+	for input, identity := range rs.remotes {
+		remotes = append(remotes, remoteEntry{Input: input, Identity: identity})
+	}
+	slices.SortFunc(remotes, func(a, b remoteEntry) int {
+		return cmp.Or(cmp.Compare(a.Input.Operation, b.Input.Operation), cmp.Compare(a.Input.URL, b.Input.URL), cmp.Compare(a.Input.Ref, b.Input.Ref))
+	})
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	snap := readSetSnapshot{
-		Files: make([]fileEntry, 0, len(rs.files)),
-		Dirs:  make([]fileEntry, 0, len(rs.dirs)),
-		Nodes: make([]nodeEntry, 0, len(rs.nodes)),
+		Remotes: remotes,
+		Files:   make([]fileEntry, 0, len(rs.files)),
+		Dirs:    make([]fileEntry, 0, len(rs.dirs)),
+		Nodes:   make([]nodeEntry, 0, len(rs.nodes)),
 	}
 	for p, h := range rs.files {
 		snap.Files = append(snap.Files, fileEntry{Path: p, Hash: h})
@@ -161,32 +183,48 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	return snap
 }
 
-// stillValidFS replays recorded reads against the same filtered source view.
-// Matching every observed input means a hit reproduces the cached output.
-func (snap readSetSnapshot) stillValidFS(lower fs.FS) bool {
-	for _, f := range snap.Files {
-		b, err := fs.ReadFile(lower, f.Path)
-		if (err != nil) != (f.Hash == "") {
-			return false // file appeared or vanished since recording
+func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, input *treeFS, immutable bool) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !immutable {
+		lower := input.lower
+		for _, f := range snap.Files {
+			b, err := fs.ReadFile(lower, f.Path)
+			if (err != nil) != (f.Hash == "") {
+				return false, ctx.Err()
+			}
+			if err == nil && manifest.SHA256Hex(b) != f.Hash {
+				return false, ctx.Err()
+			}
 		}
-		if err == nil && manifest.SHA256Hex(b) != f.Hash {
-			return false // content changed
+		for _, d := range snap.Dirs {
+			entries, err := fs.ReadDir(lower, d.Path)
+			if err != nil {
+				return false, ctx.Err()
+			}
+			if hashEntries(entryNames(entries)) != d.Hash {
+				return false, ctx.Err()
+			}
+		}
+		for _, n := range snap.Nodes {
+			info, err := fs.Stat(lower, n.Path)
+			if diskKind(err == nil, err == nil && info.IsDir()) != n.Kind {
+				return false, ctx.Err()
+			}
 		}
 	}
-	for _, d := range snap.Dirs {
-		entries, err := fs.ReadDir(lower, d.Path)
-		if err != nil {
-			return false
+	for _, remote := range snap.Remotes {
+		if err := ctx.Err(); err != nil {
+			return false, err
 		}
-		if hashEntries(entryNames(entries)) != d.Hash {
-			return false // a child was added or removed
+		_, identity, err := remote.Input.acquire(ctx, cache, input)
+		if ctx.Err() != nil {
+			return false, ctx.Err()
 		}
-	}
-	for _, n := range snap.Nodes {
-		info, err := fs.Stat(lower, n.Path)
-		if diskKind(err == nil, err == nil && info.IsDir()) != n.Kind {
-			return false // a probed path appeared, vanished, or changed file↔dir
+		if err != nil || identity != remote.Identity {
+			return false, nil
 		}
 	}
-	return true
+	return ctx.Err() == nil, ctx.Err()
 }

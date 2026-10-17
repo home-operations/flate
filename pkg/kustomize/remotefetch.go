@@ -15,6 +15,51 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
+type remoteOperation uint8
+
+const (
+	remoteHTTP remoteOperation = iota
+	remoteGit
+)
+
+type remoteInput struct {
+	Operation remoteOperation `json:"op"`
+	URL       string          `json:"url"`
+	Ref       string          `json:"ref,omitempty"`
+}
+
+type remoteIdentity struct {
+	HTTP     string `json:"http,omitempty"`
+	Key      string `json:"key,omitempty"`
+	Revision string `json:"revision,omitempty"`
+	Digest   string `json:"digest,omitempty"`
+}
+
+func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (fs.FS, remoteIdentity, error) {
+	switch r.Operation {
+	case remoteHTTP:
+		acquired, err := c.FetchRemote(ctx, r.URL, input.retry)
+		if err != nil {
+			return nil, remoteIdentity{}, err
+		}
+		return acquired, remoteIdentity{HTTP: cache.AcquisitionIdentity(acquired)}, nil
+	case remoteGit:
+		if c.gitBase == nil {
+			return nil, remoteIdentity{}, fmt.Errorf("%w: kustomization references remote git base %q but no git fetcher is wired", manifest.ErrInput, r.URL)
+		}
+		artifact, err := c.gitBase(ctx, GitBaseRequest{URL: r.URL, Ref: r.Ref, MaxAge: input.maxAge}, input.retry)
+		if err != nil {
+			return nil, remoteIdentity{}, err
+		}
+		if artifact == nil || artifact.FS == nil || artifact.Key == "" || (artifact.Revision == "" && artifact.Digest == "") {
+			return nil, remoteIdentity{}, fmt.Errorf("%w: remote git base has no immutable content", manifest.ErrInput)
+		}
+		return artifact.FS, remoteIdentity{Key: artifact.Key, Revision: artifact.Revision, Digest: artifact.Digest}, nil
+	default:
+		return nil, remoteIdentity{}, fmt.Errorf("%w: unknown remote operation %d", manifest.ErrInput, r.Operation)
+	}
+}
+
 // remoteFetch owns one complete acquisition independently of waiter cancellation.
 type remoteFetch struct {
 	start  sync.Once
@@ -29,11 +74,12 @@ type remoteKey struct {
 	retry cache.RetryConfig
 }
 
-// FetchRemote shares complete acquisitions with equal policies. Successes
+// FetchRemote returns an immutable filesystem containing content and shares
+// complete acquisitions with equal policies. Successes
 // and definitive client errors remain available for this TreeCache's lifetime.
 // Shared work outlives individual waiters and uses bounded HTTP requests. Only
 // Close guarantees worker cleanup; a FetchRemote return does not join the owner.
-func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.RetryConfig) ([]byte, error) {
+func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.RetryConfig) (fs.FS, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -101,7 +147,7 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 		if rf.err != nil {
 			return nil, rf.err
 		}
-		return fs.ReadFile(rf.input, "content")
+		return rf.input, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

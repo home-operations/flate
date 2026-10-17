@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 )
@@ -53,7 +55,11 @@ func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 				done := make(chan error, concurrency-1)
 				for range concurrency - 1 {
 					go func() {
-						body, err := c.FetchRemote(t.Context(), "https://example.invalid/resource", retry)
+						input, err := c.FetchRemote(t.Context(), "https://example.invalid/resource", retry)
+						var body []byte
+						if err == nil {
+							body, err = fs.ReadFile(input, "content")
+						}
 						if err == nil && string(body) != "body: ok\n" {
 							err = fmt.Errorf("body=%q", body)
 						}
@@ -135,13 +141,20 @@ func TestFetchRemote_RetryTransientCacheClientError(t *testing.T) {
 			t.Cleanup(srv.Close)
 			cache := newTestTreeCache(t, "")
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-			body, err := cache.FetchRemote(t.Context(), srv.URL, retry)
+			input, err := cache.FetchRemote(t.Context(), srv.URL, retry)
+			var body []byte
+			if err == nil {
+				body, err = fs.ReadFile(input, "content")
+			}
 			if !tc.retry {
 				status, ok := errors.AsType[*fetcherr.ResponseError](err)
 				if !ok || status.StatusCode != tc.status || status.Op != http.MethodGet || hits.Load() != 1 {
 					t.Fatalf("initial status=%+v err=%v hits=%d", status, err, hits.Load())
 				}
-				body, err = cache.FetchRemote(t.Context(), srv.URL, retry)
+				input, err = cache.FetchRemote(t.Context(), srv.URL, retry)
+				if err == nil {
+					body, err = fs.ReadFile(input, "content")
+				}
 			}
 			if tc.client {
 				if fetcherr.Classes(err)&fetcherr.Client == 0 || hits.Load() != 1 {
@@ -259,7 +272,11 @@ func TestFetchRemote_PartialBodyRetry(t *testing.T) {
 					bodies := make(chan []byte, concurrency)
 					for range concurrency {
 						go func() {
-							body, err := c.FetchRemote(t.Context(), srv.URL, retry)
+							input, err := c.FetchRemote(t.Context(), srv.URL, retry)
+							var body []byte
+							if err == nil {
+								body, err = fs.ReadFile(input, "content")
+							}
 							if err != nil || string(body) != "complete" {
 								t.Errorf("body=%q, error=%v", body, err)
 							}
@@ -274,10 +291,17 @@ func TestFetchRemote_PartialBodyRetry(t *testing.T) {
 						t.Fatalf("requests=%d, want 2", hits.Load())
 					}
 					body[0] = 'X'
-					if body, err := c.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); err != nil || string(body) != "replacement" {
+					input, err := c.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{})
+					if err == nil {
+						body, err = fs.ReadFile(input, "content")
+					}
+					if err != nil || string(body) != "replacement" {
 						t.Fatalf("replacement body=%q, error=%v", body, err)
 					}
-					body, err := c.FetchRemote(t.Context(), srv.URL, retry)
+					input, err = c.FetchRemote(t.Context(), srv.URL, retry)
+					if err == nil {
+						body, err = fs.ReadFile(input, "content")
+					}
 					if err != nil || string(body) != "complete" || hits.Load() != 3 {
 						t.Fatalf("completed generation body=%q, error=%v, hits=%d", body, err, hits.Load())
 					}
@@ -339,7 +363,11 @@ func TestFetchRemote_NetworkSuppression(t *testing.T) {
 			}
 			fresh.transport = tr
 			fresh.httpClient = &http.Client{Transport: fresh.network.HTTPTransport(tr)}
-			body, err := fresh.FetchRemote(t.Context(), "http://network.test/first", retry)
+			input, err := fresh.FetchRemote(t.Context(), "http://network.test/first", retry)
+			var body []byte
+			if err == nil {
+				body, err = fs.ReadFile(input, "content")
+			}
 			if err != nil || string(body) != "new run" {
 				t.Fatalf("cache shared negative state: %q %v", body, err)
 			}
@@ -628,7 +656,11 @@ func TestFetchRemote_OwnerIsolation(t *testing.T) {
 					}
 					for range concurrency {
 						go func() {
-							body, err := b.FetchRemote(t.Context(), url, sourcecache.RetryConfig{})
+							input, err := b.FetchRemote(t.Context(), url, sourcecache.RetryConfig{})
+							var body []byte
+							if err == nil {
+								body, err = fs.ReadFile(input, "content")
+							}
 							if err == nil && string(body) != "healthy" {
 								err = fmt.Errorf("body=%q", body)
 							}
@@ -651,7 +683,12 @@ func TestFetchRemote_OwnerIsolation(t *testing.T) {
 					if _, err := a.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
 						t.Fatalf("closed owner: %v", err)
 					}
-					if body, err := b.FetchRemote(t.Context(), srv.URL+"/after", sourcecache.RetryConfig{}); err != nil || string(body) != "healthy" {
+					input, err := b.FetchRemote(t.Context(), srv.URL+"/after", sourcecache.RetryConfig{})
+					var body []byte
+					if err == nil {
+						body, err = fs.ReadFile(input, "content")
+					}
+					if err != nil || string(body) != "healthy" {
 						t.Fatalf("borrowed backing/Network closed: %q %v", body, err)
 					}
 				})
@@ -724,8 +761,93 @@ func TestFetchRemote_NetworkSuppressionOwnerCancellation(t *testing.T) {
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "healthy") }))
 			t.Cleanup(srv.Close)
-			if body, err := other.FetchRemote(t.Context(), srv.URL, retry); err != nil || string(body) != "healthy" {
+			input, err := other.FetchRemote(t.Context(), srv.URL, retry)
+			var body []byte
+			if err == nil {
+				body, err = fs.ReadFile(input, "content")
+			}
+			if err != nil || string(body) != "healthy" {
 				t.Fatalf("healthy endpoint: %q %v", body, err)
+			}
+		})
+	}
+}
+
+func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
+	for _, operation := range []remoteOperation{remoteHTTP, remoteGit} {
+		t.Run(fmt.Sprint(operation), func(t *testing.T) {
+			var version atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, version.Load())
+			}))
+			t.Cleanup(srv.Close)
+			descriptor := remoteInput{Operation: operation, URL: srv.URL + "/repo.git//file"}
+			if operation == remoteGit {
+				descriptor.Ref = "main"
+			}
+			retry := sourcecache.RetryConfig{Attempts: 2}
+			var first remoteIdentity
+			for _, v := range []int32{1, 1, 2} {
+				version.Store(v)
+				c := newTestTreeCache(t, "")
+				c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, gotRetry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					if operation != remoteGit || request.URL != descriptor.URL || request.Ref != descriptor.Ref || request.MaxAge != time.Minute || gotRetry != retry {
+						t.Fatalf("acquisition request=%+v retry=%+v", request, gotRetry)
+					}
+					return &store.SourceArtifact{Key: "family", Revision: fmt.Sprint(v), FS: fstest.MapFS{"content": {Data: fmt.Append(nil, v)}}}, nil
+				})
+				input := newTreeFS(fstest.MapFS{}, "/src", nil)
+				input.retry, input.maxAge = retry, time.Minute
+				acquired, identity, err := descriptor.acquire(t.Context(), c, input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := fs.ReadFile(acquired, "content")
+				if err != nil || string(body) != fmt.Sprint(v) {
+					t.Fatalf("acquired body=%q error=%v", body, err)
+				}
+				if operation == remoteHTTP && (identity.HTTP == "" || identity.HTTP != sourcecache.AcquisitionIdentity(acquired)) {
+					t.Fatalf("HTTP identity=%+v", identity)
+				}
+				if operation == remoteGit && (identity.Key != "family" || identity.Revision != fmt.Sprint(v)) {
+					t.Fatalf("Git identity=%+v", identity)
+				}
+				if first == (remoteIdentity{}) {
+					first = identity
+				}
+				if (identity == first) != (v == 1) {
+					t.Fatalf("generation %d identity=%+v first=%+v", v, identity, first)
+				}
+				c.Close()
+			}
+		})
+	}
+}
+
+func TestRemoteInput_UnavailableGit(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		artifact *store.SourceArtifact
+	}{
+		{name: "unavailable"},
+		{name: "missing filesystem", artifact: &store.SourceArtifact{Key: "family", Revision: "revision"}},
+		{name: "missing family", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Revision: "revision"}},
+		{name: "missing generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family"}},
+		{name: "digest generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Digest: "digest"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestTreeCache(t, "")
+			c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+				return tc.artifact, nil
+			})
+			descriptor := remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo.git", Ref: "main"}
+			_, identity, err := descriptor.acquire(t.Context(), c, newTreeFS(fstest.MapFS{}, "/src", nil))
+			if tc.name == "digest generation" {
+				if err != nil || identity.Key != "family" || identity.Digest != "digest" {
+					t.Fatalf("digest generation=%+v error=%v", identity, err)
+				}
+			} else if !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("unavailable Git error=%v", err)
 			}
 		})
 	}

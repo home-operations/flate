@@ -11,15 +11,12 @@ package kustomize
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
-
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
 // gitBaseSpec is a resources: entry classified as a remote git base,
@@ -194,22 +191,16 @@ func trimPrefixFold(s, prefix string) (string, bool) {
 }
 
 // fetchGitBase mounts the whole repository so local parent references retain their coordinates.
-func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, spec gitBaseSpec) (string, error) {
-	if cache.gitBase == nil {
-		return "", fmt.Errorf("kustomization references remote git base %q but no git fetcher is wired", spec.repoURL)
-	}
-	input := memFS.(*treeFS)
+func (w *inputWalk) fetchGitBase(ctx context.Context, spec gitBaseSpec) (string, error) {
+	input := w.fs
 	identity := spec.repoURL + "@" + spec.ref
 	if dest := input.bases[identity]; dest != "" {
 		rel, err := filepath.Rel(spec.dir, filepath.Join(dest, spec.subPath))
 		return "./" + filepath.ToSlash(rel), err
 	}
-	artifact, err := cache.gitBase(ctx, GitBaseRequest{URL: spec.repoURL, Ref: spec.ref, MaxAge: input.maxAge}, input.retry)
+	acquired, err := w.acquire(ctx, remoteInput{Operation: remoteGit, URL: spec.repoURL, Ref: spec.ref})
 	if err != nil {
 		return "", err
-	}
-	if artifact == nil || artifact.FS == nil || artifact.Key == "" {
-		return "", fmt.Errorf("%w: remote git base has no immutable content", manifest.ErrInput)
 	}
 	name := remoteResourcePrefix + manifest.Fingerprint(identity)
 	dest := filepath.Join(spec.dir, name)
@@ -217,11 +208,10 @@ func fetchGitBase(ctx context.Context, cache *TreeCache, memFS filesys.FileSyste
 	if err != nil {
 		return "", err
 	}
-	if err := input.upper.Mount(filepath.ToSlash(rel), artifact.FS); err != nil {
+	if err := input.upper.Mount(filepath.ToSlash(rel), acquired); err != nil {
 		return "", err
 	}
-	// Mounted remote reads MUST NOT be attributed to local source inputs.
-	input.rec = nil
+	input.origins = append(input.origins, mountOrigin{path: filepath.ToSlash(rel)})
 	if input.bases == nil {
 		input.bases = make(map[string]string)
 	}

@@ -148,7 +148,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
-	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
-	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 // base surfaces a clear error rather than silently HTTP-GETting the URL.
 func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://github.com/o/r?ref=v1\n"})
-	_, err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
+	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
 	if err == nil {
 		t.Fatal("expected error when no git fetcher is wired")
 	}
@@ -316,7 +316,7 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 	var calls atomic.Int32
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, &calls)
-	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -374,7 +374,7 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n"})
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
-	if _, err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
+	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
@@ -554,7 +554,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 						return nil, ctx.Err()
 					}
 					body := fmt.Sprintf("resources:\n  - %s/%d\n", srv.URL, retry.Attempts)
-					return &store.SourceArtifact{Key: fmt.Sprint(retry.Attempts), FS: fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}}}, nil
+					return &store.SourceArtifact{Key: "family", Revision: fmt.Sprint(retry.Attempts), FS: fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}}}, nil
 				})
 				type result struct {
 					attempts int

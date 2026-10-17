@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,14 +29,15 @@ type treeFS struct {
 	maxAge  time.Duration
 	retry   cache.RetryConfig
 	bases   map[string]string
+	origins []mountOrigin
+}
+
+type mountOrigin struct {
+	path, source string
 }
 
 func newTreeFS(lower fs.FS, root string, rec *readSet) *treeFS {
-	t := &treeFS{upper: tree.NewBuilder(lower), lower: lower, root: root, rec: rec}
-	if rec != nil {
-		t.changed = make(map[string]struct{})
-	}
-	return t
+	return &treeFS{upper: tree.NewBuilder(lower), lower: lower, root: root, rec: rec}
 }
 
 // fromKyaml strips only a component-boundary mount prefix. Parent components
@@ -135,18 +137,64 @@ func (t *treeFS) modified(rel string) bool {
 	}
 }
 
+// origin follows snapshot aliases before deciding whether a path belongs to
+// the source. Remote coordinates remain canonical for preflight's visited keys.
+func (t *treeFS) origin(rel string) (string, bool) {
+	for {
+		matched := false
+		for _, mount := range slices.Backward(t.origins) {
+			if rel != mount.path && !strings.HasPrefix(rel, mount.path+"/") {
+				continue
+			}
+			if mount.source == "" {
+				return rel, false
+			}
+			rel = path.Join(mount.source, strings.TrimPrefix(rel[len(mount.path):], "/"))
+			matched = true
+			break
+		}
+		if !matched {
+			return rel, true
+		}
+	}
+}
+
+func (t *treeFS) observed(name, rel string) (string, string, bool) {
+	if t.rec == nil || t.rec.immutable || !fs.ValidPath(rel) {
+		return "", "", false
+	}
+	authored, err := t.rel(name)
+	if err != nil {
+		return "", "", false
+	}
+	origin, local := t.origin(authored)
+	if !local || t.modified(origin) {
+		return "", "", false
+	}
+	if origin == authored {
+		return origin, name, true
+	}
+	return origin, t.mount(origin), true
+}
+
 func (t *treeFS) mark(rel string) {
-	if t.rec != nil {
-		t.changed[rel] = struct{}{}
+	if t.rec != nil && !t.rec.immutable {
+		if rel, local := t.origin(rel); local {
+			if t.changed == nil {
+				t.changed = make(map[string]struct{})
+			}
+			t.changed[rel] = struct{}{}
+		}
 	}
 }
 
 func (t *treeFS) probe(name, rel string) {
-	if t.rec == nil || !fs.ValidPath(rel) || t.modified(rel) {
+	rel, recorded, local := t.observed(name, rel)
+	if !local {
 		return
 	}
 	info, err := fs.Stat(t.lower, rel)
-	t.rec.recordNode(name, diskKind(err == nil, err == nil && info.IsDir()))
+	t.rec.recordNode(recorded, diskKind(err == nil, err == nil && info.IsDir()))
 }
 
 func (t *treeFS) Exists(name string) bool {
@@ -180,8 +228,8 @@ func (t *treeFS) ReadFile(name string) ([]byte, error) {
 		return nil, err
 	}
 	data, err := t.upper.ReadFile(rel)
-	if t.rec != nil && !t.modified(rel) {
-		t.rec.recordFile(name, data, err)
+	if _, recorded, local := t.observed(name, rel); local {
+		t.rec.recordFile(recorded, data, err)
 	}
 	return data, treeError("read", name, err)
 }
@@ -213,9 +261,9 @@ func (t *treeFS) Open(name string) (filesys.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if t.rec != nil && !t.modified(rel) {
-		data, err := fs.ReadFile(t.lower, rel)
-		t.rec.recordFile(name, data, err)
+	if _, recorded, local := t.observed(name, rel); local {
+		data, err := t.upper.ReadFile(rel)
+		t.rec.recordFile(recorded, data, err)
 	}
 	file, err := t.upper.Open(rel)
 	if err != nil {
@@ -254,9 +302,9 @@ func (t *treeFS) ReadDir(name string) ([]string, error) {
 		return nil, err
 	}
 	entries, err := t.upper.ReadDir(rel)
-	if t.rec != nil {
-		if lower, e := fs.ReadDir(t.lower, rel); e == nil {
-			t.rec.recordDir(name, entryNames(lower))
+	if origin, recorded, local := t.observed(name, rel); local {
+		if lower, e := fs.ReadDir(t.lower, origin); e == nil {
+			t.rec.recordDir(recorded, entryNames(lower))
 		}
 	}
 	return entryNames(entries), treeError("readdir", name, err)
@@ -278,9 +326,9 @@ func (t *treeFS) Walk(name string, fn filepath.WalkFunc) error {
 			return treeError("walk", mounted, err)
 		}
 		info, err := entry.Info()
-		if err == nil && info.IsDir() && t.rec != nil {
-			if entries, e := fs.ReadDir(t.lower, p); e == nil {
-				t.rec.recordDir(mounted, entryNames(entries))
+		if origin, recorded, local := t.observed(mounted, p); err == nil && info.IsDir() && local {
+			if entries, e := fs.ReadDir(t.lower, origin); e == nil {
+				t.rec.recordDir(recorded, entryNames(entries))
 			}
 		}
 		return fn(mounted, info, err)

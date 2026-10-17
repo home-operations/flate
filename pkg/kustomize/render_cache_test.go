@@ -13,19 +13,23 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/tree"
 )
 
 var demoRawSpec = map[string]any{
@@ -338,79 +342,144 @@ func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_RemoteNotCached(t *testing.T) {
-	t.Logf("render persistence eligible=%v", renderPersistenceEligible(t))
-	for _, origin := range []string{"http", "patch", "generator", "plugin", "plugin-directory", "git", "nested-mount"} {
-		t.Run(origin, func(t *testing.T) {
-			var version atomic.Int64
-			remoteBody := func() string {
-				name := fmt.Sprintf("remote-v%d", version.Load())
-				switch origin {
-				case "patch":
-					return "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: local}\ndata: {marker: " + name + "}\n"
-				case "generator", "plugin-directory":
-					return name
-				case "plugin":
-					return "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: " + name + "}\nliterals: [marker=" + name + "]\n"
-				default:
-					return cmYAML(name)
-				}
-			}
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = fmt.Fprint(w, remoteBody())
-			}))
-			t.Cleanup(srv.Close)
-			const gitURL = "https://example.invalid/o/r.git"
-			ref := srv.URL + "/remote.yaml"
-			remoteFiles := map[string]string{}
-			if origin == "git" || origin == "nested-mount" {
-				ref = gitURL + "//remote?ref=main"
-				remoteFiles["remote/kustomization.yaml"] = "resources: [cm.yaml]\n"
-			}
-			kustomization := "resources: [local.yaml, " + fmt.Sprintf("%q", ref) + "]\n"
-			if origin == "nested-mount" {
-				remoteFiles["outer/nested/kustomization.yaml"] = kustomization
-				remoteFiles["outer/nested/local.yaml"] = cmYAML("local")
-				remoteFiles["outer/kustomization.yaml"] = "resources: [nested]\n"
-				kustomization = fmt.Sprintf("resources: [%q]\n", gitURL+"//outer?ref=main")
-			}
-			files := map[string]string{"local.yaml": cmYAML("local")}
-			switch origin {
-			case "patch":
-				kustomization = "resources: [local.yaml]\npatches: [{path: " + ref + "}]\n"
-			case "generator":
-				kustomization = "configMapGenerator: [{name: generated, files: [" + ref + "]}]\n"
-			case "plugin":
-				kustomization = "generators: [" + ref + "]\n"
-			case "plugin-directory":
-				kustomization = "generators: [plugins]\n"
-				files["plugins/kustomization.yaml"] = "resources: [nested]\n"
-				files["plugins/nested/kustomization.yaml"] = "resources: [../g.yaml]\n"
-				files["plugins/g.yaml"] = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [" + ref + "]\n"
-			}
-			files["kustomization.yaml"] = kustomization
-			root := writeTree(t, files)
-			cacheDir := t.TempDir()
-			for _, v := range []int64{1, 2} {
-				version.Store(v)
-				remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
-				cache := newTestTreeCache(t, cacheDir)
-				remote := memoryTree(t, remoteFiles)
-				cache.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					if req.URL != gitURL {
-						t.Errorf("unexpected git URL %q", req.URL)
+func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
+	eligible := renderPersistenceEligible(t)
+	t.Logf("persisted sentinel assertions executed=%v", eligible)
+	for _, immutable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("immutable_%t", immutable), func(t *testing.T) {
+			for _, origin := range []string{"http", "patch", "generator", "plugin", "plugin-directory", "git", "nested-mount"} {
+				t.Run(origin, func(t *testing.T) {
+					var version atomic.Int64
+					remoteBody := func() string {
+						name := fmt.Sprintf("remote-v%d", version.Load())
+						switch origin {
+						case "patch":
+							return "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: local}\ndata: {marker: " + name + "}\n"
+						case "generator", "plugin-directory":
+							return name
+						case "plugin":
+							return "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: " + name + "}\nliterals: [marker=" + name + "]\n"
+						default:
+							return cmYAML(name)
+						}
 					}
-					return &store.SourceArtifact{FS: remote, Key: fmt.Sprintf("pin-%d", v)}, nil
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						_, _ = fmt.Fprint(w, remoteBody())
+					}))
+					t.Cleanup(srv.Close)
+					const gitURL = "https://example.invalid/o/r.git"
+					ref := srv.URL + "/remote.yaml"
+					remoteFiles := map[string]string{}
+					if origin == "git" || origin == "nested-mount" {
+						ref = gitURL + "//remote?ref=main"
+						remoteFiles["remote/kustomization.yaml"] = "resources: [cm.yaml]\n"
+					}
+					kustomization := "resources: [local.yaml, " + fmt.Sprintf("%q", ref) + "]\n"
+					if origin == "nested-mount" {
+						remoteFiles["outer/nested/kustomization.yaml"] = kustomization
+						remoteFiles["outer/nested/local.yaml"] = cmYAML("local")
+						remoteFiles["outer/kustomization.yaml"] = "resources: [nested]\n"
+						kustomization = fmt.Sprintf("resources: [%q]\n", gitURL+"//outer?ref=main")
+					}
+					files := map[string]string{"local.yaml": cmYAML("local")}
+					switch origin {
+					case "patch":
+						kustomization = "resources: [local.yaml]\npatches: [{path: " + ref + "}]\n"
+					case "generator":
+						kustomization = "configMapGenerator: [{name: generated, files: [chosen=" + ref + "]}]\n"
+					case "plugin":
+						kustomization = "generators: [" + ref + "]\n"
+					case "plugin-directory":
+						kustomization = "generators: [plugins]\n"
+						files["plugins/kustomization.yaml"] = "resources: [nested]\n"
+						files["plugins/nested/kustomization.yaml"] = "resources: [../g.yaml]\n"
+						files["plugins/g.yaml"] = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [" + ref + "]\n"
+					}
+					files["kustomization.yaml"] = kustomization
+					root := writeTree(t, files)
+					cacheDir := t.TempDir()
+
+					newCache := func(storage string) *TreeCache {
+						c := newTestTreeCache(t, storage)
+						v := version.Load()
+						remoteFiles["remote/cm.yaml"] = cmYAML(fmt.Sprintf("remote-v%d", v))
+						remote := memoryTree(t, remoteFiles)
+						c.SetGitBaseFetcher(func(_ context.Context, req GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+							if req.URL != gitURL {
+								t.Errorf("unexpected git URL %q", req.URL)
+							}
+							return &store.SourceArtifact{FS: remote, Key: "family", Revision: fmt.Sprint(v)}, nil
+						})
+						return c
+					}
+					request := func() RenderRequest {
+						source := localSource(t, root)
+						if immutable {
+							source.Key, source.Revision = "local-family", "local-pin"
+						}
+						return RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoRawSpec}
+					}
+					version.Store(1)
+					cache := newCache(cacheDir)
+					out1, err := RenderFlux(t.Context(), cache, request(), sourcecache.RetryConfig{})
+					if err != nil || !strings.Contains(string(out1), "remote-v1") {
+						t.Fatalf("initial render: %s, %v", out1, err)
+					}
+					inputRec := newReadSet(root)
+					inputRec.immutable = immutable
+					view := newTreeFS(request().Source.FS, root, inputRec)
+					if err := preflightRemoteResources(t.Context(), cache, view, root); err != nil {
+						t.Fatal(err)
+					}
+					recorded := inputRec.snapshot()
+					if len(recorded.Remotes) == 0 || immutable && (len(recorded.Files) != 0 || len(recorded.Dirs) != 0 || len(recorded.Nodes) != 0) {
+						t.Fatalf("incomplete remote recorder: %+v", recorded)
+					}
+					if valid, err := recorded.stillValid(t.Context(), cache, view, immutable); err != nil || !valid {
+						t.Fatalf("unchanged remote identity: %t, %v", valid, err)
+					}
+					key := renderKey(request(), root, nil)
+					snap, stored, hit := readTestRenderFrame(t, cache, key)
+					if hit != eligible || hit && (!bytes.Equal(stored, out1) || len(snap.Remotes) == 0 || immutable && (len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0)) {
+						t.Fatalf("published=%t eligible=%t snapshot=%+v output=%s", hit, eligible, snap, stored)
+					}
+					fresh := newCache("")
+					want, err := RenderFlux(t.Context(), fresh, request(), sourcecache.RetryConfig{})
+					if err != nil || !bytes.Equal(want, out1) || hit && !bytes.Equal(want, stored) {
+						t.Fatalf("fresh/cached bytes differ: %s, %s, %v", want, stored, err)
+					}
+					closeTestTreeCache(t, fresh)
+					if eligible {
+						publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
+					}
+					closeTestTreeCache(t, cache)
+					cache = newCache(cacheDir)
+					out2, err := RenderFlux(t.Context(), cache, request(), sourcecache.RetryConfig{})
+					if err != nil || eligible && string(out2) != "SENTINEL\n" || !eligible && !bytes.Equal(out2, out1) {
+						t.Fatalf("unchanged fresh-owner render: %s, %v", out2, err)
+					}
+					closeTestTreeCache(t, cache)
+					version.Store(2)
+					cache = newCache(cacheDir)
+					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || valid {
+						t.Fatalf("changed remote identity: %t, %v", valid, err)
+					}
+					out3, err := RenderFlux(t.Context(), cache, request(), sourcecache.RetryConfig{})
+					if err != nil || !strings.Contains(string(out3), "remote-v2") || bytes.Equal(out3, out1) {
+						t.Fatalf("changed remote render: %s, %v", out3, err)
+					}
+					closeTestTreeCache(t, cache)
 				})
-				out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
-				if err != nil || !strings.Contains(string(out), fmt.Sprintf("remote-v%d", v)) {
-					t.Fatalf("remote version %d: %s, %v", v, out, err)
-				}
-				if _, _, hit := readTestRenderFrame(t, cache, renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoRawSpec, SubPath: "."}, root, nil)); hit {
-					t.Fatal("remote render persisted without a local read-set identity")
-				}
 			}
 		})
+	}
+}
+
+func closeTestTreeCache(t *testing.T, c *TreeCache) {
+	t.Helper()
+	c.Close()
+	if err := c.owner.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -669,4 +738,578 @@ func TestRenderFlux_CacheStorageFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderFlux_RemoteCacheReachability(t *testing.T) {
+	eligible := renderPersistenceEligible(t)
+	t.Logf("persisted reachability assertions executed=%v; validator assertions always execute", eligible)
+	t.Run("empty-and-canceled", func(t *testing.T) {
+		valid, err := (readSetSnapshot{}).stillValid(t.Context(), nil, &treeFS{}, false)
+		if err != nil || !valid {
+			t.Fatalf("empty snapshot did work: %t, %v", valid, err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		valid, err = (readSetSnapshot{Files: []fileEntry{{Path: "unread", Hash: "hash"}}}).stillValid(ctx, nil, &treeFS{}, false)
+		if valid || !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation did not precede replay: %t, %v", valid, err)
+		}
+	})
+	t.Run("cancellation-during-local-mismatch", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		lower := &pausedRenderFS{FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML("local")}), entered: make(chan struct{}), release: make(chan struct{})}
+		done := make(chan error, 1)
+		go func() {
+			_, err := (readSetSnapshot{Files: []fileEntry{{Path: "cm.yaml", Hash: "mismatch"}}}).stillValid(ctx, nil, &treeFS{lower: lower}, false)
+			done <- err
+		}()
+		<-lower.entered
+		cancel()
+		close(lower.release)
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("local mismatch swallowed cancellation: %v", err)
+		}
+	})
+	for _, scenario := range []string{"local-removes", "nested-changes", "parent-removes", "reachable-fails", "cancellation"} {
+		t.Run(scenario, func(t *testing.T) {
+			var version, hits atomic.Int32
+			var unavailable, blocked atomic.Bool
+			entered := make(chan struct{}, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				if blocked.Load() {
+					entered <- struct{}{}
+					<-r.Context().Done()
+					return
+				}
+				if unavailable.Load() {
+					http.Error(w, "unavailable", http.StatusNotFound)
+					return
+				}
+				_, _ = io.WriteString(w, cmYAML(fmt.Sprintf("child-v%d", version.Load())))
+			}))
+			t.Cleanup(srv.Close)
+			const gitURL = "https://example.invalid/o/parent.git"
+			control := "resources: ['" + gitURL + "?ref=main']\n"
+			if scenario == "local-removes" {
+				control = "resources: ['" + srv.URL + "/child.yaml']\n"
+			}
+			root := writeTree(t, map[string]string{"kustomization.yaml": control, "local.yaml": cmYAML("local")})
+			cacheDir := t.TempDir()
+			parentChanged := false
+			newCache := func() *TreeCache {
+				c := newTestTreeCache(t, cacheDir)
+				files := map[string]string{"kustomization.yaml": "resources: ['" + srv.URL + "/child.yaml']\n"}
+				revision := "1"
+				if parentChanged {
+					files = map[string]string{"kustomization.yaml": "resources: [local.yaml]\n", "local.yaml": cmYAML("parent-v2")}
+					revision = "2"
+				}
+				remote := memoryTree(t, files)
+				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					return &store.SourceArtifact{FS: remote, Key: "stable-parent", Revision: revision}, nil
+				})
+				return c
+			}
+			request := func() RenderRequest {
+				return RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
+			}
+			version.Store(1)
+			c := newCache()
+			out, err := RenderFlux(t.Context(), c, request(), sourcecache.RetryConfig{})
+			if err != nil || !strings.Contains(string(out), "name: child-v1") {
+				t.Fatalf("initial render: %s, %v", out, err)
+			}
+			rec := newReadSet(root)
+			view := newTreeFS(request().Source.FS, root, rec)
+			if err := preflightRemoteResources(t.Context(), c, view, root); err != nil {
+				t.Fatal(err)
+			}
+			snap, _, err := decodeFrame(testRenderFrame(t, rec.snapshot(), out))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request().Source.FS}, false); err != nil || !valid {
+				t.Fatalf("unchanged recorded graph: valid=%t, %v", valid, err)
+			}
+			key := renderKey(request(), root, nil)
+			if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
+				snap = persisted
+				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
+			}
+			closeTestTreeCache(t, c)
+			hits.Store(0)
+			switch scenario {
+			case "local-removes":
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [local.yaml]\n")
+				unavailable.Store(true)
+			case "nested-changes":
+				version.Store(2)
+			case "parent-removes":
+				parentChanged = true
+				unavailable.Store(true)
+			case "reachable-fails":
+				unavailable.Store(true)
+			case "cancellation":
+				blocked.Store(true)
+			}
+			c = newCache()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if scenario == "cancellation" {
+				done := make(chan error, 1)
+				go func() {
+					valid, err := snap.stillValid(ctx, c, &treeFS{lower: request().Source.FS}, false)
+					if valid {
+						err = errors.New("canceled validation certified a hit")
+					}
+					done <- err
+				}()
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("validation did not reach the remote")
+				}
+				cancel()
+				select {
+				case err := <-done:
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("cancellation error: %v", err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("validation did not promptly observe cancellation")
+				}
+			} else {
+				valid, err := snap.stillValid(ctx, c, &treeFS{lower: request().Source.FS}, false)
+				if err != nil || valid {
+					t.Fatalf("changed/unavailable graph: valid=%t, %v", valid, err)
+				}
+			}
+			out, err = RenderFlux(ctx, c, request(), sourcecache.RetryConfig{})
+			switch scenario {
+			case "reachable-fails":
+				if err == nil || len(out) != 0 {
+					t.Fatalf("unavailable reachable input returned %q, %v", out, err)
+				}
+			case "cancellation":
+				if !errors.Is(err, context.Canceled) || len(out) != 0 {
+					t.Fatalf("canceled render returned %q, %v", out, err)
+				}
+			default:
+				want := map[string]string{"local-removes": "name: local", "nested-changes": "name: child-v2", "parent-removes": "name: parent-v2"}[scenario]
+				if err != nil || !strings.Contains(string(out), want) {
+					t.Fatalf("current graph: %s, %v; want %q", out, err, want)
+				}
+			}
+			if scenario == "local-removes" && hits.Load() != 0 {
+				t.Fatalf("removed local edge fetched %d times", hits.Load())
+			}
+			closeTestTreeCache(t, c)
+		})
+	}
+}
+
+func TestRenderFlux_RemoteCacheLocalAttribution(t *testing.T) {
+	eligible := renderPersistenceEligible(t)
+	t.Logf("persisted attribution assertions executed=%v; recorded snapshot assertions always execute", eligible)
+	for _, scenario := range []string{"after-git", "rewritten-plugin", "source-link"} {
+		t.Run(scenario, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, "remote data")
+			}))
+			t.Cleanup(srv.Close)
+			const gitURL = "https://example.invalid/o/repo.git"
+			files := map[string]string{
+				"kustomization.yaml": "resources: ['" + gitURL + "?ref=main', local.yaml]\n",
+				"local.yaml":         cmYAML("local-v1"),
+			}
+			changed, value, want := "local.yaml", cmYAML("local-v2"), "name: local-v2"
+			if scenario == "rewritten-plugin" {
+				files["kustomization.yaml"] = "resources: ['" + gitURL + "?ref=main']\ngenerators: [plugins]\n"
+				files["plugins/kustomization.yaml"] = "resources: [nested]\n"
+				files["plugins/nested/kustomization.yaml"] = "resources: [../g.yaml]\n"
+				files["plugins/g.yaml"] = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [local.txt, 'remote=" + srv.URL + "/value']\n"
+				files["local.txt"] = "v1"
+				changed, value, want = "local.txt", "v2", "local.txt: v2"
+			}
+			if scenario == "source-link" {
+				files["kustomization.yaml"] = "resources: ['" + gitURL + "?ref=main', link.yaml]\n"
+				files["other.yaml"] = cmYAML("other")
+				want = "name: other"
+			}
+			root := writeTree(t, files)
+			var linked fs.FS
+			if scenario == "source-link" {
+				links := tree.NewBuilder(memoryTree(t, files))
+				if err := links.AddSymlink("link.yaml", "local.yaml"); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				linked, err = links.Build()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			remote := memoryTree(t, map[string]string{"kustomization.yaml": "resources: [cm.yaml]\n", "cm.yaml": cmYAML("git")})
+			cacheDir := t.TempDir()
+			newCache := func() *TreeCache {
+				c := newTestTreeCache(t, cacheDir)
+				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					return &store.SourceArtifact{FS: remote, Key: "family", Revision: "1"}, nil
+				})
+				return c
+			}
+			request := func() RenderRequest {
+				artifact := localSource(t, root)
+				if linked != nil {
+					artifact.FS = linked
+				}
+				return RenderRequest{Source: artifact, Label: root, SubPath: ".", Spec: demoRawSpec}
+			}
+			c := newCache()
+			rec := newReadSet(root)
+			view := newTreeFS(request().Source.FS, root, rec)
+			if err := preflightRemoteResources(t.Context(), c, view, root); err != nil {
+				t.Fatal(err)
+			}
+			_, err := buildTestTreeFS(view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap := rec.snapshot()
+			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request().Source.FS}, false); err != nil || !valid {
+				t.Fatalf("unchanged snapshot: %+v, %v, %v", snap, valid, err)
+			}
+			observed := changed
+			if scenario == "source-link" {
+				observed = "link.yaml"
+			}
+			if !slices.ContainsFunc(snap.Files, func(f fileEntry) bool { return f.Path == observed }) {
+				t.Fatalf("source input %q absent: %+v", observed, snap)
+			}
+			for _, f := range snap.Files {
+				if strings.Contains(f.Path, remoteResourcePrefix) {
+					t.Fatalf("overlay coordinate recorded as source: %+v", f)
+				}
+			}
+			for name, body := range files {
+				got, err := os.ReadFile(filepath.Join(root, name))
+				if err != nil || string(got) != body {
+					t.Fatalf("source %q mutated: %q, %v", name, got, err)
+				}
+			}
+			out, err := RenderFlux(t.Context(), c, request(), sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatalf("first render: %s, %v", out, err)
+			}
+			key := renderKey(request(), root, nil)
+			if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
+				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, persisted, []byte("SENTINEL\n")))
+			}
+			closeTestTreeCache(t, c)
+			if scenario == "source-link" {
+				links := tree.NewBuilder(linked)
+				if err := links.AddSymlink("link.yaml", "other.yaml"); err != nil {
+					t.Fatal(err)
+				}
+				linked, err = links.Build()
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				testutil.WriteFile(t, root, changed, value)
+			}
+			c = newCache()
+			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request().Source.FS}, false); err != nil || valid {
+				t.Fatalf("changed source validated: %t, %v", valid, err)
+			}
+			out, err = RenderFlux(t.Context(), c, request(), sourcecache.RetryConfig{})
+			if err != nil || !strings.Contains(string(out), want) {
+				t.Fatalf("source edit: %s, %v; want %q", out, err, want)
+			}
+			closeTestTreeCache(t, c)
+		})
+	}
+	t.Run("source-link-to-injected-file", func(t *testing.T) {
+		const body = "remote bytes"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		t.Cleanup(srv.Close)
+		for _, open := range []bool{false, true} {
+			t.Run(fmt.Sprintf("open_%t", open), func(t *testing.T) {
+				c := newTestTreeCache(t, "")
+				const root = "/source"
+				rec := newReadSet(root)
+				view := newTreeFS(memoryTree(t, nil), root, rec)
+				walk := inputWalk{cache: c, fs: view}
+				if _, err := walk.acquire(t.Context(), remoteInput{Operation: remoteHTTP, URL: srv.URL}); err != nil {
+					t.Fatal(err)
+				}
+				generated, err := walk.mount([]byte(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				links := tree.NewBuilder(nil)
+				if err := links.AddSymlink("link", filepath.Base(generated)); err != nil {
+					t.Fatal(err)
+				}
+				lower, err := links.Build()
+				if err != nil {
+					t.Fatal(err)
+				}
+				view.lower = lower
+				view.upper = tree.NewBuilder(lower)
+				if _, err := walk.mount([]byte(body)); err != nil {
+					t.Fatal(err)
+				}
+				if open {
+					f, err := view.Open(root + "/link")
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, err := io.ReadAll(f)
+					if err = errors.Join(err, f.Close()); err != nil || string(data) != body {
+						t.Fatalf("read: %q, %v", data, err)
+					}
+				} else if data, err := view.ReadFile(root + "/link"); err != nil || string(data) != body {
+					t.Fatalf("read: %q, %v", data, err)
+				}
+				snap := rec.snapshot()
+				if len(snap.Files) != 1 || snap.Files[0].Path != "link" || snap.Files[0].Hash == "" {
+					t.Fatalf("authored source link lost: %+v", snap)
+				}
+				if validReadSet(t, readSetSnapshot{Files: snap.Files}, lower) {
+					t.Fatal("lower source cannot certify bytes obtained through an injected target")
+				}
+				changed := tree.NewBuilder(lower)
+				if err := changed.AddFile("local", []byte("new bytes"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := changed.AddSymlink("link", "local"); err != nil {
+					t.Fatal(err)
+				}
+				current, err := changed.Build()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if validReadSet(t, readSetSnapshot{Files: snap.Files}, current) {
+					t.Fatal("retargeted source link replayed injected bytes")
+				}
+			})
+		}
+	})
+	t.Run("nested-snapshot-observations", func(t *testing.T) {
+		root := writeTree(t, map[string]string{"local.txt": "source", "view-more-data/file": "prefix", "listed/one": "one", "walked/one": "one", "node": "file"})
+		lower := os.DirFS(root)
+		rec := newReadSet(root)
+		view := newTreeFS(lower, root, rec)
+		snapshot, err := view.upper.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.upper = tree.NewBuilder(snapshot)
+		if err := view.upper.Mount("view", snapshot); err != nil {
+			t.Fatal(err)
+		}
+		view.origins = append(view.origins, mountOrigin{path: "view", source: "."})
+		c := newTestTreeCache(t, "")
+		c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Revision: "1"}, nil
+		})
+		walk := inputWalk{cache: c, fs: view}
+		gitPath, err := walk.fetchGitBase(t.Context(), gitBaseSpec{repoURL: "https://example.invalid/o/repo.git", dir: filepath.Join(root, "view")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err = view.upper.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.upper = tree.NewBuilder(snapshot)
+		if err := view.upper.Mount("view-more", snapshot); err != nil {
+			t.Fatal(err)
+		}
+		view.origins = append(view.origins, mountOrigin{path: "view-more", source: "."})
+		alias := filepath.Join(root, "view-more", "view")
+		originalDir := filepath.Join(root, "view", gitPath)
+		nestedDir := filepath.Join(alias, gitPath)
+		original := walk.location(controlLocation{file: filepath.Join(originalDir, "foreign"), root: originalDir, pluginRoot: filepath.Join(root, "view")})
+		nested := walk.location(controlLocation{file: filepath.Join(nestedDir, "foreign"), root: nestedDir, pluginRoot: alias})
+		if original != nested || original.file == "" {
+			t.Fatalf("nested remote location lost canonical coordinates: %+v, %+v", original, nested)
+		}
+		if _, err := view.ReadFile(filepath.Join(alias, "local.txt")); err != nil {
+			t.Fatal(err)
+		}
+		f, err := view.Open(filepath.Join(alias, "local.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := view.ReadFile(filepath.Join(root, "view-more-data/file")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := view.ReadFile(filepath.Join(alias, gitPath, "foreign")); err != nil {
+			t.Fatal(err)
+		}
+		if err := view.WriteFile(filepath.Join(alias, "generated"), []byte("generated")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := view.ReadFile(filepath.Join(alias, "generated")); err != nil {
+			t.Fatal(err)
+		}
+		if !view.Exists(filepath.Join(alias, "node")) || view.IsDir(filepath.Join(alias, "node")) {
+			t.Fatal("aliased source node was not a file")
+		}
+		if _, err := view.ReadDir(alias); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := view.ReadDir(filepath.Join(alias, "listed")); err != nil {
+			t.Fatal(err)
+		}
+		if err := view.Walk(filepath.Join(alias, "walked"), func(_ string, _ os.FileInfo, err error) error { return err }); err != nil {
+			t.Fatal(err)
+		}
+		snap := rec.snapshot()
+		if len(snap.Remotes) != 1 || len(snap.Files) != 2 || snap.Files[0].Path != "local.txt" || snap.Files[1].Path != "view-more-data/file" {
+			t.Fatalf("nested snapshot attribution: %+v", snap)
+		}
+		if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: lower}, false); err != nil || !valid {
+			t.Fatalf("snapshot contains injected directory members: %+v, %t, %v", snap, valid, err)
+		}
+		for _, dir := range []string{"listed", "walked"} {
+			t.Run(dir+"-membership", func(t *testing.T) {
+				index := slices.IndexFunc(snap.Dirs, func(f fileEntry) bool { return f.Path == dir })
+				if index < 0 {
+					t.Fatalf("directory %q was not observed: %+v", dir, snap)
+				}
+				testutil.WriteFile(t, root, dir+"/two", "two")
+				if validReadSet(t, readSetSnapshot{Dirs: snap.Dirs[index : index+1]}, lower) {
+					t.Fatal("aliased directory membership change was missed")
+				}
+			})
+		}
+		if err := os.Remove(filepath.Join(root, "node")); err != nil {
+			t.Fatal(err)
+		}
+		testutil.WriteFile(t, root, "node/child", "child")
+		if validReadSet(t, readSetSnapshot{Nodes: snap.Nodes}, lower) {
+			t.Fatal("aliased node transition was missed")
+		}
+	})
+}
+
+func TestRenderFlux_RemoteCacheIsolation(t *testing.T) {
+	eligible := renderPersistenceEligible(t)
+	t.Logf("persisted isolation assertions executed=%v; concurrent snapshot assertions always execute", eligible)
+	var shared, distinct atomic.Int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/shared" {
+			shared.Add(1)
+			entered <- struct{}{}
+			<-release
+		} else {
+			distinct.Add(1)
+		}
+		_, _ = io.WriteString(w, "contents")
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestTreeCache(t, t.TempDir())
+	type result struct {
+		request RenderRequest
+		snap    readSetSnapshot
+		output  []byte
+		err     error
+	}
+	results := make(chan result, 2)
+	requests := make([]RenderRequest, 2)
+	for i := range requests {
+		name := fmt.Sprintf("local-%d", i)
+		root := writeTree(t, map[string]string{
+			"kustomization.yaml": "resources: [" + name + ".yaml]\nconfigMapGenerator: [{name: generated, files: ['first=" + srv.URL + "/shared', 'second=" + srv.URL + "/shared', 'distinct=" + srv.URL + "/" + name + "']}]\n",
+			name + ".yaml":       cmYAML(name),
+		})
+		requests[i] = RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
+	}
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	for _, request := range requests {
+		wg.Go(func() {
+			rec := newReadSet(request.Label)
+			view := newTreeFS(request.Source.FS, request.Label, rec)
+			err := preflightRemoteResources(t.Context(), c, view, request.Label)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			if _, err := buildTestTreeFS(view); err != nil {
+				results <- result{err: err}
+				return
+			}
+			out, err := RenderFlux(t.Context(), c, request, sourcecache.RetryConfig{})
+			results <- result{request: request, snap: rec.snapshot(), output: out, err: err}
+		})
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent renders did not reach shared acquisition")
+	}
+	close(release)
+	released = true
+	for range requests {
+		got := <-results
+		if got.err != nil || !strings.Contains(string(got.output), "contents") {
+			t.Fatalf("concurrent render: %s, %v", got.output, got.err)
+		}
+		snap := got.snap
+		if persisted, _, hit := readTestRenderFrame(t, c, renderKey(got.request, got.request.Label, nil)); hit {
+			snap = persisted
+		}
+		if len(snap.Remotes) != 2 || snap.Remotes[0].Input.URL >= snap.Remotes[1].Input.URL {
+			t.Fatalf("remote descriptors not private/deduplicated/sorted: %+v", snap)
+		}
+		control, err := fs.ReadFile(got.request.Source.FS, "kustomization.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range snap.Remotes {
+			if !bytes.Contains(control, []byte(entry.Input.URL)) {
+				t.Fatalf("another render's dependency leaked: %+v", entry)
+			}
+		}
+		for _, file := range snap.Files {
+			if _, err := fs.Stat(got.request.Source.FS, file.Path); err != nil {
+				t.Fatalf("another source's read leaked: %+v, %v", file, err)
+			}
+		}
+		if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: got.request.Source.FS}, false); err != nil || !valid {
+			t.Fatalf("private snapshot invalid: %+v, %t, %v", snap, valid, err)
+		}
+	}
+	if shared.Load() != 1 || distinct.Load() != 2 {
+		t.Fatalf("shared requests=%d, distinct=%d", shared.Load(), distinct.Load())
+	}
+}
+
+func buildTestTreeFS(view *treeFS) ([]byte, error) {
+	kustomizestate.BuildMutex.Lock()
+	defer kustomizestate.BuildMutex.Unlock()
+	rm, err := fluxkustomize.Build(view, view.root)
+	if err != nil {
+		return nil, err
+	}
+	return rm.AsYaml()
 }

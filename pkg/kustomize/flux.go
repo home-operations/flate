@@ -72,6 +72,9 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err != nil {
 		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
+	spec, _ := req.Spec["spec"].(map[string]any)
+	interval, _ := spec["interval"].(string)
+	maxAge, _ := time.ParseDuration(interval)
 	key := renderKey(req, root, ignore)
 	blobKey := sourcecache.BlobKey{Content: key, PersistOnly: true}
 	reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
@@ -86,20 +89,21 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		snap, output, err := decodeFrame(raw)
 		if err != nil {
 			slog.Debug("kustomize: decode render frame", "err", err)
-		} else if req.Source.Key != "" || snap.stillValidFS(lower) {
-			return output, nil
+		} else {
+			valid, err := snap.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge}, req.Source.Key != "")
+			if err != nil {
+				return nil, err
+			}
+			if valid {
+				return output, nil
+			}
 		}
 	}
 	rec := newReadSet(root)
-	var mutableRec *readSet
-	if req.Source.Key == "" {
-		mutableRec = rec
-	}
-	memFS := newTreeFS(lower, root, mutableRec)
+	rec.immutable = req.Source.Key != ""
+	memFS := newTreeFS(lower, root, rec)
 	memFS.retry = retry
-	spec, _ := req.Spec["spec"].(map[string]any)
-	interval, _ := spec["interval"].(string)
-	memFS.maxAge, _ = time.ParseDuration(interval)
+	memFS.maxAge = maxAge
 	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {
@@ -122,8 +126,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		return nil, fmt.Errorf("write kustomization.yaml: %w", err)
 	}
 
-	injected, err := preflightRemoteResources(ctx, cache, memFS, subDir)
-	if err != nil {
+	if err := preflightRemoteResources(ctx, cache, memFS, subDir); err != nil {
 		return nil, err
 	}
 	data, err = memFS.ReadFile(kfile)
@@ -163,22 +166,19 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
-	// Remote inputs have no identity in the source read set.
-	if !injected {
-		reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-			frame, err := encodeFrame(rec.snapshot(), out)
-			if err != nil {
-				return ocispec.Descriptor{}, fmt.Errorf("encode kustomize render frame: %w", err)
-			}
-			_, err = io.Copy(w, bytes.NewReader(frame))
-			return ocispec.Descriptor{}, err
-		})
+	reader, _, _, err = cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		frame, err := encodeFrame(rec.snapshot(), out)
 		if err != nil {
-			return nil, fmt.Errorf("kustomize render cache publish: %w", err)
+			return ocispec.Descriptor{}, fmt.Errorf("encode kustomize render frame: %w", err)
 		}
-		if err := reader.Close(); err != nil {
-			return nil, fmt.Errorf("%w: close kustomize render frame: %w", manifest.ErrFlux, err)
-		}
+		_, err = io.Copy(w, bytes.NewReader(frame))
+		return ocispec.Descriptor{}, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("kustomize render cache publish: %w", err)
+	}
+	if err := reader.Close(); err != nil {
+		return nil, fmt.Errorf("%w: close kustomize render frame: %w", manifest.ErrFlux, err)
 	}
 	return out, nil
 }

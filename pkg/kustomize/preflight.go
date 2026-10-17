@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -79,7 +80,6 @@ type inputWalk struct {
 	cache   *TreeCache
 	fs      *treeFS
 	visited map[controlLocation][]byte
-	mounts  []string
 }
 
 type inputResult struct {
@@ -99,13 +99,13 @@ type inputPath struct {
 	directory         bool
 }
 
-func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) (bool, error) {
+func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) error {
 	w := inputWalk{cache: cache, fs: memFS.(*treeFS), visited: make(map[controlLocation][]byte)}
-	result, err := w.directory(ctx, subPath, "")
+	_, err := w.directory(ctx, subPath, "")
 	if err != nil {
 		err = fmt.Errorf("%w: preflight: %w", manifest.ErrFlux, err)
 	}
-	return result.injected, err
+	return err
 }
 
 func (w *inputWalk) directory(ctx context.Context, dir, pluginRoot string) (inputResult, error) {
@@ -180,9 +180,8 @@ func (w *inputWalk) pluginDirectory(ctx context.Context, dir, owner string) (str
 			if err := w.fs.upper.Mount(name, snapshot); err != nil {
 				return "", inputResult{}, err
 			}
-			w.fs.mark(name)
+			w.fs.origins = append(w.fs.origins, mountOrigin{path: name, source: "."})
 			mount := filepath.Join(w.fs.root, name)
-			w.mounts = append(w.mounts, mount)
 			rel, err := filepath.Rel(w.fs.root, key.root)
 			if err != nil {
 				return "", inputResult{}, err
@@ -205,10 +204,13 @@ func (w *inputWalk) pluginDirectory(ctx context.Context, dir, owner string) (str
 }
 
 func (w *inputWalk) location(loc controlLocation) controlLocation {
-	for _, mount := range slices.Backward(w.mounts) {
-		for _, coordinate := range []*string{&loc.file, &loc.root, &loc.pluginRoot} {
-			if *coordinate == mount || strings.HasPrefix(*coordinate, mount+string(filepath.Separator)) {
-				*coordinate = w.fs.root + strings.TrimPrefix(*coordinate, mount)
+	for _, coordinate := range []*string{&loc.file, &loc.root, &loc.pluginRoot} {
+		if *coordinate == "" {
+			continue
+		}
+		if rel, err := w.fs.rel(*coordinate); err == nil {
+			if origin, _ := w.fs.origin(rel); origin != rel {
+				*coordinate = w.fs.mount(origin)
 			}
 		}
 	}
@@ -360,6 +362,14 @@ func (w *inputWalk) pluginOperand(ctx context.Context, loc controlLocation, node
 	return result, err
 }
 
+func (w *inputWalk) acquire(ctx context.Context, descriptor remoteInput) (fs.FS, error) {
+	acquired, identity, err := descriptor.acquire(ctx, w.cache, w.fs)
+	if err == nil && w.fs.rec != nil {
+		w.fs.rec.recordRemote(descriptor, identity)
+	}
+	return acquired, err
+}
+
 func (w *inputWalk) filePath(ctx context.Context, loc controlLocation, raw string) (inputPath, error) {
 	file := raw
 	if !filepath.IsAbs(file) {
@@ -368,7 +378,11 @@ func (w *inputWalk) filePath(ctx context.Context, loc controlLocation, raw strin
 	if _, _, ok := cutHTTPScheme(raw); !ok {
 		return inputPath{file: file}, nil
 	}
-	body, err := w.cache.FetchRemote(ctx, raw, w.fs.retry)
+	acquired, err := w.acquire(ctx, remoteInput{Operation: remoteHTTP, URL: raw})
+	if err != nil {
+		return inputPath{}, err
+	}
+	body, err := fs.ReadFile(acquired, "content")
 	if err != nil {
 		return inputPath{}, err
 	}
@@ -379,7 +393,7 @@ func (w *inputWalk) filePath(ctx context.Context, loc controlLocation, raw strin
 func (w *inputWalk) resourcePath(ctx context.Context, loc controlLocation, raw string) (inputPath, error) {
 	if spec, ok := isGitRemoteBase(raw); ok {
 		spec.dir = loc.root
-		dest, err := fetchGitBase(ctx, w.cache, w.fs, spec)
+		dest, err := w.fetchGitBase(ctx, spec)
 		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true}, err
 	}
 	path, err := w.filePath(ctx, loc, raw)

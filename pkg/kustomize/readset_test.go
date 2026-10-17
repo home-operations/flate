@@ -1,8 +1,11 @@
 package kustomize
 
 import (
+	"bytes"
+	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 )
@@ -49,7 +52,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	})
 
 	t.Run("unchanged tree is a hit", func(t *testing.T) {
-		if !snap.stillValidFS(base()) {
+		if !validReadSet(t, snap, base()) {
 			t.Error("identical tree must validate (cache hit)")
 		}
 	})
@@ -57,7 +60,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	t.Run("editing a recorded file misses", func(t *testing.T) {
 		d := base()
 		d["a.yaml"] = &fstest.MapFile{Data: []byte("kind: ConfigMap\ndata: {x: y}\n")}
-		if snap.stillValidFS(d) {
+		if validReadSet(t, snap, d) {
 			t.Error("an edit to a recorded input must invalidate (cache miss)")
 		}
 	})
@@ -65,7 +68,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	t.Run("editing an UNREAD file stays a hit (granularity)", func(t *testing.T) {
 		d := base()
 		d["b.yaml"] = &fstest.MapFile{Data: []byte("kind: Secret\nstringData: {k: v}\n")}
-		if !snap.stillValidFS(d) {
+		if !validReadSet(t, snap, d) {
 			t.Error("b.yaml was never read by this build; editing it must NOT invalidate")
 		}
 	})
@@ -73,7 +76,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	t.Run("adding a file to the listed dir misses", func(t *testing.T) {
 		d := base()
 		d["c.yaml"] = &fstest.MapFile{Data: []byte("kind: Service\n")}
-		if snap.stillValidFS(d) {
+		if validReadSet(t, snap, d) {
 			t.Error("a new file in the auto-scanned dir must invalidate")
 		}
 	})
@@ -81,7 +84,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	t.Run("deleting a recorded file misses", func(t *testing.T) {
 		d := base()
 		delete(d, "a.yaml")
-		if snap.stillValidFS(d) {
+		if validReadSet(t, snap, d) {
 			t.Error("deleting a recorded input must invalidate")
 		}
 	})
@@ -89,7 +92,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	t.Run("a probed-absent component appearing misses", func(t *testing.T) {
 		d := base()
 		d["comp/kustomization.yaml"] = &fstest.MapFile{}
-		if snap.stillValidFS(d) {
+		if validReadSet(t, snap, d) {
 			t.Error("an optional component that materialized must invalidate")
 		}
 	})
@@ -104,10 +107,63 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snap := recordAgainst(root, tc.before, reads{probed: []string{"comp"}})
-			if !snap.stillValidFS(tc.before) || snap.stillValidFS(tc.after) {
+			if !validReadSet(t, snap, tc.before) || validReadSet(t, snap, tc.after) {
 				t.Fatal("probed node transition did not invalidate")
 			}
 		})
 	}
 
+}
+
+func TestReadSet_RemoteObservations(t *testing.T) {
+	entries := []remoteEntry{
+		{Input: remoteInput{Operation: remoteGit, URL: "https://example.invalid/b.git", Ref: "z"}, Identity: remoteIdentity{Key: "family", Revision: "1"}},
+		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"}, Identity: remoteIdentity{HTTP: "http-b"}},
+		{Input: remoteInput{Operation: remoteGit, URL: "https://example.invalid/b.git", Ref: "a"}, Identity: remoteIdentity{Key: "family", Revision: "2"}},
+		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"}, Identity: remoteIdentity{HTTP: "http-a"}},
+	}
+	var first []byte
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
+			rs := newReadSet("/src")
+			if rs.remotes != nil || rs.snapshot().Remotes != nil {
+				t.Fatal("local-only recorder allocated remote observations")
+			}
+			ordered := slices.Clone(entries)
+			if reverse {
+				slices.Reverse(ordered)
+			}
+			for _, entry := range ordered {
+				rs.recordRemote(entry.Input, entry.Identity)
+				rs.recordRemote(entry.Input, entry.Identity)
+			}
+			snap := rs.snapshot()
+			if len(snap.Remotes) != len(entries) {
+				t.Fatalf("deduplicated observations=%v", snap.Remotes)
+			}
+			frame, err := encodeFrame(snap, []byte("output"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, _, err := decodeFrame(frame)
+			if err != nil || !slices.Equal(decoded.Remotes, snap.Remotes) {
+				t.Fatalf("roundtrip=%+v error=%v", decoded.Remotes, err)
+			}
+			if first == nil {
+				first = frame
+			}
+			if !bytes.Equal(frame, first) {
+				t.Fatal("snapshot order depends on observation order")
+			}
+		})
+	}
+}
+
+func validReadSet(t *testing.T, snap readSetSnapshot, lower fs.FS) bool {
+	t.Helper()
+	valid, err := snap.stillValid(t.Context(), nil, &treeFS{lower: lower}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return valid
 }

@@ -2081,7 +2081,11 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			}
 			trees := kustomize.NewTreeCache(c, next.cfg.Network)
 			t.Cleanup(trees.Close)
-			body, err := trees.FetchRemote(t.Context(), srv.URL+"/0", sourcecache.RetryConfig{})
+			input, err := trees.FetchRemote(t.Context(), srv.URL+"/0", sourcecache.RetryConfig{})
+			var body []byte
+			if err == nil {
+				body, err = fs.ReadFile(input, "content")
+			}
 			if err != nil || string(body) != "new run" || hits.Load() != 1 {
 				t.Fatalf("fresh run: %q %v hits=%d", body, err, hits.Load())
 			}

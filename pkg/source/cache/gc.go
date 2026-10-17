@@ -21,6 +21,7 @@ import (
 // SweepOpts tunes Sweep's behavior.
 type SweepOpts struct {
 	// MaxAge retires named tags whose payload mtime predates now-MaxAge.
+	// Coalesced access timestamps allow one second of retention grace.
 	// Zero disables age retirement; unreachable Git generations are always collected.
 	MaxAge time.Duration
 	// DryRun reports the selection without locking or changing the cache.
@@ -144,7 +145,7 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 	}
 	cutoff := time.Time{}
 	if maxAge > 0 {
-		cutoff = time.Now().Add(-maxAge)
+		cutoff = time.Now().Add(-maxAge).Add(-accessInterval)
 	}
 	for _, tag := range tags {
 		desc, err := store.Resolve(ctx, tag)

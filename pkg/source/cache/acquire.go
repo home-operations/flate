@@ -27,6 +27,8 @@ const prefix = "flate."
 
 const maxTrailingBytes = 1 << 20
 
+const accessInterval = time.Second
+
 // ArchiveKey identifies an archive and its source-ignore policy.
 // Content MUST include the effective credentials used by the producer.
 type ArchiveKey struct {
@@ -64,6 +66,7 @@ type entry struct {
 	descriptor ocispec.Descriptor
 	stored     ocispec.Descriptor
 	resolved   time.Time
+	touched    time.Time
 	git        *GitGeneration
 	outcome    *outcome
 	unloaded   bool
@@ -292,10 +295,22 @@ func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Durat
 
 func (c *Cache) touch(e *entry) error {
 	if c.store != nil {
+		if e.touched.IsZero() {
+			info, err := c.root.Stat(blobPath(e.stored.Digest))
+			if err != nil {
+				return &CacheError{err}
+			}
+			e.touched = info.ModTime()
+		}
 		now := time.Now()
+		// Sweep allows the same interval so coalescing never retires a recent access early.
+		if now.Sub(e.touched) < accessInterval {
+			return nil
+		}
 		if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
 			return &CacheError{err}
 		}
+		e.touched = now
 	}
 	return nil
 }

@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
-	"helm.sh/helm/v4/pkg/chart/v2/loader"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -34,10 +32,9 @@ type Client struct {
 	// construction.
 	resolver SourceResolver
 
-	// Charts are shared by acquisition pin or captured directory content.
-	// Existing per-key locks coalesce parsing; renders clone at the mutation boundary.
+	// Canonical charts MUST remain immutable; renders clone at the mutation boundary.
 	chartMu        sync.RWMutex
-	chartCache     map[string]chartCacheEntry
+	chartCache     map[string]chartLoadResult
 	chartLoadLocks *keylock.KeyMap[string]
 
 	// chartValuesCache memoizes mergeChartValuesFiles output keyed by
@@ -67,17 +64,11 @@ type Client struct {
 	cache *cache.Cache
 }
 
-// Mutable archives retain the exact bytes consumed by the upstream loader.
-type chartCacheEntry struct {
-	loaded  chartLoadResult
-	archive []byte
-}
-
 // NewClient constructs a Client borrowing the supplied nonnil cache owner.
 // The caller MUST keep the owner open until all Client operations finish.
 func NewClient(owner *cache.Cache) (*Client, error) {
 	return &Client{
-		chartCache:       map[string]chartCacheEntry{},
+		chartCache:       map[string]chartLoadResult{},
 		chartValuesCache: map[string]map[string]any{},
 		chartLoadLocks:   keylock.New[string](),
 		valuesCache:      values.NewCache(),
@@ -145,94 +136,79 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 	if err != nil {
 		return chartLoadResult{}, err
 	}
-	var location string
+	pin, _ := authority.(string)
+	selector := struct {
+		Pin, Path string
+		Auto      bool
+	}{Pin: pin, Auto: true}
 	switch hr.Chart.RepoKind {
 	case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
-		location = path.Clean(hr.Chart.Name)
-	default:
-		location, err = chartPathInFS(input)
+		selector.Path, selector.Auto = path.Clean(hr.Chart.Name), false
 	}
-	if err != nil {
-		return chartLoadResult{}, err
-	}
-	pin, _ := authority.(string)
-	label := location
-	if art.LocalPath != "" {
-		label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
-	}
-	var files []*archive.BufferedFile
-	var origin any
-	if pin != "" {
-		origin = struct{ Pin, Location string }{pin, location}
-	} else {
+	var captured capturedChart
+	var label string
+	capture := func() error {
+		location := selector.Path
+		if selector.Auto {
+			location, err = chartPathInFS(input)
+			if err != nil {
+				return err
+			}
+		}
+		label = location
+		if art.LocalPath != "" {
+			label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
+		}
 		var missing bool
-		files, missing, err = captureChartDir(input, location)
+		captured, missing, err = captureChart(input, location)
 		if missing {
-			return chartLoadResult{}, err
+			return err
 		}
 		if err != nil {
-			return chartLoadResult{}, fmt.Errorf("load chart %s: %w", label, err)
+			return fmt.Errorf("load chart %s: %w", label, err)
 		}
-		if files != nil {
-			content := make([]chartFileContent, len(files))
-			for i, f := range files {
-				content[i] = chartFileContent{Name: f.Name, Data: f.Data}
-			}
-			origin = content
-		} else if art.LocalPath != "" {
-			origin = struct{ Root, Path, Location string }{art.LocalRoot, art.LocalPath, location}
+		return nil
+	}
+	var cacheKey string
+	if pin != "" {
+		cacheKey = manifest.Fingerprint(selector)
+	} else {
+		if err := capture(); err != nil {
+			return chartLoadResult{}, err
 		}
+		cacheKey = captured.fingerprint()
 	}
-	cacheKey := ""
-	if origin != nil {
-		cacheKey = manifest.Fingerprint(origin)
-	}
-	immutable := pin != "" || files != nil
 	c.chartMu.RLock()
-	entry, cached := c.chartCache[cacheKey]
+	loaded, cached := c.chartCache[cacheKey]
 	c.chartMu.RUnlock()
-	if !cached || !immutable {
-		if cacheKey != "" {
-			release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
-			if err != nil {
-				return chartLoadResult{}, err
-			}
-			defer release()
-			c.chartMu.RLock()
-			entry, cached = c.chartCache[cacheKey]
-			c.chartMu.RUnlock()
+	if !cached {
+		release, err := c.chartLoadLocks.Acquire(ctx, cacheKey)
+		if err != nil {
+			return chartLoadResult{}, err
 		}
-		if !cached || !immutable {
-			if files != nil {
-				var ch *chart.Chart
-				ch, err = loader.LoadFiles(files)
-				if err == nil {
-					entry = chartCacheEntry{loaded: chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}}
-				}
-			} else {
-				var missing bool
-				entry, missing, err = loadFSChart(input, location, entry)
-				if missing {
+		defer release()
+		c.chartMu.RLock()
+		loaded, cached = c.chartCache[cacheKey]
+		c.chartMu.RUnlock()
+		if !cached {
+			if pin != "" {
+				if err := capture(); err != nil {
 					return chartLoadResult{}, err
 				}
 			}
+			loaded.chart, err = captured.load()
 			if err != nil {
 				if _, ok := errors.AsType[chart.ValidationError](err); ok {
 					err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
 				}
 				return chartLoadResult{}, fmt.Errorf("load chart %s: %w", label, err)
 			}
-			if immutable {
-				entry.archive = nil
-			}
-			if cacheKey != "" {
-				c.chartMu.Lock()
-				c.chartCache[cacheKey] = entry
-				c.chartMu.Unlock()
-			}
+			loaded.fingerprint = manifest.Fingerprint(projectChart(loaded.chart))
+			c.chartMu.Lock()
+			c.chartCache[cacheKey] = loaded
+			c.chartMu.Unlock()
 		}
 	}
-	loaded := entry.loaded
 	loaded.artifact = *art
 	return loaded, nil
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -56,8 +57,11 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 				t.Cleanup(func() { _ = listener.Close() })
 			}
 			want, wantErr := loader.LoadDir(root)
-			entry, _, gotErr := loadFSChart(os.DirFS(root), ".", chartCacheEntry{})
-			got := entry.loaded.chart
+			captured, _, gotErr := captureChart(os.DirFS(root), ".")
+			var got *chart.Chart
+			if gotErr == nil {
+				got, gotErr = captured.load()
+			}
 			if irregular {
 				if wantErr == nil || gotErr == nil {
 					t.Fatalf("irregular: upstream=%v FS=%v", wantErr, gotErr)
@@ -172,31 +176,21 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 	t.Run("oversized", func(t *testing.T) {
 		data := bytes.Repeat([]byte("x"), 4*int(archive.MaxDecompressedChartSize))
 		input := fstest.MapFS{"chart.tgz": {Data: data}}
-		for _, tc := range []struct {
-			name     string
-			previous chartCacheEntry
-		}{
-			{"empty previous", chartCacheEntry{}},
-			{"matching previous", chartCacheEntry{archive: data}},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				var bytesRead int64
-				observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) {
-					file, err := input.Open(name)
-					if err != nil {
-						return nil, err
-					}
-					return countingFile{File: file, bytesRead: &bytesRead}, nil
-				}}
-				_, missing, err := loadFSChart(observed, "chart.tgz", tc.previous)
-				assert.Equal(t, missing, false)
-				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
-				if err == nil || !strings.Contains(err.Error(), "chart archive exceeds maximum decompressed size") {
-					t.Errorf("expected archive size error, got %v", err)
-				}
-				assert.Equal(t, bytesRead, archive.MaxDecompressedChartSize+1)
-			})
+		var bytesRead int64
+		observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) {
+			file, err := input.Open(name)
+			if err != nil {
+				return nil, err
+			}
+			return countingFile{File: file, bytesRead: &bytesRead}, nil
+		}}
+		_, missing, err := captureChart(observed, "chart.tgz")
+		assert.Equal(t, missing, false)
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+		if err == nil || !strings.Contains(err.Error(), "chart archive exceeds maximum decompressed size") {
+			t.Errorf("expected archive size error, got %v", err)
 		}
+		assert.Equal(t, bytesRead, archive.MaxDecompressedChartSize+1)
 	})
 	t.Run("valid reload", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -212,18 +206,19 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 		assert.Equal(t, int64(len(data)) < archive.MaxDecompressedChartSize, true)
 		assert.Equal(t, int64(buf.Len()) < archive.MaxDecompressedChartSize, true)
 		input := fstest.MapFS{"chart.tgz": {Data: buf.Bytes()}}
-		loaded, missing, err := loadFSChart(input, "chart.tgz", chartCacheEntry{})
+		captured, missing, err := captureChart(input, "chart.tgz")
 		assert.NoError(t, err)
 		assert.Equal(t, missing, false)
-		assert.Equal(t, loaded.loaded.chart.Metadata.Name, "chart")
-		assert.Equal(t, loaded.loaded.chart.Metadata.Version, "1.0.0")
-		assert.Equal(t, bytes.Equal(loaded.archive, buf.Bytes()), true)
-		warm, missing, err := loadFSChart(input, "chart.tgz", loaded)
+		loaded, err := captured.load()
+		assert.NoError(t, err)
+		assert.Equal(t, loaded.Metadata.Name, "chart")
+		assert.Equal(t, loaded.Metadata.Version, "1.0.0")
+		assert.Equal(t, bytes.Equal(captured.archive, buf.Bytes()), true)
+		warm, missing, err := captureChart(input, "chart.tgz")
 		assert.NoError(t, err)
 		assert.Equal(t, missing, false)
-		assert.Equal(t, warm.loaded.chart == loaded.loaded.chart, true)
-		assert.Equal(t, warm.loaded.fingerprint, loaded.loaded.fingerprint)
-		assert.Equal(t, bytes.Equal(warm.archive, loaded.archive), true)
+		assert.Equal(t, warm.fingerprint(), captured.fingerprint())
+		assert.Equal(t, bytes.Equal(warm.archive, captured.archive), true)
 	})
 }
 
@@ -239,7 +234,7 @@ func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
 	if _, err := loader.LoadDir(root); err == nil {
 		t.Fatal("Helm accepted oversized fixture")
 	}
-	if _, _, err := loadFSChart(input, ".", chartCacheEntry{}); !errors.Is(err, manifest.ErrInput) {
+	if _, _, err := captureChart(input, "."); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("oversized FS chart lacks input classification: %v", err)
 	}
 }
@@ -267,7 +262,10 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 		"ignore":        {"chart/.helmignore": {Data: []byte("**\n")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, missing, err := loadFSChart(input, "chart", chartCacheEntry{})
+			captured, missing, err := captureChart(input, "chart")
+			if err == nil {
+				_, err = captured.load()
+			}
 			if missing != (name == "missing") {
 				t.Fatalf("missing location = %v for %s: %v", missing, name, err)
 			}
@@ -292,7 +290,8 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 
 func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	st := store.New()
-	cli, err := NewClient(newTestCache(t, ""))
+	owner := newTestCache(t, "")
+	cli, err := NewClient(owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,8 +299,13 @@ func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	label := t.TempDir()
 	testutil.WriteFile(t, label, "Chart.yaml", "apiVersion: v2\nname: host\nversion: 1.0.0\n")
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: "chart", RepoNamespace: "n"}}
-	st.SetArtifact(hr.ChartSource(),
-		&store.SourceArtifact{LocalPath: label, Key: "pin"})
+	art := &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(label)), LocalPath: label, Key: "pin"}
+	st.SetArtifact(hr.ChartSource(), art)
+	_, err = cli.loadChart(t.Context(), hr)
+	assert.NoError(t, err)
+	released := *art
+	released.FS = nil
+	st.SetArtifact(hr.ChartSource(), &released)
 	if _, err := cli.loadChart(t.Context(), hr); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("released content used host chart: %v", err)
 	}
@@ -322,8 +326,8 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		stamp         int64
 	}{
 		{roots[0], "1.0.0", 1},
-		{roots[0], "2.0.0", 2},
-		{roots[1], "3.0.0", 2},
+		{roots[0], "2.0.0", 1},
+		{roots[1], "3.0.0", 1},
 	} {
 		var buf bytes.Buffer
 		gw, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
@@ -341,7 +345,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		assert.NoError(t, os.Chtimes(filename, stamp, stamp))
 		info, err := os.Stat(filename)
 		assert.NoError(t, err)
-		if tc.root == roots[1] {
+		if previousInfo != nil {
 			assert.Equal(t, info.Size(), previousInfo.Size())
 			assert.Equal(t, info.ModTime().Equal(previousInfo.ModTime()), true)
 		}
@@ -355,6 +359,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		warm, err := cli.loadChart(t.Context(), hr)
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == loaded.chart, true)
+		assert.Equal(t, warm.fingerprint, loaded.fingerprint)
 		previous, previousInfo = loaded.chart, info
 	}
 }
@@ -366,22 +371,38 @@ func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
 	client.SetSourceResolver(NewStoreSourceResolver(st))
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: id.Group, RepoKind: id.Kind, RepoName: id.Name, RepoNamespace: id.Namespace}}
-	for _, label := range []string{"", "mutable"} {
-		for _, value := range []string{"one", "two", "one"} {
-			input := fstest.MapFS{
-				"Chart.yaml":  {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
-				"values.yaml": {Data: []byte("answer: " + value + "\n")},
-			}
-			st.SetArtifact(id, &store.SourceArtifact{FS: input, LocalPath: label})
-			loaded, err := client.loadChart(t.Context(), hr)
-			if err != nil || loaded.chart.Values["answer"] != value {
-				t.Fatalf("anonymous input %q: %+v, %v", value, loaded, err)
-			}
-			input["Chart.yaml"].Data = []byte("apiVersion: v2\nname: demo\nversion: 20.0.0\n")
-			loaded, err = client.loadChart(t.Context(), hr)
-			if err != nil || loaded.chart.Metadata.Version != "20.0.0" {
-				t.Fatalf("modified anonymous chart: %+v, %v", loaded, err)
-			}
+	for _, archive := range []bool{false, true} {
+		for _, label := range []string{"", "mutable"} {
+			t.Run(fmt.Sprintf("archive_%t/label_%s", archive, label), func(t *testing.T) {
+				canonical := map[string]chartLoadResult{}
+				for _, value := range []string{"one", "two", "one"} {
+					input := fstest.MapFS{
+						"Chart.yaml":  {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+						"values.yaml": {Data: []byte("answer: " + value + "\n")},
+					}
+					for _, version := range []string{"1.0.0", "2.0.0"} {
+						input["Chart.yaml"].Data = []byte("apiVersion: v2\nname: demo\nversion: " + version + "\n")
+						admitted := input
+						if archive {
+							admitted = fstest.MapFS{"chart.tgz": {Data: chartArchive(t, input)}}
+						}
+						st.SetArtifact(id, &store.SourceArtifact{FS: admitted, LocalPath: label})
+						loaded, err := client.loadChart(t.Context(), hr)
+						assert.NoError(t, err)
+						assert.Equal(t, loaded.chart.Values["answer"], any(value))
+						assert.Equal(t, loaded.chart.Metadata.Version, version)
+						warm, err := client.loadChart(t.Context(), hr)
+						assert.NoError(t, err)
+						assert.Equal(t, warm.chart == loaded.chart, true)
+						assert.Equal(t, warm.fingerprint, loaded.fingerprint)
+						if previous, ok := canonical[value+version]; ok {
+							assert.Equal(t, loaded.chart == previous.chart, true)
+							assert.Equal(t, loaded.fingerprint, previous.fingerprint)
+						}
+						canonical[value+version] = loaded
+					}
+				}
+			})
 		}
 	}
 }
@@ -428,9 +449,11 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		next, err := chartFilesInFS(input)
 		assert.NoError(t, err)
 		assert.Equal(t, cmp.Equal(next, files), false)
-		later, _, err := loadFSChart(input, ".", chartCacheEntry{})
+		later, _, err := captureChart(input, ".")
 		assert.NoError(t, err)
-		assert.Equal(t, string(later.loaded.chart.Dependencies()[0].Templates[0].Data), "new")
+		laterChart, err := later.load()
+		assert.NoError(t, err)
+		assert.Equal(t, string(laterChart.Dependencies()[0].Templates[0].Data), "new")
 		clear(reads)
 		cli, err := NewClient(newTestCache(t, ""))
 		assert.NoError(t, err)
@@ -444,6 +467,47 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		assert.Equal(t, reads[".helmignore"], 1)
 		assert.Equal(t, reads["charts/child/templates/cm.yaml"], 1)
 	})
+	t.Run("archive exact handoff", func(t *testing.T) {
+		data := chartArchive(t, base())
+		input := fstest.MapFS{"chart.tgz": {Data: data}}
+		var bytesRead int64
+		observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) {
+			file, err := input.Open(name)
+			if err != nil {
+				return nil, err
+			}
+			return countingFile{File: file, bytesRead: &bytesRead}, nil
+		}}
+		captured, _, err := captureChart(observed, "chart.tgz")
+		assert.NoError(t, err)
+		key := captured.fingerprint()
+		changed := base()
+		changed["charts/child/templates/cm.yaml"].Data = []byte("new")
+		input["chart.tgz"].Data = chartArchive(t, changed)
+		ch, err := captured.load()
+		assert.NoError(t, err)
+		assert.Equal(t, string(ch.Dependencies()[0].Templates[0].Data), "old")
+		assert.Equal(t, captured.fingerprint(), key)
+		assert.Equal(t, bytesRead, int64(len(data)))
+		bytesRead = 0
+		cli, err := NewClient(newTestCache(t, ""))
+		assert.NoError(t, err)
+		st := store.New()
+		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: "chart.tgz", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
+		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
+		cli.SetSourceResolver(NewStoreSourceResolver(st))
+		loaded, err := cli.loadChart(t.Context(), hr)
+		assert.NoError(t, err)
+		assert.Equal(t, string(loaded.chart.Dependencies()[0].Templates[0].Data), "new")
+		assert.Equal(t, bytesRead, int64(len(input["chart.tgz"].Data)))
+		bytesRead = 0
+		warm, err := cli.loadChart(t.Context(), hr)
+		assert.NoError(t, err)
+		assert.Equal(t, warm.chart == loaded.chart, true)
+		assert.Equal(t, warm.fingerprint, loaded.fingerprint)
+		assert.Equal(t, bytesRead, int64(len(input["chart.tgz"].Data)))
+	})
+
 	for _, tc := range []struct {
 		name   string
 		change func(fstest.MapFS)
@@ -521,7 +585,7 @@ func TestLoadFSChart_FailureRecovery(t *testing.T) {
 				t.Fatalf("lost read/close error: %v", err)
 			}
 			if failure == "disappeared" {
-				_, missing, err := loadFSChart(observed, ".", chartCacheEntry{})
+				_, missing, err := captureChart(observed, ".")
 				assert.Equal(t, missing, false)
 				assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 			}

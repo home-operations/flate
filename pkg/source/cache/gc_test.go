@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -242,6 +243,45 @@ func TestSweep_GitGenerations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSweep_CoalescedAccessRetention(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		c := newCache(t, root)
+		key := BlobKey{Content: "coalesced-access"}
+		r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), ocispec.Descriptor{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Close(); err != nil {
+			t.Fatal(err)
+		}
+		v, _ := c.entries.Load(id)
+		at := time.Now().Add(-500 * time.Millisecond)
+		if err := c.root.Chtimes(blobPath(v.(*entry).stored.Digest), at, at); err != nil {
+			t.Fatal(err)
+		}
+		r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for _, expired := range []bool{false, true} {
+			if expired {
+				time.Sleep(2 * time.Second)
+			}
+			res, err := Sweep(t.Context(), root, SweepOpts{MaxAge: time.Nanosecond})
+			if err != nil || len(res.Errors) != 0 || (len(res.Removed) == 1) != expired {
+				t.Fatalf("expired=%v: %+v, %v", expired, res, err)
+			}
+		}
+	})
 }
 
 func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {

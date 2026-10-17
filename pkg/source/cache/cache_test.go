@@ -143,14 +143,37 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			at := e.(*entry).resolved
 			if disk {
 				p := filepath.Join(c.root.Name(), blobPath(e.(*entry).stored.Digest))
+				recent := time.Now()
+				if err := os.Chtimes(p, recent, recent); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Stat(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.(*entry).touched = info.ModTime()
+				var warm sync.WaitGroup
+				for range 8 {
+					warm.Go(func() {
+						if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected); err != nil {
+							t.Error(err)
+						}
+					})
+				}
+				warm.Wait()
+				unchanged, err := os.Stat(p)
+				if err != nil || !unchanged.ModTime().Equal(info.ModTime()) {
+					t.Fatalf("warm hit rewrote retention timestamp: %v, %v", unchanged, err)
+				}
 				stale := time.Now().Add(-24 * time.Hour)
 				if err := os.Chtimes(p, stale, stale); err != nil {
 					t.Fatal(err)
 				}
+				e.(*entry).touched = stale
 				if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected); err != nil {
 					t.Fatal(err)
 				}
-				info, err := os.Stat(p)
+				info, err = os.Stat(p)
 				if err != nil || !info.ModTime().After(stale) {
 					t.Fatalf("access time: %v, %v", info, err)
 				}
@@ -1324,6 +1347,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				if err := os.Remove(blob); err != nil {
 					t.Fatal(err)
 				}
+				v.(*entry).touched = stale
 				if _, _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce); !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("touch failure: %v", err)
 				}

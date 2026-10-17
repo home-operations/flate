@@ -85,9 +85,11 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				}
 				cli.SetSourceResolver(NewStoreSourceResolver(st))
 				opts := Options{DisableChartDigestTracking: disable}
+				held := acquireChartFS(t, cli.cache, os.DirFS(dir))
+				var canonical *chart.Chart
 				render := func(identity store.SourceArtifact) (string, string, string) {
 					t.Helper()
-					identity.Kind, identity.LocalPath, identity.FS = manifest.KindOCIRepository, dir, os.DirFS(dir)
+					identity.Kind, identity.LocalPath, identity.FS = manifest.KindOCIRepository, dir, held
 					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &identity)
 					out, err := cli.Template(t.Context(), hr, nil, opts)
 					if err != nil {
@@ -97,6 +99,12 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					if canonical == nil {
+						canonical = loaded.chart
+					}
+					assert.Equal(t, loaded.chart == canonical, true)
+					assert.Equal(t, loaded.artifact.Revision, identity.Revision)
+					assert.Equal(t, loaded.artifact.Digest, identity.Digest)
 					assert.Equal(t, loaded.chart.Metadata.Version, "6.15.0")
 					assert.Equal(t, loaded.chart.Dependencies()[0].Metadata.Version, "1.2.3+child")
 					loaded.oci = &ociChartContent{Digest: identity.Digest, Revision: identity.Revision, DisableTracking: disable}
@@ -127,6 +135,8 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					testutil.WriteFile(t, dir, "prod.yaml", "marker: "+tc.marker+"\n")
 					testutil.WriteFile(t, dir, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n")
 					testutil.WriteFile(t, dir, "templates/cm.yaml", string(template))
+					t.Run("updated acquisition", func(t *testing.T) { held = acquireChartFS(t, cli.cache, os.DirFS(dir)) })
+					canonical = nil
 				}
 				second, nextKey, nextValuesKey := render(tc.next)
 				assert.Equal(t, first == second, tc.wantSameOutput)
@@ -137,7 +147,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				}
 				assert.Diff(t, hr, original)
 				for _, revision := range []string{"6.14.0@" + next, "invalid"} {
-					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: next, Revision: revision})
+					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: held, LocalPath: dir, Digest: next, Revision: revision})
 					if _, err := cli.Template(t.Context(), hr, nil, opts); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 						t.Fatalf("invalid revision bypassed validation: %v", err)
 					}
@@ -388,10 +398,10 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 }
 
 func TestTemplateCache_TemplateIntegration(t *testing.T) {
-	for _, backing := range []string{"memory", "disk"} {
+	for _, backing := range []string{"memory", "disk", "acquired"} {
 		t.Run(backing, func(t *testing.T) {
 			root := ""
-			if backing == "disk" {
+			if backing != "memory" {
 				root = t.TempDir()
 			}
 			dir := t.TempDir()
@@ -409,16 +419,42 @@ data:
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+			reads := map[string]int{}
+			input := os.DirFS(dir)
+			chartRoot := ""
+			if backing == "acquired" {
+				chartRoot = t.TempDir()
+				input = acquireChartFS(t, newTestCache(t, chartRoot), input)
+			} else {
+				base := input
+				input = chartOpenFS{FS: base, open: func(name string) (fs.File, error) {
+					reads[name]++
+					return base.Open(name)
+				}}
+			}
+			st := store.New()
+			st.SetArtifact(newHR().ChartSource(), &store.SourceArtifact{FS: input})
+			resolver := NewStoreSourceResolver(st)
+			cli.SetSourceResolver(resolver)
 			first, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
+			canonical, err := cli.loadChart(t.Context(), newHR())
+			assert.NoError(t, err)
+			beforeReads := reads["mychart/templates/configmap.yaml"]
 			second, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			assert.Equal(t, second, first)
+			if backing != "acquired" {
+				assert.Equal(t, reads["mychart/templates/configmap.yaml"], beforeReads+1)
+			}
+			warm, err := cli.loadChart(t.Context(), newHR())
+			assert.NoError(t, err)
+			assert.Equal(t, warm.chart == canonical.chart, true)
+			assert.Equal(t, warm.fingerprint, canonical.fingerprint)
 			third, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "different"}, Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -447,15 +483,33 @@ data:
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+			cli.SetSourceResolver(resolver)
+			loaded, err = cli.loadChart(t.Context(), newHR())
+			assert.NoError(t, err)
+			if backing == "acquired" {
+				// Remove chart backing alone so completed output remains readable.
+				assert.NoError(t, os.RemoveAll(filepath.Join(chartRoot, "oci", "blobs")))
+				_, err := fs.ReadFile(input, "mychart/templates/configmap.yaml")
+				if err == nil {
+					t.Fatal("backing removal did not prevent chart reads")
+				}
+				repeated, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
+				assert.NoError(t, err)
+				assert.Equal(t, repeated, first)
+			}
 			out, err := cli.Template(t.Context(), newHR(), values, Options{})
 			if root != "" && renderPersistenceEligible(t) {
+				t.Log("verified persisted completed-output hit")
 				if err != nil || out != first {
 					t.Fatalf("completed hit: output=%q, error=%v", out, err)
 				}
 			} else if err == nil || !strings.Contains(err.Error(), "cache miss action") {
 				t.Fatalf("ineligible output did not bypass persistence: %v", err)
 			}
+			warm, err = cli.loadChart(t.Context(), newHR())
+			assert.NoError(t, err)
+			assert.Equal(t, warm.chart == loaded.chart, true)
+			assert.Equal(t, warm.fingerprint, loaded.fingerprint)
 			values["greeting"] = "changed"
 			if _, err := cli.Template(t.Context(), newHR(), values, Options{}); err == nil || !strings.Contains(err.Error(), "cache miss action") {
 				t.Fatalf("changed input did not miss completed output: %v", err)

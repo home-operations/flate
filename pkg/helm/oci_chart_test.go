@@ -129,7 +129,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			}
 			var canonical *chart.Chart
 			for _, entry := range cli.chartCache {
-				canonical = entry.loaded.chart
+				canonical = entry.chart
 			}
 			if canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child" {
 				t.Fatal("parallel renders mutated canonical metadata")

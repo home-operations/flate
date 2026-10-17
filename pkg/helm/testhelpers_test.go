@@ -2,17 +2,21 @@ package helm
 
 import (
 	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
+	"io"
+	"io/fs"
+	"testing"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"io"
-	"io/fs"
-	"testing"
 )
 
 func ociRenderFixture(tb testing.TB) (*store.Store, *manifest.HelmRelease, string) {
@@ -83,4 +87,28 @@ func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 		tb.Fatal(err)
 	}
 	return acquired
+}
+
+func chartArchive(tb testing.TB, input fs.FS) []byte {
+	tb.Helper()
+	var buf bytes.Buffer
+	gw, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
+	assert.NoError(tb, err)
+	tw := tar.NewWriter(gw)
+	err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(input, name)
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: "chart/" + name, Mode: 0o600, Size: int64(len(data))}); err != nil {
+			return err
+		}
+		_, err = tw.Write(data)
+		return err
+	})
+	assert.NoError(tb, errors.Join(err, tw.Close(), gw.Close()))
+	return buf.Bytes()
 }

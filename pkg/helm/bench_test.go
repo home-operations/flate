@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -26,20 +27,29 @@ func BenchmarkOCIChartVersion_DirectReference(b *testing.B) {
 	}
 }
 
-// BenchmarkTemplate_AppTemplateChart measures helm.Template against
-// the testdata/simple/charts/mychart chart referenced in the plan.
-// Each b.Loop iteration runs one Template — the same shape every HR
-// reconcile drives.
-//
-// A disk owner reuses completed output when build metadata is eligible.
-// Compare BenchmarkTemplate_AppTemplateChartUncached for the memory-owner path.
 func BenchmarkTemplate_AppTemplateChart(b *testing.B) {
+	benchmarkTemplateAppTemplateChart(b, false)
+}
+
+func BenchmarkTemplate_AppTemplateChart_Acquired(b *testing.B) {
+	benchmarkTemplateAppTemplateChart(b, true)
+}
+
+func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
+	b.Helper()
+	if acquired && !renderPersistenceEligible(b) {
+		b.Fatal("acquired render benchmark requires identified build metadata from a clean checkout")
+	}
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(newTestCache(b, b.TempDir()))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
+	input := os.DirFS(chartDir)
+	if acquired {
+		input = acquireChartFS(b, cli.cache, input)
+	}
+	cli.SetSourceResolver(benchChartResolver(b, chartDir, input))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -75,7 +85,7 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
+	cli.SetSourceResolver(benchChartResolver(b, chartDir, os.DirFS(chartDir)))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -133,7 +143,7 @@ spec:
 				if err != nil {
 					b.Fatal(err)
 				}
-				cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", dir))
+				cli.SetSourceResolver(benchChartResolver(b, dir, os.DirFS(dir)))
 				hr := newHR()
 				hr.CRDsPolicy = policy
 				b.ReportAllocs()
@@ -147,20 +157,29 @@ spec:
 	}
 }
 
-// BenchmarkTemplate_CommonMetadataVariants renders the same chart +
-// values + release through one warm cache while varying ONLY
-// hr.CommonMetadata each iteration. CommonMetadata is applied downstream
-// of Template (the controller's ApplyHRCommonMetadata) and never affects
-// the rendered bytes, so every iteration SHOULD be a cache hit. This
-// uses a disk owner to measure completed-output reuse for differing metadata
-// when build metadata is eligible. CommonMetadata is applied after Template.
 func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
+	benchmarkTemplateCommonMetadataVariants(b, false)
+}
+
+func BenchmarkTemplate_CommonMetadataVariants_Acquired(b *testing.B) {
+	benchmarkTemplateCommonMetadataVariants(b, true)
+}
+
+func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
+	b.Helper()
+	if acquired && !renderPersistenceEligible(b) {
+		b.Fatal("acquired render benchmark requires identified build metadata from a clean checkout")
+	}
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(newTestCache(b, b.TempDir()))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
+	input := os.DirFS(chartDir)
+	if acquired {
+		input = acquireChartFS(b, cli.cache, input)
+	}
+	cli.SetSourceResolver(benchChartResolver(b, chartDir, input))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -174,7 +193,6 @@ func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
-	// Prime the cache so b.Loop measures the warm path.
 	if _, err := cli.Template(ctx, hr, values, Options{}); err != nil {
 		b.Fatalf("warm Template: %v", err)
 	}
@@ -198,12 +216,25 @@ func BenchmarkTemplate_CommonMetadataVariants(b *testing.B) {
 
 // BenchmarkLoadChart_Cached validates mutable content and reuses its canonical chart.
 func BenchmarkLoadChart_Cached(b *testing.B) {
+	benchmarkLoadChartCached(b, false)
+}
+
+func BenchmarkLoadChart_Cached_Acquired(b *testing.B) {
+	benchmarkLoadChartCached(b, true)
+}
+
+func benchmarkLoadChartCached(b *testing.B, acquired bool) {
+	b.Helper()
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(newTestCache(b, ""))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(benchLocalChartResolver(b, "chart-repo", "flux-system", chartDir))
+	input := os.DirFS(chartDir)
+	if acquired {
+		input = acquireChartFS(b, cli.cache, input)
+	}
+	cli.SetSourceResolver(benchChartResolver(b, chartDir, input))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -216,7 +247,6 @@ func BenchmarkLoadChart_Cached(b *testing.B) {
 		},
 	}
 	ctx := context.Background()
-	// Prime the cache so b.Loop measures the warm path.
 	if _, err := cli.loadChart(ctx, hr); err != nil {
 		b.Fatalf("warm loadChart: %v", err)
 	}
@@ -258,11 +288,6 @@ func BenchmarkMergeChartValuesFiles(b *testing.B) {
 	}
 }
 
-// stageBenchChartDir copies the testdata/simple/charts/mychart layout
-// into a fresh temp dir under b.TempDir() so the bench is hermetic
-// (the helm client's loader caches captured content; reusing the
-// repo's checked-in chart would couple every run's cache to that
-// path's mtime).
 func stageBenchChartDir(b *testing.B) string {
 	b.Helper()
 	dir := b.TempDir()
@@ -287,16 +312,13 @@ data:
 	return dir
 }
 
-// benchLocalChartResolver wires a store with a single GitRepository
-// pointing at dir, then returns a StoreSourceResolver — mirrors the
-// pattern in helm_test.go's localChartResolver but takes *testing.B.
-func benchLocalChartResolver(b *testing.B, name, namespace, dir string) SourceResolver {
+func benchChartResolver(b *testing.B, dir string, input fs.FS) SourceResolver {
 	b.Helper()
 	st := store.New()
-	gr := &manifest.GitRepository{Name: name, Namespace: namespace}
+	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
 	st.AddObject(gr)
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
-		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: input, LocalPath: dir,
 	})
 	return NewStoreSourceResolver(st)
 }

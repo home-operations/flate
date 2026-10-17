@@ -51,57 +51,58 @@ func chartPathInFS(input fs.FS) (string, error) {
 	return selected, nil
 }
 
-func loadFSChart(input fs.FS, name string, previous chartCacheEntry) (chartCacheEntry, bool, error) {
-	files, missing, err := captureChartDir(input, name)
-	if err != nil {
-		return chartCacheEntry{}, missing, err
+type capturedChart struct {
+	files   []*archive.BufferedFile
+	archive []byte
+}
+
+func (c capturedChart) fingerprint() string {
+	if c.files == nil {
+		return manifest.Fingerprint(c.archive)
 	}
-	var ch *chart.Chart
-	var data []byte
-	if files != nil {
-		ch, err = loader.LoadFiles(files)
-	} else {
-		r, openErr := input.Open(name)
-		if openErr != nil {
-			return chartCacheEntry{}, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, openErr)
-		}
-		var readErr error
-		data, readErr = io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
-		if err := errors.Join(readErr, r.Close()); err != nil {
-			return chartCacheEntry{}, false, fmt.Errorf("%w: read chart %s: %w", manifest.ErrInput, name, err)
-		}
-		if int64(len(data)) > archive.MaxDecompressedChartSize {
-			return chartCacheEntry{}, false, fmt.Errorf("%w: chart archive exceeds maximum decompressed size", manifest.ErrInput)
-		}
-		if previous.archive != nil && bytes.Equal(data, previous.archive) {
-			return previous, false, nil
-		}
-		ch, err = loader.LoadArchive(bytes.NewReader(data))
+	content := make([]chartFileContent, len(c.files))
+	for i, f := range c.files {
+		content[i] = chartFileContent{Name: f.Name, Data: f.Data}
 	}
-	if err != nil {
-		return chartCacheEntry{}, false, err
+	return manifest.Fingerprint(content)
+}
+
+func (c capturedChart) load() (*chart.Chart, error) {
+	if c.files != nil {
+		return loader.LoadFiles(c.files)
 	}
-	return chartCacheEntry{loaded: chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}, archive: data}, false, nil
+	return loader.LoadArchive(bytes.NewReader(c.archive))
 }
 
 // A missing requested location is distinct from a read failure within a chart.
-func captureChartDir(input fs.FS, name string) ([]*archive.BufferedFile, bool, error) {
+func captureChart(input fs.FS, name string) (capturedChart, bool, error) {
 	info, err := fs.Stat(input, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, true, fmt.Errorf("%w: chart not found at %s", manifest.ErrInput, name)
+			return capturedChart{}, true, fmt.Errorf("%w: chart not found at %s", manifest.ErrInput, name)
 		}
-		return nil, false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
+		return capturedChart{}, false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
 	}
-	if !info.IsDir() {
-		return nil, false, nil
+	if info.IsDir() {
+		input, err = fs.Sub(input, name)
+		if err != nil {
+			return capturedChart{}, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
+		}
+		files, err := chartFilesInFS(input)
+		return capturedChart{files: files}, false, err
 	}
-	input, err = fs.Sub(input, name)
+	r, err := input.Open(name)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
+		return capturedChart{}, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
 	}
-	files, err := chartFilesInFS(input)
-	return files, false, err
+	data, readErr := io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
+	if err := errors.Join(readErr, r.Close()); err != nil {
+		return capturedChart{}, false, fmt.Errorf("%w: read chart %s: %w", manifest.ErrInput, name, err)
+	}
+	if int64(len(data)) > archive.MaxDecompressedChartSize {
+		return capturedChart{}, false, fmt.Errorf("%w: chart archive exceeds maximum decompressed size", manifest.ErrInput)
+	}
+	return capturedChart{archive: data}, false, nil
 }
 
 // Capture MUST finish before LoadFiles consumes the records.

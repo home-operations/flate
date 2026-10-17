@@ -1,13 +1,13 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/home-operations/flate/pkg/source/cache"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,59 +17,74 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
-	for _, pinned := range []bool{false, true} {
-		t.Run(map[bool]string{false: "mutable", true: "pinned"}[pinned], func(t *testing.T) {
-			const callers = 16
-			root := t.TempDir()
-			testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 1.0.0\n")
-			testutil.WriteFile(t, root, "mychart/templates/cm.yaml", "kind: ConfigMap\n")
-			testutil.WriteFile(t, root, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
-			owner := newTestCache(t, "")
-			input, err := source.NewLocalFS(t.Context(), root)
-			assert.NoError(t, err)
-			if pinned {
-				input = acquireChartFS(t, owner, input)
-			}
-			cli, err := NewClient(owner)
-			assert.NoError(t, err)
-			st := store.New()
-			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", RepoName: "repo", RepoNamespace: "default", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
-			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, LocalPath: root, Key: "untrusted"})
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			var charts [callers]*chart.Chart
-			var wg sync.WaitGroup
-			start := make(chan struct{})
-			for i := range callers {
-				wg.Go(func() {
-					<-start
-					loaded, err := cli.loadChart(t.Context(), hr)
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					charts[i] = loaded.chart
-				})
-			}
-			close(start)
-			wg.Wait()
-			for _, ch := range charts {
-				if ch == nil || ch != charts[0] {
-					t.Fatal("concurrent identical inputs did not share the canonical chart")
+	for _, archive := range []bool{false, true} {
+		for _, pinned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("archive_%t/pinned_%t", archive, pinned), func(t *testing.T) {
+				const callers = 16
+				root := t.TempDir()
+				testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 1.0.0\n")
+				testutil.WriteFile(t, root, "mychart/templates/cm.yaml", "kind: ConfigMap\n")
+				testutil.WriteFile(t, root, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
+				owner := newTestCache(t, "")
+				input, err := source.NewLocalFS(t.Context(), root)
+				assert.NoError(t, err)
+				location := "mychart"
+				if archive {
+					sub, err := fs.Sub(input, "mychart")
+					assert.NoError(t, err)
+					input = fstest.MapFS{"chart.tgz": {Data: chartArchive(t, sub)}}
+					location = "chart.tgz"
 				}
-			}
-			assert.Equal(t, len(cli.chartCache), 1)
-		})
+				if pinned {
+					input = acquireChartFS(t, owner, input)
+				}
+				cli, err := NewClient(owner)
+				assert.NoError(t, err)
+				st := store.New()
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: location, RepoName: "repo", RepoNamespace: "default", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
+				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, LocalPath: root, Key: "untrusted"})
+				cli.SetSourceResolver(NewStoreSourceResolver(st))
+				var charts [callers]*chart.Chart
+				var wg sync.WaitGroup
+				start := make(chan struct{})
+				for i := range callers {
+					wg.Go(func() {
+						<-start
+						loaded, err := cli.loadChart(t.Context(), hr)
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						charts[i] = loaded.chart
+					})
+				}
+				close(start)
+				wg.Wait()
+				for _, ch := range charts {
+					if ch == nil || ch != charts[0] {
+						t.Fatal("concurrent identical inputs did not share the canonical chart")
+					}
+				}
+				assert.Equal(t, len(cli.chartCache), 1)
+			})
+		}
 	}
 }
 
@@ -136,13 +151,6 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	}
 }
 
-// TestLoadChart_PerCallCloneIsolatesValuesAndDependencies pins that
-// each LoadChart call returns a fresh outer *chart.Chart whose
-// Values map and Metadata.Dependencies slice are independent of the
-// cached canonical AND of every other concurrent caller. Without
-// the clone, helm's ProcessDependencies (called by Install.Run)
-// mutates Chart.Values and per-Dependency Enabled flags on the
-// shared pointer, racing across reconciles.
 func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 	input := fstest.MapFS{
 		"Chart.yaml":                     {Data: []byte("apiVersion: v2\nname: parent\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 1.0.0\n  condition: child.enabled\n")},
@@ -166,15 +174,28 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 		return string(data)
 	}
 	before := snapshot()
-	for _, enabled := range []bool{false, true, false, true} {
-		out, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": "rendered"}}, Options{})
-		assert.NoError(t, err)
-		assert.Equal(t, strings.Contains(out, "rendered"), enabled)
-		assert.Equal(t, snapshot(), before)
-		loaded, err := cli.loadChart(t.Context(), hr)
-		assert.NoError(t, err)
-		assert.Equal(t, loaded.chart == canonical.chart, true)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range 16 {
+		wg.Go(func() {
+			<-start
+			enabled := i%2 == 0
+			value := fmt.Sprintf("rendered-%02d", i)
+			out, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, Options{})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			assert.Equal(t, strings.Contains(out, "kind: ConfigMap"), enabled)
+			assert.Equal(t, strings.Contains(out, fmt.Sprintf("value: %q", value)), enabled)
+		})
 	}
+	close(start)
+	wg.Wait()
+	assert.Equal(t, snapshot(), before)
+	loaded, err := cli.loadChart(t.Context(), hr)
+	assert.NoError(t, err)
+	assert.Equal(t, loaded.chart == canonical.chart, true)
 }
 
 type chartBacking struct {
@@ -189,7 +210,7 @@ func (b *chartBacking) Open(name string) (billy.File, error) {
 
 func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 	root := t.TempDir()
-	for _, dir := range []string{"one", "two"} {
+	for _, dir := range []string{".", "one", "two"} {
 		testutil.WriteFile(t, root, dir+"/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
 		testutil.WriteFile(t, root, dir+"/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: chart\n")
 	}
@@ -245,6 +266,107 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		second, err := cli.loadChart(t.Context(), other)
 		assert.NoError(t, err)
 		assert.Equal(t, second.chart == first.chart, false)
+		explicit := hr.Clone()
+		explicit.Chart.Name = "."
+		rootChart, err := cli.loadChart(t.Context(), explicit)
+		assert.NoError(t, err)
+		auto := explicit.Clone()
+		auto.Chart.RepoKind = manifest.KindHelmChart
+		st.SetArtifact(auto.ChartSource(), art)
+		autoChart, err := cli.loadChart(t.Context(), auto)
+		assert.NoError(t, err)
+		assert.Equal(t, autoChart.chart == rootChart.chart, false)
+		reads = backing.opens.Load()
+		warm, err = cli.loadChart(t.Context(), auto)
+		assert.NoError(t, err)
+		assert.Equal(t, warm.chart == autoChart.chart, true)
+		assert.Equal(t, backing.opens.Load(), reads)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err = cli.loadChart(ctx, auto)
+		assert.Equal(t, errors.Is(err, context.Canceled), true)
 		assert.Equal(t, art.Key, "untrusted")
+	}
+
+	for _, tc := range []struct{ name, kind, shape string }{
+		{"OCI chart", manifest.KindHelmChart, "file"},
+		{"HTTP chart", manifest.KindHelmChart, "file"},
+		{"OCI directory", manifest.KindOCIRepository, "directory"},
+		{"OCI archive", manifest.KindOCIRepository, "archive"},
+		{"Bucket directory", manifest.KindBucket, "directory"},
+		{"Bucket archive", manifest.KindBucket, "archive"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cacheRoot := t.TempDir()
+			owner := newTestCache(t, cacheRoot)
+			cli, err := NewClient(owner)
+			assert.NoError(t, err)
+			st := store.New()
+			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: tc.kind, RepoName: "chart"}}
+			if tc.kind == manifest.KindBucket {
+				hr.Chart.Name = "."
+				if tc.shape == "archive" {
+					hr.Chart.Name = "chart.tgz"
+				}
+			}
+			var previous *chart.Chart
+			for _, version := range []string{"1.0.0", "2.0.0"} {
+				input := fstest.MapFS{"Chart.yaml": {Data: []byte("apiVersion: v2\nname: chart\nversion: " + version + "\n")}}
+				var acquired fs.FS
+				backingName := "Chart.yaml"
+				if tc.shape == "directory" {
+					input = fstest.MapFS{"nested/Chart.yaml": input["Chart.yaml"]}
+					backingName = "nested/Chart.yaml"
+					if tc.kind == manifest.KindBucket {
+						hr.Chart.Name = "nested"
+					}
+				}
+				if tc.shape == "file" {
+					data := chartArchive(t, input)
+					r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: version}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+						_, err := io.Copy(w, bytes.NewReader(data))
+						return ocispec.Descriptor{}, err
+					})
+					assert.NoError(t, err)
+					acquired = cache.FileFS("chart.tgz", r)
+					assert.NoError(t, r.Close())
+					backingName = "chart.tgz"
+				} else {
+					if tc.shape == "archive" {
+						input = fstest.MapFS{"chart.tgz": {Data: chartArchive(t, input)}}
+						backingName = "chart.tgz"
+					}
+					t.Run(version, func(t *testing.T) { acquired = acquireChartFS(t, owner, input) })
+				}
+				art := &store.SourceArtifact{FS: acquired, Key: "untrusted", LocalPath: "same-label", Revision: version}
+				st.SetArtifact(hr.ChartSource(), art)
+				loaded, err := cli.loadChart(t.Context(), hr)
+				assert.NoError(t, err)
+				assert.Equal(t, loaded.chart.Metadata.Version, version)
+				assert.Equal(t, loaded.chart != previous, true)
+				previous = loaded.chart
+				// FileFS Stat opens its backing; poisoning below the view preserves real authority.
+				assert.NoError(t, os.RemoveAll(filepath.Join(cacheRoot, "oci", "blobs")))
+				_, err = fs.ReadFile(acquired, backingName)
+				if err == nil {
+					t.Fatal("backing poison did not prevent chart reads")
+				}
+				warm, err := cli.loadChart(t.Context(), hr)
+				assert.NoError(t, err)
+				assert.Equal(t, warm.chart == loaded.chart, true)
+				assert.Equal(t, warm.fingerprint, loaded.fingerprint)
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				_, err = cli.loadChart(ctx, hr)
+				assert.Equal(t, errors.Is(err, context.Canceled), true)
+				explicit := hr.Clone()
+				explicit.Chart.RepoKind, explicit.Chart.Name = manifest.KindGitRepository, "."
+				st.SetArtifact(explicit.ChartSource(), art)
+				if _, err := cli.loadChart(t.Context(), explicit); err == nil {
+					t.Fatal("explicit root reused a different chart selector")
+				}
+			}
+		})
 	}
 }

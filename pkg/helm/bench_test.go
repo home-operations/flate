@@ -38,7 +38,7 @@ func BenchmarkTemplate_AppTemplateChart_Acquired(b *testing.B) {
 func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	b.Helper()
 	if acquired && !renderPersistenceEligible(b) {
-		b.Fatal("acquired render benchmark requires identified build metadata from a clean checkout")
+		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(newTestCache(b, b.TempDir()))
@@ -168,7 +168,7 @@ func BenchmarkTemplate_CommonMetadataVariants_Acquired(b *testing.B) {
 func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	b.Helper()
 	if acquired && !renderPersistenceEligible(b) {
-		b.Fatal("acquired render benchmark requires identified build metadata from a clean checkout")
+		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
 	cli, err := NewClient(newTestCache(b, b.TempDir()))

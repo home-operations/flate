@@ -176,24 +176,17 @@ func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {
 	return decoded
 }
 
-// MatchSelector returns true when sel matches lbls. Helper for
-// ProviderResolver implementations that filter by InputProviderReference.Selector.
-func MatchSelector(sel *metav1.LabelSelector, lbls map[string]string) (bool, error) {
-	if sel == nil {
-		return true, nil
-	}
-	s, err := metav1.LabelSelectorAsSelector(sel)
-	if err != nil {
-		return false, err
-	}
-	return s.Matches(labels.Set(lbls)), nil
-}
-
-// StoreResolver returns a ProviderResolver backed by s. Name-only refs
-// perform a direct id lookup; selector refs walk the store's
-// ResourceSetInputProviders in the requested namespace and filter by
-// metadata.labels using the reference's exact group and kind.
+// StoreResolver returns a store-backed resolver for one sequential reconciliation.
+// References and selectors MUST remain immutable; the resolver MUST NOT be shared
+// across reconciliations or goroutines.
 func StoreResolver(s *store.Store) ProviderResolver {
+	type compilation struct {
+		selector labels.Selector
+		err      error
+	}
+	var firstSelector *metav1.LabelSelector
+	var firstCompilation compilation
+	var selectors map[*metav1.LabelSelector]compilation
 	return func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		if id.Name != "" {
 			obj, ok := s.Get[*manifest.ResourceSetInputProvider](id)
@@ -206,15 +199,34 @@ func StoreResolver(s *store.Store) ProviderResolver {
 			return nil, nil
 		}
 		var out []*manifest.ResourceSetInputProvider
+		var matcher labels.Selector
 		for _, p := range s.ListAs[*manifest.ResourceSetInputProvider](id.Group, id.Kind) {
 			if p.Namespace != id.Namespace {
 				continue
 			}
-			match, err := MatchSelector(ref.Selector, p.Labels)
-			if err != nil {
-				return nil, err
+			if matcher == nil {
+				compiled := firstCompilation
+				if ref.Selector != firstSelector {
+					var ok bool
+					compiled, ok = selectors[ref.Selector]
+					if !ok {
+						compiled.selector, compiled.err = metav1.LabelSelectorAsSelector(ref.Selector)
+						if firstSelector == nil {
+							firstSelector, firstCompilation = ref.Selector, compiled
+						} else {
+							if selectors == nil {
+								selectors = make(map[*metav1.LabelSelector]compilation)
+							}
+							selectors[ref.Selector] = compiled
+						}
+					}
+				}
+				if compiled.err != nil {
+					return nil, compiled.err
+				}
+				matcher = compiled.selector
 			}
-			if match {
+			if matcher.Matches(labels.Set(p.Labels)) {
 				out = append(out, p)
 			}
 		}

@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -171,6 +172,31 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 		if rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue" {
 			t.Fatal("selector mutation changed the authored spec")
 		}
+	}
+}
+
+func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
+	c, s := newController(t)
+	rs := selectorFixture("invalid", "blue")
+	rs.InputsFrom = []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "color", Operator: "invalid"}}}}}
+	s.AddObject(rs)
+	s.AddObject(staticRSIP("input", rs.Namespace, map[string]string{"color": "blue"}, nil))
+	resolve := resourceset.StoreResolver(s)
+	content := resourceSetContent(rs, resolve)
+	if content != nil {
+		t.Fatalf("invalid selector content=%v, want nil", content)
+	}
+	if _, handled, err := c.FingerprintDedup(rs.Named(), content, func([]map[string]any) {}); handled || err != nil {
+		t.Fatalf("invalid selector fingerprint handled=%t error=%v, want miss", handled, err)
+	}
+	if _, err := resourceset.Render(rs, resolve); err == nil {
+		t.Fatal("invalid selector rendered successfully")
+	}
+	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusFailed {
+		t.Fatalf("status=%+v, want Failed", info)
+	}
+	if artifact := s.GetArtifact(rs.Named()); artifact != nil {
+		t.Fatalf("invalid selector published artifact=%v", artifact)
 	}
 }
 

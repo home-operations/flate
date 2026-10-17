@@ -614,10 +614,6 @@ spec:
 	}
 }
 
-// TestRender_InputsFrom_StaticProvider locks the billimek volsync
-// pattern: a ResourceSet with no inline inputs that references a Static
-// ResourceSetInputProvider, whose defaultValues become a single input
-// set the template iterates over with `<<- range $app := inputs.apps >>`.
 func TestRender_InputsFrom_StaticProvider(t *testing.T) {
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "apps", Namespace: "kube-system", Labels: map[string]string{"set": "apps"},
@@ -650,8 +646,7 @@ data:
 	other.Namespace = "other"
 	st.AddObject(&other)
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindResourceSetInputProvider, Name: rsip.Name, Namespace: rsip.Namespace})
-	resolver := resourceset.StoreResolver(st)
-	docs, err := resourceset.Render(rs, resolver)
+	docs, err := resourceset.Render(rs, resourceset.StoreResolver(st))
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -664,8 +659,6 @@ data:
 		data := doc["data"].(map[string]any)
 		caps[md["name"].(string)] = data["capacity"].(string)
 	}
-	// alpha falls back to inputs.defaults.capacity (1Gi); bravo
-	// overrides via its own per-app capacity (5Gi).
 	assert.Diff(t, caps, map[string]string{"alpha": "1Gi", "bravo": "5Gi"})
 	for _, selector := range []bool{false, true} {
 		for _, tc := range []struct {
@@ -688,13 +681,150 @@ data:
 					ref.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"set": "apps"}}
 				}
 				candidate.InputsFrom = []fluxopv1.InputProviderReference{ref}
-				docs, err := resourceset.Render(&candidate, resolver)
+				docs, err := resourceset.Render(&candidate, resourceset.StoreResolver(st))
 				if err != nil || len(docs) != tc.want {
 					t.Fatalf("docs=%d, error=%v, want %d", len(docs), err, tc.want)
 				}
 			})
 		}
 	}
+	for _, tc := range []struct {
+		name string
+		refs []fluxopv1.InputProviderReference
+		want int
+	}{
+		{"expressions", []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "set", Operator: metav1.LabelSelectorOpIn, Values: []string{"apps"}}}}}}, 2},
+		{"empty selector", []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{}}}, 2},
+		{"named invalid selector", []fluxopv1.InputProviderReference{{Name: rsip.Name, Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "set", Operator: "invalid"}}}}}, 2},
+		{"nil selector", []fluxopv1.InputProviderReference{{}}, 0},
+		{"overlapping references", []fluxopv1.InputProviderReference{{Name: rsip.Name}, {Selector: &metav1.LabelSelector{}}, {Selector: &metav1.LabelSelector{MatchLabels: rsip.Labels}}}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := *rs
+			candidate.InputsFrom = tc.refs
+			got, err := resourceset.Render(&candidate, resourceset.StoreResolver(st))
+			assert.NoError(t, err)
+			if len(got) != tc.want {
+				t.Fatalf("docs=%d, want %d", len(got), tc.want)
+			}
+			if tc.want != 0 {
+				assert.Diff(t, got, docs)
+			}
+		})
+	}
+
+}
+
+func TestStoreResolver_SelectorInputs(t *testing.T) {
+	db := &manifest.ResourceSetInputProvider{Name: "db", Namespace: "apps", Labels: map[string]string{"role": "db"}, DefaultValues: fluxopv1.ResourceSetInput{"value": jsonTmpl(t, `"first"`)}}
+	web := *db
+	web.Name, web.Labels = "web", map[string]string{"role": "web"}
+	other := *db
+	other.Namespace = "other"
+	invalid := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}
+	selected := &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}}
+	scope := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps"}
+	for _, tc := range []struct {
+		name      string
+		providers []manifest.BaseManifest
+		ref       fluxopv1.InputProviderReference
+		id        manifest.NamedResource
+		want      []string
+		wantError bool
+	}{
+		{"success", []manifest.BaseManifest{db, &web}, fluxopv1.InputProviderReference{Selector: selected}, scope, []string{"db"}, false},
+		{"empty selector", []manifest.BaseManifest{db, &web}, fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{}}, scope, []string{"db", "web"}, false},
+		{"invalid eligible", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, true},
+		{"invalid empty", nil, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, false},
+		{"invalid other namespace", []manifest.BaseManifest{&other}, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, false},
+		{"invalid foreign group", []manifest.BaseManifest{db, &manifest.RawObject{APIVersion: "other.example/v1", Kind: scope.Kind, Namespace: scope.Namespace, Name: db.Name}}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: "other.example", Kind: scope.Kind, Namespace: scope.Namespace}, nil, false},
+		{"invalid foreign kind", []manifest.BaseManifest{db, &manifest.ResourceSet{Name: db.Name, Namespace: scope.Namespace}}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Kind: manifest.KindResourceSet, Namespace: scope.Namespace}, nil, false},
+		{"named invalid selector", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, db.Named(), []string{"db"}, false},
+		{"unnamed nil selector", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{}, scope, nil, false},
+		{"omitted group and kind", []manifest.BaseManifest{db, &web}, fluxopv1.InputProviderReference{Selector: selected}, manifest.NamedResource{Namespace: scope.Namespace}, []string{"db"}, false},
+		{"omitted group", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Kind: scope.Kind, Namespace: scope.Namespace}, nil, false},
+		{"omitted kind", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Namespace: scope.Namespace}, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			for _, p := range tc.providers {
+				st.AddObject(p)
+			}
+			resolve := resourceset.StoreResolver(st)
+			for range 2 {
+				got, err := resolve(tc.ref, tc.id)
+				if (err != nil) != tc.wantError {
+					t.Fatalf("resolve error=%v, want error=%t", err, tc.wantError)
+				}
+				var names []string
+				for _, p := range got {
+					names = append(names, p.Name)
+				}
+				assert.Diff(t, names, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name  string
+		prior *metav1.LabelSelector
+	}{
+		{"first cached error in empty scope", nil},
+		{"additional cached error in empty scope", selected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New()
+			st.AddObject(db)
+			resolve := resourceset.StoreResolver(st)
+			if tc.prior != nil {
+				got, err := resolve(fluxopv1.InputProviderReference{Selector: tc.prior}, scope)
+				assert.NoError(t, err)
+				assert.Equal(t, len(got), 1)
+			}
+			ref := fluxopv1.InputProviderReference{Selector: invalid}
+			empty := scope
+			empty.Namespace = "empty"
+			for range 2 {
+				if _, err := resolve(ref, scope); err == nil {
+					t.Fatal("invalid selector accepted with an eligible provider")
+				}
+				got, err := resolve(ref, empty)
+				assert.NoError(t, err)
+				assert.Equal(t, len(got), 0)
+			}
+		})
+	}
+	t.Run("distinct selectors and live providers", func(t *testing.T) {
+		st := store.New()
+		st.AddObject(db)
+		st.AddObject(&web)
+		resolve := resourceset.StoreResolver(st)
+		webSelector := &metav1.LabelSelector{MatchLabels: web.Labels}
+		for _, tc := range []struct {
+			selector *metav1.LabelSelector
+			want     manifest.NamedResource
+		}{{selected, db.Named()}, {webSelector, web.Named()}, {selected, db.Named()}, {webSelector, web.Named()}} {
+			got, err := resolve(fluxopv1.InputProviderReference{Selector: tc.selector}, scope)
+			assert.NoError(t, err)
+			if len(got) != 1 || got[0].Named() != tc.want {
+				t.Fatalf("providers=%v, want %s", got, tc.want)
+			}
+		}
+		fresh := *db
+		fresh.Labels = map[string]string{"role": "web"}
+		fresh.DefaultValues = fluxopv1.ResourceSetInput{"value": jsonTmpl(t, `"updated"`)}
+		st.AddObject(&fresh)
+		got, err := resolve(fluxopv1.InputProviderReference{Selector: selected}, scope)
+		assert.NoError(t, err)
+		assert.Equal(t, len(got), 0)
+		got, err = resolve(fluxopv1.InputProviderReference{Selector: webSelector}, scope)
+		assert.NoError(t, err)
+		if len(got) != 2 || got[0].Named() != db.Named() || got[1].Named() != web.Named() {
+			t.Fatalf("updated providers=%v, want db and web", got)
+		}
+		inputs, err := got[0].ExportedInputs()
+		assert.NoError(t, err)
+		assert.Equal(t, inputs[0]["value"], "updated")
+	})
 }
 
 // TestRender_InputsFrom_DynamicProviderEmptySkip verifies that a

@@ -109,16 +109,18 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 		return err
 	}
 
+	resolve := resourceset.StoreResolver(c.Store)
+
 	// A fingerprint hit MUST not replay emission: KeepEmitted / Store.RecordEmitted /
 	// rawSink bookkeeping is cumulative and already complete. AddObject
 	// independently suppresses equal RawObject arrivals. Changed inputs require
 	// a fresh render; fp is reused for SetArtifact.
-	fp, handled, err := c.FingerprintDedup(id, resourceSetContent(rs, c.Store), func([]map[string]any) {})
+	fp, handled, err := c.FingerprintDedup(id, resourceSetContent(rs, resolve), func([]map[string]any) {})
 	if handled {
 		return err
 	}
 
-	docs, err := resourceset.Render(rs, resourceset.StoreResolver(c.Store))
+	docs, err := resourceset.Render(rs, resolve)
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
 		return err
@@ -199,8 +201,7 @@ func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
 	return false
 }
 
-func resourceSetContent(rs *manifest.ResourceSet, s *store.Store) any {
-	resolve := resourceset.StoreResolver(s)
+func resourceSetContent(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver) any {
 	providers := make(map[manifest.NamedResource]*manifest.ResourceSetInputProvider)
 	for edge := range manifest.References(rs) {
 		if edge.Use != "inputsFrom" {

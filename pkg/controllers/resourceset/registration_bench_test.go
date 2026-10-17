@@ -137,8 +137,9 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 					var errs [2]error
 					for i, rs := range sets {
 						tasks.Go(b.Context(), "render", func(context.Context) {
-							fp, _, _ := c.FingerprintDedup(rs.Named(), resourceSetContent(rs, s), func([]map[string]any) {})
-							docs, err := resourceset.Render(rs, resourceset.StoreResolver(s))
+							resolve := resourceset.StoreResolver(s)
+							fp, _, _ := c.FingerprintDedup(rs.Named(), resourceSetContent(rs, resolve), func([]map[string]any) {})
+							docs, err := resourceset.Render(rs, resolve)
 							errs[i] = err
 							artifacts[i] = &store.ResourceSetArtifact{Manifests: docs, Fingerprint: fp}
 						})
@@ -199,12 +200,13 @@ func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 		t.Fatalf("initial renders=%d, want 1", renders.Load())
 	}
 	initial := s.GetArtifact(rs.Named())
-	docs, err := resourceset.Render(rs, resourceset.StoreResolver(s))
+	resolve := resourceset.StoreResolver(s)
+	docs, err := resourceset.Render(rs, resolve)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.emit(rs.Named(), docs, true)
-	s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{Manifests: docs, Fingerprint: replayKey(resourceSetContent(rs, s))})
+	s.SetArtifact(rs.Named(), &store.ResourceSetArtifact{Manifests: docs, Fingerprint: replayKey(resourceSetContent(rs, resolve))})
 	if renders.Load() != 2 || updates.Load() != 1 || s.GetArtifact(rs.Named()) != initial {
 		t.Fatalf("equal-output renders=%d artifact updates=%d, want renders=2 updates=1 and unchanged artifact", renders.Load(), updates.Load())
 	}

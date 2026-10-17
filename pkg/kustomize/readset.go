@@ -54,7 +54,7 @@ type readSet struct {
 	nodes map[string]nodeKind // relpath -> kind, for paths only probed (not read/listed)
 
 	// Remote observations are collected only during serial preflight.
-	remotes map[remoteInput]remoteIdentity
+	remotes map[remoteInput]remoteObservation
 }
 
 func newReadSet(root string) *readSet {
@@ -111,16 +111,37 @@ func (rs *readSet) recordNode(abs string, kind nodeKind) {
 	rs.mu.Unlock()
 }
 
-func (rs *readSet) recordRemote(input remoteInput, identity remoteIdentity) {
+type remoteObservation struct {
+	identity remoteIdentity
+	parents  map[remoteInput]struct{}
+}
+
+func (rs *readSet) recordRemote(input remoteInput, identity remoteIdentity, parents []remoteInput) {
 	if rs.remotes == nil {
-		rs.remotes = make(map[remoteInput]remoteIdentity)
+		rs.remotes = make(map[remoteInput]remoteObservation)
 	}
-	rs.remotes[input] = identity
+	observation := rs.remotes[input]
+	observation.identity = identity
+	for _, parent := range parents {
+		if parent == input {
+			continue
+		}
+		if observation.parents == nil {
+			observation.parents = make(map[remoteInput]struct{})
+		}
+		observation.parents[parent] = struct{}{}
+	}
+	rs.remotes[input] = observation
 }
 
 type remoteEntry struct {
 	Input    remoteInput    `json:"input"`
 	Identity remoteIdentity `json:"identity"`
+	Parents  []remoteInput  `json:"parents,omitempty"`
+}
+
+func compareRemoteInputs(a, b remoteInput) int {
+	return cmp.Or(cmp.Compare(a.Operation, b.Operation), cmp.Compare(a.URL, b.URL), cmp.Compare(a.Ref, b.Ref))
 }
 
 // fileEntry / nodeEntry are the serialized, sorted snapshot the disk cache
@@ -146,12 +167,15 @@ type readSetSnapshot struct {
 // snapshot freezes the recorder into its deterministic serialized form.
 func (rs *readSet) snapshot() readSetSnapshot {
 	var remotes []remoteEntry
-	for input, identity := range rs.remotes {
-		remotes = append(remotes, remoteEntry{Input: input, Identity: identity})
+	for input, observation := range rs.remotes {
+		entry := remoteEntry{Input: input, Identity: observation.identity}
+		for parent := range observation.parents {
+			entry.Parents = append(entry.Parents, parent)
+		}
+		slices.SortFunc(entry.Parents, compareRemoteInputs)
+		remotes = append(remotes, entry)
 	}
-	slices.SortFunc(remotes, func(a, b remoteEntry) int {
-		return cmp.Or(cmp.Compare(a.Input.Operation, b.Input.Operation), cmp.Compare(a.Input.URL, b.Input.URL), cmp.Compare(a.Input.Ref, b.Input.Ref))
-	})
+	slices.SortFunc(remotes, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	snap := readSetSnapshot{
@@ -214,7 +238,12 @@ func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, in
 			}
 		}
 	}
-	for _, remote := range snap.Remotes {
+	order, ok := snap.remoteOrder()
+	if !ok {
+		return false, ctx.Err()
+	}
+	for _, index := range order {
+		remote := snap.Remotes[index]
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
@@ -227,4 +256,41 @@ func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, in
 		}
 	}
 	return ctx.Err() == nil, ctx.Err()
+}
+
+func (snap readSetSnapshot) remoteOrder() ([]int, bool) {
+	if len(snap.Remotes) == 0 {
+		return nil, true
+	}
+	indices := make(map[remoteInput]int, len(snap.Remotes))
+	for index, entry := range snap.Remotes {
+		indices[entry.Input] = index
+	}
+	state := make([]uint8, len(snap.Remotes))
+	order := make([]int, 0, len(snap.Remotes))
+	var visit func(int) bool
+	visit = func(index int) bool {
+		switch state[index] {
+		case 1:
+			return false
+		case 2:
+			return true
+		}
+		state[index] = 1
+		for _, parent := range snap.Remotes[index].Parents {
+			parentIndex, ok := indices[parent]
+			if !ok || !visit(parentIndex) {
+				return false
+			}
+		}
+		state[index] = 2
+		order = append(order, index)
+		return true
+	}
+	for index := range snap.Remotes {
+		if !visit(index) {
+			return nil, false
+		}
+	}
+	return order, true
 }

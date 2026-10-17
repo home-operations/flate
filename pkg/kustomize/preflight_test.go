@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -593,55 +595,214 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 }
 
 func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		_, _ = io.WriteString(w, "remote data")
-	}))
-	t.Cleanup(srv.Close)
-	url := srv.URL + "/repo.git//data"
-	const gitURL = "https://example.invalid/owner/repo.git"
-	remote := memoryTree(t, map[string]string{"kustomization.yaml": "configMapGenerator: [{name: nested, files: ['chosen=" + url + "']}]\n"})
-	c := newTestTreeCache(t, "")
-	gitCalls := 0
-	c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		gitCalls++
-		if request.URL != gitURL || request.Ref != "main" {
-			t.Fatalf("Git request=%+v", request)
+	t.Run("root-after-nested", func(t *testing.T) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			_, _ = io.WriteString(w, "remote data")
+		}))
+		t.Cleanup(srv.Close)
+		url := srv.URL + "/repo.git//data"
+		const gitURL = "https://example.invalid/owner/repo.git"
+		remote := memoryTree(t, map[string]string{"kustomization.yaml": "configMapGenerator: [{name: nested, files: ['chosen=" + url + "']}]\n"})
+		c := newTestTreeCache(t, "")
+		gitCalls := 0
+		c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+			gitCalls++
+			if request.URL != gitURL || request.Ref != "main" {
+				t.Fatalf("Git request=%+v", request)
+			}
+			return &store.SourceArtifact{FS: remote, Key: "family", Revision: "revision"}, nil
+		})
+		rec := newReadSet("/src")
+		input := newTreeFS(memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + gitURL + "?ref=main']\nconfigMapGenerator: [{name: root, files: ['chosen=" + url + "', 'other=" + url + "']}]\n"}), "/src", rec)
+		err := preflightRemoteResources(t.Context(), c, input, "/src")
+		if err != nil {
+			t.Fatalf("preflight error=%v", err)
 		}
-		return &store.SourceArtifact{FS: remote, Key: "family", Revision: "revision"}, nil
-	})
-	rec := newReadSet("/src")
-	input := newTreeFS(memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + gitURL + "?ref=main']\nconfigMapGenerator: [{name: root, files: ['chosen=" + url + "', 'other=" + url + "']}]\n"}), "/src", rec)
-	err := preflightRemoteResources(t.Context(), c, input, "/src")
-	if err != nil {
-		t.Fatalf("preflight error=%v", err)
-	}
-	snap := rec.snapshot()
-	if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input != (remoteInput{Operation: remoteGit, URL: gitURL, Ref: "main"}) {
-		t.Fatalf("remote observations=%+v", snap.Remotes)
-	}
-	frame, err := encodeFrame(snap, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, _, err := decodeFrame(frame)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range decoded.Remotes {
-		acquired, identity, err := entry.Input.acquire(t.Context(), c, input)
-		if err != nil || identity != entry.Identity {
-			t.Fatalf("replayed identity=%+v observation=%+v error=%v", identity, entry, err)
+		snap := rec.snapshot()
+		if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input != (remoteInput{Operation: remoteGit, URL: gitURL, Ref: "main"}) {
+			t.Fatalf("remote observations=%+v", snap.Remotes)
 		}
-		if entry.Input.Operation == remoteHTTP {
-			body, err := fs.ReadFile(acquired, "content")
-			if err != nil || string(body) != "remote data" {
-				t.Fatalf("HTTP body=%q error=%v", body, err)
+		wantParents := []remoteInput{{Operation: remoteGit, URL: gitURL, Ref: "main"}}
+		if diff := cmp.Diff(wantParents, snap.Remotes[0].Parents); diff != "" || len(snap.Remotes[1].Parents) != 0 {
+			t.Fatalf("root sighting erased nested parents (-want +got):\n%s; Git parents=%+v", diff, snap.Remotes[1].Parents)
+		}
+		frame, err := encodeFrame(snap, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, _, err := decodeFrame(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range decoded.Remotes {
+			acquired, identity, err := entry.Input.acquire(t.Context(), c, input)
+			if err != nil || identity != entry.Identity {
+				t.Fatalf("replayed identity=%+v observation=%+v error=%v", identity, entry, err)
+			}
+			if entry.Input.Operation == remoteHTTP {
+				body, err := fs.ReadFile(acquired, "content")
+				if err != nil || string(body) != "remote data" {
+					t.Fatalf("HTTP body=%q error=%v", body, err)
+				}
 			}
 		}
-	}
-	if hits.Load() != 1 || gitCalls != 2 {
-		t.Fatalf("HTTP requests=%d Git acquisitions=%d", hits.Load(), gitCalls)
+		if hits.Load() != 1 || gitCalls != 2 {
+			t.Fatalf("HTTP requests=%d Git acquisitions=%d", hits.Load(), gitCalls)
+		}
+	})
+	for _, scenario := range []string{"nested-git", "http-plugin", "shared-mount", "shared-plugin", "equal-content-plugins", "same-repository-subpaths"} {
+		t.Run(scenario, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := make(map[string]int)
+			record := func(url string) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls[url]++
+			}
+			var changed atomic.Int32
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				record(srv.URL + r.URL.Path)
+				body := "remote data"
+				if strings.HasPrefix(r.URL.Path, "/plugin-") {
+					body = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: ['chosen=" + srv.URL + "/a-child']\n"
+					if changed.Load() == 2 && r.URL.Path == "/plugin-one" || changed.Load() == 3 && r.URL.Path == "/plugin-two" {
+						body += "behavior: merge\n"
+					}
+				}
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+			a := remoteInput{Operation: remoteGit, URL: "https://example.invalid/a-parent.git", Ref: "main"}
+			b := remoteInput{Operation: remoteGit, URL: "https://example.invalid/z-parent.git", Ref: "main"}
+			shared := remoteInput{Operation: remoteGit, URL: "https://example.invalid/m-shared.git", Ref: "main"}
+			child := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/a-child"}
+			plugin := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/plugin-one"}
+			otherPlugin := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/plugin-two"}
+			leaf := "configMapGenerator: [{name: nested, files: ['chosen=" + child.URL + "']}]\n"
+			root := "resources: ['" + a.URL + "//subdir?ref=main']\n"
+			repositories := map[string]map[string]string{}
+			want := map[remoteInput][]remoteInput{a: nil}
+			switch scenario {
+			case "nested-git":
+				repositories[a.URL] = map[string]string{"subdir/kustomization.yaml": "resources: ['" + b.URL + "//subdir?ref=main']\n"}
+				repositories[b.URL] = map[string]string{"subdir/kustomization.yaml": leaf}
+				want[b], want[child] = []remoteInput{a}, []remoteInput{a, b}
+			case "http-plugin":
+				repositories[a.URL] = map[string]string{"subdir/kustomization.yaml": "generators: ['" + plugin.URL + "']\n"}
+				want[plugin], want[child] = []remoteInput{a}, []remoteInput{a, plugin}
+			case "shared-mount":
+				root = "resources: ['" + a.URL + "//subdir?ref=main', '" + b.URL + "//subdir?ref=main']\n"
+				for _, parent := range []remoteInput{a, b} {
+					repositories[parent.URL] = map[string]string{"subdir/kustomization.yaml": "resources: ['" + shared.URL + "//subdir?ref=main']\n"}
+				}
+				repositories[shared.URL] = map[string]string{
+					"subdir/kustomization.yaml": "resources: [../inner]\n",
+					"inner/kustomization.yaml":  leaf,
+				}
+				want[b], want[shared], want[child] = nil, []remoteInput{a, b}, []remoteInput{a, b, shared}
+			case "shared-plugin":
+				root = "generators: ['" + a.URL + "//plugins?ref=main', '" + b.URL + "//plugins?ref=main']\n"
+				for _, parent := range []remoteInput{a, b} {
+					repositories[parent.URL] = map[string]string{"plugins/kustomization.yaml": "resources: ['" + plugin.URL + "']\n"}
+				}
+				want[b], want[plugin], want[child] = nil, []remoteInput{a, b}, []remoteInput{a, b, plugin}
+			case "equal-content-plugins":
+				root = "generators: ['" + plugin.URL + "', '" + otherPlugin.URL + "']\n"
+				want = map[remoteInput][]remoteInput{plugin: nil, otherPlugin: nil, child: {plugin, otherPlugin}}
+			case "same-repository-subpaths":
+				repositories[a.URL] = map[string]string{"subdir/kustomization.yaml": "resources: ['" + a.URL + "//leaf?ref=main']\n", "leaf/kustomization.yaml": leaf}
+				want[child] = []remoteInput{a}
+			}
+			newCache := func() *TreeCache {
+				c := newTestTreeCache(t, "")
+				c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					record(request.URL)
+					files, ok := repositories[request.URL]
+					if !ok || request.Ref != "main" {
+						t.Fatalf("Git request=%+v", request)
+					}
+					revision := "1"
+					if changed.Load() == 1 && request.URL == b.URL {
+						revision = "2"
+					}
+					return &store.SourceArtifact{FS: memoryTree(t, files), Key: request.URL, Revision: revision}, nil
+				})
+				return c
+			}
+			c := newCache()
+			rec := newReadSet("/src")
+			input := newTreeFS(memoryTree(t, map[string]string{"kustomization.yaml": root}), "/src", rec)
+			if err := preflightRemoteResources(t.Context(), c, input, "/src"); err != nil {
+				t.Fatal(err)
+			}
+			snap := rec.snapshot()
+			if len(snap.Remotes) != len(want) {
+				t.Fatalf("observations=%+v; want=%+v", snap.Remotes, want)
+			}
+			for _, entry := range snap.Remotes {
+				parents, ok := want[entry.Input]
+				slices.SortFunc(parents, compareRemoteInputs)
+				if !ok || !cmp.Equal(parents, entry.Parents) {
+					t.Fatalf("parents of %+v (-want +got):\n%s", entry.Input, cmp.Diff(parents, entry.Parents))
+				}
+			}
+			mu.Lock()
+			for descriptor := range want {
+				if calls[descriptor.URL] != 1 {
+					t.Errorf("capture acquisitions for %s=%d, want 1", descriptor.URL, calls[descriptor.URL])
+				}
+			}
+			mu.Unlock()
+			frame, err := encodeFrame(snap, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap, _, err = decodeFrame(frame)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closeTestTreeCache(t, c)
+			mu.Lock()
+			clear(calls)
+			mu.Unlock()
+			c = newCache()
+			if valid, err := snap.stillValid(t.Context(), c, input, true); err != nil || !valid {
+				t.Fatalf("unchanged graph: valid=%t error=%v", valid, err)
+			}
+			mu.Lock()
+			for descriptor := range want {
+				if calls[descriptor.URL] != 1 {
+					t.Errorf("replay acquisitions for %s=%d, want 1", descriptor.URL, calls[descriptor.URL])
+				}
+			}
+			mu.Unlock()
+			closeTestTreeCache(t, c)
+			var changes []int32
+			switch scenario {
+			case "shared-mount", "shared-plugin":
+				changes = []int32{1}
+			case "equal-content-plugins":
+				changes = []int32{2, 3}
+			}
+			for _, change := range changes {
+				changed.Store(change)
+				mu.Lock()
+				clear(calls)
+				mu.Unlock()
+				c = newCache()
+				if valid, err := snap.stillValid(t.Context(), c, input, true); err != nil || valid {
+					t.Fatalf("changed parent %d: valid=%t error=%v", change, valid, err)
+				}
+				mu.Lock()
+				if calls[child.URL] != 0 || scenario == "shared-mount" && calls[shared.URL] != 0 {
+					t.Errorf("changed parent %d acquired descendants: %v", change, calls)
+				}
+				mu.Unlock()
+				closeTestTreeCache(t, c)
+			}
+		})
 	}
 }

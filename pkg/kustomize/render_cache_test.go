@@ -886,6 +886,9 @@ func TestRenderFlux_RemoteCacheReachability(t *testing.T) {
 					t.Fatalf("changed/unavailable graph: valid=%t, %v", valid, err)
 				}
 			}
+			if (scenario == "local-removes" || scenario == "parent-removes") && hits.Load() != 0 {
+				t.Fatalf("removed edge fetched %d times during validation", hits.Load())
+			}
 			out, err = RenderFlux(ctx, c, request(), sourcecache.RetryConfig{})
 			switch scenario {
 			case "reachable-fails":
@@ -902,8 +905,8 @@ func TestRenderFlux_RemoteCacheReachability(t *testing.T) {
 					t.Fatalf("current graph: %s, %v; want %q", out, err, want)
 				}
 			}
-			if scenario == "local-removes" && hits.Load() != 0 {
-				t.Fatalf("removed local edge fetched %d times", hits.Load())
+			if (scenario == "local-removes" || scenario == "parent-removes") && hits.Load() != 0 {
+				t.Fatalf("removed edge fetched %d times after fresh rendering", hits.Load())
 			}
 			closeTestTreeCache(t, c)
 		})
@@ -1044,7 +1047,7 @@ func TestRenderFlux_RemoteCacheLocalAttribution(t *testing.T) {
 				rec := newReadSet(root)
 				view := newTreeFS(memoryTree(t, nil), root, rec)
 				walk := inputWalk{cache: c, fs: view}
-				if _, err := walk.acquire(t.Context(), remoteInput{Operation: remoteHTTP, URL: srv.URL}); err != nil {
+				if _, err := walk.acquire(t.Context(), remoteInput{Operation: remoteHTTP, URL: srv.URL}, walkScope{}); err != nil {
 					t.Fatal(err)
 				}
 				generated, err := walk.mount([]byte(body))
@@ -1119,7 +1122,7 @@ func TestRenderFlux_RemoteCacheLocalAttribution(t *testing.T) {
 			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Revision: "1"}, nil
 		})
 		walk := inputWalk{cache: c, fs: view}
-		gitPath, err := walk.fetchGitBase(t.Context(), gitBaseSpec{repoURL: "https://example.invalid/o/repo.git", dir: filepath.Join(root, "view")})
+		gitPath, err := walk.fetchGitBase(t.Context(), gitBaseSpec{repoURL: "https://example.invalid/o/repo.git", dir: filepath.Join(root, "view")}, walkScope{})
 		if err != nil {
 			t.Fatal(err)
 		}

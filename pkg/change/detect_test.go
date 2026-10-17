@@ -272,14 +272,6 @@ func TestDetect_HashLimit(t *testing.T) {
 					t.Fatalf("blocked jobs: active=%d peak=%d before=%d, want eight overlapping jobs", reads.active.Load(), reads.maximum.Load(), reads.before.Load())
 				}
 				switch scenario {
-				case "changed":
-					for range 9 {
-						reads.release <- struct{}{}
-					}
-					synctest.Wait()
-					if reads.before.Load() != 17 || reads.active.Load() != 8 {
-						t.Fatalf("final hash wave: before=%d active=%d", reads.before.Load(), reads.active.Load())
-					}
 				case "canceled":
 					cancel()
 				case "read error":

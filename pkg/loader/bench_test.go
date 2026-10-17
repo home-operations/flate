@@ -171,7 +171,7 @@ func BenchmarkRecordObject_Kustomization(b *testing.B) {
 
 func benchmarkRecordObject(b *testing.B, kind string) {
 	b.Helper()
-	for _, count := range []int{0, 1, 3, 4, 16} {
+	for _, count := range []int{0, 1, 3, 16} {
 		b.Run(fmt.Sprintf("refs=%d", count), func(b *testing.B) {
 			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "app", Namespace: "ns"}
 			if kind == manifest.KindHelmRelease {

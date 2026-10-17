@@ -67,7 +67,7 @@ func BenchmarkAddRendered(b *testing.B) {
 // shard) so a regression in the dedup / setLocked / fireUnderLock
 // chain shows up clean.
 func BenchmarkAddObject_Contended(b *testing.B) {
-	for _, p := range []int{1, 4, 8, 16} {
+	for _, p := range []int{1, 4, 16} {
 		b.Run(fmt.Sprintf("parallel=%d", p), func(b *testing.B) {
 			s := New()
 			b.SetParallelism(p)

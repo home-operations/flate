@@ -232,7 +232,7 @@ go test -race ./...
 golangci-lint run ./...
 ```
 
-Tool versions pin via [mise](https://mise.jdx.dev). Testdata lives in [`testdata/`](testdata/); [`test/e2e`](test/e2e/) runs the cobra command tree in-process — no fork/exec, no freshly built binary.
+Tool versions pin via [mise](https://mise.jdx.dev). Testdata lives in [`testdata/`](testdata/); the scenario packages in [`test/e2e`](test/e2e/) run the cobra command tree in process through one shared harness. Run them with `go test -race ./test/e2e/...`; no freshly built binary is needed.
 
 ## Releases
 

@@ -1,4 +1,4 @@
-package e2e
+package substitution
 
 import (
 	"os"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_SubstitutionProducerRendering(t *testing.T) {
@@ -74,10 +75,10 @@ spec:
 				}
 				var original string
 				if mode == "path-orig" {
-					original = copyTree(t, root)
+					original = harness.CopyTree(t, root)
 				}
-				repo := gitInit(t, root)
-				gitCommitAll(t, repo)
+				repo := harness.GitInit(t, root)
+				harness.GitCommitAll(t, repo)
 				if mode == "diff" {
 					testutil.WriteFile(t, root, "app/cm.yaml", strings.Replace(deployment, "-old", "-new", 1))
 				} else {
@@ -108,7 +109,7 @@ spec:
 					args[0] = "diff"
 					args = append(args, "-o", "diff")
 				}
-				stdout, stderr, code := runCLIBuffers(args...)
+				stdout, stderr, code := harness.RunCLIBuffers(args...)
 				if mode != "full" && strings.Contains(stdout, "unrelated-workload") {
 					t.Fatalf("unchanged workload retained: stdout=%s stderr=%s", stdout, stderr)
 				}
@@ -131,7 +132,7 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 	for _, workers := range []string{"1", "2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 15 {
-				stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
 				if code != 1 || stdout != "" || stderr != want {
 					t.Fatalf("substitution cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 				}
@@ -166,7 +167,7 @@ func TestE2E_SubstitutionProducerTransformedNamespace(t *testing.T) {
 				if mode == "changed" {
 					args = append(args, "--path-orig", original)
 				}
-				stdout, stderr, code := runCLIBuffers(args...)
+				stdout, stderr, code := harness.RunCLIBuffers(args...)
 				if code != 0 || !strings.Contains(stdout, "version: 4.6.2") {
 					t.Fatalf("transformed substitution: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -185,7 +186,7 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 	for _, workers := range []string{"2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 15 {
-				stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
 				if code != 1 || stdout != "" || strings.Contains(stderr, "flux-system/consumer  dependency cycle:") ||
 					!strings.Contains(stderr, "blocks flux-system/consumer") || !strings.Contains(stderr, "2 failed · 1 blocked") {
 					t.Fatalf("downstream cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)

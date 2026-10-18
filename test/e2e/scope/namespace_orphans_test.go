@@ -1,4 +1,4 @@
-package e2e
+package scope
 
 import (
 	"archive/tar"
@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -50,7 +51,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			if tc.namespace == "" {
 				wantCode, wantMaps = 1, 0
 			}
-			out, stderr, code := runCLIBuffers(append([]string{"get", "ks", "-o", "json"}, flags...)...)
+			out, stderr, code := harness.RunCLIBuffers(append([]string{"get", "ks", "-o", "json"}, flags...)...)
 			if code != wantCode {
 				t.Errorf("get exit=%d want=%d stderr=%s", code, wantCode, stderr)
 			}
@@ -76,7 +77,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			if children != 1 {
 				t.Errorf("child identities=%d want=1; output=%s", children, out)
 			}
-			out, stderr, code = runCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+			out, stderr, code = harness.RunCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
 			if code != wantCode {
 				t.Errorf("build exit=%d want=%d stderr=%s", code, wantCode, stderr)
 			}
@@ -114,7 +115,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			if children != 1 || maps != wantMaps {
 				t.Errorf("rendered children=%d ConfigMaps=%d want=1/%d; output=%s", children, maps, wantMaps, out)
 			}
-			out, stderr, code = runCLIBuffers(append([]string{"test", "all"}, flags...)...)
+			out, stderr, code = harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
 			if code != wantCode || strings.Contains(out+stderr, "blocked") != (wantCode == 1) {
 				t.Errorf("test exit=%d want=%d output=%s stderr=%s", code, wantCode, out, stderr)
 			}
@@ -132,7 +133,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 					t.Run(fmt.Sprintf("insert%d%d/remove%d", order[0], order[1], removed), func(t *testing.T) {
 						renderRaw := func() map[string]string {
 							t.Helper()
-							out, stderr, code := runCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+							out, stderr, code := harness.RunCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
 							if code != 0 {
 								t.Fatalf("build exit=%d stderr=%s", code, stderr)
 							}
@@ -197,7 +198,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			}
 			flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
 			getArgs := append([]string{"get", "hr", "-o", "json"}, flags...)
-			hr, _ := requireCLIOK(t, getArgs...)
+			hr, _ := harness.RequireCLIOK(t, getArgs...)
 			var releases []struct {
 				Name, Namespace string
 				SourceRef       struct{ Name, Namespace string }
@@ -216,7 +217,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 				t.Fatalf("release namespaces = %v, want %v; full output: %s", got, namespaces, hr)
 			}
 			buildArgs := append([]string{"build", "all", "-o", "yaml"}, flags...)
-			build, _ := requireCLIOK(t, buildArgs...)
+			build, _ := harness.RequireCLIOK(t, buildArgs...)
 			docs, err := manifest.SplitDocs([]byte(build))
 			if err != nil {
 				t.Fatal(err)
@@ -237,7 +238,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			if scenario != "standalone" && scenario != "shared" && !slices.Equal(repos, namespaces) {
 				t.Errorf("repository namespaces = %v, want %v; full output: %s", repos, namespaces, build)
 			}
-			out, _ := requireCLIOK(t, append([]string{"test", "all"}, flags...)...)
+			out, _ := harness.RequireCLIOK(t, append([]string{"test", "all"}, flags...)...)
 			if strings.Contains(out, "failed") || strings.Contains(out, "blocked") {
 				t.Errorf("unexpected test result: %s", out)
 			}
@@ -256,7 +257,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 	t.Run("terminal replay", func(t *testing.T) {
 		root, cache, _ := namespaceOrphanFixture(t, "explicit")
 		flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
-		out, _ := requireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+		out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
 		if !strings.Contains(out, "name: demo-chart") {
 			t.Fatalf("last-good chart did not render: %s", out)
 		}
@@ -288,7 +289,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			}
 		})
 		for _, command := range [][]string{{"build", "all"}, {"test", "all"}} {
-			out, stderr, code := runCLIBuffers(append(command, flags...)...)
+			out, stderr, code := harness.RunCLIBuffers(append(command, flags...)...)
 			if code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) || strings.Contains(out, "name: demo-chart") || strings.Contains(out+stderr, "warning") {
 				t.Fatalf("terminal replay became success or warning: exit=%d stdout=%s stderr=%s", code, out, stderr)
 			}
@@ -323,11 +324,11 @@ func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 				t.Fatalf("failed owner's raw releases admitted during discovery: %+v", releases)
 			}
 			flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", fmt.Sprint(concurrency), "--no-progress"}
-			out, stderr, code := runCLIBuffers(append([]string{"test", "all"}, flags...)...)
+			out, stderr, code := harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
 			if code != 1 || !strings.Contains(out+stderr, "flux-system/owner") || !strings.Contains(out+stderr, "no matches") {
 				t.Errorf("owner build failure must remain visible: exit=%d stdout=%s stderr=%s", code, out, stderr)
 			}
-			out, stderr, code = runCLIBuffers(append([]string{"get", "hr", "-o", "json"}, flags...)...)
+			out, stderr, code = harness.RunCLIBuffers(append([]string{"get", "hr", "-o", "json"}, flags...)...)
 			if code != 1 {
 				t.Errorf("failed owner get exit=%d stderr=%s", code, stderr)
 			}
@@ -357,7 +358,7 @@ func namespaceOrphanFixture(t *testing.T, scenario string) (string, string, []st
 	t.Setenv("NO_PROXY", "*")
 	t.Setenv("no_proxy", "*")
 	root, cache := t.TempDir(), t.TempDir()
-	gitInit(t, root)
+	harness.GitInit(t, root)
 	namespaces := []string{"demo"}
 	rawNS := ""
 	if scenario == "explicit" {

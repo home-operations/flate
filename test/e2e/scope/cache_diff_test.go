@@ -1,4 +1,4 @@
-package e2e
+package scope
 
 import (
 	"os"
@@ -10,6 +10,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_Diff_InTreeCache(t *testing.T) {
@@ -18,7 +19,7 @@ func TestE2E_Diff_InTreeCache(t *testing.T) {
 			for _, state := range []string{"unchanged", "changed", "suspended_current", "suspended_orig"} {
 				t.Run(state, func(t *testing.T) {
 					repoRoot := t.TempDir()
-					repo := gitInit(t, repoRoot)
+					repo := harness.GitInit(t, repoRoot)
 					sourceName := "flux-system"
 					if source == "self" {
 						sourceName = "cluster"
@@ -57,7 +58,7 @@ metadata: {name: hello, namespace: apps}
 data:
   greeting: hola
 `)
-					gitCommitAll(t, repo)
+					harness.GitCommitAll(t, repo)
 					head, err := repo.Head()
 					if err != nil {
 						t.Fatal(err)
@@ -67,13 +68,13 @@ data:
 						t.Fatal(err)
 					}
 					if state == "changed" {
-						mutateFile(t, filepath.Join(repoRoot, "apps", "cm.yaml"), "greeting: hola", "greeting: hi")
+						harness.MutateFile(t, filepath.Join(repoRoot, "apps", "cm.yaml"), "greeting: hola", "greeting: hi")
 					}
 					switch state {
 					case "suspended_current":
-						mutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  path: ./apps", "  suspend: true\n  path: ./apps")
+						harness.MutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  path: ./apps", "  suspend: true\n  path: ./apps")
 					case "suspended_orig":
-						mutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  suspend: true\n", "")
+						harness.MutateFile(t, filepath.Join(repoRoot, "flux", "cluster.yaml"), "  suspend: true\n", "")
 					}
 					t.Chdir(repoRoot)
 					layouts := []struct {
@@ -102,7 +103,7 @@ data:
 									if source == "self" {
 										args = append(args, "--path", "flux")
 									}
-									out, stderr := requireCLIOK(t, args...)
+									out, stderr := harness.RequireCLIOK(t, args...)
 									if state == "unchanged" && out != "" {
 										t.Errorf("unchanged stdout must be empty:\n%s\nstderr:\n%s", out, stderr)
 									}

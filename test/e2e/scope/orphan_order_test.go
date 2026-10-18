@@ -1,4 +1,4 @@
-package e2e
+package scope
 
 import (
 	stdcmp "cmp"
@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_OrphanNotesDeterministic(t *testing.T) {
@@ -38,7 +39,7 @@ spec:
 	for _, concurrency := range []int{2, 8} {
 		t.Run(fmt.Sprintf("concurrency%d", concurrency), func(t *testing.T) {
 			for run := range 6 {
-				stdout, _ := requireCLIOK(t, "test", "--path", root, "--cache-dir", cache,
+				stdout, _ := harness.RequireCLIOK(t, "test", "--path", root, "--cache-dir", cache,
 					"--no-progress", "--concurrency", fmt.Sprint(concurrency))
 				if strings.Count(stdout, "resource orphaned id=") != 8 {
 					t.Fatalf("want eight orphan notes:\n%s", stdout)

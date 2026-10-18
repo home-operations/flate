@@ -1,11 +1,13 @@
-package e2e
+package sourceref
 
 import (
 	"fmt"
-	"github.com/home-operations/flate/internal/testutil"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_DiscoveryIndex_ScopedRawFileFallback(t *testing.T) {
@@ -76,7 +78,7 @@ kind: ConfigMap
 metadata: {name: out, namespace: default}
 data: {v: "${K}"}
 `)
-			_, stderr, code := runCLIBuffers("build", "ks", "consumer", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			_, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
 			if code != 1 || !strings.Contains(stderr, "other") {
 				t.Fatalf("exit=%d stderr=%s", code, stderr)
 			}
@@ -137,7 +139,7 @@ data: {v: "${K}"}
 `)
 			}
 			testutil.WriteFile(t, root, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: out2, namespace: default}\ndata: {v: \"${K}\"}\n")
-			stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
 			if code != 0 || !strings.Contains(stdout, "name: out2") || !strings.Contains(stdout, "v: v") {
 				t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
@@ -165,7 +167,7 @@ spec: {path: ./apps/bad}
 			testutil.WriteFile(t, root, "apps/good/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: good-output}\n")
 			testutil.WriteFile(t, root, "apps/bad/kustomization.yaml", "configMapGenerator:\n- name: bad\n  "+input+"\n")
 			for _, workers := range []string{"2", "8"} {
-				stdout, stderr, code := runCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
 				if code != 1 || !strings.Contains(stdout, "good-output") || !strings.Contains(stderr, "bad") || !strings.Contains(stderr, "file sources:") {
 					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -193,7 +195,7 @@ spec:
 	testutil.WriteFile(t, root, "apps/b/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/b/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {key: '${API_KEY}'}\n")
 	for _, workers := range []string{"2", "8"} {
-		stdout := runCLIStdout(t, "build", "ks", "consumer", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+		stdout := harness.RunCLIStdout(t, "build", "ks", "consumer", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
 		if !strings.Contains(stdout, "..PLACEHOLDER_API_KEY..") || strings.Contains(stdout, "ENC[") {
 			t.Fatalf("ciphertext substitution: %s", stdout)
 		}
@@ -218,7 +220,7 @@ func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 				kind = "OCIRepository"
 			}
 			root := t.TempDir()
-			repo := gitInit(t, root)
+			repo := harness.GitInit(t, root)
 			testutil.WriteFile(t, root, "kubernetes/clusters/c0/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: bootstrap, namespace: flux-system}
@@ -254,8 +256,8 @@ spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
 			}
 			testutil.WriteFile(t, root, "kubernetes/apps/x/kustomization.yaml", resources)
 			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: before}\n")
-			gitCommitAll(t, repo)
-			orig := copyTree(t, root)
+			harness.GitCommitAll(t, repo)
+			orig := harness.CopyTree(t, root)
 			origScan := filepath.Join(orig, "kubernetes/clusters/c0")
 			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: after}\n")
 			scan := filepath.Join(root, "kubernetes/clusters/c0")
@@ -268,7 +270,7 @@ spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
 				if mode == "diff" {
 					args = append(args, "--path-orig", origScan)
 				}
-				stdout, stderr, code := runCLIBuffers(args...)
+				stdout, stderr, code := harness.RunCLIBuffers(args...)
 				if tc.name == "unknown" && mode == "diff" {
 					if code != 0 || stdout != "" || !strings.Contains(stderr, "outside the local tree; not rendered") {
 						t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
@@ -307,11 +309,11 @@ spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
 			}
 			if tc.diagnostic == "" {
 				args := []string{"build", "all", "--path", scan, "--path-orig", origScan, "--concurrency", "2", "--no-progress"}
-				stdout, stderr, code := runCLIBuffers(args...)
+				stdout, stderr, code := harness.RunCLIBuffers(args...)
 				if code != 0 || !strings.Contains(stdout, "consumer-output") || !strings.Contains(stdout, "value: after") || strings.Contains(stdout, "unrelated-sibling") {
 					t.Fatalf("changed subtree exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
-				stdout, stderr, code = runCLIBuffers("diff", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", scan, "--concurrency", "2", "--no-progress")
+				stdout, stderr, code = harness.RunCLIBuffers("diff", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", scan, "--concurrency", "2", "--no-progress")
 				if code != 0 {
 					t.Fatalf("reverse diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -319,9 +321,9 @@ spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
 					t.Fatalf("reverse artifact/consumer values: %s", stdout)
 				}
 				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-unrelated-sibling}\n")
-				clean := copyTree(t, orig)
+				clean := harness.CopyTree(t, orig)
 				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: another-unrelated-sibling}\n")
-				stdout, stderr, code = runCLIBuffers("build", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", filepath.Join(clean, "kubernetes/clusters/c0"), "--concurrency", "2", "--no-progress")
+				stdout, stderr, code = harness.RunCLIBuffers("build", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", filepath.Join(clean, "kubernetes/clusters/c0"), "--concurrency", "2", "--no-progress")
 				if code != 0 || strings.Contains(stdout, "consumer-output") || strings.Contains(stdout, "artifact-output") || strings.Contains(stdout, "unrelated-sibling") {
 					t.Fatalf("unrelated edit exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}

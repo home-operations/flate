@@ -1,4 +1,4 @@
-package e2e
+package substitution
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
@@ -29,7 +30,7 @@ spec:
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}'}\n")
 			for _, workers := range []string{"2", "8"} {
-				stdout, stderr, code := runCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
 				if code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_VALUE..") || strings.Contains(stdout, "ENC[") {
 					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -50,7 +51,7 @@ spec:
 	testutil.WriteFile(t, root, "secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: creds, namespace: flux-system}\ndata: {VALUE: QQ==, EMPTY: invalid-base64!}\nstringData: {VALUE: B, EMPTY: ''}\n")
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}\n")
-	stdout, stderr, code := runCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
+	stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
 	if code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback") {
 		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}

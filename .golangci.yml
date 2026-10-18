@@ -205,6 +205,8 @@ linters:
         linters:
           - errcheck
           - unparam
+      - path: (_test\.go|^test/e2e/internal/harness/)
+        linters:
           # gosec's production-security heuristics (G101 hardcoded credentials,
           # …) misfire on test fixtures, which legitimately carry credential-
           # shaped literals — e.g. a Secret/ExternalSecret table keyed on

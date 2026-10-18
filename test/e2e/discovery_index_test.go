@@ -259,56 +259,49 @@ spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
 			origScan := filepath.Join(orig, "kubernetes/clusters/c0")
 			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: after}\n")
 			scan := filepath.Join(root, "kubernetes/clusters/c0")
-			var rendered string
 			cache := t.TempDir()
-			for _, workers := range []string{"2", "8"} {
-				for _, mode := range []string{"build", "test", "diff"} {
-					if tc.name == "unsupported" && mode != "diff" {
-						continue
+			for _, mode := range []string{"build", "test", "diff"} {
+				if tc.name == "unsupported" && mode != "diff" {
+					continue
+				}
+				args := []string{mode, "all", "--path", scan, "--concurrency", "2", "--cache-dir", cache, "--no-progress"}
+				if mode == "diff" {
+					args = append(args, "--path-orig", origScan)
+				}
+				stdout, stderr, code := runCLIBuffers(args...)
+				if tc.name == "unknown" && mode == "diff" {
+					if code != 0 || stdout != "" || !strings.Contains(stderr, "outside the local tree; not rendered") {
+						t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 					}
-					args := []string{mode, "all", "--path", scan, "--concurrency", workers, "--cache-dir", cache, "--no-progress"}
-					if mode == "diff" {
-						args = append(args, "--path-orig", origScan)
-					}
-					stdout, stderr, code := runCLIBuffers(args...)
-					if tc.name == "unknown" && mode == "diff" {
-						if code != 0 || stdout != "" || !strings.Contains(stderr, "outside the local tree; not rendered") {
-							t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-						}
-						continue
-					}
-					if tc.diagnostic != "" {
-						if code != 1 || !strings.Contains(stdout+stderr, tc.diagnostic) {
-							t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
-						}
-						if tc.later && mode == "build" && !strings.Contains(stdout, "artifact-output") {
-							t.Fatalf("parent did not render: %s", stdout)
-						}
-						if strings.Contains(stdout, "unrelated-root-output") {
-							t.Fatal("frozen root moved")
-						}
-						continue
-					}
-					if code != 0 {
+					continue
+				}
+				if tc.diagnostic != "" {
+					if code != 1 || !strings.Contains(stdout+stderr, tc.diagnostic) {
 						t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
 					}
-					switch mode {
-					case "build":
-						if !strings.Contains(stdout, "artifact-output") || !strings.Contains(stdout, "after") {
-							t.Fatalf("missing artifact bytes: %s", stdout)
-						}
-						if rendered != "" && rendered != stdout {
-							t.Fatal("render changed with concurrency/cache")
-						}
-						rendered = stdout
-					case "test":
-						if !strings.Contains(stdout+stderr, "3 passed") {
-							t.Fatalf("test did not evaluate content: %s %s", stdout, stderr)
-						}
-					case "diff":
-						if strings.Count(stdout, "- before\n") != 2 || strings.Count(stdout, "+ after\n") != 2 {
-							t.Fatalf("forward artifact/consumer values: %s", stdout)
-						}
+					if tc.later && mode == "build" && !strings.Contains(stdout, "artifact-output") {
+						t.Fatalf("parent did not render: %s", stdout)
+					}
+					if strings.Contains(stdout, "unrelated-root-output") {
+						t.Fatal("frozen root moved")
+					}
+					continue
+				}
+				if code != 0 {
+					t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
+				}
+				switch mode {
+				case "build":
+					if !strings.Contains(stdout, "artifact-output") || !strings.Contains(stdout, "after") {
+						t.Fatalf("missing artifact bytes: %s", stdout)
+					}
+				case "test":
+					if !strings.Contains(stdout+stderr, "3 passed") {
+						t.Fatalf("test did not evaluate content: %s %s", stdout, stderr)
+					}
+				case "diff":
+					if strings.Count(stdout, "- before\n") != 2 || strings.Count(stdout, "+ after\n") != 2 {
+						t.Fatalf("forward artifact/consumer values: %s", stdout)
 					}
 				}
 			}

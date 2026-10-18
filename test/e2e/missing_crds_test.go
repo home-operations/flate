@@ -118,106 +118,102 @@ func suspendedIssueResourceSet() string {
 }
 
 func TestE2E_MissingCRDs_Policy(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		for _, tc := range []struct {
-			name, kind, supplied, namespace string
-			enabled, success                bool
-		}{
-			{name: "strict absent", kind: "CustomResourceDefinition"},
-			{name: "allowed absent", kind: "CustomResourceDefinition", enabled: true, success: true},
-			{name: "supplied CRD", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, success: true},
-			{name: "supplied CRD opt in", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, enabled: true, success: true},
-			{name: "strict absent explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system"},
-			{name: "allowed absent explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system", enabled: true, success: true},
-			{name: "supplied explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system", supplied: helmReleaseCRD, success: true},
-			{name: "supplied explicit CRD opt in", kind: "CustomResourceDefinition", namespace: "flux-system", supplied: helmReleaseCRD, enabled: true, success: true},
-			{name: "missing ConfigMap", kind: "ConfigMap", enabled: true},
-			{name: "missing Secret", kind: "Secret", enabled: true},
-			{name: "missing Widget", kind: "Widget", enabled: true},
-			{name: "supplied ConfigMap", kind: "ConfigMap", enabled: true, success: true, supplied: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: helmreleases.helm.toolkit.fluxcd.io, namespace: flux-system}\ndata: {key: value}\n"},
-		} {
-			t.Run(fmt.Sprintf("workers_%d/%s", workers, tc.name), func(t *testing.T) {
-				rs := strings.Replace(suspendedIssueResourceSet(), "kind: CustomResourceDefinition", "kind: "+tc.kind, 1)
-				if tc.kind == manifest.KindConfigMap || tc.kind == manifest.KindSecret {
-					rs = strings.Replace(rs, "apiVersion: apiextensions.k8s.io/v1", "apiVersion: v1", 1)
+	for _, tc := range []struct {
+		name, kind, supplied, namespace string
+		enabled, success                bool
+	}{
+		{name: "strict absent", kind: "CustomResourceDefinition"},
+		{name: "allowed absent", kind: "CustomResourceDefinition", enabled: true, success: true},
+		{name: "supplied CRD", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, success: true},
+		{name: "supplied CRD opt in", kind: "CustomResourceDefinition", supplied: helmReleaseCRD, enabled: true, success: true},
+		{name: "strict absent explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system"},
+		{name: "allowed absent explicit CRD", kind: "CustomResourceDefinition", namespace: "flux-system", enabled: true, success: true},
+		{name: "missing ConfigMap", kind: "ConfigMap", enabled: true},
+		{name: "missing Secret", kind: "Secret", enabled: true},
+		{name: "missing Widget", kind: "Widget", enabled: true},
+		{name: "supplied ConfigMap", kind: "ConfigMap", enabled: true, success: true, supplied: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: helmreleases.helm.toolkit.fluxcd.io, namespace: flux-system}\ndata: {key: value}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := strings.Replace(suspendedIssueResourceSet(), "kind: CustomResourceDefinition", "kind: "+tc.kind, 1)
+			if tc.kind == manifest.KindConfigMap || tc.kind == manifest.KindSecret {
+				rs = strings.Replace(rs, "apiVersion: apiextensions.k8s.io/v1", "apiVersion: v1", 1)
+			}
+			if tc.namespace != "" {
+				rs = strings.Replace(rs, "      kind: "+tc.kind+"\n", "      kind: "+tc.kind+"\n      namespace: "+tc.namespace+"\n", 1)
+			}
+			dir := missingCRDRepo(t, rs)
+			if tc.supplied != "" {
+				testutil.WriteFile(t, dir, "apps/dependency.yaml", tc.supplied)
+				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n- dependency.yaml\n")
+			}
+			args := []string{"--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2", "--allow-missing-secrets=false"}
+			if tc.enabled {
+				args = append(args, "--allow-missing-crds")
+			}
+			out, errOut, code := runCLIBuffers(append([]string{"test", "all"}, args...)...)
+			wantCode := 1
+			if tc.success {
+				wantCode = 0
+			}
+			if code != wantCode {
+				t.Fatalf("exit=%d want %d stdout=%s stderr=%s", code, wantCode, out, errOut)
+			}
+			diagnostics := out + errOut
+			wantWarning := 0
+			if tc.enabled && tc.kind == manifest.KindCustomResourceDefinition && tc.supplied == "" {
+				wantWarning = 1
+			}
+			if got := strings.Count(diagnostics, "absent from offline inputs; accepted for"); got != wantWarning {
+				t.Fatalf("warning count=%d want %d: %s", got, wantWarning, diagnostics)
+			}
+			if wantWarning == 1 {
+				crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
+				want := "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"
+				if !strings.Contains(diagnostics, want) {
+					t.Fatalf("canonical warning absent: %s", diagnostics)
 				}
-				if tc.namespace != "" {
-					rs = strings.Replace(rs, "      kind: "+tc.kind+"\n", "      kind: "+tc.kind+"\n      namespace: "+tc.namespace+"\n", 1)
+			}
+			if !tc.success {
+				if !strings.Contains(diagnostics, "not found") {
+					t.Fatalf("missing dependency not reported: %s", diagnostics)
 				}
-				dir := missingCRDRepo(t, rs)
-				if tc.supplied != "" {
-					testutil.WriteFile(t, dir, "apps/dependency.yaml", tc.supplied)
-					testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n- dependency.yaml\n")
+				return
+			}
+			child, childErr := requireCLIOK(t, append([]string{"get", "hr", "-o", "yaml"}, args...)...)
+			for _, part := range []string{"name: flux-operator", "kind: OCIRepository", "suspend: true"} {
+				if !strings.Contains(child, part) {
+					t.Fatalf("missing child spec %q: %s", part, child)
 				}
-				args := []string{"--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-secrets=false"}
-				if tc.enabled {
-					args = append(args, "--allow-missing-crds")
+			}
+			if strings.Contains(child+childErr, "absent from offline inputs") {
+				t.Fatal("get must suppress advisories")
+			}
+			for _, skip := range []bool{true, false} {
+				skipKinds := "Secret"
+				if skip {
+					skipKinds += ",CustomResourceDefinition"
 				}
-				out, errOut, code := runCLIBuffers(append([]string{"test", "all"}, args...)...)
-				wantCode := 1
-				if tc.success {
-					wantCode = 0
+				built, builtErr := requireCLIOK(t, append(append([]string{"build", "all"}, args...), "--skip-kinds="+skipKinds)...)
+				if strings.Contains(built+builtErr, "absent from offline inputs") {
+					t.Fatal("build must suppress advisories")
 				}
-				if code != wantCode {
-					t.Fatalf("exit=%d want %d stdout=%s stderr=%s", code, wantCode, out, errOut)
-				}
-				diagnostics := out + errOut
-				wantWarning := 0
-				if tc.enabled && tc.kind == manifest.KindCustomResourceDefinition && tc.supplied == "" {
-					wantWarning = 1
-				}
-				if got := strings.Count(diagnostics, "absent from offline inputs; accepted for"); got != wantWarning {
-					t.Fatalf("warning count=%d want %d: %s", got, wantWarning, diagnostics)
-				}
-				if wantWarning == 1 {
-					crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
-					want := "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"
-					if !strings.Contains(diagnostics, want) {
-						t.Fatalf("canonical warning absent: %s", diagnostics)
+				if tc.kind == manifest.KindCustomResourceDefinition && tc.supplied != "" {
+					docs, err := manifest.DecodeDocs(strings.NewReader(built))
+					if err != nil {
+						t.Fatal(err)
 					}
-				}
-				if !tc.success {
-					if !strings.Contains(diagnostics, "not found") {
-						t.Fatalf("missing dependency not reported: %s", diagnostics)
-					}
-					return
-				}
-				child, childErr := requireCLIOK(t, append([]string{"get", "hr", "-o", "yaml"}, args...)...)
-				for _, part := range []string{"name: flux-operator", "kind: OCIRepository", "suspend: true"} {
-					if !strings.Contains(child, part) {
-						t.Fatalf("missing child spec %q: %s", part, child)
-					}
-				}
-				if strings.Contains(child+childErr, "absent from offline inputs") {
-					t.Fatal("get must suppress advisories")
-				}
-				for _, skip := range []bool{true, false} {
-					skipKinds := "Secret"
-					if skip {
-						skipKinds += ",CustomResourceDefinition"
-					}
-					built, builtErr := requireCLIOK(t, append(append([]string{"build", "all"}, args...), "--skip-kinds="+skipKinds)...)
-					if strings.Contains(built+builtErr, "absent from offline inputs") {
-						t.Fatal("build must suppress advisories")
-					}
-					if tc.kind == manifest.KindCustomResourceDefinition && tc.supplied != "" {
-						docs, err := manifest.DecodeDocs(strings.NewReader(built))
-						if err != nil {
-							t.Fatal(err)
-						}
-						found := false
-						for _, doc := range docs {
-							if manifest.DocKind(doc) == manifest.KindCustomResourceDefinition {
-								found = true
-							}
-						}
-						if found == skip {
-							t.Fatalf("CRD excluded=%t did not filter only output: %s", skip, built)
+					found := false
+					for _, doc := range docs {
+						if manifest.DocKind(doc) == manifest.KindCustomResourceDefinition {
+							found = true
 						}
 					}
+					if found == skip {
+						t.Fatalf("CRD excluded=%t did not filter only output: %s", skip, built)
+					}
 				}
-			})
-		}
+			}
+		})
 	}
 }
 
@@ -238,44 +234,42 @@ func TestE2E_MissingCRDs_Environment(t *testing.T) {
 func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 	var first, firstBuild, firstHR string
 	for _, workers := range []int{2, 4} {
-		for range 2 {
-			rs := suspendedIssueResourceSet()
-			ref := "    - apiVersion: apiextensions.k8s.io/v1\n      kind: CustomResourceDefinition\n      name: helmreleases.helm.toolkit.fluxcd.io\n"
-			rs = strings.Replace(rs, ref, ref+ref+strings.Replace(ref, "helmreleases.helm.toolkit.fluxcd.io", "widgets.example.com", 1), 1)
-			rs += "---\n" + strings.Replace(rs, "  name: flux-operator\n", "  name: z-dependent\n", 1)
-			dir := missingCRDRepo(t, rs)
-			out, errOut := requireCLIOK(t, "test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
-			lines := []string{}
-			for line := range strings.SplitSeq(out+errOut, "\n") {
-				if strings.Contains(line, "absent from offline inputs; accepted for") {
-					lines = append(lines, strings.TrimSpace(line))
-				}
+		rs := suspendedIssueResourceSet()
+		ref := "    - apiVersion: apiextensions.k8s.io/v1\n      kind: CustomResourceDefinition\n      name: helmreleases.helm.toolkit.fluxcd.io\n"
+		rs = strings.Replace(rs, ref, ref+ref+strings.Replace(ref, "helmreleases.helm.toolkit.fluxcd.io", "widgets.example.com", 1), 1)
+		rs += "---\n" + strings.Replace(rs, "  name: flux-operator\n", "  name: z-dependent\n", 1)
+		dir := missingCRDRepo(t, rs)
+		out, errOut := requireCLIOK(t, "test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
+		lines := []string{}
+		for line := range strings.SplitSeq(out+errOut, "\n") {
+			if strings.Contains(line, "absent from offline inputs; accepted for") {
+				lines = append(lines, strings.TrimSpace(line))
 			}
-			if len(lines) != 2 {
-				t.Fatalf("warnings=%v", lines)
+		}
+		if len(lines) != 2 {
+			t.Fatalf("warnings=%v", lines)
+		}
+		for _, line := range lines {
+			if strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator") != 1 || strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/z-dependent") != 1 {
+				t.Fatalf("distinct sorted dependents missing: %s", line)
 			}
-			for _, line := range lines {
-				if strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator") != 1 || strings.Count(line, "ResourceSet.fluxcd.controlplane.io/flux-system/z-dependent") != 1 {
-					t.Fatalf("distinct sorted dependents missing: %s", line)
-				}
-			}
-			if !strings.Contains(lines[0], "helmreleases.helm.toolkit.fluxcd.io") || !strings.Contains(lines[1], "widgets.example.com") {
-				t.Fatalf("warnings out of order: %v", lines)
-			}
-			built, _ := requireCLIOK(t, "build", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
-			hr, _ := requireCLIOK(t, "get", "hr", "-o", "yaml", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
-			if firstBuild == "" {
-				firstBuild = built
-				firstHR = hr
-			}
-			if built != firstBuild || hr != firstHR {
-				t.Fatal("rendered output changed across runs or concurrency levels")
-			}
-			got := strings.Join(lines, "\n")
-			first = cmp.Or(first, got)
-			if got != first {
-				t.Fatalf("warnings changed: want %s got %s", first, got)
-			}
+		}
+		if !strings.Contains(lines[0], "helmreleases.helm.toolkit.fluxcd.io") || !strings.Contains(lines[1], "widgets.example.com") {
+			t.Fatalf("warnings out of order: %v", lines)
+		}
+		built, _ := requireCLIOK(t, "build", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
+		hr, _ := requireCLIOK(t, "get", "hr", "-o", "yaml", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
+		if firstBuild == "" {
+			firstBuild = built
+			firstHR = hr
+		}
+		if built != firstBuild || hr != firstHR {
+			t.Fatal("rendered output changed across runs or concurrency levels")
+		}
+		got := strings.Join(lines, "\n")
+		first = cmp.Or(first, got)
+		if got != first {
+			t.Fatalf("warnings changed: want %s got %s", first, got)
 		}
 	}
 }

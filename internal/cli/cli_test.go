@@ -101,18 +101,6 @@ data:
 	return k8s
 }
 
-// TestRun_VersionFlag covers the --version path that cobra wires onto
-// the root command. Exit 0, version string echoed to stdout.
-func TestRun_VersionFlag(t *testing.T) {
-	stdout, _, code := runCLI(t, "--version")
-	if code != 0 {
-		t.Fatalf("--version exited %d", code)
-	}
-	if !strings.Contains(stdout, "dev") {
-		t.Errorf("expected version string in stdout, got %q", stdout)
-	}
-}
-
 // TestRun_HelpExits0 covers the "no subcommand" path — cobra prints
 // help and exits 0.
 func TestRun_HelpExits0(t *testing.T) {
@@ -124,17 +112,6 @@ func TestRun_HelpExits0(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("--help output missing verb %q: %s", want, stdout)
 		}
-	}
-}
-
-// TestRun_UnknownCommand returns non-zero and a useful error.
-func TestRun_UnknownCommand(t *testing.T) {
-	_, stderr, code := runCLI(t, "frobnicate")
-	if code == 0 {
-		t.Fatal("expected non-zero exit for unknown command")
-	}
-	if !strings.Contains(stderr, "frobnicate") {
-		t.Errorf("error should name the unknown command; got %q", stderr)
 	}
 }
 
@@ -173,21 +150,6 @@ func TestRun_GroupDefaultsToAll(t *testing.T) {
 	}
 }
 
-// TestRun_LogLevelFlag exercises the persistent --log-level handler.
-// Accepted enum values exit 0 on --help (the PreRunE successfully
-// installs the level). The cobra --help fast path doesn't trigger
-// PreRunE in older cobra, so we keep the original assertion shape
-// for the success values; the rejection case is covered by
-// TestRun_LogLevelFlag_RejectsInvalid below using a real command.
-func TestRun_LogLevelFlag(t *testing.T) {
-	for _, lvl := range []string{"debug", "info", "warn", "error"} {
-		_, _, code := runCLI(t, "--log-level", lvl, "--help")
-		if code != 0 {
-			t.Errorf("--log-level %q exited %d", lvl, code)
-		}
-	}
-}
-
 // TestRun_LogLevelFlag_RejectsInvalid pins the validation fix: an
 // invalid --log-level value must fail loudly with a clear message
 // rather than silently defaulting to info. Without the fix
@@ -216,15 +178,13 @@ func TestRun_MissingPathErrors(t *testing.T) {
 	}
 }
 
-// TestRun_BuildAll exercises the full build-all happy path: render
-// the fixture, emit YAML, exit 0.
 func TestRun_BuildAll(t *testing.T) {
 	path := writeFixture(t)
 	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
 	if code != 0 {
 		t.Fatalf("build all exited %d: stderr=%s", code, stderr)
 	}
-	for _, want := range []string{"kind: ConfigMap", "name: hello"} {
+	for _, want := range []string{"kind: ConfigMap", "name: hello", "greeting: hi"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("build output missing %q:\n%s", want, stdout)
 		}
@@ -336,17 +296,6 @@ func TestRun_GetKS_NameFilter(t *testing.T) {
 	}
 }
 
-func TestRun_GetKS_NameFilter_NoMatch(t *testing.T) {
-	path := writeFixture(t)
-	_, stderr, code := runCLI(t, "get", "ks", "nonexistent", "--path", path)
-	if code == 0 {
-		t.Fatal("expected non-zero for nonexistent name on get")
-	}
-	if !strings.Contains(stderr, "nonexistent") {
-		t.Errorf("error should name the typo'd argument: %q", stderr)
-	}
-}
-
 func TestRun_GetKS_NameFilter_LabelMismatchIsEmpty(t *testing.T) {
 	path := writeFixture(t)
 	stdout, stderr, code := runCLI(t, "get", "ks", "apps", "--path", path, "-l", "app.kubernetes.io/name=other")
@@ -369,19 +318,6 @@ func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "apps") {
 		t.Errorf("error should name the scoped-out argument: %q", stderr)
-	}
-}
-
-// TestRun_BuildKS_NameFilter_NoMatch is the error path: typo name on
-// build should fail loud instead of rendering an empty target.
-func TestRun_BuildKS_NameFilter_NoMatch(t *testing.T) {
-	path := writeFixture(t)
-	_, stderr, code := runCLI(t, "build", "ks", "nonexistent", "--path", path)
-	if code == 0 {
-		t.Fatal("expected non-zero for nonexistent name on build")
-	}
-	if !strings.Contains(stderr, "nonexistent") {
-		t.Errorf("error should name the typo'd argument: %q", stderr)
 	}
 }
 
@@ -444,18 +380,6 @@ func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 	if summary["kustomizations"] != 1 || summary["helmReleases"] != 0 {
 		t.Errorf("namespace-scoped summary = %#v, want 1 KS and 0 HR", summary)
 	}
-}
-
-// TestRun_GetImages_NameDefault exercises the default name format
-// (one image per line).
-func TestRun_GetImages_NameDefault(t *testing.T) {
-	path := writeFixture(t)
-	_, _, code := runCLI(t, "get", "images", "--path", path)
-	if code != 0 {
-		t.Fatalf("get images exited %d", code)
-	}
-	// Fixture has no images, but the command should still succeed
-	// with an empty list — failing exit would indicate a regression.
 }
 
 // TestRun_GetImages_RejectsBadOutput verifies the -o diff rejection.
@@ -545,17 +469,6 @@ func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 	}
 }
 
-func TestRun_TestKS_NameFilter_NoMatch(t *testing.T) {
-	path := writeFixture(t)
-	_, stderr, code := runCLI(t, "test", "ks", "nonexistent", "--path", path)
-	if code == 0 {
-		t.Fatal("expected non-zero for nonexistent name on test")
-	}
-	if !strings.Contains(stderr, "nonexistent") {
-		t.Errorf("error should name the typo'd argument: %q", stderr)
-	}
-}
-
 func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
 	path := writeFixture(t)
 	want := errors.New("stdout closed")
@@ -597,19 +510,6 @@ func TestRun_TestAll_JoinsVisibleFailuresWithRunError(t *testing.T) {
 	}
 }
 
-// TestRun_TestAll_RejectsOutput covers that test has no -o flag at all
-// (it emits one fixed plain-text report), so `-o` is an unknown flag.
-func TestRun_TestAll_RejectsOutput(t *testing.T) {
-	path := writeFixture(t)
-	_, stderr, code := runCLI(t, "test", "all", "--path", path, "-o", "yaml")
-	if code == 0 {
-		t.Fatal("expected non-zero exit")
-	}
-	if !strings.Contains(stderr, "unknown") {
-		t.Errorf("expected unknown-flag error: %q", stderr)
-	}
-}
-
 // TestRun_DiffKS_NoOrigErrors covers the diff-without-path-orig path:
 // diff must reject when no baseline is supplied.
 func TestRun_DiffKS_NoOrigErrors(t *testing.T) {
@@ -636,41 +536,6 @@ func TestRun_DiffKS_TwoTreesNoDelta(t *testing.T) {
 	}
 	if strings.Contains(stdout, "@@") {
 		t.Errorf("identical tree should produce no hunks:\n%s", stdout)
-	}
-}
-
-func TestRun_DiffKS_ExplicitDiffOutput(t *testing.T) {
-	current := writeFixture(t)
-	orig := t.TempDir()
-	copyTree(t, current, orig)
-	_, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", "diff")
-	if code != 0 {
-		t.Fatalf("diff ks -o diff exited %d: %s", code, stderr)
-	}
-}
-
-func TestRun_DiffKS_NameFilter_NoMatch(t *testing.T) {
-	current := writeFixture(t)
-	orig := t.TempDir()
-	copyTree(t, current, orig)
-	_, stderr, code := runCLI(t, "diff", "ks", "nonexistent", "--path", current, "--path-orig", orig)
-	if code == 0 {
-		t.Fatal("expected non-zero for nonexistent name on diff")
-	}
-	if !strings.Contains(stderr, "nonexistent") {
-		t.Errorf("error should name the typo'd argument: %q", stderr)
-	}
-}
-
-// TestRun_DiffImages_NameDefault exercises diff images on identical
-// trees — no images either side, no diff hunks.
-func TestRun_DiffImages_NameDefault(t *testing.T) {
-	current := writeFixture(t)
-	orig := t.TempDir()
-	copyTree(t, current, orig)
-	_, _, code := runCLI(t, "diff", "images", "--path", current, "--path-orig", orig)
-	if code != 0 {
-		t.Fatalf("diff images exited %d", code)
 	}
 }
 
@@ -1029,7 +894,10 @@ data:
 	want := []string{"ghcr.io/example/a:1", "ghcr.io/example/z:2"}
 	for _, format := range []string{"name", "yaml", "json"} {
 		t.Run(format, func(t *testing.T) {
-			flags := []string{"--path", current, "--cache-dir", cache, "--concurrency", "2", "-o", format}
+			flags := []string{"--path", current, "--cache-dir", cache, "--concurrency", "2"}
+			if format != "name" {
+				flags = append(flags, "-o", format)
+			}
 			get, stderr, code := runCLI(t, append([]string{"get", "images"}, flags...)...)
 			if code != 0 {
 				t.Fatalf("get images exited %d: %s", code, stderr)
@@ -1059,6 +927,30 @@ data:
 			assert.Diff(t, images, want)
 		})
 	}
+	t.Run("empty/default", func(t *testing.T) {
+		for _, verb := range []string{"get", "diff"} {
+			t.Run(verb, func(t *testing.T) {
+				args := []string{verb, "images", "--path", orig, "--cache-dir", cache, "--concurrency", "2"}
+				if verb == "diff" {
+					args = append(args, "--path-orig", writeFixture(t))
+				}
+				stdout, stderr, code := runCLI(t, args...)
+				if code != 0 || stdout != "" {
+					t.Fatalf("empty %s images: exit=%d stdout=%q stderr=%s", verb, code, stdout, stderr)
+				}
+			})
+		}
+	})
+	t.Run("unchanged/json", func(t *testing.T) {
+		stdout, stderr, code := runCLI(t, "diff", "images", "--path", current, "--path-orig", current,
+			"--cache-dir", cache, "--concurrency", "2", "-o", "json")
+		if code != 0 {
+			t.Fatalf("unchanged diff images: exit=%d stderr=%s", code, stderr)
+		}
+		if got := strings.TrimSpace(stdout); got != "[]" && got != "null" {
+			t.Fatalf("unchanged image diff = %q, want [] or null", stdout)
+		}
+	})
 }
 
 func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {

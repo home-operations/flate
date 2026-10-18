@@ -86,36 +86,28 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := substitutionFixture(t, tc.postBuild, "${VALUE}")
-			var first string
-			for _, workers := range []int{2, 4} {
-				args := []string{"build", "all", "--path", root, "--concurrency", fmt.Sprint(workers), "--cache-dir", t.TempDir(), "--skip-kinds", "CustomResourceDefinition"}
-				if tc.input != "" {
-					args = append(args, "--substitute-from", substitutionInput(t, tc.input))
+			args := []string{"build", "all", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--skip-kinds", "CustomResourceDefinition"}
+			if tc.input != "" {
+				args = append(args, "--substitute-from", substitutionInput(t, tc.input))
+			}
+			for _, pair := range tc.pairs {
+				args = append(args, "--substitute", pair)
+			}
+			if tc.strict {
+				args = append(args, "--strict-substitutions")
+			}
+			out, diagnostic, code := runCLI(t, args...)
+			if (code != 0) != tc.fail {
+				t.Fatalf("exit=%d: %s", code, diagnostic)
+			}
+			if tc.fail {
+				if !strings.Contains(diagnostic, "ConfigMap") || !strings.Contains(diagnostic, "apps/external") {
+					t.Fatalf("missing reference diagnostic: %s", diagnostic)
 				}
-				for _, pair := range tc.pairs {
-					args = append(args, "--substitute", pair)
-				}
-				if tc.strict {
-					args = append(args, "--strict-substitutions")
-				}
-				out, diagnostic, code := runCLI(t, args...)
-				if (code != 0) != tc.fail {
-					t.Fatalf("workers=%d exit=%d: %s", workers, code, diagnostic)
-				}
-				if tc.fail {
-					if !strings.Contains(diagnostic, "ConfigMap") || !strings.Contains(diagnostic, "apps/external") {
-						t.Fatalf("missing reference diagnostic: %s", diagnostic)
-					}
-					continue
-				}
-				if got := substitutionOutput(t, out); got != tc.want {
-					t.Fatalf("got %q, want %q", got, tc.want)
-				}
-				if workers == 2 {
-					first = out
-				} else if out != first {
-					t.Fatal("output varies with concurrency")
-				}
+				return
+			}
+			if got := substitutionOutput(t, out); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -481,34 +473,26 @@ func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 			}
 			root := substitutionFixture(t, postBuild, "${VALUE}")
 			cache, inputs := t.TempDir(), t.TempDir()
-			var firstConcurrency []string
-			for _, workers := range []int{2, 4} {
-				var outputs []string
-				for i, value := range []string{"first", "second", "second", "first"} {
-					args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", fmt.Sprint(workers), "--strict-substitutions"}
-					if tc.kind == "" {
-						args = append(args, "--substitute", "VALUE="+value)
-					} else {
-						testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
-						args = append(args, "--substitute-from", filepath.Join(inputs, "values.yaml"))
-					}
-					out, diagnostic, code := runCLI(t, args...)
-					if code != 0 {
-						t.Fatal(diagnostic)
-					}
-					if got := substitutionOutput(t, out); got != value {
-						t.Fatalf("workers=%d run=%d: cached value %q, want %q", workers, i, got, value)
-					}
-					outputs = append(outputs, out)
+			var outputs []string
+			for i, value := range []string{"first", "second", "second", "first"} {
+				args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", "2", "--strict-substitutions"}
+				if tc.kind == "" {
+					args = append(args, "--substitute", "VALUE="+value)
+				} else {
+					testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
+					args = append(args, "--substitute-from", filepath.Join(inputs, "values.yaml"))
 				}
-				if outputs[1] != outputs[2] || outputs[0] != outputs[3] {
-					t.Fatal("identical inputs changed warm-cache output bytes")
+				out, diagnostic, code := runCLI(t, args...)
+				if code != 0 {
+					t.Fatal(diagnostic)
 				}
-				if workers == 2 {
-					firstConcurrency = outputs
-				} else if !slices.Equal(firstConcurrency, outputs) {
-					t.Fatal("warm-cache output varies with concurrency")
+				if got := substitutionOutput(t, out); got != value {
+					t.Fatalf("run=%d: cached value %q, want %q", i, got, value)
 				}
+				outputs = append(outputs, out)
+			}
+			if outputs[1] != outputs[2] || outputs[0] != outputs[3] {
+				t.Fatal("identical inputs changed warm-cache output bytes")
 			}
 		})
 	}

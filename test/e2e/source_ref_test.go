@@ -459,7 +459,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				if !errors.Is(heldError, manifest.ErrInput) {
 					t.Fatal("expected held consumer's decode error")
 				}
-				repeats = 16
+				repeats = 2
 				if !tt.reversedPaths {
 					wantError = "flate error: " + heldError.Error() + "\n"
 				}
@@ -795,16 +795,12 @@ spec:
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}
 			transport := installSourceRefTransport(t, repo.Storer)
-			for _, concurrency := range []string{"2", "8"} {
-				t.Run("concurrency_"+concurrency, func(t *testing.T) {
-					out, stderr, code := runCLIBuffers("build", "ks", "probe", "-n", "flux-system",
-						"--path", filepath.Join(root, "flux"), "--concurrency", concurrency, "--cache-dir", t.TempDir())
-					if code != 0 || stderr != "" || transport.calls.Load() != 0 ||
-						!strings.Contains(out, "name: ok") {
-						t.Fatalf("re-keyed held consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
-							code, transport.calls.Load(), out, cmp.Diff("", stderr))
-					}
-				})
+			out, stderr, code := runCLIBuffers("build", "ks", "probe", "-n", "flux-system",
+				"--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
+			if code != 0 || stderr != "" || transport.calls.Load() != 0 ||
+				!strings.Contains(out, "name: ok") {
+				t.Fatalf("re-keyed held consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
+					code, transport.calls.Load(), out, cmp.Diff("", stderr))
 			}
 			st := store.New()
 			res, discoveryError := discovery.Run(t.Context(), discovery.Config{

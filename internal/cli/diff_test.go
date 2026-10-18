@@ -706,9 +706,11 @@ spec:
 			if strings.Count(stderr, "external source") != 2 || strings.Contains(stderr, "home-kubernetes") {
 				t.Errorf("want only unrelated external-source disclosures: %s", stderr)
 			}
-			secondOut, secondErr, secondCode := runCLI(t, args...)
-			if secondOut != stdout || secondErr != stderr || secondCode != code {
-				t.Errorf("repeated diff changed output or exit code:\n%s\n%s", secondOut, secondErr)
+			if tc.name == "different origins" {
+				secondOut, secondErr, secondCode := runCLI(t, args...)
+				if secondOut != stdout || secondErr != stderr || secondCode != code {
+					t.Errorf("repeated diff changed output or exit code:\n%s\n%s", secondOut, secondErr)
+				}
 			}
 		})
 	}

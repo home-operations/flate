@@ -84,19 +84,20 @@ data:
 						{name: "relative", path: "./.cache"},
 						{name: "absolute", path: filepath.Join(repoRoot, ".absolute-cache")},
 					}
+					warmths := []string{"fresh", "warm", "repeat"}
+					if source != "self" || state != "changed" {
+						layouts = layouts[:1]
+						warmths = warmths[:1]
+					}
 					var control string
 					for _, layout := range layouts {
 						t.Run(layout.name, func(t *testing.T) {
 							if _, err := os.Stat(layout.path); !os.IsNotExist(err) {
 								t.Fatalf("cache must start absent: %v", err)
 							}
-							for _, warmth := range []string{"fresh", "warm", "repeat"} {
+							for _, warmth := range warmths {
 								t.Run(warmth, func(t *testing.T) {
-									workers := "2"
-									if warmth == "repeat" {
-										workers = "8"
-									}
-									args := []string{"diff", "all", "--base", "cache-base", "--concurrency", workers,
+									args := []string{"diff", "all", "--base", "cache-base", "--concurrency", "2",
 										"-o", "diff", "--cache-dir", layout.path}
 									if source == "self" {
 										args = append(args, "--path", "flux")

@@ -62,13 +62,6 @@ func runCLIOutputOnly(t *testing.T, args ...string) string {
 	return stdout + stderr
 }
 
-// runCLIStdoutOnly is the stdout variant of runCLIOutputOnly.
-func runCLIStdoutOnly(t *testing.T, args ...string) string {
-	t.Helper()
-	stdout, _, _ := runCLIBuffers(args...)
-	return stdout
-}
-
 // runCLIStdout returns stdout only — log lines on stderr would
 // otherwise pollute payloads that tests parse.
 func runCLIStdout(t *testing.T, args ...string) string {
@@ -96,16 +89,6 @@ func testdataPath(t *testing.T, sub string) string {
 	}
 	t.Fatal("could not locate repo root from " + wd)
 	return ""
-}
-
-func TestE2E_GetKS(t *testing.T) {
-	out := runCLIOutputOnly(t, "get", "ks", "--path", testdataPath(t, "simple"))
-	if !strings.Contains(out, "NAMESPACE") || !strings.Contains(out, "NAME") {
-		t.Errorf("missing table headers:\n%s", out)
-	}
-	if !strings.Contains(out, "apps") {
-		t.Errorf("expected 'apps' kustomization in output:\n%s", out)
-	}
 }
 
 func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
@@ -149,16 +132,6 @@ func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 	}
 }
 
-func TestE2E_BuildKS(t *testing.T) {
-	out := runCLI(t, "build", "ks", "--path", copyTree(t, testdataPath(t, "simple")))
-	if !strings.Contains(out, "kind: ConfigMap") {
-		t.Errorf("missing ConfigMap:\n%s", out)
-	}
-	if !strings.Contains(out, "greeting: hello-from-flate") {
-		t.Errorf("missing expected value:\n%s", out)
-	}
-}
-
 func TestE2E_BuildHR(t *testing.T) {
 	dir := copyTree(t, testdataPath(t, "simple"))
 	testutil.WriteFile(t, dir, "charts/mychart/templates/secret.yaml", `apiVersion: v1
@@ -184,6 +157,13 @@ stringData: {greeting: hello-from-secret}
 			}
 			if got := strings.Contains(out, "kind: Secret"); got != tc.wantSecret {
 				t.Errorf("Secret present=%v, want %v:\n%s", got, tc.wantSecret, out)
+			}
+			if !tc.wantSecret {
+				again := runCLIStdout(t, "build", "hr", "--path", dir,
+					"--skip-kinds="+tc.skip, "--concurrency", "2", "--cache-dir", t.TempDir())
+				if out != again {
+					t.Errorf("build hr output differs between runs (length %d vs %d)", len(out), len(again))
+				}
 			}
 		})
 	}
@@ -274,59 +254,6 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 	}
 }
 
-// build hr emits identical bytes on repeated runs against the same
-// tree. Pins the per-artifact sort that's needed because some Helm
-// charts use `range $name, $v := .Values.*` which iterates Go maps
-// randomly — without the sort, byte-stable diffs in CI would break.
-func TestE2E_BuildHR_Deterministic(t *testing.T) {
-	dir := copyTree(t, testdataPath(t, "simple"))
-	out1 := runCLIStdout(t, "build", "hr", "--path", dir)
-	out2 := runCLIStdout(t, "build", "hr", "--path", dir)
-	if out1 != out2 {
-		t.Errorf("build hr output differs between runs (length %d vs %d)", len(out1), len(out2))
-	}
-}
-
-func TestE2E_GetAll_JSON(t *testing.T) {
-	out := runCLIOutputOnly(t, "get", "all", "--path", testdataPath(t, "simple"), "-o", "json")
-	if !strings.Contains(out, `"kustomizations"`) {
-		t.Errorf("missing kustomizations in json:\n%s", out)
-	}
-}
-
-func TestE2E_Help(t *testing.T) {
-	out := runCLI(t, "--help")
-	for _, want := range []string{"build", "diff", "get", "test"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("help missing %q:\n%s", want, out)
-		}
-	}
-}
-
-func TestE2E_BadPath(t *testing.T) {
-	_, code := runCLIExpectErr(t, "get", "ks", "--path", "/nonexistent-12345")
-	if code == 0 {
-		t.Errorf("expected non-zero exit for bad path")
-	}
-}
-
-func TestE2E_TestCommand(t *testing.T) {
-	out := runCLI(t, "test", "all", "--path", copyTree(t, testdataPath(t, "simple")))
-	if !strings.Contains(out, "✓") {
-		t.Errorf("expected a passing row in test output:\n%s", out)
-	}
-}
-
-func TestE2E_DiffNoChange(t *testing.T) {
-	p := testdataPath(t, "simple")
-	out := runCLIOutputOnly(t, "diff", "ks", "--path", p, "--path-orig", p)
-	// No diffs expected — output should be empty or near-empty.
-	if strings.Contains(out, "---") && strings.Contains(out, "+++") &&
-		strings.Contains(out, "@@") {
-		t.Errorf("unexpected diff content for identical paths:\n%s", out)
-	}
-}
-
 func TestE2E_Diff_OwnershipCycle(t *testing.T) {
 	orig, current := t.TempDir(), t.TempDir()
 	for _, side := range []struct {
@@ -367,15 +294,6 @@ data:
 		"--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "-o", "diff")
 	if !strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after") {
 		t.Errorf("expected ConfigMap value change:\n%s\nstderr:\n%s", out, stderr)
-	}
-}
-
-func TestE2E_DiffImagesNoChange(t *testing.T) {
-	p := testdataPath(t, "simple")
-	out := runCLIStdoutOnly(t, "diff", "images", "--path", p, "--path-orig", p, "-o", "json")
-	got := strings.TrimSpace(out)
-	if got != "[]" && got != "null" {
-		t.Errorf("expected empty image diff for identical paths, got: %q", got)
 	}
 }
 

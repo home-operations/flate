@@ -22,10 +22,14 @@ type Dispatch struct {
 func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.DrainLevel) bool {
 	tb.Helper()
 	var terminal bool
+	failures := d.Tasks.Failures()
 	d.Tasks.Go(ctx, "test/"+d.ID.String(), func(ctx context.Context) {
 		terminal = len(d.ReconcileNode(ctx, d.ID, drain)) == 0
 	})
 	d.Tasks.BlockTillDone()
+	if added := d.Tasks.Failures() - failures; added > 0 {
+		tb.Errorf("reconcile %s: %d task failures", d.ID, added)
+	}
 	return terminal
 }
 

@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -90,9 +91,12 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	t.Parallel()
 	owner := cachetest.New(t, "", sourcecache.New)
+	var buf bytes.Buffer
+	testutil.WriteTar(t, &buf, map[string]string{"file": "content"}, 0o600)
+	data := buf.Bytes()
 	acquired, _, _, err := owner.Acquire(t.Context(), sourcecache.ArchiveKey{Content: "admission"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		testutil.WriteTar(t, w, map[string]string{"file": "content"}, 0o600)
-		return ocispec.Descriptor{}, nil
+		_, err := w.Write(data)
+		return ocispec.Descriptor{}, err
 	})
 	assert.NoError(t, err)
 	r, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "blob"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {

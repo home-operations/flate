@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"io"
@@ -62,9 +63,12 @@ func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 	if err != nil {
 		tb.Fatal(err)
 	}
+	var buf bytes.Buffer
+	testutil.WriteTar(tb, &buf, files, 0o600)
+	data := buf.Bytes()
 	acquired, _, _, err := owner.Acquire(tb.Context(), cache.ArchiveKey{Content: tb.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		testutil.WriteTar(tb, w, files, 0o600)
-		return ocispec.Descriptor{}, nil
+		_, err := w.Write(data)
+		return ocispec.Descriptor{}, err
 	})
 	if err != nil {
 		tb.Fatal(err)

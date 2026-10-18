@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -19,6 +20,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -181,6 +183,206 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 	})
 }
 
+func TestTemplateCache_SubchartPersistence(t *testing.T) {
+	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build to exercise persisted renders")
+	}
+	t.Log("persistence eligible: true")
+	st, hr, dir := ociRenderFixture(t)
+	testutil.WriteFile(t, dir, "Chart.yaml", `apiVersion: v2
+name: podinfo
+version: 6.15.0
+dependencies:
+  - name: child
+    version: 1.2.3+child
+    condition: child.enabled
+  - name: sibling
+    version: 1.0.0
+    condition: sibling.enabled
+`)
+	for _, name := range []string{"child", "sibling"} {
+		version := "1.0.0"
+		if name == "child" {
+			version = "1.2.3+child"
+		}
+		testutil.WriteFile(t, dir, "charts/"+name+"/Chart.yaml", "apiVersion: v2\nname: "+name+"\nversion: "+version+"\n")
+		testutil.WriteFile(t, dir, "charts/"+name+"/values.yaml", "enabled: true\nmarker: original\n")
+		testutil.WriteFile(t, dir, "charts/"+name+"/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}
+data:
+  marker: {{ .Values.marker | quote }}
+`)
+	}
+	input := acquireChartFS(t, cachetest.New(t, t.TempDir(), cache.New), os.DirFS(dir))
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
+		Kind: manifest.KindOCIRepository, FS: input, Digest: digest, Revision: "6.15.0@" + digest,
+	})
+	newClient := func(t *testing.T, owner *cache.Cache, reverse bool) *Client {
+		t.Helper()
+		_, pin, err := source.OperationView(t.Context(), input)
+		assert.NoError(t, err)
+		if pin == "" {
+			t.Fatal("fixture did not acquire an immutable operation pin")
+		}
+		selector := manifest.Fingerprint(struct {
+			Pin, Path string
+			Auto      bool
+		}{Pin: pin, Auto: true})
+		captured, _, err := captureChart(input, ".")
+		assert.NoError(t, err)
+		ch, err := captured.load()
+		assert.NoError(t, err)
+		dependencies := ch.Dependencies()
+		slices.SortFunc(dependencies, func(a, b *chart.Chart) int { return strings.Compare(a.Name(), b.Name()) })
+		if reverse {
+			slices.Reverse(dependencies)
+		}
+		ch.SetDependencies(dependencies...)
+		order := slices.Clone(ch.Dependencies())
+		before := projectChart(cloneChartForRender(ch))
+		fingerprint := manifest.Fingerprint(before)
+		t.Cleanup(func() {
+			assert.Equal(t, slices.Equal(ch.Dependencies(), order), true)
+			assert.Diff(t, projectChart(ch), before)
+			assert.Equal(t, manifest.Fingerprint(projectChart(ch)), fingerprint)
+		})
+		cli, err := NewClient(owner)
+		assert.NoError(t, err)
+		cli.SetSourceResolver(NewStoreSourceResolver(st))
+		// Canonical charts MUST remain immutable; choose the loader order before admission.
+		cli.chartCache[selector] = chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
+		return cli
+	}
+	keyFor := func(t *testing.T, cli *Client) cache.BlobKey {
+		t.Helper()
+		loaded, err := cli.loadChart(t.Context(), hr)
+		assert.NoError(t, err)
+		loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
+		values, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		assert.NoError(t, err)
+		key := computeTemplateKey(loaded, values, Options{}, hr)
+		t.Logf("chart fingerprint=%s template key=%s", loaded.fingerprint, key)
+		if key == "" {
+			t.Fatal("subchart fixture produced an empty completed-output key")
+		}
+		return cache.BlobKey{Content: key, PersistOnly: true}
+	}
+	readBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey) string {
+		t.Helper()
+		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+		assert.NoError(t, err)
+		data, err := io.ReadAll(r)
+		assert.NoError(t, errors.Join(err, r.Close()))
+		return string(data)
+	}
+	writeBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey, data string) {
+		t.Helper()
+		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			_, err := io.WriteString(w, data)
+			return ocispec.Descriptor{}, err
+		})
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+	}
+	root := t.TempDir()
+	owner := cachetest.New(t, root, cache.New)
+	cli := newClient(t, owner, false)
+	key := keyFor(t, cli)
+	_, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+	if !errors.Is(err, errdef.ErrNotFound) {
+		t.Fatalf("cold lookup: got %v, want not found", err)
+	}
+	t.Log("direct cold lookup: not found")
+	cold, err := cli.Template(t.Context(), hr, nil, Options{})
+	assert.NoError(t, err)
+	for _, name := range []string{"child", "sibling"} {
+		if !strings.Contains(cold, "name: "+name+"\n") {
+			t.Fatalf("cold render omitted enabled dependency %s", name)
+		}
+	}
+	assert.Equal(t, readBlob(t, owner, key), cold)
+	t.Log("direct cold publication: exact render bytes")
+	second, err := cli.Template(t.Context(), hr, nil, Options{})
+	assert.NoError(t, err)
+	assert.Equal(t, second, cold)
+	marked := cold + "\n# persisted-subchart-hit\n"
+	writeBlob(t, owner, key, marked)
+	warm, err := cli.Template(t.Context(), hr, nil, Options{})
+	assert.NoError(t, err)
+	assert.Equal(t, warm, marked)
+	t.Log("same-client marked hit: verified")
+	assert.NoError(t, owner.Close())
+	owner = cachetest.New(t, root, cache.New)
+	cli = newClient(t, owner, true)
+	reopenedKey := keyFor(t, cli)
+	reader, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, cache.Policy{MaxAge: cache.Forever}, nil)
+	if lookupErr == nil {
+		assert.NoError(t, reader.Close())
+	}
+	t.Logf("fresh-owner direct lookup: %v", lookupErr)
+	reopened, err := cli.Template(t.Context(), hr, nil, Options{})
+	assert.NoError(t, err)
+	if reopened != marked {
+		t.Fatalf("fresh owner/client rerendered unchanged subcharts: marker absent=%v, fresh bytes equal cold=%v", !strings.Contains(reopened, "# persisted-subchart-hit"), reopened == cold)
+	}
+	writeBlob(t, owner, reopenedKey, cold)
+	restored, err := cli.Template(t.Context(), hr, nil, Options{})
+	assert.NoError(t, err)
+	assert.Equal(t, restored, cold)
+	assert.Equal(t, reopenedKey.Content, key.Content)
+	assert.NoError(t, lookupErr)
+	t.Log("verified persisted subchart publication, marked hit, reopen, and restored byte equality")
+	writeBlob(t, owner, key, marked)
+	for _, field := range []string{"template", "defaults"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			files := fstest.MapFS{}
+			assert.NoError(t, fs.WalkDir(os.DirFS(dir), ".", func(name string, entry fs.DirEntry, err error) error {
+				if err != nil || entry.IsDir() {
+					return err
+				}
+				data, err := fs.ReadFile(os.DirFS(dir), name)
+				files[name] = &fstest.MapFile{Data: data}
+				return err
+			}))
+			if field == "template" {
+				files["charts/child/templates/cm.yaml"].Data = []byte(strings.ReplaceAll(string(files["charts/child/templates/cm.yaml"].Data), "marker:", "edited-template:"))
+			} else {
+				files["charts/child/values.yaml"].Data = []byte("enabled: true\nmarker: edited-default\n")
+			}
+			updated := acquireChartFS(t, cachetest.New(t, t.TempDir(), cache.New), files)
+			nextStore := store.New()
+			nextStore.AddObject(&manifest.OCIRepository{Name: "podinfo", Namespace: "apps"})
+			nextStore.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, FS: updated, Digest: digest, Revision: "6.15.0@" + digest,
+			})
+			next, err := NewClient(owner)
+			assert.NoError(t, err)
+			next.SetSourceResolver(NewStoreSourceResolver(nextStore))
+			nextKey := keyFor(t, next)
+			if nextKey.Content == key.Content {
+				t.Fatal("edited child reused the original completed-output key")
+			}
+			_, _, _, err = owner.Blob(t.Context(), nextKey, cache.Policy{MaxAge: cache.Forever}, nil)
+			if !errors.Is(err, errdef.ErrNotFound) {
+				t.Fatalf("edited child lookup: got %v, want not found", err)
+			}
+			out, err := next.Template(t.Context(), hr, nil, Options{})
+			assert.NoError(t, err)
+			if out == cold || strings.Contains(out, "# persisted-subchart-hit") || !strings.Contains(out, "edited-") {
+				t.Fatal("edited child reused stale output or omitted its new content")
+			}
+			assert.Equal(t, readBlob(t, owner, nextKey), out)
+			assert.Equal(t, readBlob(t, owner, key), marked)
+			t.Log("reacquired child content invalidated the key and rendered fresh bytes with fixed parent/release/OCI identity")
+		})
+	}
+}
+
 func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact, manifest.KindHelmChart} {
@@ -240,6 +442,101 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 	k2 := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values2, opts, hr)
 	if k1 != k2 {
 		t.Errorf("same logical values must produce same key:\nk1=%s\nk2=%s", k1, k2)
+	}
+}
+
+func TestComputeTemplateKey_SubchartOrder(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		nested  bool
+		aliases bool
+	}{
+		{name: "siblings"},
+		{name: "nested", nested: true},
+		{name: "same name with aliases", aliases: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st, hr, dir := ociRenderFixture(t)
+			parent, prefix := "", "charts/"
+			if tc.nested {
+				parent, prefix = "charts/child/", "charts/child/charts/"
+			}
+			declarations := "dependencies:\n"
+			for _, name := range []string{"child", "sibling"} {
+				loadedName := name
+				alias := ""
+				if tc.aliases {
+					loadedName = "child"
+					alias = "    alias: " + name + "-alias\n"
+				}
+				declarations += "  - name: " + loadedName + "\n    version: 1.0.0\n" + alias
+				testutil.WriteFile(t, dir, prefix+name+"/Chart.yaml", "apiVersion: v2\nname: "+loadedName+"\nversion: 1.0.0\n")
+				testutil.WriteFile(t, dir, prefix+name+"/values.yaml", "marker: "+name+"\n")
+				testutil.WriteFile(t, dir, prefix+name+"/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}
+data:
+  marker: {{ .Values.marker | quote }}
+  origin: `+name+`-template
+`)
+			}
+			if tc.nested {
+				testutil.WriteFile(t, dir, parent+"Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n"+declarations)
+				declarations = "dependencies:\n  - name: child\n    version: 1.2.3+child\n"
+			}
+			testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n"+declarations)
+			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+			input := os.DirFS(dir)
+			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
+				Kind: manifest.KindOCIRepository, FS: input, Digest: digest, Revision: "6.15.0@" + digest,
+			})
+			var keys, outputs [2]string
+			for i := range 2 {
+				captured, _, err := captureChart(input, ".")
+				assert.NoError(t, err)
+				ch, err := captured.load()
+				assert.NoError(t, err)
+				ordered := ch
+				if tc.nested {
+					ordered = ch.Dependencies()[0]
+				}
+				dependencies := slices.Clone(ordered.Dependencies())
+				slices.SortFunc(dependencies, func(a, b *chart.Chart) int {
+					return strings.Compare(string(a.Templates[0].Data), string(b.Templates[0].Data))
+				})
+				if i == 1 {
+					slices.Reverse(dependencies)
+				}
+				ordered.SetDependencies(dependencies...)
+				order := slices.Clone(ordered.Dependencies())
+				before := projectChart(cloneChartForRender(ch))
+				loaded := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
+				assert.Equal(t, slices.Equal(ordered.Dependencies(), order), true)
+				cli, err := NewClient(cachetest.New(t, "", cache.New))
+				assert.NoError(t, err)
+				cli.SetSourceResolver(NewStoreSourceResolver(st))
+				cli.chartCache[captured.fingerprint()] = loaded
+				loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
+				values, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+				assert.NoError(t, err)
+				keys[i] = computeTemplateKey(loaded, values, Options{}, hr)
+				if keys[i] == "" {
+					t.Fatal("ordered graph produced an empty key")
+				}
+				outputs[i], err = cli.Template(t.Context(), hr, nil, Options{})
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Equal(ordered.Dependencies(), order), true)
+				assert.Diff(t, projectChart(ch), before)
+				if !strings.Contains(outputs[i], "-template") {
+					t.Fatal("fresh render omitted dependency content")
+				}
+			}
+			assert.Equal(t, keys[0] == keys[1], !tc.aliases)
+			assert.Equal(t, outputs[0] == outputs[1], !tc.aliases)
+		})
 	}
 }
 

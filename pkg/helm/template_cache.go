@@ -1,6 +1,9 @@
 package helm
 
 import (
+	"slices"
+	"strings"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -36,6 +39,10 @@ func projectChart(ch *chart.Chart) *chartContent {
 		for i, sub := range dependencies {
 			content.Dependencies[i] = projectChart(sub)
 		}
+		// Helm selects the first compatible same-name child; preserve that order.
+		slices.SortStableFunc(content.Dependencies, func(a, b *chartContent) int {
+			return strings.Compare(a.Metadata.Name, b.Metadata.Name)
+		})
 	}
 	return content
 }

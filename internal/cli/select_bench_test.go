@@ -19,11 +19,11 @@ func completedScopeFixture(b *testing.B, count int, failures, cycle bool) orches
 	b.Helper()
 	root := b.TempDir()
 	var source strings.Builder
-	// The shared bootstrap source contributes one entry to the keep set.
 	ids := make([]manifest.NamedResource, count-1)
 	for i := range ids {
-		ids[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: fmt.Sprintf("ns-%d", i%8), Name: fmt.Sprintf("item-%05d", i)}
-		fmt.Fprintf(&source, "---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: %s, namespace: %s}\nspec:\n  path: ./objects/%s\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n", ids[i].Name, ids[i].Namespace, ids[i].Name)
+		ids[i] = testutil.KustomizationID(fmt.Sprintf("ns-%d", i%8), fmt.Sprintf("item-%05d", i))
+		source.WriteString("---\n")
+		source.WriteString(testutil.KustomizationYAML(ids[i].Name, ids[i].Namespace, "  path: ./objects/"+ids[i].Name+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	}
 	testutil.WriteFile(b, root, "flux.yaml", source.String())
 	o, err := orchestrator.New(b.Context(), orchestrator.Config{Path: root, RepoRoot: root, CacheDir: b.TempDir(), Concurrency: 2, ExternalChanges: change.NewSet([]string{"flux.yaml"})})
@@ -93,7 +93,7 @@ func BenchmarkSelect_CompletedScope(b *testing.B) {
 								spec["containers"].([]any)[0].(map[string]any)["image"] = "example.test/app:v2"
 							}
 						}
-						roots := []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}
+						roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
 						opts := diff.Options{Format: diff.FormatJSON}
 						b.ReportAllocs()
 						for b.Loop() {

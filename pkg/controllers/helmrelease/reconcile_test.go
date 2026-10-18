@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -108,7 +109,7 @@ metadata: {name: issuer}
 			})
 			st.UpdateStatus(src.Named(), store.StatusReady, "recorded artifact")
 			st.AddObject(hr)
-			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("reconcile: %+v", info)
 			}
 			art := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
@@ -156,7 +157,7 @@ metadata: {name: issuer}
 			st.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"})
 			st.DeleteObject(manifest.NamedResource{Group: "nvidia.com", Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"})
 			st.DeleteObject(manifest.NamedResource{Group: "cert-manager.io", Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"})
-			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("repeat reconcile: %+v", info)
 			}
 			if st.GetArtifact(hr.Named()) != art {
@@ -183,7 +184,7 @@ metadata: {name: issuer}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + sharedPrefix, Digest: sharedPrefix,
 			})
-			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("shared-prefix digest reconcile: %+v", info)
 			}
 			sameVersion := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
@@ -197,7 +198,7 @@ metadata: {name: issuer}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + next, Digest: next,
 			})
-			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("changed digest reconcile: %+v", info)
 			}
 			updated := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
@@ -214,7 +215,7 @@ metadata: {name: issuer}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "latest@" + next, Digest: next,
 			})
-			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("changed revision reconcile: %+v", info)
 			}
 			revised := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
@@ -227,7 +228,7 @@ metadata: {name: issuer}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "invalid", Digest: next,
 			})
-			if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusFailed {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 				t.Fatalf("invalid changed revision bypassed validation: %+v", info)
 			}
 		})
@@ -257,7 +258,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("chart gate category = %v", err)
 	}
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -280,7 +281,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		DependsOn: []helmv2.DependencyReference{{Name: dep.Name, Namespace: dep.Namespace}},
 	}
 	st.AddObject(hr)
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -305,7 +306,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("parent gate category = %v", err)
 	}
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -338,7 +339,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: resolver})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -356,7 +357,7 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 		// An unset chart source fails the dependency gate.
 	}
 	st.AddObject(hr)
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -384,7 +385,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 					t.Parallel()
 					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 					parents := map[manifest.NamedResource]manifest.NamedResource{}
-					id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "release", Namespace: "apps"}
+					id := testutil.HelmReleaseID("apps", "release")
 					if site.parent {
 						parents[id] = parent.Named()
 					}

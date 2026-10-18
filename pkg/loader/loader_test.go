@@ -73,32 +73,14 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 			}
 			testutil.WriteFile(t, root, "apps/test/network/kustomization.yaml", resources)
 			testutil.WriteFile(t, root, "apps/test/network/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: network}\n")
-			testutil.WriteFile(t, root, "apps/test/network/echo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: echo, namespace: network}
-spec:
-  path: ./apps/base/echo
-  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
-`)
-			testutil.WriteFile(t, root, "apps/test/network/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: tunnel, namespace: network}
-spec:
-  path: ./apps/base/tunnel
-  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
-`)
+			testutil.WriteFile(t, root, "apps/test/network/echo.yaml", testutil.KustomizationYAML("echo", "network", "  path: ./apps/base/echo\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
+			testutil.WriteFile(t, root, "apps/test/network/ks.yaml", testutil.KustomizationYAML("tunnel", "network", "  path: ./apps/base/tunnel\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
 			st := store.New()
 			l := loaderFixture(st, nil)
 			l.SourceRoot = root
 			parent := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system", Path: "apps/test"}
 			if tc.alias {
-				testutil.WriteFile(t, root, "flux/parent.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./apps/test
-  sourceRef: {kind: GitRepository, name: cluster}
-`)
+				testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./apps/test\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
 				location, err := gitrepo.Locate(t.Context(), root, root)
 				if err != nil {
 					t.Fatal(err)
@@ -134,7 +116,7 @@ spec:
 				name string
 				want bool
 			}{{"echo", true}, {"tunnel", tc.listed}} {
-				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "network", Name: child.name}
+				id := testutil.KustomizationID("network", child.name)
 				if got := st.GetObject(id) != nil; got != child.want {
 					t.Errorf("Store admission for %s = %v, want %v", child.name, got, child.want)
 				}
@@ -165,25 +147,9 @@ patches:
 `)
 	testutil.WriteFile(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm, namespace: apps}\n")
 	// Real bootstrap-entry sibling KS (has spec.path) — must still surface.
-	testutil.WriteFile(t, dir, "apps/entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: entry, namespace: flux-system}
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+	testutil.WriteFile(t, dir, "apps/entry.yaml", testutil.KustomizationYAML("entry", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	// Patch fragment: kind: Kustomization, only spec.patches, no path/source.
-	testutil.WriteFile(t, dir, "apps/patch.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: patch}
-spec:
-  patches:
-    - patch: |-
-        apiVersion: helm.toolkit.fluxcd.io/v2
-        kind: HelmRelease
-        metadata: {name: not-used}
-      target: {kind: HelmRelease}
-`)
+	testutil.WriteFile(t, dir, "apps/patch.yaml", testutil.KustomizationYAML("patch", "", "  patches:\n    - patch: |-\n        apiVersion: helm.toolkit.fluxcd.io/v2\n        kind: HelmRelease\n        metadata: {name: not-used}\n      target: {kind: HelmRelease}\n"))
 
 	s := store.New()
 	l := loaderFixture(s, nil)
@@ -192,10 +158,10 @@ spec:
 		t.Fatalf("Load: %v", err)
 	}
 
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "entry"}) == nil {
+	if s.GetObject(testutil.KustomizationID("flux-system", "entry")) == nil {
 		t.Errorf("real bootstrap-entry KS (has spec.path) must surface")
 	}
-	if got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "", Name: "patch"}); got != nil {
+	if got := s.GetObject(testutil.KustomizationID("", "patch")); got != nil {
 		t.Errorf("path-less/source-less patch-fragment Kustomization must NOT be surfaced; got %v", got)
 	}
 }
@@ -203,17 +169,7 @@ spec:
 func TestLoader_Load(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 	testutil.WriteFile(t, dir, "cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -256,14 +212,7 @@ kind: Kustomization
 resources:
   - ks.yaml
 `)
-	testutil.WriteFile(t, root, "gate/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: crds
-  namespace: flux-system
-spec:
-  path: ./blank
-`)
+	testutil.WriteFile(t, root, "gate/ks.yaml", testutil.KustomizationYAML("crds", "flux-system", "  path: ./blank\n"))
 
 	s := store.New()
 	l := loaderFixture(s, nil)
@@ -271,7 +220,7 @@ spec:
 	if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "crds"}) == nil {
+	if s.GetObject(testutil.KustomizationID("flux-system", "crds")) == nil {
 		t.Fatal("escaping dir resource not followed: Kustomization flux-system/crds missing from store")
 	}
 }
@@ -288,20 +237,13 @@ kind: Kustomization
 resources:
   - ../escape.yaml
 `)
-	testutil.WriteFile(t, root, "escape.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: escaped
-  namespace: flux-system
-spec:
-  path: ./x
-`)
+	testutil.WriteFile(t, root, "escape.yaml", testutil.KustomizationYAML("escaped", "flux-system", "  path: ./x\n"))
 
 	s := store.New()
 	if _, err := loaderFixture(s, nil).Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "escaped"}) != nil {
+	if s.GetObject(testutil.KustomizationID("flux-system", "escaped")) != nil {
 		t.Fatal("escaping FILE resource was loaded; the opened-path escape guard regressed")
 	}
 }
@@ -333,24 +275,16 @@ func TestLoader_SkipsDotDirs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, filepath.Join(name, "hidden.yaml"), `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: hidden, namespace: ns}
-spec: {path: ./hidden, sourceRef: {kind: GitRepository, name: flux-system}}
-`)
-			testutil.WriteFile(t, dir, "visible.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: visible, namespace: ns}
-spec: {path: ./visible, sourceRef: {kind: GitRepository, name: flux-system}}
-`)
+			testutil.WriteFile(t, dir, filepath.Join(name, "hidden.yaml"), testutil.KustomizationYAML("hidden", "ns", "  {path: ./hidden, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
+			testutil.WriteFile(t, dir, "visible.yaml", testutil.KustomizationYAML("visible", "ns", "  {path: ./visible, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 			s := store.New()
 			if _, err := New(s).Load(t.Context(), dir); err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "hidden"}) != nil {
+			if s.GetObject(testutil.KustomizationID("ns", "hidden")) != nil {
 				t.Error("dot-directory manifest was loaded")
 			}
-			if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "visible"}) == nil {
+			if s.GetObject(testutil.KustomizationID("ns", "visible")) == nil {
 				t.Error("root manifest was skipped")
 			}
 		})
@@ -367,14 +301,7 @@ func TestLoader_SkipsKustomizeComponentSubtree(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/db/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
-	testutil.WriteFile(t, dir, "components/db/template.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: "${APP}-db", namespace: ns}
-spec:
-  path: ./does/not/matter
-  sourceRef: {kind: GitRepository, name: flux-system}
-  interval: 1h
-`)
+	testutil.WriteFile(t, dir, "components/db/template.yaml", testutil.KustomizationYAML("${APP}-db", "ns", "  path: ./does/not/matter\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 1h\n"))
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: real, namespace: ns}
@@ -388,7 +315,7 @@ metadata: {name: real, namespace: ns}
 	if n != 0 || len(l.Index.Records) != 1 {
 		t.Errorf("admitted %d objects with records %v, want only the real ConfigMap indexed", n, l.Index.Records)
 	}
-	if got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-db"}); got != nil {
+	if got := s.GetObject(testutil.KustomizationID("ns", "${APP}-db")); got != nil {
 		t.Errorf("Component-subtree resource should not be loaded; got %v", got)
 	}
 }
@@ -398,19 +325,12 @@ func TestLoader_SkipsKustomizeComponent_JSONForm(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/foo/Kustomization",
 		`{"apiVersion":"kustomize.config.k8s.io/v1alpha1","kind":"Component"}`)
-	testutil.WriteFile(t, dir, "components/foo/leak.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: "${APP}-leak", namespace: ns}
-spec:
-  path: ./irrelevant
-  sourceRef: {kind: GitRepository, name: flux-system}
-  interval: 1h
-`)
+	testutil.WriteFile(t, dir, "components/foo/leak.yaml", testutil.KustomizationYAML("${APP}-leak", "ns", "  path: ./irrelevant\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 1h\n"))
 	s := store.New()
 	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"})
+	got := s.GetObject(testutil.KustomizationID("ns", "${APP}-leak"))
 	if got != nil {
 		t.Errorf("Component subtree leaked a templated KS: %v", got)
 	}
@@ -434,19 +354,12 @@ kind: Component
 resources:
   - ./ks.yaml
 `)
-	testutil.WriteFile(t, dir, "addons/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: addons, namespace: flux-system}
-spec:
-  path: ./addons
-  sourceRef: {kind: GitRepository, name: flux-system}
-  interval: 1h
-`)
+	testutil.WriteFile(t, dir, "addons/ks.yaml", testutil.KustomizationYAML("addons", "flux-system", "  path: ./addons\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 1h\n"))
 	s := store.New()
 	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	got := s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "addons"})
+	got := s.GetObject(testutil.KustomizationID("flux-system", "addons"))
 	if got == nil {
 		t.Error("foreign 'kind: Component' (non-kustomize apiVersion) silently skipped sibling KS — Component gate fired without apiVersion check")
 	}
@@ -487,7 +400,7 @@ spec:
   execute-command: /config/seerr-pushover.sh
 `,
 			},
-			want: []manifest.NamedResource{{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}},
+			want: []manifest.NamedResource{testutil.HelmReleaseID("default", "notifier")},
 		},
 		{
 			name: "SkipsSecretGeneratorDataFile",
@@ -601,14 +514,7 @@ resources:
   # - ./atuin/ks.yaml   # commented toggle stub — should be invisible
 `)
 	for _, app := range []string{"valheim", "atuin"} {
-		testutil.WriteFile(t, dir, "default/"+app+"/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: `+app+`
-spec:
-  path: ./default/`+app+`/app
-  sourceRef: { kind: GitRepository, name: flux-system, namespace: flux-system }
-`)
+		testutil.WriteFile(t, dir, "default/"+app+"/ks.yaml", testutil.KustomizationYAML(app, "", "  path: ./default/"+app+"/app\n  sourceRef: { kind: GitRepository, name: flux-system, namespace: flux-system }\n"))
 		testutil.WriteFile(t, dir, "default/"+app+"/app/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -634,16 +540,16 @@ spec:
 		t.Fatalf("Load: %v", err)
 	}
 	// Valheim (claimed) MUST be present.
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
+	if s.GetObject(testutil.KustomizationID("", "valheim")) == nil {
 		t.Error("claimed Kustomization 'valheim' missing")
 	}
 	// Atuin (commented out) MUST be absent.
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "atuin"}) != nil {
+	if s.GetObject(testutil.KustomizationID("", "atuin")) != nil {
 		t.Error("orphan Kustomization 'atuin' should be skipped (#346 deep-orphan)")
 	}
 	// Atuin's deep HR MUST also be absent — its only kustomize-graph
 	// connection is via the orphan wrapper.
-	if s.GetObject(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "atuin"}) != nil {
+	if s.GetObject(testutil.HelmReleaseID("", "atuin")) != nil {
 		t.Error("HelmRelease only reachable via orphan wrapper should be skipped")
 	}
 	// Valheim's HR should NOT load via the initial graph walk either
@@ -653,7 +559,7 @@ spec:
 	// loadAt(valheim/app/) which becomes a fresh entry-point.
 	// (This test stops before that step, so the HR is absent here —
 	// which is the correct flux-local behavior.)
-	if s.GetObject(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "valheim"}) != nil {
+	if s.GetObject(testutil.HelmReleaseID("", "valheim")) != nil {
 		t.Error("HelmRelease in unreachable subtree leaked into initial walk")
 	}
 }
@@ -677,30 +583,8 @@ resources:
   - ./valheim.yaml
   # - ./vrising.yaml   # disabled toggle stub
 `)
-	testutil.WriteFile(t, dir, "apps/games/valheim.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: valheim
-spec:
-  interval: 1h
-  path: ./apps/base/games/valheim
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/games/vrising.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: vrising
-spec:
-  interval: 1h
-  path: ./apps/base/games/vrising
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, dir, "apps/games/valheim.yaml", testutil.KustomizationYAML("valheim", "", "  interval: 1h\n  path: ./apps/base/games/valheim\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
+	testutil.WriteFile(t, dir, "apps/games/vrising.yaml", testutil.KustomizationYAML("vrising", "", "  interval: 1h\n  path: ./apps/base/games/vrising\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{Name: "games", Path: "./apps/games"})
 	l := New(s)
@@ -712,11 +596,11 @@ spec:
 	// is left empty by the parser (the YAML has no
 	// metadata.namespace); the parent kustomization.yaml's
 	// `namespace:` overlay would fill it at render time.
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "valheim"}) == nil {
+	if s.GetObject(testutil.KustomizationID("", "valheim")) == nil {
 		t.Error("referenced Kustomization 'valheim' missing from store")
 	}
 	// vrising is NOT referenced — must be skipped as orphan.
-	if s.GetObject(manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "vrising"}) != nil {
+	if s.GetObject(testutil.KustomizationID("", "vrising")) != nil {
 		t.Error("orphan Kustomization 'vrising' should not be loaded (issue #342)")
 	}
 }
@@ -740,14 +624,7 @@ metadata:
 data:
   FOO: bar
 `)
-	testutil.WriteFile(t, dir, "components/settings/templated-ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: "${APP}-leak", namespace: ns}
-spec:
-  path: ./irrelevant
-  sourceRef: {kind: GitRepository, name: flux-system}
-  interval: 1h
-`)
+	testutil.WriteFile(t, dir, "components/settings/templated-ks.yaml", testutil.KustomizationYAML("${APP}-leak", "ns", "  path: ./irrelevant\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 1h\n"))
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
@@ -769,7 +646,7 @@ spec:
 	// envsubst guard even if walkComponentData tried to publish it,
 	// but this assertion pins the "Component CRs stay hidden" contract
 	// at the boundary the caller cares about: the Store.
-	leakID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "${APP}-leak"}
+	leakID := testutil.KustomizationID("ns", "${APP}-leak")
 	if s.GetObject(leakID) != nil {
 		t.Errorf("templated Flux CR inside a Component must NOT leak into the Store")
 	}
@@ -787,12 +664,12 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
-	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "envoy-gateway", Name: "envoy-gateway"}
+	hrID := testutil.HelmReleaseID("envoy-gateway", "envoy-gateway")
 	assert.Equal(t, s.GetObject(hrID), manifest.BaseManifest(nil))
 	assert.Diff(t, l.Index.Records[hrID].Refs, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}})
 	assert.Equal(t, len(l.documents.cache[path].objects), 1)
 	ksPath := filepath.Join(dir, "ks.yaml")
-	testutil.WriteFile(t, dir, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: app, namespace: apps}\nspec: {path: ./apps}\n")
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("app", "apps", "  {path: ./apps}\n"))
 	if _, err := l.loadFile(ksPath); err != nil {
 		t.Fatal(err)
 	}
@@ -921,18 +798,7 @@ spec:
 `)
 	// The bootstrap-style Flux KS, sibling to kustomization.yaml but
 	// outside its resources graph.
-	testutil.WriteFile(t, dir, "repositories/flux-entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: flux-entry-repos
-  namespace: flux-system
-spec:
-  path: ./repositories
-  sourceRef:
-    kind: GitRepository
-    name: cluster
-  interval: 10m
-`)
+	testutil.WriteFile(t, dir, "repositories/flux-entry.yaml", testutil.KustomizationYAML("flux-entry-repos", "flux-system", "  path: ./repositories\n  sourceRef:\n    kind: GitRepository\n    name: cluster\n  interval: 10m\n"))
 	// A sibling HelmRelease should stay invisible — the scan is
 	// scoped to Flux Kustomization CRs only.
 	testutil.WriteFile(t, dir, "repositories/stray-hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -954,7 +820,7 @@ spec:
 		t.Fatalf("Load: %v", err)
 	}
 
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "flux-entry-repos"}
+	ksID := testutil.KustomizationID("flux-system", "flux-entry-repos")
 	if s.GetObject(ksID) == nil {
 		t.Errorf("bootstrap-sibling Flux KS must reach the Store during discovery")
 	}
@@ -962,7 +828,7 @@ spec:
 		t.Errorf("SourceFiles[KS] = %q; want %q", got, want)
 	}
 
-	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "stray"}
+	hrID := testutil.HelmReleaseID("flux-system", "stray")
 	if s.GetObject(hrID) != nil {
 		t.Errorf("sibling HR must NOT be picked up by the bootstrap scan (scope is Flux KS only)")
 	}
@@ -983,18 +849,7 @@ kind: Kustomization
 resources:
   - ./entry.yaml
 `)
-	testutil.WriteFile(t, dir, "entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: entry
-  namespace: flux-system
-spec:
-  path: ./
-  sourceRef:
-    kind: GitRepository
-    name: cluster
-  interval: 10m
-`)
+	testutil.WriteFile(t, dir, "entry.yaml", testutil.KustomizationYAML("entry", "flux-system", "  path: ./\n  sourceRef:\n    kind: GitRepository\n    name: cluster\n  interval: 10m\n"))
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
@@ -1019,18 +874,7 @@ func TestLoader_BootstrapSiblingHonorsKrmignore(t *testing.T) {
 kind: Kustomization
 resources: []
 `)
-	testutil.WriteFile(t, dir, "flux-entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: ignored
-  namespace: flux-system
-spec:
-  path: ./
-  sourceRef:
-    kind: GitRepository
-    name: cluster
-  interval: 10m
-`)
+	testutil.WriteFile(t, dir, "flux-entry.yaml", testutil.KustomizationYAML("ignored", "flux-system", "  path: ./\n  sourceRef:\n    kind: GitRepository\n    name: cluster\n  interval: 10m\n"))
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
@@ -1139,7 +983,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		for _, name := range []string{"first", "second"} {
-			testutil.WriteFile(t, root, name+"/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+name+"}\nspec: {path: ./apps}\n")
+			testutil.WriteFile(t, root, name+"/ks.yaml", testutil.KustomizationYAML(name, "", "  {path: ./apps}\n"))
 		}
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
@@ -1163,7 +1007,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("uncreated file error = %v, want not exist", err)
 		}
-		testutil.WriteFile(t, root, "second/late.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: late}\nspec: {path: ./apps}\n")
+		testutil.WriteFile(t, root, "second/late.yaml", testutil.KustomizationYAML("late", "", "  {path: ./apps}\n"))
 		n, err = l.Load(t.Context(), filepath.Join(root, "second"))
 		assert.NoError(t, err)
 		if n != 1 {
@@ -1178,7 +1022,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			t.Fatal("load discarded retained directory observations")
 		}
 		for _, name := range []string{"first", "second"} {
-			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: name}
+			id := testutil.KustomizationID("", name)
 			record, indexed := l.Index.Lookup(id)
 			if !indexed || record.Path != filepath.Join(root, name, "ks.yaml") || s.GetObject(id) == nil {
 				t.Fatalf("%s graph was not loaded and indexed: %+v", name, record)
@@ -1206,14 +1050,14 @@ func TestLoader_IndependentRoots(t *testing.T) {
 	t.Run("admitted membership", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "first.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: first}\nspec: {path: ./apps}\n")
+		testutil.WriteFile(t, root, "first.yaml", testutil.KustomizationYAML("first", "", "  {path: ./apps}\n"))
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
 		admitted, err := gittree.AdmitDirectory(t.Context(), location)
 		assert.NoError(t, err)
 		input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: admitted.FS})
 		assert.NoError(t, err)
-		testutil.WriteFile(t, root, "second.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: second}\nspec: {path: ./apps}\n")
+		testutil.WriteFile(t, root, "second.yaml", testutil.KustomizationYAML("second", "", "  {path: ./apps}\n"))
 		s := store.New()
 		s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 		n, err := New(s).Load(t.Context(), root)
@@ -1240,11 +1084,11 @@ func TestLoader_IndependentRoots(t *testing.T) {
 				roots[0] = filepath.Join(roots[1], "child")
 			}
 			ids := []manifest.NamedResource{
-				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "first"},
-				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "second"},
+				testutil.KustomizationID("", "first"),
+				testutil.KustomizationID("", "second"),
 			}
 			for i, root := range roots {
-				testutil.WriteFile(t, root, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+ids[i].Name+"}\nspec: {path: ./apps}\n")
+				testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML(ids[i].Name, "", "  {path: ./apps}\n"))
 			}
 			l := New(store.New())
 			if tc.bounded {

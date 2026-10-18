@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -39,10 +40,7 @@ func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
-		ids[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
-			Kind: manifest.KindKustomization, Namespace: "ns",
-			Name: fmt.Sprintf("ks-%05d", i),
-		}
+		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("ks-%05d", i))
 	}
 	// Build an acyclic chain: ks-i depends on ks-(i+1). The last
 	// object has no deps. Single linear DAG keeps the bench
@@ -78,10 +76,7 @@ func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
 
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
-		ids[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
-			Kind: manifest.KindKustomization, Namespace: "ns",
-			Name: fmt.Sprintf("ks-%05d", i),
-		}
+		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("ks-%05d", i))
 	}
 	for i := range N {
 		var deps []manifest.NamedResource
@@ -101,7 +96,7 @@ func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
 func BenchmarkDependencyGraph_RegisterHealthyChain(b *testing.B) {
 	ids := make([]manifest.NamedResource, 100)
 	for i := range ids {
-		ids[i] = ksNode(fmt.Sprintf("node-%03d", i))
+		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("node-%03d", i))
 	}
 	b.ReportAllocs()
 	for b.Loop() {
@@ -119,14 +114,14 @@ func BenchmarkDependencyGraph_RegisterHealthyChain(b *testing.B) {
 func BenchmarkDependencyGraph_RegisterWhileCycleFailed(b *testing.B) {
 	for _, fan := range []int{0, 100, 1000} {
 		b.Run(fmt.Sprintf("fan=%d", fan), func(b *testing.B) {
-			a, c, leaf := ksNode("a"), ksNode("b"), ksNode("leaf")
+			a, c, leaf := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "leaf")
 			deps := []manifest.NamedResource{c}
 			for i := range fan {
-				deps = append(deps, ksNode(fmt.Sprintf("fan-%04d", i)))
+				deps = append(deps, testutil.KustomizationID("ns", fmt.Sprintf("fan-%04d", i)))
 			}
 			ids := make([]manifest.NamedResource, 500)
 			for i := range ids {
-				ids[i] = ksNode(fmt.Sprintf("node-%04d", i))
+				ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("node-%04d", i))
 			}
 			b.ReportAllocs()
 			for b.Loop() {

@@ -2,14 +2,16 @@ package orchestrator
 
 import (
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -31,10 +33,10 @@ func makeKS(name, ns string, deps ...manifest.NamedResource) *manifest.Kustomiza
 // their Flux dependsOn graph remains intact.
 func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 	t.Parallel()
-	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	idA := testutil.KustomizationID("ns", "a")
+	idB := testutil.KustomizationID("ns", "b")
 	// `extra` is an acyclic dep — it must not be marked failed.
-	idExtra := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "extra"}
+	idExtra := testutil.KustomizationID("ns", "extra")
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB, idExtra))
@@ -64,8 +66,8 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 
 func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	t.Parallel()
-	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	idA := testutil.KustomizationID("ns", "a")
+	idB := testutil.KustomizationID("ns", "b")
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
@@ -86,8 +88,8 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 
 func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 	t.Parallel()
-	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	idA := testutil.KustomizationID("ns", "a")
+	idB := testutil.KustomizationID("ns", "b")
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
@@ -121,8 +123,8 @@ func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 // listener honest if it ever gets refactored.
 func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	t.Parallel()
-	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
+	idA := testutil.KustomizationID("ns", "a")
+	idB := testutil.KustomizationID("ns", "b")
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	// Bootstrap-time graph: just one acyclic KS. No cycles to break.
@@ -164,7 +166,7 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 	// Chain: ks-0 → ks-1 → ks-2 → ... → ks-(N-1). Pure DAG.
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
-		ids[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprintf("ks-%05d", i)}
+		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("ks-%05d", i))
 	}
 	for i := range N {
 		var deps []manifest.NamedResource
@@ -203,9 +205,9 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 // dependsOn to break it; every previously-failed member must clear.
 func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 	t.Parallel()
-	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
-	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
-	idC := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "c"}
+	idA := testutil.KustomizationID("ns", "a")
+	idB := testutil.KustomizationID("ns", "b")
+	idC := testutil.KustomizationID("ns", "c")
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
@@ -237,8 +239,8 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 // dispatches both kinds through one path.
 func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 	t.Parallel()
-	idX := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "x"}
-	idY := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "y"}
+	idX := testutil.HelmReleaseID("ns", "x")
+	idY := testutil.HelmReleaseID("ns", "y")
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(&manifest.HelmRelease{
@@ -264,7 +266,7 @@ func TestSameKindDepTargets_CallerBuffer(t *testing.T) {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			want := make([]manifest.NamedResource, count)
 			for i := range want {
-				want[i] = manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprint(i)}
+				want[i] = testutil.KustomizationID("ns", fmt.Sprint(i))
 			}
 			ks := makeKS("app", "ns", want...)
 			var buf [8]manifest.NamedResource
@@ -295,14 +297,12 @@ func TestLogNewCycleMessages_Deterministic(t *testing.T) {
 	next := make(map[manifest.NamedResource]string)
 	for i, msg := range []string{"cycle-d", "cycle-c", "cycle-b", "cycle-a"} {
 		for _, member := range []string{"a", "b"} {
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
-				Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprintf("%d-%s", i, member),
-			}
+			id := testutil.KustomizationID("ns", fmt.Sprintf("%d-%s", i, member))
 			next[id] = msg
 		}
 	}
 	prev := map[manifest.NamedResource]string{
-		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "1-a"}: "cycle-c",
+		testutil.KustomizationID("ns", "1-a"): "cycle-c",
 	}
 	for range 2 {
 		got = nil

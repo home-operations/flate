@@ -1,9 +1,6 @@
 package oci
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -47,31 +44,4 @@ func TestPickLayer_Selection(t *testing.T) {
 			}
 		})
 	}
-}
-
-func mustTarGz(t *testing.T, files map[string]string) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-	for name, body := range files {
-		if err := tw.WriteHeader(&tar.Header{
-			Name:     name,
-			Typeflag: tar.TypeReg,
-			Size:     int64(len(body)),
-			Mode:     0o644,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
 }

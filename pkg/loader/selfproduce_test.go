@@ -87,14 +87,7 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 					"---\napiVersion: foreign.example/v1\nkind: Secret\nmetadata: {name: foreign-secret}\nstringData: {VALUE: foreign}\n")
 
 			testutil.WriteFile(t, dir, "kubernetes/apps/bare/kustomization.yaml", tc.local+"resources: [child.yaml]\nconfigMapGenerator:\n  - name: generated\n    literals: [CLUSTER_NAME=home]\nsecretGenerator:\n  - name: generated-secret\n    literals: [KEY=value]\n")
-			testutil.WriteFile(t, dir, "kubernetes/apps/bare/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer}
-spec:
-  path: ./leaf
-  postBuild:
-    substituteFrom: [{kind: ConfigMap, name: generated}, {kind: Secret, name: generated-secret}]
-`)
+			testutil.WriteFile(t, dir, "kubernetes/apps/bare/child.yaml", testutil.KustomizationYAML("consumer", "", "  path: ./leaf\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: generated}, {kind: Secret, name: generated-secret}]\n"))
 			testutil.WriteFile(t, dir, "leaf/kustomization.yaml", "resources: []\n")
 			s := store.New()
 			clusterApps := &manifest.Kustomization{
@@ -144,7 +137,7 @@ spec:
 			if got := renderers(idx, generated); !slices.Contains(got, clusterApps.Named()) {
 				t.Errorf("generated ConfigMap %s owners=%v", generated, got)
 			}
-			consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: "consumer"}
+			consumer := testutil.KustomizationID(tc.namespace, "consumer")
 			record, ok := idx.Lookup(consumer)
 			if !ok {
 				t.Fatalf("consumer %s not indexed: records=%+v", consumer, idx.Records)
@@ -373,14 +366,14 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 	testutil.WriteFile(t, dir, "apps/test/app-a/kustomization.yaml", "resources:\n  - ../../base/app-a\n")
 	testutil.WriteFile(t, dir, "apps/base/app-a/kustomization.yaml", "resources:\n  - ks.yaml\n")
 	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml",
-		"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: app-a\n  namespace: flux-system\nspec:\n  path: ./apps/${CLUSTER_ENV}/app-a\n")
+		testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n"))
 	// shared: pulled by BOTH cluster-apps (./apps/test -> ./shared) and
 	// cluster-apps2 (./apps/test2) — two distinct parents, ambiguous.
 	testutil.WriteFile(t, dir, "apps/test/shared/kustomization.yaml", "resources:\n  - ../../base/shared\n")
 	testutil.WriteFile(t, dir, "apps/test2/kustomization.yaml", "resources:\n  - ../base/shared\n")
 	testutil.WriteFile(t, dir, "apps/base/shared/kustomization.yaml", "resources:\n  - ks.yaml\n")
 	testutil.WriteFile(t, dir, "apps/base/shared/ks.yaml",
-		"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: shared\n  namespace: flux-system\nspec:\n  path: ./apps/${CLUSTER_ENV}/shared\n")
+		testutil.KustomizationYAML("shared", "flux-system", "  path: ./apps/${CLUSTER_ENV}/shared\n"))
 
 	s := store.New()
 	s.AddObject(&manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
@@ -390,13 +383,13 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 
 	l := loaderFixture(s, nil)
 	for _, name := range []string{"app-a", "shared"} {
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := testutil.KustomizationID("flux-system", name)
 		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
 	}
 	rendererFixture(t, l, dir, nil)
 	idx := l.Index
 
-	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	if got, ok := emissionParentForTest(idx, "apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
 		t.Errorf("EmissionParentByFile(app-a) = (%v, %v), want (cluster-apps, true)", got, ok)
 	}
@@ -717,17 +710,9 @@ func TestFinalizeIndex_MixedKustomizationDataFile(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: owner, namespace: flux-system}
-spec: {path: ./apps}
-`)
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps}\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
-			bundle := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child, namespace: apps}
-spec: {path: ./child}
-`
+			bundle := testutil.KustomizationYAML("child", "apps", "  {path: ./child}\n")
 			if mode == "mixed_producer" {
 				bundle += "---\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer}\nspec: {target: {name: values}}\n"
 			} else {
@@ -757,8 +742,8 @@ data: {value: fixture}
 			}
 			producers := &manifest.ProducerIndex{}
 			l.FinalizeIndex(root, producers)
-			owner := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "owner"}
-			child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
+			owner := testutil.KustomizationID("flux-system", "owner")
+			child := testutil.KustomizationID("apps", "child")
 			values := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
 			if existing != nil && l.Store.GetObject(values) != existing {
 				t.Fatal("pre-existing data object was replaced")

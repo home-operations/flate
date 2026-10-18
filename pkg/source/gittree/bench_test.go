@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // benchRepo seeds a source repo with n blobs (a 90/10 small/large mix —
@@ -25,10 +26,7 @@ import (
 func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 	b.Helper()
 	src := b.TempDir()
-	repo, err := git.PlainInit(src, false)
-	if err != nil {
-		b.Fatalf("PlainInit: %v", err)
-	}
+	repo := testutil.GitInit(b, src)
 	for i := range n {
 		size := 2 << 10 // 2KB
 		if i%10 == 0 {
@@ -46,18 +44,9 @@ func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 			b.Fatal(err)
 		}
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		b.Fatalf("Worktree: %v", err)
-	}
-	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
-		b.Fatalf("Add: %v", err)
-	}
-	if _, err := wt.Commit("seed", &git.CommitOptions{
+	testutil.GitCommitAll(b, repo, "seed", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
-	}); err != nil {
-		b.Fatalf("Commit: %v", err)
-	}
+	})
 
 	clone := b.TempDir()
 	cloned, err := git.PlainClone(clone, false, &git.CloneOptions{URL: src})

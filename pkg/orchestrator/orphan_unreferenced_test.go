@@ -21,17 +21,7 @@ import (
 func TestOrchestrator_UnreferencedBaseKSOrphaned(t *testing.T) {
 	dir := t.TempDir()
 
-	testutil.WriteFile(t, dir, "cluster/flux-system.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: cluster-apps
-  namespace: flux-system
-spec:
-  path: ./apps/test
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-`)
+	testutil.WriteFile(t, dir, "cluster/flux-system.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./apps/test\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/test/kustomization.yaml", "resources:\n  - ./app-a\n  - ./app-b\n")
 	testutil.WriteFile(t, dir, "apps/test/app-a/kustomization.yaml", "resources:\n  - ../../base/app-a\n")
 	testutil.WriteFile(t, dir, "apps/test/app-b/kustomization.yaml", "resources:\n  - ../../base/app-b\n")
@@ -42,30 +32,8 @@ spec:
 		testutil.WriteFile(t, dir, "apps/base/"+app+"/kustomization.yaml", "resources:\n  - cm.yaml\n")
 		testutil.WriteFile(t, dir, "apps/base/"+app+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: "+app+"-cm\n  namespace: flux-system\n")
 	}
-	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: app-a
-  namespace: flux-system
-spec:
-  path: ./apps/${CLUSTER_ENV}/app-a
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/base/app-b/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: app-b
-  namespace: flux-system
-spec:
-  path: ./apps/${CLUSTER_ENV}/app-b
-  dependsOn:
-    - name: app-a
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-`)
+	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
+	testutil.WriteFile(t, dir, "apps/base/app-b/ks.yaml", testutil.KustomizationYAML("app-b", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-b\n  dependsOn:\n    - name: app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 
 	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
 	if err != nil {
@@ -77,7 +45,7 @@ spec:
 	}
 
 	for _, name := range []string{"app-a", "app-b"} {
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := testutil.KustomizationID("flux-system", name)
 		if info, failed := res.Failed[id]; failed {
 			t.Errorf("%s hard-failed, want orphaned: %s", name, info.Message)
 		}

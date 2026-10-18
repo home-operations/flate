@@ -24,6 +24,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -44,7 +45,7 @@ func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
 				testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 1.0.0\n")
 				testutil.WriteFile(t, root, "mychart/templates/cm.yaml", "kind: ConfigMap\n")
 				testutil.WriteFile(t, root, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.0.0\n")
-				owner := newTestCache(t, "")
+				owner := cachetest.New(t, "", cache.New)
 				local, err := gitrepo.Locate(t.Context(), root, root)
 				assert.NoError(t, err)
 				admitted, err := gittree.AdmitDirectory(t.Context(), local)
@@ -105,7 +106,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	for name, body := range files {
 		testutil.WriteFile(t, dir, name, body)
 	}
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", cache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 		"charts/child/values.yaml":       {Data: []byte("value: canonical\n")},
 		"charts/child/templates/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: child\ndata:\n  value: {{ .Values.value | quote }}\n")},
 	}
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", cache.New))
 	assert.NoError(t, err)
 	st := store.New()
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: ".", RepoName: "repo", RepoNamespace: "default", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
@@ -221,15 +222,9 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		testutil.WriteFile(t, root, dir+"/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
 		testutil.WriteFile(t, root, dir+"/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: chart\n")
 	}
-	repo, err := git.PlainInit(root, false)
-	assert.NoError(t, err)
-	wt, err := repo.Worktree()
-	assert.NoError(t, err)
-	_, err = wt.Add(".")
-	assert.NoError(t, err)
-	_, err = wt.Commit("chart", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
-	assert.NoError(t, err)
-	owner := newTestCache(t, "")
+	repo := testutil.GitInit(t, root)
+	testutil.GitCommitAll(t, repo, "chart", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
+	owner := cachetest.New(t, "", cache.New)
 	produce := func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		repo, err := git.CloneContext(ctx, storer, worktree, &git.CloneOptions{URL: "file://" + root, NoCheckout: true})
 		if err != nil {
@@ -306,7 +301,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cacheRoot := t.TempDir()
-			owner := newTestCache(t, cacheRoot)
+			owner := cachetest.New(t, cacheRoot, cache.New)
 			cli, err := NewClient(owner)
 			assert.NoError(t, err)
 			st := store.New()

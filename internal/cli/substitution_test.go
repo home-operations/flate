@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -17,10 +16,8 @@ import (
 func substitutionFixture(t *testing.T, postBuild, expression string) string {
 	t.Helper()
 	root := t.TempDir()
-	if _, err := git.PlainInit(root, false); err != nil {
-		t.Fatal(err)
-	}
-	testutil.WriteFile(t, root, "flux.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  interval: 1m\n  path: ./app\n"+postBuild)
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("consumer", "apps", "  interval: 1m\n  path: ./app\n")+postBuild)
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata:\n  value: '"+expression+"'\n")
 	return root
@@ -333,7 +330,7 @@ func TestRun_SubstitutionIsolation(t *testing.T) {
 	for _, ref := range []string{"secretRef", "certSecretRef", "proxySecretRef"} {
 		t.Run(ref, func(t *testing.T) {
 			root := substitutionFixture(t, "", "literal")
-			testutil.WriteFile(t, root, "flux.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  sourceRef: {kind: OCIRepository, name: remote}\n")
+			testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  sourceRef: {kind: OCIRepository, name: remote}\n"))
 			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: remote, namespace: apps}\nspec:\n  url: oci://example.invalid/fixture\n  "+ref+": {name: external}\n")
 			input := substitutionInput(t, externalSecret)
 			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--substitute-from", input)
@@ -390,7 +387,7 @@ func TestRun_StrictSubstitutionEnvironmentPrecedence(t *testing.T) {
 
 func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
-	testutil.WriteFile(t, root, "producer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: ./producer}\n")
+	testutil.WriteFile(t, root, "producer.yaml", testutil.KustomizationYAML("producer", "apps", "  {path: ./producer}\n"))
 	testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [input.yaml]\n")
 	testutil.WriteFile(t, root, "producer/input.yaml", strings.Replace(externalCM, "supplied", "repository", 1))
 	input := substitutionInput(t, strings.Replace(externalCM, "supplied", "private-fixture-value", 1))
@@ -426,7 +423,7 @@ func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 
 func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 	root := substitutionFixture(t, "", "literal")
-	testutil.WriteFile(t, root, "flux.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps, namespace: flux-system}\nspec: {path: ./app, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substituteFrom: [{kind: Secret, name: cluster-secrets}]}}\n")
+	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  {path: ./app, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substituteFrom: [{kind: Secret, name: cluster-secrets}]}}\n"))
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml, hr.yaml]\n")
 	testutil.WriteFile(t, root, "app/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec: {chart: {spec: {chart: charts/mychart, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}, values: {greeting: '${SECRET_X}'}}\n")
 	testutil.WriteFile(t, root, "charts/mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")

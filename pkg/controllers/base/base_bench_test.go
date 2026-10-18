@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -31,7 +32,7 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 			st.UpdateStatus(obj.Named(), state, "reason")
 			c := base.New(st, nil, "benchmark")
 			deps := []manifest.DependencyRef{{NamedResource: obj.Named()}}
-			id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
+			id := testutil.HelmReleaseID("apps", "consumer")
 			b.ReportAllocs()
 			for b.Loop() {
 				_ = c.Require(b.Context(), id, deps, manifest.DrainNone)

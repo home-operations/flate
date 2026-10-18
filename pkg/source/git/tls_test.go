@@ -34,6 +34,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
@@ -197,7 +198,7 @@ func TestFetcher_TLSOperations(t *testing.T) {
 			srv.StartTLS()
 			t.Cleanup(srv.Close)
 			proxy, connects := tlsGitProxy(t)
-			f := &Fetcher{Cache: newGitCache(t, ""), Secrets: func(_, name string) *manifest.Secret {
+			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Secrets: func(_, name string) *manifest.Secret {
 				if name == "proxy" {
 					return &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "username": "proxy", "password": "password"}}
 				}
@@ -230,7 +231,7 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		srv := httptest.NewTLSServer(http.NotFoundHandler())
 		defer srv.Close()
 		ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
-		f := &Fetcher{Cache: newGitCache(t, ""), Secrets: func(_, _ string) *manifest.Secret {
+		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
 		}}
 		ssrfguard.Restrict(true)
@@ -306,7 +307,7 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 				if err := r.Storer.SetReference(plumbing.NewHashReference(head.Name(), hash)); err != nil {
 					t.Fatal(err)
 				}
-				f := &Fetcher{Cache: newGitCache(t, ""), Secrets: func(_, _ string) *manifest.Secret {
+				f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Secrets: func(_, _ string) *manifest.Secret {
 					return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
 				}}
 				repo := gitRepoWithSecret("recursive", srv.URL, "tls")
@@ -343,7 +344,7 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 			release := make(chan struct{})
 			unblock := sync.OnceFunc(func() { close(release) })
 			var workers sync.WaitGroup
-			f := &Fetcher{Cache: newGitCache(t, "")}
+			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			secrets := map[string]*manifest.Secret{}
 			f.Secrets = func(_, name string) *manifest.Secret { return secrets[name] }
 			repos := make([]*manifest.GitRepository, concurrency-1)
@@ -581,11 +582,7 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 			if wave == "direct" {
 				t.Setenv("no_proxy", "*")
 			}
-			c, err := sourcecache.New(t.Context(), cacheRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = c.Close() }()
+			c := cachetest.New(t, cacheRoot, sourcecache.New)
 			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return sec }}
 			request, err := f.resolveTransport(repo)
 			if err != nil {

@@ -13,6 +13,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -60,7 +61,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	run.store.AddObject(ks)
 	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
 	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.MsgSuspended)
-	roots := []manifest.NamedResource{{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "same"}, {Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "same"}}
+	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +86,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 
 func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	t.Parallel()
-	a, sibling, other := ksID("a"), ksID("sibling"), ksID("other")
+	a, sibling, other := testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "sibling"), testutil.KustomizationID("flux-system", "other")
 	other.Namespace = "other"
 	run := selectedRun(&Result{})
 	for _, id := range []manifest.NamedResource{a, sibling, other} {
@@ -94,7 +95,7 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	set := change.NewSet([]string{"a.yaml"})
 	run.index = indexForTest(map[manifest.NamedResource]string{a: "a.yaml", sibling: "sibling.yaml", other: "other.yaml"})
 	run.filter = change.NewFilter(set, run.index, run.store)
-	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}, nil)
+	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 	if err != nil || selected[0].Counts[manifest.KindKustomization] != 2 {
 		t.Fatalf("inferred scope excluded healthy sibling or admitted foreign namespace: %+v %v", selected, err)
 	}
@@ -102,8 +103,8 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 
 func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 	t.Parallel()
-	visible := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
-	hidden := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}
+	visible := testutil.KustomizationID("media", "plex")
+	hidden := testutil.KustomizationID("default", "other")
 	for _, tc := range []struct {
 		name    string
 		visible bool
@@ -123,7 +124,7 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 			}
 			run := selectedRun(&Result{Failed: failed})
 			run.Err = errors.Join(&FailuresError{Message: "raw resource failures"}, tc.extra)
-			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "media"}}, nil)
+			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("media", "")}, nil)
 			if (err != nil) != (tc.visible || tc.extra != nil) || (len(selected[0].Failed) != 0) != tc.visible {
 				t.Fatalf("unexpected scoped failure: %+v %v", selected[0], err)
 			}
@@ -140,7 +141,7 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 func TestSelect_MissingAndCycles(t *testing.T) {
 	t.Parallel()
 	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
+		return testutil.KustomizationID("apps", name)
 	}
 	selected, missing, a, b, consumer := id("selected"), id("missing"), id("a"), id("b"), id("consumer")
 	for _, named := range []bool{false, true} {
@@ -156,7 +157,7 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 			}
 			setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{a: selected, b: selected, consumer: selected})
 			run.Err = &FailuresError{Message: "raw failure summary"}
-			root := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}
+			root := testutil.KustomizationID("", "")
 			if named {
 				root.Name = selected.Name
 			}
@@ -190,7 +191,7 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 
 func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	t.Parallel()
-	selected, root, other, a, b := ksID("selected"), ksID("root"), ksID("other"), ksID("a"), ksID("b")
+	selected, root, other, a, b := testutil.KustomizationID("flux-system", "selected"), testutil.KustomizationID("flux-system", "root"), testutil.KustomizationID("flux-system", "other"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b")
 	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}}})
 	for _, id := range []manifest.NamedResource{selected, root, other, a, b} {
 		run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: id.Name + " failure"}
@@ -208,7 +209,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	}
 	got, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
 	assert.Diff(t, got[0].Unrelated, results[0].Unrelated)
-	missing := ksID("missing")
+	missing := testutil.KustomizationID("flux-system", "missing")
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, other: {missing}}
 	run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{selected: {Status: store.StatusFailed, Message: "selected blocked"}, other: {Status: store.StatusFailed, Message: "other blocked"}}
 	results, _, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
@@ -216,7 +217,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
 	selected.Name = "healthy"
 	run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
-	c := ksID("c")
+	c := testutil.KustomizationID("flux-system", "c")
 	run.Result = &Result{Failed: map[manifest.NamedResource]store.StatusInfo{a: {Message: "cycle a"}, b: {Message: "cycle b"}, c: {Message: "cycle c"}}, Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {c, b, c}, b: {a}, c: {a}}}
 	results, err, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
 	assert.Equal(t, err, nil)
@@ -226,7 +227,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	t.Parallel()
 	closeErr := errors.New("shared cache close")
-	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{ksID("failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
+	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{testutil.KustomizationID("flux-system", "failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
 	for _, tc := range []struct {
 		name                  string
@@ -250,7 +251,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				}
 				runs[i].Err = err
 			}
-			_, err, remainder := Select(runs, errors.Join(joinTreeErrors(tc.orig, tc.current), tc.shared), []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}, nil)
+			_, err, remainder := Select(runs, errors.Join(joinTreeErrors(tc.orig, tc.current), tc.shared), []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 			if (err != nil) != (tc.orig != nil || tc.current != nil || tc.shared != nil) || (tc.want != "" && !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("snapshot attribution changed: %v", err)
 			}
@@ -277,8 +278,8 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			if reversed {
 				slices.Reverse(children)
 			}
-			selected, err, remainder := Select(runs, errors.Join(children...), []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}}, nil)
-			want := "both snapshots had reconcile failures\norig snapshot: reconcile completed with 1 failure(s):\n  " + ksID("failed").String() + ": resource failed\ncurrent snapshot: context canceled"
+			selected, err, remainder := Select(runs, errors.Join(children...), []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			want := "both snapshots had reconcile failures\norig snapshot: reconcile completed with 1 failure(s):\n  " + testutil.KustomizationID("flux-system", "failed").String() + ": resource failed\ncurrent snapshot: context canceled"
 			wantRemainder := "current snapshot: context canceled"
 			if reversed {
 				want = "teardown B\n" + want + "\nteardown A"
@@ -331,7 +332,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				}
 			}
 			raw := errors.Join(joinTreeErrors(runs[0].Err, runs[1].Err), closeErr)
-			selected, err, remainder := Select(runs, raw, []manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}}, nil)
+			selected, err, remainder := Select(runs, raw, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 			if len(selected) != 2 {
 				t.Fatalf("lost partial sides: %v", selected)
 			}
@@ -354,8 +355,8 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 
 func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 	t.Parallel()
-	parent := ksID("parent")
-	child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+	parent := testutil.KustomizationID("flux-system", "parent")
+	child := testutil.HelmReleaseID("apps", "child")
 	for _, tc := range []struct {
 		disposition store.StatusInfo
 		unavailable bool
@@ -417,7 +418,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	t.Parallel()
-	victim := ksID("victim")
+	victim := testutil.KustomizationID("flux-system", "victim")
 	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: victim.Name}
 	extra := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "victim"}
 	run := selectedRun(&Result{})
@@ -528,7 +529,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 
 func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 	t.Parallel()
-	root, mid, leaf, missing, dual := ksID("root"), ksID("mid"), ksID("leaf"), ksID("missing"), ksID("dual")
+	root, mid, leaf, missing, dual := testutil.KustomizationID("flux-system", "root"), testutil.KustomizationID("flux-system", "mid"), testutil.KustomizationID("flux-system", "leaf"), testutil.KustomizationID("flux-system", "missing"), testutil.KustomizationID("flux-system", "dual")
 	for _, tc := range []struct {
 		name    string
 		blocked map[manifest.NamedResource][]manifest.NamedResource
@@ -545,7 +546,7 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 				run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "nested dependencies failed"}
 			}
 			run.Err = &FailuresError{Message: "raw failures"}
-			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}, nil)
+			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 			assert.Diff(t, selected[0].Causes, tc.want)
 			if err == nil || strings.Contains(err.Error(), "nested dependencies failed") || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", len(tc.blocked))) {
 				t.Fatalf("cascade error did not count distinct victims: %v", err)
@@ -560,7 +561,7 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 	t.Parallel()
 	run := selectedRun(&Result{})
-	valid := []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}
+	valid := []manifest.NamedResource{testutil.KustomizationID("", "")}
 	for _, roots := range [][]manifest.NamedResource{
 		nil,
 		{{}},
@@ -583,7 +584,7 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 
 func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 	t.Parallel()
-	child, parent, unrelated := ksID("child"), ksID("parent"), ksID("unrelated")
+	child, parent, unrelated := testutil.KustomizationID("flux-system", "child"), testutil.KustomizationID("flux-system", "parent"), testutil.KustomizationID("flux-system", "unrelated")
 	orig := selectedRun(&Result{})
 	current := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{unrelated: {Status: store.StatusFailed, Message: "unrelated failed"}}})
 	for _, run := range []Rendered{orig, current} {
@@ -640,7 +641,7 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 				if count == 2 {
 					runs = append(runs, run)
 				}
-				selected, err, _ := Select(runs, nil, []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace}}, nil)
+				selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID(tc.namespace, "")}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -660,7 +661,7 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 
 func TestSelect_AuthoredPrerequisites(t *testing.T) {
 	t.Parallel()
-	dep := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "other", Name: "dep"}
+	dep := testutil.HelmReleaseID("other", "dep")
 	provider := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "provider"}
 	rs := &manifest.ResourceSet{Name: "selected", Namespace: "apps"}
 	rs.DependsOn = []fluxopv1.Dependency{{APIVersion: dep.Group + "/v2", Kind: dep.Kind, Name: dep.Name, Namespace: dep.Namespace}}
@@ -695,8 +696,8 @@ func TestSelect_AuthoredPrerequisites(t *testing.T) {
 
 func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	t.Parallel()
-	present, absent := ksID("a-present"), ksID("z-absent")
-	middle, oldRoot, newRoot := ksID("middle"), ksID("old-root"), ksID("new-root")
+	present, absent := testutil.KustomizationID("flux-system", "a-present"), testutil.KustomizationID("flux-system", "z-absent")
+	middle, oldRoot, newRoot := testutil.KustomizationID("flux-system", "middle"), testutil.KustomizationID("flux-system", "old-root"), testutil.KustomizationID("flux-system", "new-root")
 	orig, current := selectedRun(&Result{}), selectedRun(&Result{})
 	for _, id := range []manifest.NamedResource{present, absent} {
 		orig.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
@@ -786,14 +787,14 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 						run.store.AddObject(source)
 					}
 				}
-				selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
+				selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.HelmReleaseID("", "")}, nil)
 				if err != nil || selected[0].ChartVersions != nil || hr.Chart.Version != "9.9.9" {
 					t.Fatalf("explicit version replaced: %+v %v", selected[0].ChartVersions, err)
 				}
 				updated := hr.Clone()
 				updated.Chart.Version = ""
 				run.store.AddObject(updated)
-				selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
+				selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.HelmReleaseID("", "")}, nil)
 				if err != nil || selected[0].ChartVersions[hr.Named()] != tc.want {
 					t.Fatalf("effective source version: %+v %v, want %q", selected[0].ChartVersions, err, tc.want)
 				}

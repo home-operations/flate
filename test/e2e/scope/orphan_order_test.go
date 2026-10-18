@@ -15,23 +15,11 @@ import (
 
 func TestE2E_OrphanNotesDeterministic(t *testing.T) {
 	root, cache := t.TempDir(), t.TempDir()
-	testutil.WriteFile(t, root, "flux.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
 	for _, suffix := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
-		testutil.WriteFile(t, root, "apps/stray-"+suffix+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: stray-`+suffix+`, namespace: flux-system}
-spec:
-  path: ./missing-`+suffix+`
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+		testutil.WriteFile(t, root, "apps/stray-"+suffix+".yaml", testutil.KustomizationYAML("stray-"+suffix, "flux-system", "  path: ./missing-"+suffix+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	}
 	// The verdict's elapsed clock depends on runtime, rather than resource order.
 	clock := regexp.MustCompile(`   \d+(?:\.\d+s|m\d+s)\n$`)

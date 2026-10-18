@@ -565,27 +565,14 @@ func localSource(ref manifest.GitRepositoryRef) *manifest.GitRepository {
 func localFixture(tb testing.TB) (string, *git.Repository, plumbing.Hash, plumbing.Hash) {
 	tb.Helper()
 	root := tb.TempDir()
-	repo, err := git.PlainInit(root, false)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		tb.Fatal(err)
-	}
+	repo := testutil.GitInit(tb, root)
 	var hashes [2]plumbing.Hash
 	for i, value := range []string{"A", "B"} {
 		testutil.WriteFile(tb, root, "value.txt", value)
 		testutil.WriteFile(tb, root, "extra.txt", "extra")
-		if _, err := wt.Add("."); err != nil {
-			tb.Fatal(err)
-		}
-		hashes[i], err = wt.Commit(value, &git.CommitOptions{
+		hashes[i] = testutil.GitCommitAll(tb, repo, value, &git.CommitOptions{
 			Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
 		})
-		if err != nil {
-			tb.Fatal(err)
-		}
 		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName([]string{"v1.0.0", "v2.0.0"}[i]), hashes[i])); err != nil {
 			tb.Fatal(err)
 		}

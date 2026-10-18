@@ -3,15 +3,14 @@ package diff_test
 import (
 	"fmt"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
-
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // Example compares explicitly attributed documents and retains chart metadata
 // even when normalization strips the chart label from the compared manifests.
 func Example() {
-	parent := diff.Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "media", Name: "sonarr"}
+	parent := diff.Parent{NamedResource: testutil.HelmReleaseID("media", "sonarr")}
 	deployment := func(chartVer, image string) map[string]any {
 		return map[string]any{
 			"apiVersion": "apps/v1", "kind": "Deployment",

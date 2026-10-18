@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -47,11 +48,7 @@ data:
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
 
-	owner, err := cache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = owner.Close() })
+	owner := cachetest.New(t, "", cache.New)
 	cli, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

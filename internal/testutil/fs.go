@@ -3,8 +3,11 @@
 package testutil
 
 import (
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -36,4 +39,41 @@ func writeFileWithParents(tb testing.TB, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		tb.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// CopyTree copies src into dst using fixture directory and file modes.
+func CopyTree(tb testing.TB, src, dst string) {
+	tb.Helper()
+	err := filepath.WalkDir(src, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o750)
+		}
+		data, err := fs.ReadFile(os.DirFS(src), filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		WriteFileAt(tb, target, string(data))
+		return nil
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// WriteTree writes files beneath a symlink-resolved temporary directory.
+func WriteTree(tb testing.TB, files map[string]string) string {
+	tb.Helper()
+	root, err := filepath.EvalSymlinks(tb.TempDir())
+	if err != nil {
+		tb.Fatalf("evalsymlinks tempdir: %v", err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		WriteFile(tb, root, name, files[name])
+	}
+	return root
 }

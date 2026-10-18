@@ -1,10 +1,13 @@
 package sourceref
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
@@ -19,30 +22,14 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
 `)
-			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  interval: 10m
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", `  interval: 10m
   path: ./consumer
   sourceRef: {kind: GitRepository, name: flux-system}
   postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: raw, namespace: flux-system}
-spec: {interval: 10m, path: ./shared, sourceRef: {kind: GitRepository, name: flux-system}}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: nsprod, namespace: flux-system}
-spec: {interval: 10m, path: ./overlay, sourceRef: {kind: GitRepository, name: flux-system}}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: other, namespace: other}
-spec:
-  interval: 10m
+`)+"---\n"+
+				testutil.KustomizationYAML("raw", "flux-system", "  {interval: 10m, path: ./shared, sourceRef: {kind: GitRepository, name: flux-system}}\n")+"---\n"+
+				testutil.KustomizationYAML("nsprod", "flux-system", "  {interval: 10m, path: ./overlay, sourceRef: {kind: GitRepository, name: flux-system}}\n")+"---\n"+
+				testutil.KustomizationYAML("other", "other", `  interval: 10m
   path: ./shared
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   patches:
@@ -51,7 +38,7 @@ spec:
         - op: replace
           path: /does/not/exist
           value: x
-`)
+`))
 			testutil.WriteFile(t, root, "shared/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -97,20 +84,12 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
 `)
-				testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  interval: 10m
+				testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", `  interval: 10m
   path: ./consumer
   sourceRef: {kind: GitRepository, name: flux-system}
   postBuild: {substituteFrom: [{kind: ConfigMap, name: othercm}]}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: producer, namespace: flux-system}
-spec: {interval: 10m, path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}
-`)
+`)+"---\n"+
+					testutil.KustomizationYAML("producer", "flux-system", "  {interval: 10m, path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flux-system
@@ -153,16 +132,7 @@ func TestE2E_BootstrapGeneratorFailureIsolation(t *testing.T) {
 			parent := t.TempDir()
 			root := filepath.Join(parent, "repo")
 			testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE-CONTENT")
-			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: good, namespace: flux-system}
-spec: {path: ./apps/good}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: bad, namespace: flux-system}
-spec: {path: ./apps/bad}
-`)
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("good", "flux-system", "  {path: ./apps/good}\n")+"---\n"+testutil.KustomizationYAML("bad", "flux-system", "  {path: ./apps/bad}\n"))
 			testutil.WriteFile(t, root, "apps/good/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/good/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: good-output}\n")
 			testutil.WriteFile(t, root, "apps/bad/kustomization.yaml", "configMapGenerator:\n- name: bad\n  "+input+"\n")
@@ -181,13 +151,7 @@ spec: {path: ./apps/bad}
 
 func TestE2E_BootstrapGeneratorSopsSubstitution(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  path: ./apps/b
-  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}
-`)
+	testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps/b\n  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}\n"))
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux, apps/a]\n")
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "secretGenerator:\n- name: creds\n  namespace: flux-system\n  envs: [creds.sops.env]\n")
@@ -220,25 +184,14 @@ func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 				kind = "OCIRepository"
 			}
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
-			testutil.WriteFile(t, root, "kubernetes/clusters/c0/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: bootstrap, namespace: flux-system}
-spec: {path: %s, sourceRef: {kind: %s, name: flux-system}}
-`, tc.path, kind))
+			repo := testutil.GitInit(t, root)
+			testutil.WriteFile(t, root, "kubernetes/clusters/c0/ks.yaml", testutil.KustomizationYAML("bootstrap", "flux-system", "  {path: "+tc.path+", sourceRef: {kind: "+kind+", name: flux-system}}\n"))
 			if tc.diagnostic == "" {
 				consumerPath := "./consumer"
 				if tc.name == "repository" {
 					consumerPath = "kubernetes/consumer"
 				}
-				testutil.WriteFile(t, root, "kubernetes/clusters/c0/consumer.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  path: %s
-  sourceRef: {kind: %s, name: flux-system}
-  postBuild: {substituteFrom: [{kind: ConfigMap, name: artifact-output}]}
-`, consumerPath, kind))
+				testutil.WriteFile(t, root, "kubernetes/clusters/c0/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: "+consumerPath+"\n  sourceRef: {kind: "+kind+", name: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: artifact-output}]}\n"))
 				testutil.WriteFile(t, root, "kubernetes/consumer/kustomization.yaml", "resources: [cm.yaml]\n")
 				testutil.WriteFile(t, root, "kubernetes/consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output, namespace: flux-system}\ndata: {value: '${K}'}\n")
 				testutil.WriteFile(t, root, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-sibling}\n")
@@ -246,18 +199,15 @@ spec:
 			resources := "resources: [cm.yaml]\n"
 			if tc.later {
 				resources = "resources: [cm.yaml, child.yaml]\n"
-				testutil.WriteFile(t, root, "kubernetes/apps/x/child.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child, namespace: flux-system}
-spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
-`, kind))
+				testutil.WriteFile(t, root, "kubernetes/apps/x/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  {path: ./root-only, sourceRef: {kind: "+kind+", name: flux-system}}\n"))
 				testutil.WriteFile(t, root, "root-only/kustomization.yaml", "resources: [cm.yaml]\n")
 				testutil.WriteFile(t, root, "root-only/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-root-output}\n")
 			}
 			testutil.WriteFile(t, root, "kubernetes/apps/x/kustomization.yaml", resources)
 			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: before}\n")
-			harness.GitCommitAll(t, repo)
-			orig := harness.CopyTree(t, root)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			orig := t.TempDir()
+			testutil.CopyTree(t, root, orig)
 			origScan := filepath.Join(orig, "kubernetes/clusters/c0")
 			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: after}\n")
 			scan := filepath.Join(root, "kubernetes/clusters/c0")
@@ -321,7 +271,8 @@ spec: {path: ./root-only, sourceRef: {kind: %s, name: flux-system}}
 					t.Fatalf("reverse artifact/consumer values: %s", stdout)
 				}
 				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-unrelated-sibling}\n")
-				clean := harness.CopyTree(t, orig)
+				clean := t.TempDir()
+				testutil.CopyTree(t, orig, clean)
 				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: another-unrelated-sibling}\n")
 				stdout, stderr, code = harness.RunCLIBuffers("build", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", filepath.Join(clean, "kubernetes/clusters/c0"), "--concurrency", "2", "--no-progress")
 				if code != 0 || strings.Contains(stdout, "consumer-output") || strings.Contains(stdout, "artifact-output") || strings.Contains(stdout, "unrelated-sibling") {

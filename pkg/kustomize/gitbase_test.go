@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/pkg/manifest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,9 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -111,21 +113,8 @@ func fakeWorktree(t *testing.T, files map[string]string) string {
 // call and counting invocations.
 func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.Int32) {
 	t.Helper()
-	repo, err := git.PlainInit(worktree, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add("."); err != nil {
-		t.Fatal(err)
-	}
-	commit, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := testutil.GitInit(t, worktree)
+	commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.invalid"}})
 	input, _, err := gittree.New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, gittree.ViewOptions{Mode: gittree.RemoteBase})
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +216,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 		"apps/foo/unused/kustomization.yaml": "resources:\n  - http://127.0.0.1:1/unreachable.yaml\n",
 	})
 
-	src := writeTree(t, map[string]string{
+	src := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": "resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n",
 	})
 
@@ -259,7 +248,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	})
 
 	original := "resources:\n  - https://example.com/o/r?ref=v1\n"
-	src := writeTree(t, map[string]string{"kustomization.yaml": original})
+	src := testutil.WriteTree(t, map[string]string{"kustomization.yaml": original})
 
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
@@ -441,26 +430,10 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				"kustomization.yaml": "resources:\n  - cm.yaml\n", "cm.yaml": fixture.resource,
 			})
 			for _, dir := range []string{parent, child} {
-				r, err := git.PlainInit(dir, false)
-				if err != nil {
-					t.Fatal(err)
-				}
-				wt, err := r.Worktree()
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := wt.Add("."); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := wt.Commit("seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
-					t.Fatal(err)
-				}
+				r := testutil.GitInit(t, dir)
+				testutil.GitCommitAll(t, r, "seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}})
 			}
-			sources, err := sourcecache.New(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = sources.Close() })
+			sources := cachetest.New(t, "", sourcecache.New)
 			fetcher := &sourcegit.Fetcher{Cache: sources}
 			c := newTestTreeCache(t, "")
 			var requests []GitBaseRequest
@@ -483,16 +456,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				wt, err := r.Worktree()
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := wt.Add(name); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := wt.Commit(name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
-					t.Fatal(err)
-				}
+				testutil.GitCommitAll(t, r, name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}})
 			}
 			if output, err := render("1h"); err != nil || !strings.Contains(string(output), fixture.marker+"first") {
 				t.Fatalf("nested base: %s, %v", output, err)

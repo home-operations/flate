@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -87,7 +88,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			first, _, _ := sweepGit(t, c, "source-git-sweep")
 			second, desc, key := sweepGit(t, c, "source-git-sweep")
 			if scenario == "bad-anchor" || scenario == "bad-graph" {
@@ -186,7 +187,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 	for _, component := range []string{"parent", "final"} {
 		t.Run("selected-"+component+"-replacement", func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			orphan, _, _ := sweepGit(t, c, "source-git-replacement")
 			retained, _, _ := sweepGit(t, c, "source-git-replacement")
 			if err := c.Close(); err != nil {
@@ -252,7 +253,7 @@ func TestSweep_CoalescedAccessRetention(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		root := t.TempDir()
-		c := newCache(t, root)
+		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "coalesced-access"}
 		r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), ocispec.Descriptor{}))
 		if err != nil {
@@ -294,7 +295,7 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 		t.Run(maxAge.String(), func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			stale := time.Now().Add(-24 * time.Hour)
 			var retired, generations []string
 			for _, id := range []string{"source-git-stale", "git-base-stale", "source-git-touched", "git-base-touched"} {
@@ -343,7 +344,7 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	var anchors []ocispec.Descriptor
 	var generations []*GitGeneration
 	for _, id := range []string{"source-git-shared", "git-base-shared"} {
@@ -424,7 +425,7 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 func TestSweep_SharedIntermediateRetainsGitAnchor(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	generation, anchor, key := sweepGit(t, c, "source-git-shared")
 	if err := c.store.Untag(t.Context(), key); err != nil {
 		t.Fatal(err)
@@ -482,7 +483,7 @@ func TestSweep_AbsentRootAndUnrelatedDirectories(t *testing.T) {
 	if _, err := os.Stat(root); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("dry-run created root: %v", err)
 	}
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}

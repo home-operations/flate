@@ -56,13 +56,7 @@ func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, artifact := t.TempDir(), t.TempDir()
-			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  path: ./payload
-  sourceRef: {kind: OCIRepository, name: app}
-`)
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./payload\n  sourceRef: {kind: OCIRepository, name: app}\n"))
 			if tc.producer {
 				testutil.WriteFile(t, root, "flux/rs.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -89,7 +83,7 @@ spec:
 			if (err == nil) != (tc.producer && tc.fetchErr == nil) {
 				t.Fatalf("Render error=%v", err)
 			}
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
+			id := testutil.KustomizationID("flux-system", "consumer")
 			if tc.fetchErr != nil {
 				o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
 			}

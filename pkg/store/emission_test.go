@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestStore_EmittedParent_RecordsAndQueriesParent(t *testing.T) {
 	t.Parallel()
 	r := New()
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster"}
-	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
+	parent := testutil.KustomizationID("flux-system", "cluster")
+	child := testutil.HelmReleaseID("default", "demo")
 
 	if _, ok := r.EmittedParent(child); ok {
 		t.Fatal("EmittedParent should return ok=false for unknown id")
@@ -36,9 +37,9 @@ func TestStore_EmittedParent_RecordsAndQueriesParent(t *testing.T) {
 func TestStore_EmittedParent_FirstWriterWins(t *testing.T) {
 	t.Parallel()
 	r := New()
-	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "n", Name: "demo"}
-	parentA := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
-	parentB := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "b"}
+	child := testutil.HelmReleaseID("n", "demo")
+	parentA := testutil.KustomizationID("flux-system", "a")
+	parentB := testutil.KustomizationID("flux-system", "b")
 
 	r.RecordEmitted(parentA, []manifest.NamedResource{child})
 	r.RecordEmitted(parentB, []manifest.NamedResource{child})
@@ -56,7 +57,7 @@ func TestStore_RecordEmitted_AttributesEveryChild(t *testing.T) {
 			t.Run(fmt.Sprintf("insertForeignFirst=%t/withdrawForeignFirst=%t", insertForeignFirst, withdrawForeignFirst), func(t *testing.T) {
 				t.Parallel()
 				r := New()
-				parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster"}
+				parent := testutil.KustomizationID("flux-system", "cluster")
 				other := parent
 				other.Group = "example.test"
 				a := &manifest.RawObject{APIVersion: manifest.HelmReleaseDomain + "/v2", Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "a"}
@@ -156,9 +157,9 @@ func TestStore_RecordEmitted_AttributesEveryChild(t *testing.T) {
 func TestStore_RecordEmitted_HonorsSelfEdgeAndFirstWriterWins(t *testing.T) {
 	t.Parallel()
 	r := New()
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster"}
-	other := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "other"}
-	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "demo"}
+	parent := testutil.KustomizationID("flux-system", "cluster")
+	other := testutil.KustomizationID("flux-system", "other")
+	child := testutil.HelmReleaseID("ns", "demo")
 
 	// Self-edge (parent == child) must be silently dropped.
 	r.RecordEmitted(parent, []manifest.NamedResource{parent, child})
@@ -179,12 +180,12 @@ func TestStore_RecordEmitted_HonorsSelfEdgeAndFirstWriterWins(t *testing.T) {
 func TestStore_EmittedChildrenByParent_Concurrent(t *testing.T) {
 	t.Parallel()
 	r := New()
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	parent := testutil.KustomizationID("apps", "parent")
 	var wg sync.WaitGroup
 	for worker := range 2 {
 		wg.Go(func() {
 			for i := range 100 {
-				child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: fmt.Sprintf("%d-%d", worker, i)}
+				child := testutil.HelmReleaseID("apps", fmt.Sprintf("%d-%d", worker, i))
 				r.RecordEmitted(parent, []manifest.NamedResource{child})
 				r.EmittedChildrenByParent()
 			}

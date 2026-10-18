@@ -12,14 +12,10 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
-
-// id builds a Kustomization-kind NodeID for tests.
-func id(name string) NodeID {
-	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
-}
 
 type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool)
 
@@ -29,7 +25,7 @@ func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.Dr
 
 func TestEdgeIdx_AddAndDelete(t *testing.T) {
 	t.Parallel()
-	dep, otherDep, first, second := id("dep"), id("other-dep"), id("first"), id("second")
+	dep, otherDep, first, second := testutil.KustomizationID("ns", "dep"), testutil.KustomizationID("ns", "other-dep"), testutil.KustomizationID("ns", "first"), testutil.KustomizationID("ns", "second")
 	for _, tc := range []struct {
 		name string
 		add  [][2]NodeID
@@ -79,10 +75,10 @@ func TestScheduler_WakeOrder(t *testing.T) {
 	ordered := []NodeID{
 		{Kind: manifest.KindHelmRelease, Namespace: "z", Name: "a"},
 		{Group: "example.test", Kind: manifest.KindHelmRelease, Namespace: "z", Name: "a"},
-		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "a", Name: "a"},
-		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "a", Name: "b"},
-		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "b", Name: "a"},
-		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "a", Name: "a"},
+		testutil.HelmReleaseID("a", "a"),
+		testutil.HelmReleaseID("a", "b"),
+		testutil.HelmReleaseID("b", "a"),
+		testutil.KustomizationID("a", "a"),
 	}
 	for _, path := range []string{"parked", "failed"} {
 		for _, tc := range []struct {
@@ -100,7 +96,7 @@ func TestScheduler_WakeOrder(t *testing.T) {
 				t.Parallel()
 				for range 64 {
 					s := New(task.NewBounded(2), nil)
-					dep, otherDep, prefix := id("dependency"), id("other-dependency"), id("queued")
+					dep, otherDep, prefix := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "other-dependency"), testutil.KustomizationID("ns", "queued")
 					s.runq = []NodeID{prefix}
 					for _, nid := range tc.order {
 						n := &node{id: nid, state: stateParked, blockedOn: []NodeID{dep, otherDep}}
@@ -153,13 +149,13 @@ func TestScheduler_WakeAllocations(t *testing.T) {
 		for _, count := range []int{0, 1, 4} {
 			t.Run(fmt.Sprintf("%s/waiters=%d", path, count), func(t *testing.T) {
 				s := New(task.NewBounded(2), nil)
-				dep := id("dependency")
+				dep := testutil.KustomizationID("ns", "dependency")
 				idx := s.parkedIdx
 				if path == "failed" {
 					idx = s.failedIdx
 				}
 				for i := range count {
-					nid := id(fmt.Sprintf("waiter-%d", i))
+					nid := testutil.KustomizationID("ns", fmt.Sprintf("waiter-%d", i))
 					s.nodes[nid] = &node{id: nid, state: stateRunning}
 					idx.add(dep, nid)
 				}
@@ -184,7 +180,7 @@ func TestScheduler_WakeRunningWaiter(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
 			s := New(task.NewBounded(2), nil)
-			dep, nid := id("dependency"), id("running")
+			dep, nid := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "running")
 			n := &node{id: nid, state: stateRunning}
 			s.nodes[nid], s.inFlight = n, 1
 			idx := s.parkedIdx
@@ -215,7 +211,7 @@ func TestScheduler_WakeRunningWaiter(t *testing.T) {
 func TestScheduler_FailedWakeStopsAtCap(t *testing.T) {
 	t.Parallel()
 	s := New(task.NewBounded(2), nil)
-	dep, first, second := id("dependency"), id("a"), id("b")
+	dep, first, second := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")
 	for _, nid := range []NodeID{second, first} {
 		s.nodes[nid] = &node{id: nid, state: stateTerminal, failedOn: []NodeID{dep}}
 		s.failedIdx.add(dep, nid)
@@ -253,7 +249,7 @@ func TestScheduler_RunCancellationBoundary(t *testing.T) {
 				return OutcomeTerminal, nil, false
 			}))
 			if tc.seed {
-				s.Seed([]NodeID{id("last")})
+				s.Seed([]NodeID{testutil.KustomizationID("ns", "last")})
 			}
 			if tc.cancelBefore {
 				cancel()
@@ -281,7 +277,7 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 			releaseBodies := sync.OnceFunc(func() { close(release) })
 			defer releaseBodies()
 			defer cancel()
-			victim, held := id("feedback"), id("held")
+			victim, held := testutil.KustomizationID("ns", "feedback"), testutil.KustomizationID("ns", "held")
 			var active, runs atomic.Int64
 			var s *Scheduler
 			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
@@ -331,7 +327,7 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 			recorded := s.err
 			s.mu.Unlock()
 			cancel()
-			s.OnArrival(id("late"), true)
+			s.OnArrival(testutil.KustomizationID("ns", "late"), true)
 			select {
 			case err := <-done:
 				t.Fatalf("Run returned before body drain: %v", err)
@@ -359,7 +355,7 @@ func TestScheduler_RunStopDrains(t *testing.T) {
 }
 
 func TestScheduler_FailedBlockerSets(t *testing.T) {
-	a, b, c, d := id("a"), id("b"), id("c"), id("d")
+	a, b, c, d := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c"), testutil.KustomizationID("ns", "d")
 	for _, tc := range []struct {
 		name    string
 		blocked []NodeID
@@ -374,7 +370,7 @@ func TestScheduler_FailedBlockerSets(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(task.NewBounded(2), nil)
-			n := &node{id: id("consumer"), state: stateRunning}
+			n := &node{id: testutil.KustomizationID("ns", "consumer"), state: stateRunning}
 			s.nodes[n.id], s.inFlight = n, 1
 			s.complete(n.id, OutcomeDependencyFailed, []NodeID{a, b, c}, false)
 			var got bool
@@ -399,17 +395,17 @@ func TestScheduler_FailedReplacementPreservesOtherConsumers(t *testing.T) {
 			t.Run(fmt.Sprintf("fanin_%d/position_%d", fanIn, position), func(t *testing.T) {
 				t.Parallel()
 				s := New(task.NewBounded(2), nil)
-				n := &node{id: id("consumer"), state: stateRunning}
+				n := &node{id: testutil.KustomizationID("ns", "consumer"), state: stateRunning}
 				s.nodes[n.id], s.inFlight = n, 1
 				previous, blocked := make([]NodeID, fanIn), make([]NodeID, fanIn)
-				other := id("other")
+				other := testutil.KustomizationID("ns", "other")
 				for i := range previous {
-					previous[i] = id(fmt.Sprintf("blocker-%02d", i))
+					previous[i] = testutil.KustomizationID("ns", fmt.Sprintf("blocker-%02d", i))
 					blocked[i] = previous[i]
 					s.failedIdx[previous[i]] = map[NodeID]struct{}{other: {}}
 				}
 				s.complete(n.id, OutcomeDependencyFailed, previous, false)
-				blocked[position] = id("replacement")
+				blocked[position] = testutil.KustomizationID("ns", "replacement")
 				n.state, s.inFlight = stateRunning, 1
 				s.complete(n.id, OutcomeDependencyFailed, blocked, false)
 				assert.Diff(t, n.failedOn, blocked)
@@ -429,9 +425,9 @@ func TestScheduler_FailedReplacementPreservesOtherConsumers(t *testing.T) {
 func TestScheduler_FailedBlockerWidthChanges(t *testing.T) {
 	t.Parallel()
 	s := New(task.NewBounded(2), nil)
-	n := &node{id: id("consumer")}
+	n := &node{id: testutil.KustomizationID("ns", "consumer")}
 	s.nodes[n.id] = n
-	a, b, c := id("a"), id("b"), id("c")
+	a, b, c := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c")
 	complete := func(out Outcome, blocked, want []NodeID) {
 		t.Helper()
 		n.state, s.inFlight = stateRunning, 1
@@ -460,8 +456,8 @@ func TestRedispatchLimit(t *testing.T) {
 			var helpers sync.WaitGroup
 			var runs atomic.Int64
 			terminal, arrived := make(chan struct{}), make(chan struct{})
-			victim := id("feedback")
-			producer := id("producer")
+			victim := testutil.KustomizationID("ns", "feedback")
+			producer := testutil.KustomizationID("ns", "producer")
 			disp := dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				if nid == producer {
 					for awaitSignal(ctx, terminal) {
@@ -542,11 +538,11 @@ func TestRedispatchBudgetAllowsConvergence(t *testing.T) {
 				runs++
 				if runs <= limit {
 					s.OnArrival(nid, true)
-					return outcome, []NodeID{id("dep")}, false
+					return outcome, []NodeID{testutil.KustomizationID("ns", "dep")}, false
 				}
 				return OutcomeTerminal, nil, false
 			}))
-			s.Seed([]NodeID{id("finite")})
+			s.Seed([]NodeID{testutil.KustomizationID("ns", "finite")})
 			if err := s.Run(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -689,7 +685,7 @@ func run(t *testing.T, f *fakeDisp, workers int) *Scheduler {
 
 func assertReady(t *testing.T, f *fakeDisp, name string) {
 	t.Helper()
-	term, ready := f.state(id(name))
+	term, ready := f.state(testutil.KustomizationID("ns", name))
 	if !term || !ready {
 		t.Fatalf("%s: want terminal-Ready, got terminal=%v ready=%v", name, term, ready)
 	}
@@ -697,7 +693,7 @@ func assertReady(t *testing.T, f *fakeDisp, name string) {
 
 func assertFailed(t *testing.T, f *fakeDisp, name string) {
 	t.Helper()
-	term, ready := f.state(id(name))
+	term, ready := f.state(testutil.KustomizationID("ns", name))
 	if !term || ready {
 		t.Fatalf("%s: want terminal-Failed, got terminal=%v ready=%v", name, term, ready)
 	}
@@ -707,9 +703,9 @@ func TestLinearChainReadyPropagation(t *testing.T) {
 	t.Parallel()
 	// a -> b -> c (c is a ready leaf).
 	f := newFake(map[NodeID][]NodeID{
-		id("a"): {id("b")},
-		id("b"): {id("c")},
-		id("c"): nil,
+		testutil.KustomizationID("ns", "a"): {testutil.KustomizationID("ns", "b")},
+		testutil.KustomizationID("ns", "b"): {testutil.KustomizationID("ns", "c")},
+		testutil.KustomizationID("ns", "c"): nil,
 	})
 	run(t, f, 8)
 	assertReady(t, f, "a")
@@ -724,10 +720,10 @@ func TestDiamondReadyPropagation(t *testing.T) {
 	t.Parallel()
 	// d -> {b, c}; b -> a; c -> a; a ready leaf.
 	f := newFake(map[NodeID][]NodeID{
-		id("d"): {id("b"), id("c")},
-		id("b"): {id("a")},
-		id("c"): {id("a")},
-		id("a"): nil,
+		testutil.KustomizationID("ns", "d"): {testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c")},
+		testutil.KustomizationID("ns", "b"): {testutil.KustomizationID("ns", "a")},
+		testutil.KustomizationID("ns", "c"): {testutil.KustomizationID("ns", "a")},
+		testutil.KustomizationID("ns", "a"): nil,
 	})
 	run(t, f, 8)
 	for _, n := range []string{"a", "b", "c", "d"} {
@@ -740,8 +736,8 @@ func TestDanglingChainCascadeFails(t *testing.T) {
 	// a -> b -> (absent X). Both must fail; the leaf's "dependency not found"
 	// cascades up. manifest.DrainCascade suffices (no manifest.DrainForce needed for a chain).
 	f := newFake(map[NodeID][]NodeID{
-		id("a"): {id("b")},
-		id("b"): {id("missing")}, // "missing" is absent from the graph
+		testutil.KustomizationID("ns", "a"): {testutil.KustomizationID("ns", "b")},
+		testutil.KustomizationID("ns", "b"): {testutil.KustomizationID("ns", "missing")}, // "missing" is absent from the graph
 	})
 	run(t, f, 8)
 	assertFailed(t, f, "a")
@@ -757,26 +753,26 @@ func TestParkThenArrivalWake(t *testing.T) {
 	// discovery) and wake the parked a. A gated "keepalive" node holds the pool
 	// non-idle so the scheduler cannot reach the fixpoint and drain a before x
 	// arrives — forcing the genuine park-then-wake path deterministically.
-	foreign := id("x")
+	foreign := testutil.KustomizationID("ns", "x")
 	foreign.Group = "example.test"
 	f := newFake(map[NodeID][]NodeID{
-		id("a"):         {id("x")},
-		id("x"):         nil,
-		foreign:         nil,
-		id("keepalive"): nil,
+		testutil.KustomizationID("ns", "a"):         {testutil.KustomizationID("ns", "x")},
+		testutil.KustomizationID("ns", "x"):         nil,
+		foreign:                                     nil,
+		testutil.KustomizationID("ns", "keepalive"): nil,
 	})
 	gate := make(chan struct{})
-	f.gate[id("keepalive")] = gate
+	f.gate[testutil.KustomizationID("ns", "keepalive")] = gate
 	ts := task.NewBounded(8)
 	s := New(ts, f)
-	s.Seed([]NodeID{id("a"), id("keepalive")}) // x absent at start
+	s.Seed([]NodeID{testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "keepalive")}) // x absent at start
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()
 
 	waitUntil(t, func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.nodes[id("a")].state == stateParked
+		return s.nodes[testutil.KustomizationID("ns", "a")].state == stateParked
 	})
 	s.OnArrival(foreign, true)
 	waitUntil(t, func() bool {
@@ -786,13 +782,13 @@ func TestParkThenArrivalWake(t *testing.T) {
 	})
 	s.OnStatusWake(foreign, true, false)
 	s.mu.Lock()
-	assert.Equal(t, s.nodes[id("a")].state, stateParked)
-	assert.Diff(t, s.nodes[id("a")].blockedOn, []NodeID{id("x")})
-	assert.Equal(t, s.nodes[id("x")], nil)
+	assert.Equal(t, s.nodes[testutil.KustomizationID("ns", "a")].state, stateParked)
+	assert.Diff(t, s.nodes[testutil.KustomizationID("ns", "a")].blockedOn, []NodeID{testutil.KustomizationID("ns", "x")})
+	assert.Equal(t, s.nodes[testutil.KustomizationID("ns", "x")], nil)
 	s.mu.Unlock()
-	assert.Equal(t, f.runCount(id("a")), 1)
-	s.OnArrival(id("x"), true)
-	waitUntil(t, func() bool { term, _ := f.state(id("a")); return term })
+	assert.Equal(t, f.runCount(testutil.KustomizationID("ns", "a")), 1)
+	s.OnArrival(testutil.KustomizationID("ns", "x"), true)
+	waitUntil(t, func() bool { term, _ := f.state(testutil.KustomizationID("ns", "a")); return term })
 	close(gate) // let keepalive finish so Run can reach the fixpoint
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -821,15 +817,15 @@ func TestLostWakeupRecheck(t *testing.T) {
 	// resolve Ready WITHOUT entering draining — proving the re-check, not the
 	// draining backstop, recovered it.
 	f := newFake(map[NodeID][]NodeID{
-		id("a"): {id("b")},
-		id("b"): nil,
+		testutil.KustomizationID("ns", "a"): {testutil.KustomizationID("ns", "b")},
+		testutil.KustomizationID("ns", "b"): nil,
 	})
 	gate := make(chan struct{})
-	f.gate[id("a")] = gate
+	f.gate[testutil.KustomizationID("ns", "a")] = gate
 	// Release a's Dispatch once b is terminal.
 	go func() {
 		for {
-			if term, _ := f.state(id("b")); term {
+			if term, _ := f.state(testutil.KustomizationID("ns", "b")); term {
 				close(gate)
 				return
 			}
@@ -849,8 +845,8 @@ func TestTransitiveBlockCompareOrderCascades(t *testing.T) {
 	// ("a-top" < "z-leaf"), forcing the draining sweep to re-run the consumer
 	// first; the complete() wake must still cascade the leaf's failure upward.
 	f := newFake(map[NodeID][]NodeID{
-		id("a-top"):  {id("z-leaf")},
-		id("z-leaf"): {id("absent")},
+		testutil.KustomizationID("ns", "a-top"):  {testutil.KustomizationID("ns", "z-leaf")},
+		testutil.KustomizationID("ns", "z-leaf"): {testutil.KustomizationID("ns", "absent")},
 	})
 	run(t, f, 8)
 	assertFailed(t, f, "a-top")
@@ -863,8 +859,8 @@ func TestCrossKindCycleForceDrains(t *testing.T) {
 	// cannot break it (each sees the other present-Pending and re-parks), so
 	// the scheduler must escalate to manifest.DrainForce and fail both.
 	f := newFake(map[NodeID][]NodeID{
-		id("a"): {id("b")},
-		id("b"): {id("a")},
+		testutil.KustomizationID("ns", "a"): {testutil.KustomizationID("ns", "b")},
+		testutil.KustomizationID("ns", "b"): {testutil.KustomizationID("ns", "a")},
 	})
 	run(t, f, 8)
 	assertFailed(t, f, "a")
@@ -881,29 +877,29 @@ func TestDrainRerunReexpandsOnArrival(t *testing.T) {
 	// re-run once — re-expanding against the now-complete store — even though it
 	// parked on nothing and the arriving id is not one it waited on.
 	f := newFake(map[NodeID][]NodeID{
-		id("rs"):        nil,
-		id("keepalive"): nil,
+		testutil.KustomizationID("ns", "rs"):        nil,
+		testutil.KustomizationID("ns", "keepalive"): nil,
 	})
-	f.drainRerun[id("rs")] = true
+	f.drainRerun[testutil.KustomizationID("ns", "rs")] = true
 	gate := make(chan struct{})
-	f.gate[id("keepalive")] = gate
+	f.gate[testutil.KustomizationID("ns", "keepalive")] = gate
 
 	ts := task.NewBounded(8)
 	s := New(ts, f)
-	s.Seed([]NodeID{id("rs"), id("keepalive")})
+	s.Seed([]NodeID{testutil.KustomizationID("ns", "rs"), testutil.KustomizationID("ns", "keepalive")})
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()
 
 	// rs ran once. Now a late data arrival dirties the store; with the pool held
 	// non-idle by keepalive, the fixpoint can't fire until we release.
-	waitUntil(t, func() bool { return f.runCount(id("rs")) >= 1 })
+	waitUntil(t, func() bool { return f.runCount(testutil.KustomizationID("ns", "rs")) >= 1 })
 	s.OnArrival(NodeID{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "late"}, false)
 	close(gate)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 
-	if rc := f.runCount(id("rs")); rc != 2 {
+	if rc := f.runCount(testutil.KustomizationID("ns", "rs")); rc != 2 {
 		t.Fatalf("rerun node ran %d times; want exactly 2 (initial + one re-expansion)", rc)
 	}
 	assertReady(t, f, "rs")
@@ -914,10 +910,10 @@ func TestDrainRerunTerminatesWithoutArrival(t *testing.T) {
 	// With no arrival after its run, a rerun node converges: the store is never
 	// re-dirtied, so the fixpoint does NOT re-run it. This is the termination
 	// bound — a sweep requires a fresh arrival.
-	f := newFake(map[NodeID][]NodeID{id("rs"): nil})
-	f.drainRerun[id("rs")] = true
+	f := newFake(map[NodeID][]NodeID{testutil.KustomizationID("ns", "rs"): nil})
+	f.drainRerun[testutil.KustomizationID("ns", "rs")] = true
 	run(t, f, 8)
-	if rc := f.runCount(id("rs")); rc != 1 {
+	if rc := f.runCount(testutil.KustomizationID("ns", "rs")); rc != 1 {
 		t.Fatalf("drain-rerun node ran %d times with no arrival; want exactly 1 (no re-run)", rc)
 	}
 	assertReady(t, f, "rs")
@@ -931,16 +927,16 @@ func TestDanglingChainRunCountBounded(t *testing.T) {
 	names := []string{"n0", "n1", "n2", "n3", "n4"}
 	for i, n := range names {
 		if i+1 < len(names) {
-			g[id(n)] = []NodeID{id(names[i+1])}
+			g[testutil.KustomizationID("ns", n)] = []NodeID{testutil.KustomizationID("ns", names[i+1])}
 		} else {
-			g[id(n)] = []NodeID{id("absent")} // leaf blocks on absent
+			g[testutil.KustomizationID("ns", n)] = []NodeID{testutil.KustomizationID("ns", "absent")} // leaf blocks on absent
 		}
 	}
 	f := newFake(g)
 	run(t, f, 8)
 	for _, n := range names {
 		assertFailed(t, f, n)
-		if rc := f.runCount(id(n)); rc > 6 {
+		if rc := f.runCount(testutil.KustomizationID("ns", n)); rc > 6 {
 			t.Fatalf("%s ran %d times; expected a small bounded count", n, rc)
 		}
 	}
@@ -955,7 +951,7 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 				var s *Scheduler
 				var runs int
 				started, finished := make(chan struct{}), make(chan struct{})
-				victim, companion := id("content"), id("companion")
+				victim, companion := testutil.KustomizationID("ns", "content"), testutil.KustomizationID("ns", "companion")
 				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 					if nid == companion {
 						close(started)
@@ -978,7 +974,7 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 					s.OnArrival(nid, true)
 					s.OnArrival(nid, true)
 					if mode == "blocked" || mode == "alternating" && runs%2 == 0 {
-						return OutcomeBlocked, []NodeID{id("missing")}, false
+						return OutcomeBlocked, []NodeID{testutil.KustomizationID("ns", "missing")}, false
 					}
 					return OutcomeTerminal, nil, false
 				}))

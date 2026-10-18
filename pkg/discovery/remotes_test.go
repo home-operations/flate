@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -71,8 +70,7 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			case "gitfile":
 				testutil.WriteFile(t, root, ".git", "gitdir: missing\n")
 			case "config":
-				_, err := git.PlainInit(root, false)
-				assert.Equal(t, err, nil)
+				testutil.GitInit(t, root)
 				testutil.WriteFile(t, root, ".git/config", "[invalid\n")
 			case "lookup":
 				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)

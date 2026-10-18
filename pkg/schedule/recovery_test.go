@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -38,7 +39,7 @@ func TestDependencyFailureRecovery(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/%s", workers, mode), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
-				victim, driver, dep := id("consumer"), id("driver"), id("dependency")
+				victim, driver, dep := testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "driver"), testutil.KustomizationID("ns", "dependency")
 				if mode == "data arrival" {
 					dep.Kind = manifest.KindConfigMap
 				}
@@ -109,8 +110,8 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 			t.Run(fmt.Sprintf("reverse_%v/%s", reverse, mode), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
-				victim, driver := id("consumer"), id("driver")
-				first := id("dependency")
+				victim, driver := testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "driver")
+				first := testutil.KustomizationID("ns", "dependency")
 				second, replacement, unrelated := first, first, first
 				second.Group, replacement.Group, unrelated.Group = "example.test", "replacement.test", "unrelated.test"
 				if reverse {
@@ -214,7 +215,7 @@ func TestDependencyFailureMultiHopRecovery(t *testing.T) {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			a, b, c, driver := id("a"), id("b"), id("c"), id("driver")
+			a, b, c, driver := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c"), testutil.KustomizationID("ns", "driver")
 			var readyA, readyB, readyC atomic.Bool
 			var runsB, runsC atomic.Int64
 			var s *Scheduler
@@ -260,7 +261,7 @@ func TestDependencyFailureRedispatchLimit(t *testing.T) {
 	defer cancel()
 	var s *Scheduler
 	var runs atomic.Int64
-	dep, victim := id("dep"), id("consumer")
+	dep, victim := testutil.KustomizationID("ns", "dep"), testutil.KustomizationID("ns", "consumer")
 	s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		runs.Add(1)
 		s.OnStatusWake(dep, false, false)
@@ -277,7 +278,7 @@ func TestDependencyFailureRedispatchLimit(t *testing.T) {
 }
 
 func TestProgress_RegistrationEpisodes(t *testing.T) {
-	a, b, c := id("a-dependency"), id("b-dependency"), id("c-dependency")
+	a, b, c := testutil.KustomizationID("ns", "a-dependency"), testutil.KustomizationID("ns", "b-dependency"), testutil.KustomizationID("ns", "c-dependency")
 	cases := []struct {
 		name                        string
 		blockers                    [][]NodeID
@@ -307,7 +308,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 			t.Run(fmt.Sprintf("workers_%d/%s", workers, tc.name), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
-				victim, producer := id("consumer"), id("producer")
+				victim, producer := testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "producer")
 				blockerRounds := tc.blockers
 				if tc.event == "data" {
 					blockerRounds = make([][]NodeID, len(tc.blockers))
@@ -346,7 +347,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 							if len(blockers) > 0 {
 								switch tc.event {
 								case "unrelated":
-									s.OnArrival(id("unrelated"), false)
+									s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 								case "failed":
 									s.OnStatusWake(blockers[0], false, true)
 								case "ready", "data":
@@ -361,7 +362,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 									}
 								}
 								if tc.overwrite {
-									s.OnArrival(id("unrelated"), false)
+									s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 								}
 							}
 							select {
@@ -433,7 +434,7 @@ func TestProgress_UnwatchedData(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			ctx := t.Context()
-			consumer, producer := id("consumer"), id("producer")
+			consumer, producer := testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "producer")
 			started, finished := make(chan struct{}), make(chan struct{})
 			var s *Scheduler
 			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
@@ -479,11 +480,11 @@ func TestProgress_UnwatchedData(t *testing.T) {
 func TestProgress_IdleInterest(t *testing.T) {
 	t.Parallel()
 	s := New(task.NewBounded(2), nil)
-	n := &node{id: id("consumer"), state: stateTerminal}
-	dep := id("dependency")
+	n := &node{id: testutil.KustomizationID("ns", "consumer"), state: stateTerminal}
+	dep := testutil.KustomizationID("ns", "dependency")
 	s.nodes[n.id] = n
 	s.failedIdx[dep] = map[NodeID]struct{}{n.id: {}}
-	s.OnArrival(id("unrelated"), false)
+	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 	assert.Equal(t, s.generation, uint64(0))
 	s.OnStatusWake(dep, false, true)
 	assert.Equal(t, s.generation, uint64(0))
@@ -495,10 +496,10 @@ func TestProgress_IdleInterest(t *testing.T) {
 func TestProgress_BlockerSlicesImmutable(t *testing.T) {
 	t.Parallel()
 	s := New(task.NewBounded(2), nil)
-	a, b := id("a-dependency"), id("b-dependency")
+	a, b := testutil.KustomizationID("ns", "a-dependency"), testutil.KustomizationID("ns", "b-dependency")
 	blocked := []NodeID{a, a, b}
 	want := []NodeID{a, a, b}
-	consumer := id("consumer")
+	consumer := testutil.KustomizationID("ns", "consumer")
 	n := &node{id: consumer, state: stateRunning}
 	s.nodes[consumer], s.inFlight = n, 1
 	s.complete(consumer, OutcomeDependencyFailed, blocked, false)

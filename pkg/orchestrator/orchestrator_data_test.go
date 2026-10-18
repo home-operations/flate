@@ -18,8 +18,8 @@ import (
 
 func TestOrchestrator_ParentOf(t *testing.T) {
 	t.Parallel()
-	id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "child", Namespace: "apps"}
-	structural, rendered := ksID("structural"), ksID("rendered")
+	id := testutil.HelmReleaseID("apps", "child")
+	structural, rendered := testutil.KustomizationID("flux-system", "structural"), testutil.KustomizationID("flux-system", "rendered")
 	for _, tc := range []struct {
 		name                       string
 		structural, rendered, want bool
@@ -53,14 +53,7 @@ func TestOrchestrator_RequiredDataDependencies_FileOwners(t *testing.T) {
 	t.Run("namespace_apps", func(t *testing.T) {
 		root := t.TempDir()
 		for _, owner := range []string{"a", "b", "c"} {
-			testutil.WriteFile(t, root, owner+".yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: %s, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./%s
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`, owner, owner))
+			testutil.WriteFile(t, root, owner+".yaml", testutil.KustomizationYAML(owner, "flux-system", "  interval: 10m\n  path: ./"+owner+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 			ns := "apps"
 			if owner == "c" {
 				ns = "other"
@@ -85,7 +78,7 @@ spec:
 		for _, id := range []manifest.NamedResource{
 			{Kind: "ConfigMap", Namespace: "apps", Name: "input"},
 			{Kind: "Secret", Namespace: "apps", Name: "generated"},
-			{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration"}, ksID("a"), ksID("b"), ksID("c"),
+			{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration"}, testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b"), testutil.KustomizationID("flux-system", "c"),
 		} {
 			if !slices.Contains(got, id) {
 				t.Fatalf("known prerequisite missing: %s in %v", id, got)
@@ -103,7 +96,7 @@ spec:
 		if next := o.requiredDataDependencies(hr.Named()); len(next) != want || slices.Contains(next, manifest.NamedResource{}) {
 			t.Fatal("returned slice aliases stored state")
 		}
-		if len(o.requiredDataDependencies(ksID("absent"))) != 0 {
+		if len(o.requiredDataDependencies(testutil.KustomizationID("flux-system", "absent"))) != 0 {
 			t.Fatal("missing canonical consumer invents refs")
 		}
 	})
@@ -116,14 +109,14 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "a"}
+	id := testutil.HelmReleaseID("flux-system", "a")
 	var fresh []manifest.NamedResource
 	for range 2 {
 		if _, err := o.Render(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		deps := o.requiredDataDependencies(id)
-		if !slices.Contains(deps, ksID("apps")) || len(deps) < 2 {
+		if !slices.Contains(deps, testutil.KustomizationID("flux-system", "apps")) || len(deps) < 2 {
 			t.Fatalf("generated input ownership missing: %v", deps)
 		}
 		if fresh == nil {
@@ -174,13 +167,7 @@ spec:
   chartRef: {kind: OCIRepository, name: absent}
   valuesFrom: [{kind: ConfigMap, name: input, optional: true}]
 `, mode == "suspended"))
-				testutil.WriteFile(t, dir, "producer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: producer, namespace: flux-system}
-spec:
-  path: ./values
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+				testutil.WriteFile(t, dir, "producer.yaml", testutil.KustomizationYAML("producer", "flux-system", "  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 				testutil.WriteFile(t, dir, "values/kustomization.yaml", "resources: [input.yaml]\n")
 				testutil.WriteFile(t, dir, "values/input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {values.yaml: 'greeting: hello'}\n")
 			}
@@ -195,13 +182,13 @@ spec:
 			if _, err := o.Render(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
+			id := testutil.HelmReleaseID("apps", "consumer")
 			before, _ := o.store.GetStatus(id)
 			if !store.IsSuspended(before) && !store.IsUnchanged(before) || o.store.GetArtifact(id) != nil {
 				t.Fatalf("consumer was rendered: %+v", before)
 			}
 			got := o.requiredDataDependencies(id)
-			if !slices.Contains(got, ksID("producer")) || !slices.Contains(got, manifest.NamedResource{Kind: "ConfigMap", Namespace: "apps", Name: "input"}) {
+			if !slices.Contains(got, testutil.KustomizationID("flux-system", "producer")) || !slices.Contains(got, manifest.NamedResource{Kind: "ConfigMap", Namespace: "apps", Name: "input"}) {
 				t.Fatalf("skipped consumer lost authored refs: %v", got)
 			}
 			after, _ := o.store.GetStatus(id)
@@ -218,7 +205,7 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := func(name string) manifest.NamedResource {
-		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
+		return testutil.KustomizationID("apps", name)
 	}
 	parent, other, first, second := id("parent"), id("other"), id("a"), id("b")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
@@ -247,7 +234,7 @@ func TestOrchestrator_RequiredDataDependencies_Parents(t *testing.T) {
 	hr.ValuesFrom = []helmv2.ValuesReference{{Kind: "Secret", Name: "input", Optional: true}}
 	o.store.AddObject(hr)
 	input := manifest.NamedResource{Kind: "Secret", Namespace: "apps", Name: "input"}
-	structural, rendered := ksID("structural"), ksID("rendered")
+	structural, rendered := testutil.KustomizationID("flux-system", "structural"), testutil.KustomizationID("flux-system", "rendered")
 	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{input: structural})
 	o.store.RecordEmitted(rendered, []manifest.NamedResource{input})
 	want := []manifest.NamedResource{input, structural, rendered}

@@ -11,7 +11,8 @@ import (
 
 func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 	src := harness.TestdataPath(t, "parent-patches")
-	root := harness.CopyTree(t, src)
+	root := t.TempDir()
+	testutil.CopyTree(t, src, root)
 
 	out := harness.RunCLI(t, "test", "ks", "--path", root)
 
@@ -30,7 +31,8 @@ func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
 
 func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 	src := harness.TestdataPath(t, "parent-patches")
-	root := harness.CopyTree(t, src)
+	root := t.TempDir()
+	testutil.CopyTree(t, src, root)
 
 	out := harness.RunCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
 		"--path", root, "-o", "yaml")
@@ -45,7 +47,8 @@ func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 
 func TestE2E_SubstituteDisabledAnnotation(t *testing.T) {
 	src := harness.TestdataPath(t, "parent-patches")
-	root := harness.CopyTree(t, src)
+	root := t.TempDir()
+	testutil.CopyTree(t, src, root)
 
 	out := harness.RunCLI(t, "test", "ks", "--path", root)
 
@@ -65,15 +68,7 @@ func TestE2E_BootstrapGeneratorEnvAndFileSubstitution(t *testing.T) {
 		{"bootstrap/kustomization.yaml", "resources: [ks.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: bootstrap-values\n  envs: [../settings.env]\n  files: [FROM_FILE=../payload.txt]\n  literals: [FROM_LITERAL=literal-value]\n"},
 		{"settings.env", "FROM_ENV=env-value\n"},
 		{"payload.txt", "file-value"},
-		{"bootstrap/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-  postBuild:
-    substituteFrom: [{kind: ConfigMap, name: bootstrap-values}]
-`},
+		{"bootstrap/ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: bootstrap-values}]\n")},
 		{"apps/kustomization.yaml", "resources: [result.yaml]\n"},
 		{"apps/result.yaml", `apiVersion: v1
 kind: ConfigMap

@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -19,7 +23,7 @@ func TestE2E_Diff_InTreeCache(t *testing.T) {
 			for _, state := range []string{"unchanged", "changed", "suspended_current", "suspended_orig"} {
 				t.Run(state, func(t *testing.T) {
 					repoRoot := t.TempDir()
-					repo := harness.GitInit(t, repoRoot)
+					repo := testutil.GitInit(t, repoRoot)
 					sourceName := "flux-system"
 					if source == "self" {
 						sourceName = "cluster"
@@ -29,14 +33,7 @@ func TestE2E_Diff_InTreeCache(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					cluster := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: ` + sourceName + `, namespace: flux-system}
-`
+					cluster := testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: "+sourceName+", namespace: flux-system}\n")
 					if source == "self" {
 						cluster = `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -58,7 +55,7 @@ metadata: {name: hello, namespace: apps}
 data:
   greeting: hola
 `)
-					harness.GitCommitAll(t, repo)
+					testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 					head, err := repo.Head()
 					if err != nil {
 						t.Fatal(err)

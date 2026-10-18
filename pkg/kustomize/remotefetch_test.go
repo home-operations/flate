@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -320,7 +321,7 @@ func TestFetchRemote_NetworkSuppression(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
 			var network source.Network
-			c := NewTreeCache(newTestCache(t, ""), &network)
+			c := NewTreeCache(cachetest.New(t, "", sourcecache.New), &network)
 			t.Cleanup(c.Close)
 			tr, _ := source.NewHTTPTransport(nil, nil)
 			tr.Proxy = nil
@@ -527,7 +528,7 @@ func TestFetchRemote_CloseJoinsAcquisition(t *testing.T) {
 							t.Fatal(err)
 						}
 						if root != "" {
-							check(newTestCache(t, root))
+							check(cachetest.New(t, root, sourcecache.New))
 						}
 					})
 				})
@@ -640,7 +641,7 @@ func TestFetchRemote_OwnerIsolation(t *testing.T) {
 						_, _ = io.WriteString(w, "healthy")
 					}))
 					t.Cleanup(srv.Close)
-					owner := newTestCache(t, "")
+					owner := cachetest.New(t, "", sourcecache.New)
 					na, nb := new(source.Network), new(source.Network)
 					if sharedNetwork {
 						nb = na
@@ -712,7 +713,7 @@ func TestFetchRemote_NetworkSuppressionOwnerCancellation(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
 			var network source.Network
-			owner := newTestCache(t, "")
+			owner := cachetest.New(t, "", sourcecache.New)
 			c, other := NewTreeCache(owner, &network), NewTreeCache(owner, &network)
 			t.Cleanup(c.Close)
 			t.Cleanup(other.Close)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -29,7 +30,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					root := t.TempDir()
-					c := newCache(t, root)
+					c := cachetest.New(t, root, New)
 					key := BlobKey{Content: "recorded"}
 					calls := 0
 					fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
@@ -51,7 +52,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					if err := c.Close(); err != nil {
 						t.Fatal(err)
 					}
-					c = newCache(t, root)
+					c = cachetest.New(t, root, New)
 					_, _, _, err = c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, fail)
 					terminal, ok := errors.AsType[*TerminalError](err)
 					if !ok || !terminal.Attempted || calls != 3 {
@@ -69,7 +70,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 						if err := c.Close(); err != nil {
 							t.Fatal(err)
 						}
-						c = newCache(t, root)
+						c = cachetest.New(t, root, New)
 						for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, fail} {
 							_, _, _, err := c.Blob(t.Context(), key, policy, produce)
 							terminal, ok := errors.AsType[*TerminalError](err)
@@ -133,7 +134,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 	})
 
 	identities := make(map[string]string)
-	memory := newCache(t, "")
+	memory := cachetest.New(t, "", New)
 	for _, payload := range []string{"first", ""} {
 		r, _, _, err := memory.Blob(t.Context(), BlobKey{Content: "blob-completed"}, Policy{}, producer([]byte(payload), ocispec.Descriptor{}))
 		if err != nil {
@@ -149,7 +150,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			key := BlobKey{Content: "blob-completed"}
 			for range 2 {
 				r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
@@ -192,7 +193,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					if err := c.Close(); err != nil {
 						t.Fatal(err)
 					}
-					c = newCache(t, root)
+					c = cachetest.New(t, root, New)
 					if r, _, _, err := c.Blob(t.Context(), key, Policy{}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 						t.Fatalf("cold zero-age lookup: reader=%v, error=%v", r, err)
 					}
@@ -251,7 +252,7 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 					if backing == "disk" {
 						root = t.TempDir()
 					}
-					c := newCache(t, root)
+					c := cachetest.New(t, root, New)
 					key := BlobKey{Content: "render-test-v1-payload", PersistOnly: true}
 					for _, content := range []any{"", struct{ Key string }{"render-test-v1-payload"}} {
 						if r, _, id, err := c.Blob(t.Context(), BlobKey{Content: content, PersistOnly: true}, Policy{MaxAge: Forever}, nil); r != nil || id != "" || !errors.Is(err, manifest.ErrInput) {
@@ -285,7 +286,7 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 					if err := c.Close(); err != nil {
 						t.Fatal(err)
 					}
-					c = newCache(t, root)
+					c = cachetest.New(t, root, New)
 					r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 					if persisted {
 						if err != nil {
@@ -365,7 +366,7 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 	processIdentity = "identified"
 	t.Cleanup(func() { processIdentity = original })
 	for _, root := range []string{"", t.TempDir()} {
-		c := newCache(t, root)
+		c := cachetest.New(t, root, New)
 		for _, persistOnly := range []bool{false, true} {
 			if persistOnly && root == "" {
 				continue
@@ -386,7 +387,7 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 			}
 		}
 	}
-	c := newCache(t, t.TempDir())
+	c := cachetest.New(t, t.TempDir(), New)
 	key := BlobKey{Content: "blob-missing-payload"}
 	r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte("payload"), ocispec.Descriptor{}))
 	if err != nil {
@@ -415,7 +416,7 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 
 func TestBlob_ConcurrentPayloads(t *testing.T) {
 	t.Parallel()
-	c := newCache(t, t.TempDir())
+	c := cachetest.New(t, t.TempDir(), New)
 	const workers = 4
 	start := make(chan struct{})
 	var ready, joined sync.WaitGroup

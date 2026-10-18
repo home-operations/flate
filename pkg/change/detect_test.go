@@ -14,20 +14,11 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func writeFile(t *testing.T, dir, rel, body string) {
-	t.Helper()
-	p := filepath.Join(dir, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(p), err)
-	}
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatalf("write %s: %v", p, err)
-	}
-}
 
 func TestDetect_BothPathsRequired(t *testing.T) {
 	t.Parallel()
@@ -43,8 +34,8 @@ func TestDetect_IdenticalTreesEmpty(t *testing.T) {
 	t.Parallel()
 	before := t.TempDir()
 	after := t.TempDir()
-	writeFile(t, before, "a.yaml", "x")
-	writeFile(t, after, "a.yaml", "x")
+	testutil.WriteFile(t, before, "a.yaml", "x")
+	testutil.WriteFile(t, after, "a.yaml", "x")
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
@@ -59,15 +50,15 @@ func TestDetect_AddedRemovedModified(t *testing.T) {
 	before := t.TempDir()
 	after := t.TempDir()
 	// unchanged: ident.yaml on both sides with same content
-	writeFile(t, before, "ident.yaml", "same")
-	writeFile(t, after, "ident.yaml", "same")
+	testutil.WriteFile(t, before, "ident.yaml", "same")
+	testutil.WriteFile(t, after, "ident.yaml", "same")
 	// added: only on after side
-	writeFile(t, after, "added.yaml", "new")
+	testutil.WriteFile(t, after, "added.yaml", "new")
 	// removed: only on before side
-	writeFile(t, before, "removed.yaml", "gone")
+	testutil.WriteFile(t, before, "removed.yaml", "gone")
 	// modified-same-size: trigger the hash path with same byte length
-	writeFile(t, before, "mod.yaml", "AAA")
-	writeFile(t, after, "mod.yaml", "BBB")
+	testutil.WriteFile(t, before, "mod.yaml", "AAA")
+	testutil.WriteFile(t, after, "mod.yaml", "BBB")
 	// Bump mtime so the mtime equality bypass doesn't short-circuit.
 	if err := os.Chtimes(filepath.Join(after, "mod.yaml"), time.Now(), time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -88,8 +79,8 @@ func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
 	// Different sizes: detector should flag without hashing.
 	before := t.TempDir()
 	after := t.TempDir()
-	writeFile(t, before, "f.yaml", "small")
-	writeFile(t, after, "f.yaml", "this is a larger payload")
+	testutil.WriteFile(t, before, "f.yaml", "small")
+	testutil.WriteFile(t, after, "f.yaml", "this is a larger payload")
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
@@ -104,10 +95,10 @@ func TestDetect_HiddenScanRoot(t *testing.T) {
 	parent := t.TempDir()
 	before := filepath.Join(parent, ".before")
 	after := filepath.Join(parent, ".after")
-	writeFile(t, before, "same.yaml", "x")
-	writeFile(t, after, "same.yaml", "x")
-	writeFile(t, before, "mod.yaml", "old")
-	writeFile(t, after, "mod.yaml", "new")
+	testutil.WriteFile(t, before, "same.yaml", "x")
+	testutil.WriteFile(t, after, "same.yaml", "x")
+	testutil.WriteFile(t, before, "mod.yaml", "old")
+	testutil.WriteFile(t, after, "mod.yaml", "new")
 
 	got, err := Detect(t.Context(), testInput(before), testInput(after))
 	if err != nil {
@@ -130,8 +121,8 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 	t.Parallel()
 	before := t.TempDir()
 	after := t.TempDir()
-	writeFile(t, before, "mod.yaml", "OLD")
-	writeFile(t, after, "mod.yaml", "NEW")
+	testutil.WriteFile(t, before, "mod.yaml", "OLD")
+	testutil.WriteFile(t, after, "mod.yaml", "NEW")
 	// Exact same mtime — what the mtime-fast-path used to short-circuit on.
 	stamp := time.Now()
 	if err := os.Chtimes(filepath.Join(before, "mod.yaml"), stamp, stamp); err != nil {
@@ -153,9 +144,9 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 func TestHashFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, dir, "a", "hello")
-	writeFile(t, dir, "b", "hello")
-	writeFile(t, dir, "c", "different")
+	testutil.WriteFile(t, dir, "a", "hello")
+	testutil.WriteFile(t, dir, "b", "hello")
+	testutil.WriteFile(t, dir, "c", "different")
 	ha, err := hashFile(t.Context(), os.DirFS(dir), "a")
 	if err != nil {
 		t.Fatalf("hashFile a: %v", err)

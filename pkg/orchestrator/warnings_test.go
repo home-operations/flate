@@ -131,8 +131,8 @@ spec:
 		t.Fatalf("advisory must not fail the render; Failed=%v", res.Failed)
 	}
 
-	app := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}
-	opaque := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "opaque"}
+	app := testutil.HelmReleaseID("apps", "app")
+	opaque := testutil.HelmReleaseID("apps", "opaque")
 
 	var got *manifest.Warning
 	for i := range res.Warnings {
@@ -161,17 +161,13 @@ spec:
 // itself still succeeds: Secret refs are not hard dependency edges.
 func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: Secret
         name: cluster-secrets
-`)
+`))
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
@@ -217,19 +213,15 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
   url: https://example.test/cluster.git
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substitute: {KEEP: "ok"}
     substituteFrom:
       - kind: Secret
         name: missing
-`)
+`))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
 	testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -259,7 +251,7 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	demo := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+	demo := testutil.HelmReleaseID("apps", "demo")
 	if info, failed := res.Failed[demo]; failed {
 		t.Fatalf("demo should be rescued, not failed; got %+v", info)
 	}
@@ -297,18 +289,14 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
   url: https://example.test/cluster.git
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: Secret
         name: cloudflared-secret
-`)
+`))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./externalsecret.yaml\n  - ./cm.yaml\n")
 	// The ExternalSecret materializing cloudflared-secret enumerates its output

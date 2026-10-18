@@ -42,21 +42,13 @@ func BenchmarkRun_FollowedChain(b *testing.B) {
 			if repo.name == "late_pin" {
 				sourceName, ref = "cluster", "{tag: fixture}"
 			}
-			testutil.WriteFile(b, root, "flux/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: top, namespace: flux-system}
-spec: {path: ./level0, sourceRef: {kind: GitRepository, name: %s}}
-`, sourceName))
+			testutil.WriteFile(b, root, "flux/ks.yaml", testutil.KustomizationYAML("top", "flux-system", "  {path: ./level0, sourceRef: {kind: GitRepository, name: "+sourceName+"}}\n"))
 			for level := range depth {
 				var resources strings.Builder
 				for child := range width {
 					name := fmt.Sprintf("ks%d-%d", level, child)
 					fmt.Fprintf(&resources, "  - %s.yaml\n", name)
-					testutil.WriteFile(b, root, fmt.Sprintf("level%d/%s.yaml", level, name), fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: %s}
-spec: {path: ./level%d, sourceRef: {kind: GitRepository, name: %s}}
-`, name, level+1, sourceName))
+					testutil.WriteFile(b, root, fmt.Sprintf("level%d/%s.yaml", level, name), testutil.KustomizationYAML(name, "", "  {path: ./level"+fmt.Sprintf("%d", level+1)+", sourceRef: {kind: GitRepository, name: "+sourceName+"}}\n"))
 				}
 				testutil.WriteFile(b, root, fmt.Sprintf("level%d/kustomization.yaml", level),
 					"namespace: flux-system\nresources:\n"+resources.String())
@@ -74,34 +66,19 @@ spec:
 				cfg.SelfURLs = []string{"https://example.invalid/self.git"}
 			}
 			if repo.name == "pinned" || repo.name == "late_pin" {
-				r, err := git.PlainInit(root, false)
-				if err != nil {
-					b.Fatal(err)
-				}
+				r := testutil.GitInit(b, root)
 				if err := r.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))); err != nil {
 					b.Fatal(err)
 				}
-				w, err := r.Worktree()
-				if err != nil {
-					b.Fatal(err)
-				}
-				if _, err := w.Add("."); err != nil {
-					b.Fatal(err)
-				}
-				commit, err := w.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "b", Email: "b@e", When: time.Unix(0, 0)}})
-				if err != nil {
-					b.Fatal(err)
-				}
+				commit := testutil.GitCommitAll(b, r, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "b", Email: "b@e", When: time.Unix(0, 0)}})
 				if repo.name == "late_pin" {
 					if _, err := r.CreateTag("fixture", commit, nil); err != nil {
 						b.Fatal(err)
 					}
-					if _, err := w.Commit("head", &git.CommitOptions{
+					testutil.GitCommitAll(b, r, "head", &git.CommitOptions{
 						Author:            &object.Signature{Name: "b", Email: "b@e", When: time.Unix(1, 0)},
 						AllowEmptyCommits: true,
-					}); err != nil {
-						b.Fatal(err)
-					}
+					})
 				}
 			}
 			b.ReportAllocs()
@@ -117,11 +94,7 @@ spec:
 
 func BenchmarkRun_StandaloneSecretProducer(b *testing.B) {
 	root := b.TempDir()
-	testutil.WriteFile(b, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: owner, namespace: flux-system}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}
-`)
+	testutil.WriteFile(b, root, "flux/ks.yaml", testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 	testutil.WriteFile(b, root, "apps/kustomization.yaml", "namespace: secure\nresources: [producer.yaml]\n")
 	testutil.WriteFile(b, root, "apps/producer.yaml", `apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -145,7 +118,7 @@ stringData: {HOST: fixture-value}
 
 func BenchmarkRun_WideDirectory(b *testing.B) {
 	root := b.TempDir()
-	testutil.WriteFile(b, root, "flux/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: wide, namespace: flux-system}\nspec: {path: ./wide, sourceRef: {kind: GitRepository, name: flux-system}}\n")
+	testutil.WriteFile(b, root, "flux/ks.yaml", testutil.KustomizationYAML("wide", "flux-system", "  {path: ./wide, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 	var resources strings.Builder
 	for i := range 4000 {
 		file := fmt.Sprintf("cm-%d.yaml", i)

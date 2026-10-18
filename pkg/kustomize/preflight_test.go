@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -167,7 +169,7 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	child := "resources:\n  - " + srv.URL + "/remote.yaml\n"
-	src := writeTree(t, map[string]string{
+	src := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml":       "resources:\n  - ./child\n",
 		"child/kustomization.yaml": child,
 	})
@@ -362,7 +364,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			}
 			t.Cleanup(srv.Close)
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
-			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := newTestTreeCache(t, "")
 			cache.httpClient = srv.Client()
 			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
@@ -476,7 +478,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 			for name, body := range files {
 				files[name] = strings.ReplaceAll(body, "$URL", url)
 			}
-			root := writeTree(t, files)
+			root := testutil.WriteTree(t, files)
 			cache := newTestTreeCache(t, "")
 			if tc.gitFiles != nil {
 				gitFiles := make(map[string]string, len(tc.gitFiles))

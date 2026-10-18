@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func hrID(name string) manifest.NamedResource {
-	return manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: name}
+	return testutil.HelmReleaseID("default", name)
 }
 
 // TestWarnings_Empty: a fresh store reports nil (not empty slice) — matching

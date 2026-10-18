@@ -6,6 +6,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -26,7 +27,7 @@ func ksWithDeps(name, ns string, sub map[string]any, depNames ...string) *manife
 
 func firstDepName(t *testing.T, s *store.Store, ns, name string) string {
 	t.Helper()
-	ks, ok := s.Get[*manifest.Kustomization](manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: ns, Name: name})
+	ks, ok := s.Get[*manifest.Kustomization](testutil.KustomizationID(ns, name))
 	if !ok {
 		t.Fatalf("Kustomization %s/%s missing from store", ns, name)
 	}

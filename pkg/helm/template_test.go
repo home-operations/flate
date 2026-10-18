@@ -13,7 +13,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestTemplate_CRDsPolicy(t *testing.T) {
@@ -48,7 +50,7 @@ data:
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/crds/widgets.yaml", crd)
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +129,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/crds/a-valid.yaml", cm)
 	testutil.WriteFile(t, dir, "mychart/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +192,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", cm+"---\napiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +232,7 @@ dependencies:
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +284,7 @@ dependencies:
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -333,7 +335,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 // not alias even with identical valuesFiles.
 func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -365,7 +367,7 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 
 func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +394,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 
 func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +509,7 @@ metadata:
 data:
   version: {{ .Capabilities.KubeVersion.Version | quote }}
 `)
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +564,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cli, err := NewClient(newTestCache(t, ""))
+			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 			if err != nil {
 				t.Fatal(err)
 			}

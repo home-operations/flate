@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -146,11 +147,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c, err := cache.New(t.Context(), root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = c.Close() })
+				c := cachetest.New(t, root, cache.New)
 				f := &bucket.Fetcher{Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
 					return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
 				}}
@@ -261,16 +258,12 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 					_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
 				}))
 				t.Cleanup(srv.Close)
-				c, err := cache.New(t.Context(), "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = c.Close() })
+				c := cachetest.New(t, "", cache.New)
 				f := &bucket.Fetcher{Cache: c}
 				if wired {
 					f.Network = new(source.Network)
 				}
-				_, err = f.Fetch(t.Context(), &manifest.Bucket{
+				_, err := f.Fetch(t.Context(), &manifest.Bucket{
 					Name: "retry", Namespace: "test", BucketName: "data",
 					Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
 				}, cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond})
@@ -419,18 +412,14 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			target = srv.URL
-			c, err := cache.New(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = c.Close() })
+			c := cachetest.New(t, "", cache.New)
 			f := &bucket.Fetcher{Cache: c, Network: &network}
 			if route == "list" {
 				if err := latch(); err != nil {
 					t.Fatal(err)
 				}
 			}
-			_, err = f.Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+			_, err := f.Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			wantLists := int32(0)
 			if route == "object" {

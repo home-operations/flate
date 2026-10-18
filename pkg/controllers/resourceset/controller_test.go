@@ -13,6 +13,8 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
@@ -33,22 +35,6 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 		tasks.BlockTillDone()
 	})
 	return c, s
-}
-
-// dispatchToFixpoint drives id through ReconcileNode with escalating
-// drain levels (none→cascade→force), mirroring the scheduler's
-// structural fixpoint, until the node terminalizes (no blocked deps) or
-// drain is exhausted, then returns the final store status. Mirrors the
-// kustomization controller test harness.
-func dispatchToFixpoint(t *testing.T, c *Controller, s *store.Store, id manifest.NamedResource) store.StatusInfo {
-	t.Helper()
-	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
-			break
-		}
-	}
-	info, _ := s.GetStatus(id)
-	return info
 }
 
 func staticRSIP(name, ns string, labels map[string]string, defaults map[string]string) *manifest.ResourceSetInputProvider {
@@ -116,7 +102,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	// RSIP arrives → re-dispatch renders the Widget from its inputs.
 	s.AddObject(staticRSIP("rsip", "flux-system", nil, map[string]string{"user": "alice"}))
 	s.UpdateStatus(want, store.StatusReady, "")
-	info := dispatchToFixpoint(t, c, s, rs.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
@@ -142,7 +128,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	if !c.WantsDrainRerun(rs.Named()) || len(c.collectDeps(rs)) != 0 {
 		t.Fatal("selector-only input must request a rerun without an ID gate")
 	}
-	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("empty render status = %+v, want Ready", info)
 	}
 	if art, _ := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact); art == nil || len(art.Manifests) != 0 {
@@ -195,7 +181,7 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 	if _, err := resourceset.Render(rs, resolve); err == nil {
 		t.Fatal("invalid selector rendered successfully")
 	}
-	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusFailed {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 		t.Fatalf("status=%+v, want Failed", info)
 	}
 	if artifact := s.GetArtifact(rs.Named()); artifact != nil {
@@ -211,30 +197,26 @@ func TestReconcile_EmitsFluxChildToStore(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "fleet", Namespace: "flux-system",
-		ResourcesTemplate: `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child}
-spec:
-  path: ./child
+		ResourcesTemplate: "---\n" +
+			testutil.KustomizationYAML("child", "", `  path: ./child
   sourceRef: {kind: GitRepository, name: flux-system}
----
-apiVersion: apps/v1
+`) + "---\n" +
+			`apiVersion: apps/v1
 kind: Deployment
 metadata: {name: bare}
----
-apiVersion: rbac.authorization.k8s.io/v1
+` + "---\n" +
+			`apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: bare}
 `,
 	}
 	s.AddObject(rs)
 
-	info := dispatchToFixpoint(t, c, s, rs.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
-	childID := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "child"}
+	childID := testutil.KustomizationID("flux-system", "child")
 	child, ok := s.Get[*manifest.Kustomization](childID)
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
@@ -255,7 +237,7 @@ metadata: {name: bare}
 			t.Fatalf("missing effective child %s/%s", want, name)
 		}
 	}
-	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("repeat reconcile: %+v", info)
 	}
 	if delta := cmp.Diff(before, art.Manifests); delta != "" {
@@ -283,7 +265,7 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 				s.AddObject(provider)
 			}
 			s.AddObject(rs)
-			if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("initial render: %+v", info)
 			}
 			artifact := s.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
@@ -304,7 +286,7 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 				changed.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "missing"}}
 				s.AddObject(&changed)
 			}
-			if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusFailed {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 				t.Fatalf("status = %+v, want Failed", info)
 			}
 		})
@@ -340,7 +322,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 kind: ConfigMap
 metadata: {name: output}`}
 	s.AddObject(rs)
-	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("first status = %+v, want Ready", info)
 	}
 	artifact := s.GetArtifact(rs.Named())
@@ -415,16 +397,8 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "fleet", "namespace": "flux-system"},
 				"spec": map[string]any{
-					"inputsFrom": []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
-					"resourcesTemplate": `apiVersion: example.com/v1
-kind: Widget
-metadata: {name: stale-output}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: rs-refresh-child}
-spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
-`,
+					"inputsFrom":        []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
+					"resourcesTemplate": "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: stale-output}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n"),
 				},
 			}
 			children, _ := c.Emit(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Named().Namespace}, true)
@@ -438,15 +412,7 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 			}
 			st.UpdateStatus(rs.Named(), store.StatusPending, "")
 			replacement := manifest.DeepCopyMap(doc)
-			replacement["spec"].(map[string]any)["resourcesTemplate"] = `apiVersion: example.com/v1
-kind: Widget
-metadata: {name: << inputs.user >>}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: rs-refresh-child}
-spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
-`
+			replacement["spec"].(map[string]any)["resourcesTemplate"] = "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n")
 			if suspended {
 				replacement["metadata"].(map[string]any)["annotations"] = map[string]any{fluxopv1.ReconcileAnnotation: fluxopv1.DisabledValue}
 			}
@@ -486,7 +452,7 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 			}
 			info, _ := st.GetStatus(rs.Named())
 			art, _ := st.GetArtifact(rs.Named()).(*store.ResourceSetArtifact)
-			child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "rs-refresh-child"}
+			child := testutil.KustomizationID("flux-system", "rs-refresh-child")
 			if suspended {
 				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
 					t.Errorf("status = %+v, want Ready/suspended", info)
@@ -527,7 +493,7 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 1 || blocked[0] != want {
 		t.Fatalf("blocked = %v, want [%s]", blocked, want)
 	}
-	if info := dispatchToFixpoint(t, c, s, rs.Named()); info.Status != store.StatusFailed {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want Failed", info)
 	}
 	if art := s.GetArtifact(rs.Named()); art != nil {

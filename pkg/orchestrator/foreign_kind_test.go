@@ -18,18 +18,7 @@ import (
 // status, no fetch, and still present in the parent's output.
 func TestOrchestrator_ForeignBucketKindNotFetched(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- bucket.yaml\n")
 	testutil.WriteFile(t, dir, "apps/bucket.yaml", `apiVersion: seaweed.seaweedfs.com/v1
 kind: Bucket
@@ -70,7 +59,7 @@ spec:
 
 	// The resource still renders — dropping it would show up in a diff as a
 	// deletion of a live resource.
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ksID := testutil.KustomizationID("flux-system", "apps")
 	var found bool
 	for _, doc := range res.Manifests[ksID] {
 		name, ns := manifest.DocMetadata(doc)

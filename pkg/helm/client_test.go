@@ -2,14 +2,17 @@ package helm
 
 import (
 	"errors"
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
-	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"os"
 	"sync"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 func TestLoadChart_ValidationAcrossSources(t *testing.T) {
@@ -25,7 +28,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
 			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
-			cli, err := NewClient(newTestCache(t, ""))
+			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +51,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	second := t.TempDir()
 	writeChartFiles(t, second, "podinfo", "6.15.0")
 	testutil.WriteFile(t, second, "prod.yaml", "marker: second\n")
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +79,7 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	t.Parallel()
 	st, hr, dir := ociRenderFixture(t)
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}

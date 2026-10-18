@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func cm(name, ns, key, value string) Doc {
@@ -16,7 +16,7 @@ func cm(name, ns, key, value string) Doc {
 			},
 			"data": map[string]any{"k": value},
 		},
-		Parent: Parent{NamedResource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: ns, Name: key}},
+		Parent: Parent{NamedResource: testutil.HelmReleaseID(ns, key)},
 	}
 }
 

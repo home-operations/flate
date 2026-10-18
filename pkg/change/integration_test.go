@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -41,103 +42,69 @@ func TestIntegration_KeepCascadeIsBlockedByAncestorOnlyEmitter(t *testing.T) {
 
 	// Root sources + cluster-apps KS that fans out into media-apps
 	// and db-apps.
-	mustWrite(t, filepath.Join(dir, "kubernetes/flux/cluster.yaml"), `---
-apiVersion: source.toolkit.fluxcd.io/v1
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/flux/cluster.yaml"), "---\n"+
+		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
   name: flux-system
   namespace: flux-system
 spec:
   url: https://example.test/cluster.git
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: cluster-apps
-  namespace: flux-system
-spec:
-  interval: 10m
+`+"---\n"+
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`)
+`))
 
 	// Intermediate ancestors per subtree.
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/media/ks.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: media-apps
-  namespace: flux-system
-spec:
-  interval: 10m
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/ks.yaml"), testutil.KustomizationYAML("media-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/media
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`)
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/db/ks.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: db-apps
-  namespace: flux-system
-spec:
-  interval: 10m
+`))
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/ks.yaml"), testutil.KustomizationYAML("db-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/db
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`)
+`))
 
 	// Leaf KSes — each owns its own spec.path directly.
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/media/plex/ks.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: plex
-  namespace: media
-spec:
-  interval: 10m
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/ks.yaml"), testutil.KustomizationYAML("plex", "media", `  interval: 10m
   path: ./kubernetes/apps/media/plex/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`)
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/db/postgres/ks.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: postgres
-  namespace: db
-spec:
-  interval: 10m
+`))
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/ks.yaml"), testutil.KustomizationYAML("postgres", "db", `  interval: 10m
   path: ./kubernetes/apps/db/postgres/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`)
+`))
 
 	// Each leaf's app/ subtree gets an empty kustomization.yaml so
 	// kustomize doesn't error out at render time.
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
 
 	// The change touches plex's CM only.
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -146,7 +113,7 @@ metadata:
 data:
   changed: "yes"
 `)
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -174,9 +141,9 @@ data:
 	// Resolve every KS's final status. The keep-cascade fix means
 	// the db side stays MsgUnchanged — proof its reconcile body
 	// never ran.
-	plex := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
-	postgres := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "db", Name: "postgres"}
-	dbApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "db-apps"}
+	plex := testutil.KustomizationID("media", "plex")
+	postgres := testutil.KustomizationID("db", "postgres")
+	dbApps := testutil.KustomizationID("flux-system", "db-apps")
 
 	requireReconciled := func(id manifest.NamedResource) {
 		t.Helper()

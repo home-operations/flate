@@ -4,21 +4,18 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func ksDep(name string) manifest.DependencyRef {
-	return manifest.DependencyRef{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
-}
-
 func TestClassify_CoreStates(t *testing.T) {
 	s := store.New()
-	ready := ksDep("ready")
-	failed := ksDep("failed")
-	pending := ksDep("pending")
+	ready := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "ready")}
+	failed := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "failed")}
+	pending := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "pending")}
 	statusless := manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
-	absent := ksDep("absent")
+	absent := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "absent")}
 	s.AddObject(&manifest.Kustomization{Name: ready.Name, Namespace: ready.Namespace})
 	s.UpdateStatus(ready.NamedResource, store.StatusReady, "")
 	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "boom")
@@ -101,7 +98,7 @@ func TestClassify_CoreStates(t *testing.T) {
 func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	dep := ksDep("infra")
+	dep := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "infra")}
 	s.UpdateStatus(dep.NamedResource, store.StatusReady, "")
 	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
 

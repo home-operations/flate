@@ -34,22 +34,22 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 	}{
 		{name: "named_ready", files: map[string]string{
 			"flux/kustomization.yaml": "resources: [ks.yaml, ../apps]\n",
-			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"flux/ks.yaml":            testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, targetNamespace: media, sourceRef: {kind: GitRepository, name: cluster}}\n"),
 			"apps/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"media"}},
 		{name: "claim_only", files: map[string]string{
-			"flux/ks.yaml": "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps}\n",
+			"flux/ks.yaml": testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps}\n"),
 		}, scans: []string{"flux", "apps"}, want: []string{""}},
 		{name: "self_claim", files: map[string]string{
 			"apps/kustomization.yaml": "resources: [ks.yaml, hr.yaml]\n",
-			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner}\nspec: {path: ./apps, targetNamespace: media}\n",
+			"apps/ks.yaml":            testutil.KustomizationYAML("owner", "", "  {path: ./apps, targetNamespace: media}\n"),
 		}, scans: []string{"apps"}, want: []string{"media"}},
 		{name: "pinned_namespace", pinned: true, files: map[string]string{
-			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: pinned, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"flux/ks.yaml":            testutil.KustomizationYAML("pinned", "flux-system", "  {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n"),
 			"apps/kustomization.yaml": "namespace: dirty\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"apps"}},
 		{name: "alias_namespace", alias: true, files: map[string]string{
-			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"flux/ks.yaml":            testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, targetNamespace: apps, sourceRef: {kind: GitRepository, name: cluster}}\n"),
 			"apps/kustomization.yaml": "namespace: dirty\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"apps"}},
 		{name: "standalone", files: map[string]string{
@@ -65,25 +65,25 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"leaf/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"apps"}, want: []string{"outer"}},
 		{name: "flux_target", files: map[string]string{
-			"flux/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media}\n",
+			"flux/ks.yaml":            testutil.KustomizationYAML("apps", "flux-system", "  {path: ./apps, targetNamespace: media}\n"),
 			"apps/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"media"}},
 		{name: "nested_claim_fallback", hrDir: "apps/nested", files: map[string]string{
-			"flux/outer.yaml":                "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: outer, namespace: flux-system}\nspec: {path: ./apps}\n",
-			"flux/inner.yaml":                "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: inner, namespace: flux-system}\nspec: {path: ./apps/nested, targetNamespace: shifted}\n",
+			"flux/outer.yaml":                testutil.KustomizationYAML("outer", "flux-system", "  {path: ./apps}\n"),
+			"flux/inner.yaml":                testutil.KustomizationYAML("inner", "flux-system", "  {path: ./apps/nested, targetNamespace: shifted}\n"),
 			"apps/kustomization.yaml":        "resources: [nested]\n",
 			"apps/nested/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"flux", "apps"}, want: []string{"shifted"}},
 		{name: "shared_base", files: map[string]string{
-			"flux/red.yaml":           "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: red, namespace: flux-system}\nspec: {path: ./red}\n",
-			"flux/blue.yaml":          "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: blue, namespace: flux-system}\nspec: {path: ./blue}\n",
+			"flux/red.yaml":           testutil.KustomizationYAML("red", "flux-system", "  {path: ./red}\n"),
+			"flux/blue.yaml":          testutil.KustomizationYAML("blue", "flux-system", "  {path: ./blue}\n"),
 			"red/kustomization.yaml":  "namespace: red\nresources: [../base]\n",
 			"blue/kustomization.yaml": "namespace: blue\nresources: [../base]\n",
 			"base/kustomization.yaml": "namespace: inner\nresources: [hr.yaml]\n",
 		}, scans: []string{"flux", "red", "blue"}, want: []string{"red", "blue"}},
 		{name: "shared_fallbacks", files: map[string]string{
-			"flux/red.yaml":           "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: red, namespace: red}\nspec: {path: ./base, targetNamespace: red}\n",
-			"flux/blue.yaml":          "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: blue, namespace: blue}\nspec: {path: ./base}\n",
+			"flux/red.yaml":           testutil.KustomizationYAML("red", "red", "  {path: ./base, targetNamespace: red}\n"),
+			"flux/blue.yaml":          testutil.KustomizationYAML("blue", "blue", "  {path: ./base}\n"),
 			"base/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"flux", "base"}, want: []string{"", "red"}},
 		{name: "shared_transformer_contexts", files: map[string]string{
@@ -91,7 +91,7 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
 			"transformers/kustomization.yaml":      "resources: [transformer.yaml]\n",
 			"transformers/transformer.yaml":        namespaceTransformer,
-			"apps/ks.yaml":                         "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: myapp, namespace: flux-system}\nspec: {path: ./output, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"apps/ks.yaml":                         testutil.KustomizationYAML("myapp", "flux-system", "  {path: ./output, sourceRef: {kind: GitRepository, name: cluster}}\n"),
 			"other/kustomization.yaml":             "namespace: other\nresources: [../apps/ks.yaml]\n",
 		}, scans: []string{"apps", "other"}, want: []string{"myns"}, wantKS: []string{"myns", "other"}},
 		{name: "mixed_transformer_contexts", files: map[string]string{
@@ -99,7 +99,7 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
 			"transformers/kustomization.yaml":      "resources: [transformer.yaml]\n",
 			"transformers/transformer.yaml":        namespaceTransformer,
-			"apps/ks.yaml":                         "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: myapp, namespace: flux-system}\nspec: {path: ./output, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"apps/ks.yaml":                         testutil.KustomizationYAML("myapp", "flux-system", "  {path: ./output, sourceRef: {kind: GitRepository, name: cluster}}\n"),
 			"other/kustomization.yaml":             "resources: [../apps/ks.yaml]\n",
 		}, scans: []string{"apps", "other"}, want: []string{"myns"}, wantKS: []string{"flux-system", "myns"}},
 		{name: "self_claim_transformer_fallback", files: map[string]string{
@@ -107,11 +107,11 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 			"apps/transformers/kustomization.yaml": "namespace: myns\nresources: [../../transformers]\n",
 			"transformers/kustomization.yaml":      "resources: [transformer.yaml]\n",
 			"transformers/transformer.yaml":        namespaceTransformer,
-			"apps/ks.yaml":                         "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: myapp, namespace: flux-system}\nspec: {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n",
+			"apps/ks.yaml":                         testutil.KustomizationYAML("myapp", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n"),
 		}, scans: []string{"apps"}, want: []string{"myns"}, wantKS: []string{"myns"}},
 		{name: "cross_tree", files: map[string]string{
 			"apps/kustomization.yaml": "namespace: games\nresources: [ks.yaml]\n",
-			"apps/ks.yaml":            "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: games}\nspec: {path: ./base, dependsOn: [{name: prerequisite}]}\n",
+			"apps/ks.yaml":            testutil.KustomizationYAML("games", "", "  {path: ./base, dependsOn: [{name: prerequisite}]}\n"),
 			"base/kustomization.yaml": "resources: [hr.yaml]\n",
 		}, scans: []string{"apps", "base"}, want: []string{""}},
 	} {
@@ -175,7 +175,7 @@ spec:
 				}
 				if tc.name == "named_ready" && scan == "flux" {
 					l.ApplyNamespaces(root)
-					if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "app"}); !ok {
+					if _, ok := l.Index.Lookup(testutil.HelmReleaseID("", "app")); !ok {
 						t.Fatalf("unresolved source records before loading its path: %+v", l.Index.Records)
 					}
 					source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
@@ -193,7 +193,7 @@ spec:
 			var original, snapshot *manifest.Kustomization
 			var raw manifest.DiscoveryRecord
 			if len(tc.wantKS) != 0 {
-				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
+				id := testutil.KustomizationID("flux-system", "myapp")
 				original, _ = l.Store.Get[*manifest.Kustomization](id)
 				if original == nil {
 					t.Fatal("authored Kustomization missing")
@@ -214,27 +214,27 @@ spec:
 					}
 				}
 				for _, ns := range tc.wantKS {
-					id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
+					id := testutil.KustomizationID(ns, "myapp")
 					want[id] = []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: ns, Name: "cluster"}}
 				}
 				assert.Diff(t, got, want)
 			}
 			if tc.name == "self_claim" {
-				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "owner"}
+				id := testutil.KustomizationID("", "owner")
 				if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) == nil {
 					t.Fatal("Kustomization inherited its own targetNamespace as its identity")
 				}
 			}
 			if tc.pinned {
 				l.FinalizeIndex(root, nil)
-				r, _ := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"})
+				r, _ := l.Index.Lookup(testutil.HelmReleaseID("apps", "app"))
 				readers := l.Index.Readers[r.File]
-				if len(readers) != 1 || readers[0] != (manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "pinned"}) {
+				if len(readers) != 1 || readers[0] != (testutil.KustomizationID("flux-system", "pinned")) {
 					t.Fatalf("committed source file %q readers = %v", r.File, readers)
 				}
 			}
 			if tc.name == "cross_tree" {
-				ks, ok := l.Store.Get[*manifest.Kustomization](manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "games", Name: "games"})
+				ks, ok := l.Store.Get[*manifest.Kustomization](testutil.KustomizationID("games", "games"))
 				if !ok {
 					t.Fatal("projected Kustomization missing")
 				}
@@ -249,7 +249,7 @@ spec:
 				}
 			}
 			for _, ns := range tc.want {
-				id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: ns, Name: "app"}
+				id := testutil.HelmReleaseID(ns, "app")
 				r, ok := l.Index.Lookup(id)
 				if !ok || len(r.Refs) != 3 {
 					t.Fatalf("%s record=%+v present=%t", id, r, ok)
@@ -264,13 +264,13 @@ spec:
 				}
 
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "app"}); ok && !slices.Contains(tc.want, "") {
+			if _, ok := l.Index.Lookup(testutil.HelmReleaseID("", "app")); ok && !slices.Contains(tc.want, "") {
 				t.Fatal("stale raw consumer record")
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}); ok {
+			if _, ok := l.Index.Lookup(testutil.HelmReleaseID("flux-system", "app")); ok {
 				t.Fatal("ancestor fallback retained a stale consumer identity")
 			}
-			if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "inner", Name: "app"}); ok {
+			if _, ok := l.Index.Lookup(testutil.HelmReleaseID("inner", "app")); ok {
 				t.Fatal("inner base namespace must not override its overlay")
 			}
 		})
@@ -279,14 +279,14 @@ spec:
 	t.Run("subtree_availability", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "flux/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media, sourceRef: {kind: OCIRepository, name: source}}\n")
+		testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("parent", "flux-system", "  {path: ./apps, targetNamespace: media, sourceRef: {kind: OCIRepository, name: source}}\n"))
 		testutil.WriteFile(t, root, "kubernetes/apps/kustomization.yaml", "resources: [child.yaml, explicit.yaml]\n")
 		for _, name := range []string{"child", "explicit"} {
-			metadata := "name: " + name
+			namespace := ""
 			if name == "explicit" {
-				metadata += ", namespace: control"
+				namespace = "control"
 			}
-			testutil.WriteFile(t, root, "kubernetes/apps/"+name+".yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {"+metadata+"}\nspec: {path: ./output, sourceRef: {kind: OCIRepository, name: source, namespace: flux-system}}\n")
+			testutil.WriteFile(t, root, "kubernetes/apps/"+name+".yaml", testutil.KustomizationYAML(name, namespace, "  {path: ./output, sourceRef: {kind: OCIRepository, name: source, namespace: flux-system}}\n"))
 		}
 		st := store.New()
 		l := loaderFixture(st, nil)
@@ -297,7 +297,7 @@ spec:
 				t.Fatal(err)
 			}
 		}
-		owner, _ := st.Get[*manifest.Kustomization](manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"})
+		owner, _ := st.Get[*manifest.Kustomization](testutil.KustomizationID("flux-system", "parent"))
 		if owner == nil {
 			t.Fatal("parent missing")
 		}
@@ -306,8 +306,8 @@ spec:
 			t.Fatal("unavailable source borrowed bootstrap coordinates")
 		}
 		for _, id := range []manifest.NamedResource{
-			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "child"},
-			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "explicit", Namespace: "control"},
+			testutil.KustomizationID("", "child"),
+			testutil.KustomizationID("control", "explicit"),
 		} {
 			if _, ok := l.Index.Lookup(id); !ok {
 				t.Fatalf("unavailable source changed raw identity %s", id)
@@ -329,7 +329,7 @@ spec:
 		}
 		raw := map[string]manifest.DiscoveryRecord{}
 		for _, name := range []string{"child", "explicit"} {
-			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: name}
+			id := testutil.KustomizationID("", name)
 			if name == "explicit" {
 				id.Namespace = "control"
 			}
@@ -343,7 +343,7 @@ spec:
 		}
 		l.ApplyNamespaces(root)
 		for _, name := range []string{"child", "explicit"} {
-			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "media", Name: name}
+			id := testutil.KustomizationID("media", name)
 			record, ok := l.Index.Lookup(id)
 			if !ok || st.GetObject(id) == nil || record.File != raw[name].File || record.Path != filepath.Join(mount, "apps", name+".yaml") || record.Path != raw[name].Path {
 				t.Fatalf("projected %s record=%+v, raw=%+v", id, record, raw[name])
@@ -351,7 +351,7 @@ spec:
 		}
 		l.FinalizeIndex(root, nil)
 		for _, name := range []string{"child", "explicit"} {
-			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "media", Name: name}
+			id := testutil.KustomizationID("media", name)
 			record, ok := l.Index.Lookup(id)
 			if !ok || record.Parent != owner.Named() || record.File != "kubernetes/apps/"+name+".yaml" || record.Path != raw[name].Path {
 				t.Fatalf("finalized %s record=%+v", id, record)
@@ -366,11 +366,7 @@ spec:
 		t.Parallel()
 		root := t.TempDir()
 		writeFile(t, root, "apps/kustomization.yaml", "namespace: immich\nresources: [ks.yaml]\n")
-		writeFile(t, root, "apps/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: immich-db, namespace: pg}
-spec: {path: ./output, targetNamespace: pg}
-`)
+		writeFile(t, root, "apps/ks.yaml", testutil.KustomizationYAML("immich-db", "pg", "  {path: ./output, targetNamespace: pg}\n"))
 		l := loaderFixture(store.New(), nil)
 		l.SourceRoot = root
 		if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
@@ -378,7 +374,7 @@ spec: {path: ./output, targetNamespace: pg}
 		}
 		l.ApplyNamespaces(root)
 		l.FinalizeIndex(root, nil)
-		canonical := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "immich", Name: "immich-db"}
+		canonical := testutil.KustomizationID("immich", "immich-db")
 		ks, ok := l.Store.Get[*manifest.Kustomization](canonical)
 		if !ok || ks.TargetNamespace != "pg" {
 			t.Fatalf("canonical declaration = %+v, want targetNamespace pg", ks)
@@ -386,7 +382,7 @@ spec: {path: ./output, targetNamespace: pg}
 		if _, ok := l.Index.Lookup(canonical); !ok {
 			t.Fatal("canonical declaration missing from finalized index")
 		}
-		stale := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "pg", Name: "immich-db"}
+		stale := testutil.KustomizationID("pg", "immich-db")
 		_, indexed := l.Index.Lookup(stale)
 		if l.Store.GetObject(stale) != nil || indexed {
 			t.Fatal("stale pg/immich-db declaration survived projection")

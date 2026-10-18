@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
@@ -26,8 +25,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 			t.Parallel()
 			parent := t.TempDir()
 			if tc.ancestor || tc.linked {
-				_, err := git.PlainInit(parent, false)
-				assert.Equal(t, err, nil)
+				testutil.GitInit(t, parent)
 			}
 			root := filepath.Join(parent, "nested")
 			wantRoot := ""
@@ -65,8 +63,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 	t.Run("metadata error boundary", func(t *testing.T) {
 		t.Parallel()
 		outer := t.TempDir()
-		_, err := git.PlainInit(outer, false)
-		assert.Equal(t, err, nil)
+		testutil.GitInit(t, outer)
 		root := filepath.Join(outer, "broken")
 		assert.Equal(t, os.Mkdir(root, 0o750), nil)
 		child := filepath.Join(root, "exported")
@@ -90,8 +87,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 	t.Run("retained coordinates and configuration", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		_, err := git.PlainInit(root, false)
-		assert.Equal(t, err, nil)
+		testutil.GitInit(t, root)
 		testutil.WriteFile(t, root, ".git/config", "[remote \"origin\"]\nurl = https://host/original\n")
 		content := filepath.Join(root, "content")
 		assert.Equal(t, os.Mkdir(content, 0o750), nil)
@@ -112,12 +108,10 @@ func TestLocate_RepositorySelection(t *testing.T) {
 	t.Run("explicit root owns nested repositories", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		_, err := git.PlainInit(root, false)
-		assert.Equal(t, err, nil)
+		testutil.GitInit(t, root)
 		testutil.WriteFile(t, root, ".git/config", "[remote \"origin\"]\nurl = https://host/outer\n")
 		nested := filepath.Join(root, "nested")
-		_, err = git.PlainInit(nested, false)
-		assert.Equal(t, err, nil)
+		testutil.GitInit(t, nested)
 		testutil.WriteFile(t, nested, ".git/config", "[remote \"origin\"]\nurl = https://host/inner\n")
 		location, err := Locate(t.Context(), nested, root)
 		assert.Equal(t, err, nil)

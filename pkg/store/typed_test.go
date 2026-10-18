@@ -3,6 +3,7 @@ package store_test
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -29,7 +30,7 @@ func TestGet_ReturnsTypedObject(t *testing.T) {
 func TestGet_MissReturnsZeroFalse(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "ghost"}
+	id := testutil.KustomizationID("flux-system", "ghost")
 
 	got, ok := s.Get[*manifest.Kustomization](id)
 	if ok {
@@ -50,7 +51,7 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
 	s.AddObject(hr)
 
-	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
+	id := testutil.HelmReleaseID("default", "demo")
 	got, ok := s.Get[*manifest.Kustomization](id)
 	if ok {
 		t.Errorf("Get with wrong type should miss; got hit %v", got)
@@ -62,7 +63,7 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 // (zero, false) without panic.
 func TestGet_NilStoreSafe(t *testing.T) {
 	t.Parallel()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "x"}
+	id := testutil.KustomizationID("flux-system", "x")
 	if got, ok := (*store.Store)(nil).Get[*manifest.Kustomization](id); ok || got != nil {
 		t.Errorf("nil store: want (nil, false); got (%v, %v)", got, ok)
 	}

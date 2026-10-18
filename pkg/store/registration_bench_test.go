@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -22,7 +23,7 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/workers=%d", mode, workers), func(b *testing.B) {
 				s, ids, versions := registrationFixture(mode)
 				tasks := task.NewBounded(workers)
-				consumer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "consumer"}
+				consumer := testutil.KustomizationID("ns", "consumer")
 				s.AddObject(&manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace})
 				other := &manifest.Secret{Name: "unqueried", Namespace: "ns"}
 				unrelated := &manifest.ConfigMap{Name: "unrelated", Namespace: "ns"}
@@ -90,7 +91,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 			s, ids, versions := registrationFixture("repeated")
 			consumers := make([]manifest.NamedResource, registrationReads)
 			for i := range consumers {
-				consumers[i] = manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: fmt.Sprintf("consumer-%05d", i)}
+				consumers[i] = testutil.KustomizationID("ns", fmt.Sprintf("consumer-%05d", i))
 				s.AddObject(&manifest.Kustomization{Name: consumers[i].Name, Namespace: consumers[i].Namespace})
 				s.UpdateStatus(consumers[i], StatusReady, "")
 			}

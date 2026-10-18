@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+
 	"github.com/go-git/go-git/v5/config"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -30,15 +33,8 @@ func TestE2E_MissingLocalInputDiagnostics(t *testing.T) {
 		name, manifest, diagnostic string
 	}{
 		{
-			name: "resource",
-			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: probe, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-`,
+			name:       "resource",
+			manifest:   testutil.KustomizationYAML("probe", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"),
 			diagnostic: "resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist",
 		},
 		{
@@ -89,13 +85,7 @@ spec: {url: https://fixture.invalid/cluster.git}
 
 func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "flux/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+	testutil.WriteFile(t, root, "flux/apps.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [missing.yaml]\n")
 	stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", root, "--path-orig", root,
 		"--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress", "-o", "diff")
@@ -139,14 +129,7 @@ metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
 		for _, name := range []string{"a", "b"} {
-			testutil.WriteFile(t, side.path, "shared/"+name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+name+`, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./shared
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+			testutil.WriteFile(t, side.path, "shared/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  interval: 10m\n  path: ./shared\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 		}
 		testutil.WriteFile(t, side.path, "shared/kustomization.yaml", "resources: [a.yaml, b.yaml, cm.yaml]\n")
 		testutil.WriteFile(t, side.path, "shared/cm.yaml", `apiVersion: v1
@@ -207,29 +190,25 @@ data:
 func initSelfRefGitFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	repo := harness.GitInit(t, dir)
+	repo := testutil.GitInit(t, dir)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
 		Name: "origin", URLs: []string{"https://github.com/example/cluster.git"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	writeFile := func(rel, body string) { testutil.WriteFile(t, dir, rel, body) }
-	writeFile("k8s/flux/entry.yaml", `---
-apiVersion: source.toolkit.fluxcd.io/v1
+	writeFile("k8s/flux/entry.yaml", "---\n"+
+		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
 spec:
   url: ssh://git@github.com/example/cluster.git
   secretRef: {name: deploy-key}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./k8s/apps
   sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
-`)
+`))
 	writeFile("k8s/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	writeFile("k8s/apps/cm.yaml", `---
 apiVersion: v1
@@ -238,14 +217,15 @@ metadata: {name: hello, namespace: apps}
 data:
   value: original
 `)
-	harness.GitCommitAll(t, repo)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	return dir
 }
 
 func TestE2E_DiffImagesRequiresBaselineWhenNoGit(t *testing.T) {
 	// Copy to a tempdir with no .git ancestor (t.TempDir's parent
 	// chain stops at the OS temp root, which has no .git).
-	dir := harness.CopyTree(t, harness.TestdataPath(t, "simple"))
+	dir := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
 	out, code := harness.RunCLIExpectErr(t, "diff", "images", "--path", dir)
 	if code == 0 {
 		t.Fatalf("expected non-zero exit with no baseline source, got 0:\n%s", out)
@@ -266,14 +246,7 @@ func TestE2E_BootstrapErrorSurfacesNotMasked(t *testing.T) {
 	// returns it; Render nils the Result; the CLI must surface the
 	// underlying error rather than running the testrunner on partial
 	// state.
-	testutil.WriteFile(t, dir, "ks.yaml", `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "rs.yaml", `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
@@ -307,24 +280,10 @@ func TestE2E_ExternalSourcedWidePathDoesNotBlockCluster(t *testing.T) {
 	// Root entry: cluster-apps renders ./kubernetes/apps from the bootstrap
 	// source. Its file lives under ./kubernetes/flux, so the wide sync path
 	// ./kubernetes is its only structural ancestor — the trap.
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster.yaml", `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources: [./app-a.yaml, ./sync.yaml]\n")
 	// A normal app sourced from the bootstrap tree — must pass.
-	testutil.WriteFile(t, dir, "kubernetes/apps/app-a.yaml", `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: app-a, namespace: default}
-spec:
-  path: ./kubernetes/apps/app-a
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/app-a.yaml", testutil.KustomizationYAML("app-a", "default", "  path: ./kubernetes/apps/app-a\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "kubernetes/apps/app-a/kustomization.yaml", "resources: [./cm.yaml]\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/app-a/cm.yaml", `---
 apiVersion: v1
@@ -333,22 +292,18 @@ metadata: {name: app-a, namespace: default}
 data: {k: v}
 `)
 	// The trap: a sync KS with a WIDE path, sourced from an external private repo.
-	testutil.WriteFile(t, dir, "kubernetes/apps/sync.yaml", `---
-apiVersion: source.toolkit.fluxcd.io/v1
+	testutil.WriteFile(t, dir, "kubernetes/apps/sync.yaml", "---\n"+
+		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: side-repo, namespace: flux-system}
 spec:
   url: ssh://git@github.com/someone/private-side-repo.git
   ref: {branch: main}
   secretRef: {name: side-repo-deploy}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: side-sync, namespace: flux-system}
-spec:
-  path: ./kubernetes
+`+"---\n"+
+		testutil.KustomizationYAML("side-sync", "flux-system", `  path: ./kubernetes
   sourceRef: {kind: GitRepository, name: side-repo, namespace: flux-system}
-`)
+`))
 
 	// --allow-missing-secrets soft-skips the external source; a skip is not a
 	// failure so the run is clean (harness.RunCLI requires exit 0).
@@ -374,13 +329,7 @@ func TestE2E_OrphanParentSource(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "kubernetes/flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: local-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+			testutil.WriteFile(t, dir, "kubernetes/flux/ks.yaml", testutil.KustomizationYAML("local-apps", "flux-system", "  path: ./kubernetes/apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			resources := "resources: [configmap.yaml]\n"
 			if tc.external {
 				resources = "resources: [configmap.yaml, external.yaml]\n"
@@ -390,14 +339,10 @@ metadata: {name: external, namespace: flux-system}
 spec:
   url: https://fixture.invalid/external
   secretRef: {name: missing-auth}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: external-parent, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps/orphan
+`+"---\n"+
+					testutil.KustomizationYAML("external-parent", "flux-system", `  path: ./kubernetes/apps/orphan
   sourceRef: {kind: GitRepository, name: external}
-`)
+`))
 			}
 			testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", resources)
 			testutil.WriteFile(t, dir, "kubernetes/apps/configmap.yaml", `apiVersion: v1
@@ -405,13 +350,7 @@ kind: ConfigMap
 metadata: {name: healthy-output}
 data: {value: rendered}
 `)
-			testutil.WriteFile(t, dir, "kubernetes/apps/orphan/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: orphan, namespace: flux-system}
-spec:
-  path: ./missing
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+			testutil.WriteFile(t, dir, "kubernetes/apps/orphan/ks.yaml", testutil.KustomizationYAML("orphan", "flux-system", "  path: ./missing\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", dir,
 				"--allow-missing-secrets", "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
 			if code != 0 || !strings.Contains(stdout, "name: healthy-output") || strings.Contains(stdout, "name: orphan\n") {
@@ -423,8 +362,10 @@ spec:
 
 func TestE2E_ComponentChangePropagatesToAllConsumers(t *testing.T) {
 	src := harness.TestdataPath(t, "components")
-	orig := harness.CopyTree(t, src)
-	current := harness.CopyTree(t, src)
+	orig := t.TempDir()
+	testutil.CopyTree(t, src, orig)
+	current := t.TempDir()
+	testutil.CopyTree(t, src, current)
 
 	// Mutate the shared component in only the "current" tree.
 	harness.MutateFile(t, filepath.Join(current, "components", "shared", "shared-cm.yaml"), "value: original", "value: changed")
@@ -448,8 +389,10 @@ func TestE2E_ComponentChangePropagatesToAllConsumers(t *testing.T) {
 
 func TestE2E_NonSharedChangeDoesNotPropagate(t *testing.T) {
 	src := harness.TestdataPath(t, "components")
-	orig := harness.CopyTree(t, src)
-	current := harness.CopyTree(t, src)
+	orig := t.TempDir()
+	testutil.CopyTree(t, src, orig)
+	current := t.TempDir()
+	testutil.CopyTree(t, src, current)
 
 	harness.MutateFile(t, filepath.Join(current, "apps", "app-a", "cm.yaml"), "app: app-a", "app: app-a-edited")
 
@@ -466,7 +409,8 @@ func TestE2E_NonSharedChangeDoesNotPropagate(t *testing.T) {
 }
 
 func TestE2E_SkipKindsAppliesToKustomizationOutput(t *testing.T) {
-	root := harness.CopyTree(t, harness.TestdataPath(t, "skip-kinds"))
+	root := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "skip-kinds"), root)
 	for _, tc := range []struct {
 		name                        string
 		args                        []string
@@ -508,7 +452,8 @@ func TestE2E_SkipKindsAppliesToKustomizationOutput(t *testing.T) {
 
 func TestE2E_OrphanedKustomizationNotDiscovered(t *testing.T) {
 	src := harness.TestdataPath(t, "orphans")
-	root := harness.CopyTree(t, src)
+	root := t.TempDir()
+	testutil.CopyTree(t, src, root)
 
 	out := harness.RunCLI(t, "test", "ks", "--path", root)
 
@@ -527,22 +472,18 @@ func TestE2E_OrphanedKustomizationNotDiscovered(t *testing.T) {
 func initGitFixture(t *testing.T) (clusterPath, repoRoot string) {
 	t.Helper()
 	dir := t.TempDir()
-	repo := harness.GitInit(t, dir)
+	repo := testutil.GitInit(t, dir)
 	writeFile := func(rel, body string) { testutil.WriteFile(t, dir, rel, body) }
-	writeFile("kubernetes/flux/cluster.yaml", `---
-apiVersion: source.toolkit.fluxcd.io/v1
+	writeFile("kubernetes/flux/cluster.yaml", "---\n"+
+		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: "https://example.test/x.git"}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+`))
 	writeFile("kubernetes/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	writeFile("kubernetes/apps/cm.yaml", `---
 apiVersion: v1
@@ -551,7 +492,7 @@ metadata: {name: hello, namespace: apps}
 data:
   value: original
 `)
-	harness.GitCommitAll(t, repo)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	return filepath.Join(dir, "kubernetes", "flux"), dir
 }
 
@@ -581,7 +522,7 @@ func TestE2E_MalformedManifestScope(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			repo := harness.GitInit(t, dir)
+			repo := testutil.GitInit(t, dir)
 			testutil.WriteFile(t, dir, "monitoring/blackbox-exporter.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: blackbox-exporter, namespace: flux-system}
@@ -603,13 +544,7 @@ data: {value: rendered}
 			if tc.owned {
 				scan = filepath.Join(dir, "flux")
 				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources:\n  - ks.yaml\n")
-				owner := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: owner, namespace: flux-system}
-spec:
-  path: ./monitoring
-  sourceRef: {kind: GitRepository, name: flux-system}
-`
+				owner := testutil.KustomizationYAML("owner", "flux-system", "  path: ./monitoring\n  sourceRef: {kind: GitRepository, name: flux-system}\n")
 				if tc.suspended {
 					owner = strings.Replace(owner, "path: ./monitoring", "path: ./monitoring\n  suspend: true", 1)
 				}
@@ -629,31 +564,17 @@ metadata: {name: external, namespace: flux-system}
 spec: {url: 'https://fixture.invalid/other'}
 `
 				}
-				testutil.WriteFile(t, dir, "flux/ks.yaml", owner+`---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: sibling, namespace: flux-system}
-spec:
-  path: ./healthy
+				testutil.WriteFile(t, dir, "flux/ks.yaml", owner+"---\n"+
+					testutil.KustomizationYAML("sibling", "flux-system", `  path: ./healthy
   sourceRef: {kind: GitRepository, name: flux-system}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: dependent, namespace: flux-system}
-spec:
-  path: ./healthy
+`)+"---\n"+
+					testutil.KustomizationYAML("dependent", "flux-system", `  path: ./healthy
   dependsOn: [{name: owner}]
   sourceRef: {kind: GitRepository, name: flux-system}
-`)
+`))
 			}
 			if tc.shared {
-				testutil.WriteFile(t, dir, "flux/peer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: peer, namespace: flux-system}
-spec:
-  path: ./monitoring
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+				testutil.WriteFile(t, dir, "flux/peer.yaml", testutil.KustomizationYAML("peer", "flux-system", "  path: ./monitoring\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [ks.yaml, peer.yaml]\n")
 			}
 			if tc.wide {
@@ -661,13 +582,16 @@ spec:
 			}
 			args := []string{"build", "all", "--path", scan, "--no-progress", "--concurrency", "2"}
 			if tc.changed {
-				harness.GitCommitAll(t, repo)
-				original := harness.CopyTree(t, dir)
+				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+				original := t.TempDir()
+				testutil.CopyTree(t, dir, original)
 				harness.MutateFile(t, filepath.Join(dir, "healthy/configmap.yaml"), "value: rendered", "value: changed")
 				args = append(args, "--path-orig", original)
 			}
 			if tc.external {
-				args = []string{"diff", "all", "--path", scan, "--path-orig", harness.CopyTree(t, dir), "--no-progress", "--concurrency", "2"}
+				original := t.TempDir()
+				testutil.CopyTree(t, dir, original)
+				args = []string{"diff", "all", "--path", scan, "--path-orig", original, "--no-progress", "--concurrency", "2"}
 			}
 			stdout, stderr, code := harness.RunCLIBuffers(args...)
 			if tc.external {

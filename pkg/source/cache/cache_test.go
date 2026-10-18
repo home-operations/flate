@@ -29,6 +29,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	digest "github.com/opencontainers/go-digest"
@@ -36,21 +37,7 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
-func newCache(t *testing.T, root string) *Cache {
-	t.Helper()
-	c, err := New(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := c.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return c
-}
-
-func archive(t *testing.T, files ...string) []byte {
+func orderedArchive(t *testing.T, files ...string) []byte {
 	t.Helper()
 	var data bytes.Buffer
 	w := tar.NewWriter(&data)
@@ -84,13 +71,15 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			if disk {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			if !disk && c.root != nil {
 				t.Fatal("memory cache opened a disk root")
 			}
 			key := ArchiveKey{Content: "source-test-generations"}
 			want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"flate.revision": "v1", "other": "preserved"}}
-			first, got, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(archive(t, "file", "v1"), want))
+			var initialArchive bytes.Buffer
+			testutil.WriteTar(t, &initialArchive, map[string]string{"file": "v1"}, 0o644)
+			first, got, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(initialArchive.Bytes(), want))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +98,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				if err := c.Close(); err != nil {
 					t.Fatal(err)
 				}
-				c = newCache(t, root)
+				c = cachetest.New(t, root, New)
 			}
 			warm, got, warmID, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected)
 			if err != nil {
@@ -183,7 +172,9 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 					t.Fatal("access extended resolution TTL")
 				}
 			}
-			replacement, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(archive(t, "file", "v2"), want))
+			var replacementArchive bytes.Buffer
+			testutil.WriteTar(t, &replacementArchive, map[string]string{"file": "v2"}, 0o644)
+			replacement, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(replacementArchive.Bytes(), want))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -195,7 +186,9 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			}
 			failure := errors.New("verification failed")
 			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-				_, _ = w.Write(archive(t, "file", "partial"))
+				var partialArchive bytes.Buffer
+				testutil.WriteTar(t, &partialArchive, map[string]string{"file": "partial"}, 0o644)
+				_, _ = w.Write(partialArchive.Bytes())
 				return want, failure
 			}); !errors.Is(err, failure) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failure: %v", err)
@@ -203,7 +196,9 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			calls := 0
 			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				calls++
-				return producer(archive(t, "file", "v3"), want)(ctx, w)
+				var recoveredArchive bytes.Buffer
+				testutil.WriteTar(t, &recoveredArchive, map[string]string{"file": "v3"}, 0o644)
+				return producer(recoveredArchive.Bytes(), want)(ctx, w)
 			}); err != nil || calls != 1 {
 				t.Fatalf("failed fill reused previous alias: calls=%d, %v", calls, err)
 			}
@@ -219,7 +214,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 						t.Fatal(err)
 					}
 					testutil.WriteFileAt(t, path, "truncated")
-					c = newCache(t, root)
+					c = cachetest.New(t, root, New)
 					for attempt := range 3 {
 						_, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, unexpected)
 						if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, io.ErrUnexpectedEOF) {
@@ -242,8 +237,8 @@ func TestAcquire_ArchivePolicy(t *testing.T) {
 				if disk {
 					root = t.TempDir()
 				}
-				c := newCache(t, root)
-				data := archive(t, "dir/drop", "discard", "dir/keep", "first", "dir/.sourceignore", "!keep\n", ".sourceignore", "dir/*\nempty/*\n", "dir/keep", "last", "empty/file", "discard", "image.png", "image", ".git/config", "git")
+				c := cachetest.New(t, root, New)
+				data := orderedArchive(t, "dir/drop", "discard", "dir/keep", "first", "dir/.sourceignore", "!keep\n", ".sourceignore", "dir/*\nempty/*\n", "dir/keep", "last", "empty/file", "discard", "image.png", "image", ".git/config", "git")
 				input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-policy", WithDefaults: defaults}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
@@ -292,8 +287,8 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 			if disk {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
-			for _, data := range [][]byte{archive(t, "../escape", "x"), archive(t, "file", "x", "file/child", "y"), archive(t, "dir/file", "x", "dir", "y"), []byte("truncated")} {
+			c := cachetest.New(t, root, New)
+			for _, data := range [][]byte{orderedArchive(t, "../escape", "x"), orderedArchive(t, "file", "x", "file/child", "y"), orderedArchive(t, "dir/file", "x", "dir", "y"), []byte("truncated")} {
 				if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-invalid"}, Policy{MaxAge: 0}, producer(data, ocispec.Descriptor{})); err == nil {
 					t.Fatal("accepted invalid archive")
 				}
@@ -322,8 +317,8 @@ func TestAcquire_ExpandedCapCountsIgnoredDuplicates(t *testing.T) {
 	maxExtractedBytes = 2*512 + 5
 	t.Cleanup(func() { maxExtractedBytes = old })
 	for _, root := range []string{"", t.TempDir()} {
-		c := newCache(t, root)
-		if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-cap", Ignore: "file"}, Policy{MaxAge: 0}, producer(archive(t, "file", "abc", "file", "def"), ocispec.Descriptor{})); err == nil {
+		c := cachetest.New(t, root, New)
+		if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-cap", Ignore: "file"}, Policy{MaxAge: 0}, producer(orderedArchive(t, "file", "abc", "file", "def"), ocispec.Descriptor{})); err == nil {
 			t.Fatal("ignored duplicate bypassed expanded cap")
 		}
 	}
@@ -337,7 +332,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 					t.Run(fmt.Sprintf("%d/cold-%t/%s", callers, cold, result), func(t *testing.T) {
 						synctest.Test(t, func(t *testing.T) {
 							root := t.TempDir()
-							c := newCache(t, root)
+							c := cachetest.New(t, root, New)
 							key := BlobKey{Content: "due-wave"}
 							held, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("held"), ocispec.Descriptor{}))
 							if err != nil {
@@ -366,7 +361,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 								if err := c.Close(); err != nil {
 									t.Fatal(err)
 								}
-								c = newCache(t, root)
+								c = cachetest.New(t, root, New)
 							}
 							unlock, err := c.locks.Acquire(t.Context(), id)
 							if err != nil {
@@ -499,7 +494,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 	for _, callers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("due/canceled-winner/%d", callers), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				c := newCache(t, t.TempDir())
+				c := cachetest.New(t, t.TempDir(), New)
 				key := BlobKey{Content: "due-canceled-winner"}
 				var id string
 				if _, _, _, err := c.Blob(t.Context(), key, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
@@ -574,7 +569,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 
 	for _, concurrency := range []int{2, 4} {
 		for _, root := range []string{"", t.TempDir()} {
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			content := struct{ URL string }{"https://example.test/content"}
 			started, release := make(chan struct{}), make(chan struct{})
 			ids := make(chan string, concurrency)
@@ -584,7 +579,9 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 					close(started)
 				}
 				<-release
-				return producer(archive(t, "file", "data"), ocispec.Descriptor{Annotations: map[string]string{"flate.revision": "v1"}})(ctx, w)
+				var payloadTar bytes.Buffer
+				testutil.WriteTar(t, &payloadTar, map[string]string{"file": "data"}, 0o644)
+				return producer(payloadTar.Bytes(), ocispec.Descriptor{Annotations: map[string]string{"flate.revision": "v1"}})(ctx, w)
 			}
 			var wg sync.WaitGroup
 			for i := range concurrency {
@@ -646,12 +643,12 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 
 func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	root := t.TempDir()
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
 	}
-	shared := newCache(t, alias)
+	shared := cachetest.New(t, alias, New)
 	if shared != c {
 		t.Fatal("canonical directory has multiple owners")
 	}
@@ -703,7 +700,7 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 	t.Parallel()
 	t.Run("outcome", func(t *testing.T) {
 		t.Parallel()
-		c := newCache(t, t.TempDir())
+		c := cachetest.New(t, t.TempDir(), New)
 		index := filepath.Join(c.root.Name(), indexPath())
 		if err := os.Remove(index); err != nil {
 			t.Fatal(err)
@@ -730,7 +727,7 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 		}
 	})
 
-	c := newCache(t, t.TempDir())
+	c := cachetest.New(t, t.TempDir(), New)
 	index := filepath.Join(c.root.Name(), indexPath())
 	if err := os.Remove(index); err != nil {
 		t.Fatal(err)
@@ -741,7 +738,9 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 	calls := 0
 	fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		calls++
-		return producer(archive(t, "file", "data"), ocispec.Descriptor{})(ctx, w)
+		var payloadTar bytes.Buffer
+		testutil.WriteTar(t, &payloadTar, map[string]string{"file": "data"}, 0o644)
+		return producer(payloadTar.Bytes(), ocispec.Descriptor{})(ctx, w)
 	}
 	for range 2 {
 		if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-persist"}, Policy{MaxAge: time.Hour}, fill); err == nil {
@@ -765,7 +764,7 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 	}
 	var inputs []fs.FS
 	for _, root := range []string{"", t.TempDir()} {
-		c := newCache(t, root)
+		c := cachetest.New(t, root, New)
 		input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-sparse"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
@@ -844,7 +843,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 				t.Run("disk missing "+field, func(t *testing.T) {
 					t.Parallel()
 					root := t.TempDir()
-					c := newCache(t, root)
+					c := cachetest.New(t, root, New)
 					key := BlobKey{Content: struct{ URL string }{"https://example.test/" + family.name}, Required: family.required}
 					upstream := ocispec.Descriptor{Digest: digest.Digest(family.fields[prefix+"upstream-digest"]), Annotations: family.fields}
 					r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), upstream))
@@ -865,7 +864,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 					if err := c.Close(); err != nil {
 						t.Fatal(err)
 					}
-					c = newCache(t, root)
+					c = cachetest.New(t, root, New)
 					if r, _, failedID, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || failedID != "" || !errors.Is(err, errdef.ErrNotFound) {
 						t.Fatalf("invalid restored metadata hit: id=%q, %v", failedID, err)
 					}
@@ -896,7 +895,7 @@ func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			key := BlobKey{Content: "source-blob"}
 			reader, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("blob bytes"), ocispec.Descriptor{}))
 			if err != nil {
@@ -926,10 +925,12 @@ func TestAcquire_TrailingDataIsBounded(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			var written int
 			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-				if _, err := w.Write(archive(t, "file", "x")); err != nil {
+				var payloadTar bytes.Buffer
+				testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
+				if _, err := w.Write(payloadTar.Bytes()); err != nil {
 					return ocispec.Descriptor{}, err
 				}
 				var err error
@@ -955,13 +956,15 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			started := make(chan struct{})
 			go func() { <-started; cancel() }()
 			_, _, _, err := c.Acquire(ctx, ArchiveKey{Content: "source-cancel"}, Policy{MaxAge: 0}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-				if _, err := w.Write(archive(t, "file", "x")[:512]); err != nil {
+				var payloadTar bytes.Buffer
+				testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
+				if _, err := w.Write(payloadTar.Bytes()[:512]); err != nil {
 					return ocispec.Descriptor{}, err
 				}
 				close(started)
@@ -976,7 +979,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 	}
 	t.Run("completed blob", func(t *testing.T) {
 		t.Parallel()
-		c := newCache(t, "")
+		c := cachetest.New(t, "", New)
 		key := BlobKey{Content: "source-completed-before-cancel"}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -1004,11 +1007,13 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 
 func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
 	t.Parallel()
-	c := newCache(t, t.TempDir())
+	c := cachetest.New(t, t.TempDir(), New)
 	key := ArchiveKey{Content: "source-unchanged"}
 	var first time.Time
 	for range 2 {
-		_, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(archive(t, "file", "same"), ocispec.Descriptor{}))
+		var payloadTar bytes.Buffer
+		testutil.WriteTar(t, &payloadTar, map[string]string{"file": "same"}, 0o644)
+		_, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(payloadTar.Bytes(), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1051,7 +1056,7 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c := newCache(t, root)
+				c := cachetest.New(t, root, New)
 				synctest.Test(t, func(t *testing.T) {
 					ctx, cancel := context.WithCancel(t.Context())
 					defer cancel()
@@ -1115,9 +1120,11 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	key := ArchiveKey{Content: "source-index-recovery"}
-	data := archive(t, "file", "same")
+	var payloadTar bytes.Buffer
+	testutil.WriteTar(t, &payloadTar, map[string]string{"file": "same"}, 0o644)
+	data := payloadTar.Bytes()
 	if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {
 		t.Fatal(err)
 	}
@@ -1128,7 +1135,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	if err := os.WriteFile(index, []byte(`{"schemaVersion":`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c = newCache(t, root)
+	c = cachetest.New(t, root, New)
 	calls := 0
 	input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 		calls++
@@ -1145,7 +1152,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 func TestNew_InvalidLayoutPreservesIndex(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -1177,9 +1184,11 @@ func TestAcquire_TrailingBoundary(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c := newCache(t, root)
+				c := cachetest.New(t, root, New)
 				_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-boundary"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-					if _, err := w.Write(archive(t, "file", "x")); err != nil {
+					var payloadTar bytes.Buffer
+					testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
+					if _, err := w.Write(payloadTar.Bytes()); err != nil {
 						return ocispec.Descriptor{}, err
 					}
 					_, err := w.Write(make([]byte, maxTrailingBytes+extra))
@@ -1202,8 +1211,10 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 			if backing == "disk" {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
-			data := archive(t, "file", "x")
+			c := cachetest.New(t, root, New)
+			var payloadTar bytes.Buffer
+			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
+			data := payloadTar.Bytes()
 			trailingWriteFailed := false
 			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-failure"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				if _, err := w.Write(data); err != nil {
@@ -1233,21 +1244,9 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			src, root := t.TempDir(), t.TempDir()
-			repo, err := git.PlainInit(src, false)
-			if err != nil {
-				t.Fatal(err)
-			}
+			repo := testutil.GitInit(t, src)
 			testutil.WriteFileAt(t, filepath.Join(src, "file"), "committed")
-			wt, err := repo.Worktree()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wt.Add("."); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wt.Commit("seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}}); err != nil {
-				t.Fatal(err)
-			}
+			testutil.GitCommitAll(t, repo, "seed", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}})
 			calls := 0
 			produce := func(_ context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				calls++
@@ -1261,14 +1260,16 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				}
 				return head.Hash(), nil
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			key := GitKey{Content: "source-git-restart", Ref: "HEAD"}
 			first, id, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce)
 			if err != nil {
 				t.Fatal(err)
 			}
 			archiveKey := ArchiveKey{Content: key.Content}
-			_, _, archiveID, err := c.Acquire(t.Context(), archiveKey, Policy{MaxAge: Forever}, producer(archive(t, "file", "archive"), ocispec.Descriptor{}))
+			var payloadTar bytes.Buffer
+			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "archive"}, 0o644)
+			_, _, archiveID, err := c.Acquire(t.Context(), archiveKey, Policy{MaxAge: Forever}, producer(payloadTar.Bytes(), ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1318,7 +1319,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			if err := os.RemoveAll(src); err != nil {
 				t.Fatal(err)
 			}
-			c = newCache(t, root)
+			c = cachetest.New(t, root, New)
 			unexpected := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 				t.Error("restored product called producer")
 				return ocispec.Descriptor{}, errors.New("unexpected producer")
@@ -1403,26 +1404,14 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 		t.Run(fmt.Sprintf("recursive-held-%t", disk), func(t *testing.T) {
 			t.Parallel()
 			src := t.TempDir()
-			repo, err := git.PlainInit(src, false)
-			if err != nil {
-				t.Fatal(err)
-			}
+			repo := testutil.GitInit(t, src)
 			testutil.WriteFile(t, src, "nested/file", "first")
-			wt, err := repo.Worktree()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wt.Add("."); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wt.Commit("first", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}}); err != nil {
-				t.Fatal(err)
-			}
+			testutil.GitCommitAll(t, repo, "first", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
 			root := ""
 			if disk {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			key := GitKey{Content: "recursive-held", RecurseSubmodules: true}
 			produce := func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				repo, err := git.CloneContext(ctx, storer, worktree, &git.CloneOptions{URL: "file://" + src})
@@ -1452,12 +1441,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			for _, changed := range []bool{false, true} {
 				if changed {
 					testutil.WriteFile(t, src, "nested/file", "second")
-					if _, err := wt.Add("."); err != nil {
-						t.Fatal(err)
-					}
-					if _, err := wt.Commit("second", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}}); err != nil {
-						t.Fatal(err)
-					}
+					testutil.GitCommitAll(t, repo, "second", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
 				}
 				next, _, err := c.Git(t.Context(), key, Policy{MaxAge: 0}, produce)
 				if err != nil {
@@ -1480,7 +1464,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				if err := c.Close(); err != nil {
 					t.Fatal(err)
 				}
-				c = newCache(t, root)
+				c = cachetest.New(t, root, New)
 				restored, _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -1502,7 +1486,7 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 	for _, scenario := range []string{"producer", "cancelled", "publication"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			failure := errors.New("incomplete clone")
@@ -1563,7 +1547,7 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 			if err := c.Close(); err != nil {
 				t.Fatal(err)
 			}
-			reopened := newCache(t, c.root.Name())
+			reopened := cachetest.New(t, c.root.Name(), New)
 			if err := reopened.store.Tags(t.Context(), "", func(tags []string) error {
 				if len(tags) != 0 {
 					t.Fatalf("failed generation published durable tags: %v", tags)
@@ -1581,7 +1565,7 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 	for _, sink := range []string{"staging", "last-use", "last-use-parent", "git-generation", "staging-cleanup-parent", "staging-cleanup-final"} {
 		t.Run(sink, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			outside := t.TempDir()
 			testutil.WriteFile(t, outside, "marker", "untouched")
 			key := BlobKey{Content: "rooted-write"}
@@ -1724,8 +1708,8 @@ func TestNew_IndexRecoveryRejectsEscapingParent(t *testing.T) {
 	for _, component := range []string{"parent", "final"} {
 		t.Run(component, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
-			outside := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
+			outside := cachetest.New(t, t.TempDir(), New)
 			if err := errors.Join(c.Close(), outside.Close()); err != nil {
 				t.Fatal(err)
 			}
@@ -1772,7 +1756,7 @@ func TestNew_IndexRecoveryRejectsEscapingParent(t *testing.T) {
 			if diff := cmp.Diff(before, sweepSnapshot(t, outside.root.Name())); diff != "" {
 				t.Fatalf("outside index changed (-want +got):\n%s", diff)
 			}
-			reopened := newCache(t, c.root.Name())
+			reopened := cachetest.New(t, c.root.Name(), New)
 			if err := reopened.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -1785,7 +1769,7 @@ func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
 	for _, phase := range []string{"producer", "publication"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			outside := t.TempDir()
 			key := GitKey{Content: "source-git-escaping-cleanup", RecurseSubmodules: true}
 			parent := filepath.Dir(filepath.Join(c.root.Name(), gitObjectsPath("")))
@@ -1847,7 +1831,7 @@ func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
 			if err := c.Close(); err != nil {
 				t.Fatal(err)
 			}
-			reopened := newCache(t, c.root.Name())
+			reopened := cachetest.New(t, c.root.Name(), New)
 			if err := reopened.store.Tags(t.Context(), "", func(tags []string) error {
 				if len(tags) != 0 {
 					t.Fatalf("failed generation published durable tags: %v", tags)

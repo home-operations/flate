@@ -315,7 +315,7 @@ spec:
 			testutil.WriteFile(t, dir, "bundle.yaml", strings.Replace(fmt.Sprintf(doc, tc.authored, "9.0.0"), manifest.HelmReleaseDomain, "foreign.example", 1)+"---\n"+fmt.Sprintf(doc, "other", "2.0.0")+"---\n"+fmt.Sprintf(doc, tc.authored, "1.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
 			st := store.New()
 			admitForTest(st, dir)
-			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: tc.namespace, Name: "podinfo"}
+			id := testutil.HelmReleaseID(tc.namespace, "podinfo")
 			record := manifest.DiscoveryRecord{Path: filepath.Join(dir, "bundle.yaml")}
 			if tc.evidence {
 				record.Authored = id

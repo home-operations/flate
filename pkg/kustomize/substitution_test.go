@@ -7,6 +7,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -52,7 +53,11 @@ func TestSubstitute_StrictOperators(t *testing.T) {
 
 func TestPrepare_LayersAndImmutability(t *testing.T) {
 	t.Parallel()
-	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  postBuild:\n    substitute: {VALUE: inline}\n    substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]\n"))
+	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", `  path: ./app
+  postBuild:
+    substitute: {VALUE: inline}
+    substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]
+`)))
 	if err != nil {
 		t.Fatal(err)
 	}

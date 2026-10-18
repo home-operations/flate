@@ -106,9 +106,9 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		}
 		input := fstest.MapFS{
 			"kustomization.yaml":      {Data: []byte("resources: [ks.yaml]\n")},
-			"ks.yaml":                 {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner}\nspec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")},
+			"ks.yaml":                 {Data: []byte(testutil.KustomizationYAML("owner", "", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n"))},
 			"apps/kustomization.yaml": {Data: []byte("resources: [child.yaml]\n")},
-			"apps/child.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child}\nspec: {path: ./output, sourceRef: {kind: GitRepository, name: source}}\n")},
+			"apps/child.yaml":         {Data: []byte(testutil.KustomizationYAML("child", "", "  {path: ./output, sourceRef: {kind: GitRepository, name: source}}\n"))},
 		}
 		st := store.New()
 		source := &manifest.GitRepository{Name: "source"}
@@ -119,7 +119,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		if err := d.loadManifests(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "child"}
+		id := testutil.KustomizationID("", "child")
 		if r, ok := d.loader.Index.Lookup(id); !ok || r.File != "apps/child.yaml" || st.GetObject(id) == nil {
 			t.Fatalf("mounted child redirected by host symlink: %+v present=%t", r, ok)
 		}

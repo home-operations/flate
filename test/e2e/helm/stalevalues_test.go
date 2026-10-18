@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
@@ -15,7 +17,8 @@ import (
 // in test. (The advisory's content — opaque sibling silent, referenced values
 // never flagged — is unit-covered by orchestrator.TestRender_StaleValuesWarning.)
 func TestE2E_StaleValuesWarning(t *testing.T) {
-	path := harness.CopyTree(t, harness.TestdataPath(t, "stalevalues"))
+	path := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "stalevalues"), path)
 
 	// build renders the same output but emits no advisory, on stdout or stderr.
 	bOut, bErr, code := harness.RunCLIBuffers("build", "hr", "--path", path)

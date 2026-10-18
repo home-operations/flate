@@ -1,12 +1,15 @@
 package helm
 
 import (
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"slices"
 	"testing"
 	"testing/fstest"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
@@ -253,7 +256,7 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 		"Chart.yaml":        {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")},
 		"templates/cm.yaml": {Data: []byte("{{ .Values.first }}")},
 	}
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	st := store.New()
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}

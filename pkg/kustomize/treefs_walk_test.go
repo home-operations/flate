@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // SkipDir must suppress both layers' children while other merged directories
 // still expose disk-only entries to scanManifests.
 func TestTreeFS_WalkPropagatesSkipDir(t *testing.T) {
 	t.Parallel()
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		"app/kustomization.yaml": existingKustomization("./inner.yaml"),
 		"app/inner.yaml":         cmYAML("inner"),
 		"lib/disk.yaml":          cmYAML("libdisk"),

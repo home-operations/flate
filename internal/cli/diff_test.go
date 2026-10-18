@@ -14,7 +14,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -136,7 +135,7 @@ spec:
 				}
 				assert.Equal(t, got.Suppressed[0].Side, diff.SideCurrent)
 				assert.Equal(t, got.Suppressed[0].Count, 1)
-				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"})
+				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")})
 				assert.Equal(t, strings.Contains(got.Suppressed[0].Reason, "missing-ca"), true)
 				assert.Equal(t, strings.HasPrefix(got.Suppressed[0].Reason, store.SkippedPrefix), false)
 				return
@@ -171,13 +170,7 @@ metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
 		testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml, hr.yaml, child.yaml]\nnamePrefix: x-\n")
-		testutil.WriteFile(t, path, "apps/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child, namespace: flux-system}
-spec:
-  path: ./nested
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+		testutil.WriteFile(t, path, "apps/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./nested\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 		hr := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: demo, namespace: apps}
@@ -202,14 +195,10 @@ metadata: {name: private, namespace: flux-system}
 spec:
   url: oci://example.invalid/private/manifests
   certSecretRef: {name: missing-ca}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
   sourceRef: {kind: OCIRepository, name: private}
-`)
+`))
 	testutil.WriteFile(t, failed, "apps/kustomization.yaml", "resources: [cm.yaml, hr.yaml, child.yaml, missing.yaml]\nnamePrefix: x-\n")
 	for _, tc := range []struct {
 		name, side, namespace, orig, current string
@@ -252,13 +241,7 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec: {url: https://example.test/cluster.git}
 `)
-			testutil.WriteFile(t, path, "flux/other.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: other, namespace: flux-system}
-spec:
-  path: ./other
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+			testutil.WriteFile(t, path, "flux/other.yaml", testutil.KustomizationYAML("other", "flux-system", "  path: ./other\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			dir, greeting := "apps", "before"
 			if path == current {
 				dir, greeting = "other", "after"
@@ -268,14 +251,10 @@ metadata: {name: private, namespace: flux-system}
 spec:
   url: oci://example.invalid/private/manifests
   certSecretRef: {name: missing-ca}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
+`+"---\n"+
+					testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
   sourceRef: {kind: OCIRepository, name: private}
-`)
+`))
 			}
 			testutil.WriteFile(t, path, "other/kustomization.yaml", "resources: []\n")
 			testutil.WriteFile(t, path, dir+"/kustomization.yaml", "resources: [hr.yaml]\n")
@@ -319,14 +298,7 @@ func TestRun_DiffJSON(t *testing.T) {
 		if dir == current {
 			failure = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: missing}]}\n"
 		}
-		testutil.WriteFile(t, dir, "flux/broken.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: broken, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./broken
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`+failure)
+		testutil.WriteFile(t, dir, "flux/broken.yaml", testutil.KustomizationYAML("broken", "flux-system", "  interval: 10m\n  path: ./broken\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")+failure)
 		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, dir, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: withheld}\n")
 	}
@@ -501,29 +473,18 @@ metadata: {name: home-kubernetes, namespace: gitops-system}
 spec:
   url: `+sourceURL+`
   interval: 1h
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: gitops-system}
-spec:
-  path: ./apps
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "gitops-system", `  path: ./apps
   sourceRef: {kind: GitRepository, name: home-kubernetes}
   interval: 1h
-`)
+`))
 	testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, current, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello, namespace: apps}
 data: {greeting: hi}
 `)
-	testutil.WriteFile(t, current, "flux/second.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: second-apps, namespace: gitops-system}
-spec:
-  path: ./second-apps
-  sourceRef: {kind: GitRepository, name: home-kubernetes}
-  interval: 1h
-`)
+	testutil.WriteFile(t, current, "flux/second.yaml", testutil.KustomizationYAML("second-apps", "gitops-system", "  path: ./second-apps\n  sourceRef: {kind: GitRepository, name: home-kubernetes}\n  interval: 1h\n"))
 	testutil.WriteFile(t, current, "second-apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, current, "second-apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -531,7 +492,7 @@ metadata: {name: second, namespace: apps}
 data: {greeting: hi}
 `)
 	orig = t.TempDir()
-	copyTree(t, current, orig)
+	testutil.CopyTree(t, current, orig)
 	writeBaselineGit(t, current, "git@github.com:example/home-ops.git")
 	return current, orig
 }
@@ -658,15 +619,11 @@ func TestRun_DiffKS_PathOrigRepositoryIdentity(t *testing.T) {
 kind: GitRepository
 metadata: {name: unrelated, namespace: beta}
 spec: {url: "https://example.invalid/unrelated.git", interval: 1h}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: external-apps, namespace: beta}
-spec:
-  path: ./external
+`+"---\n"+
+					testutil.KustomizationYAML("external-apps", "beta", `  path: ./external
   sourceRef: {kind: GitRepository, name: unrelated}
   interval: 1h
-`)
+`))
 				testutil.WriteFile(t, dir, "external/kustomization.yaml", "resources:\n- cm.yaml\n")
 				testutil.WriteFile(t, dir, "external/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: must-not-render}\n")
 			}
@@ -772,15 +729,11 @@ func TestRun_DiffKS_NamedExternalSourceDisclosure(t *testing.T) {
 kind: GitRepository
 metadata: {name: external, namespace: beta}
 spec: {url: "https://example.invalid/external.git", interval: 1h}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: external-apps, namespace: beta}
-spec:
-  path: ./external
+`+"---\n"+
+			testutil.KustomizationYAML("external-apps", "beta", `  path: ./external
   sourceRef: {kind: GitRepository, name: external}
   interval: 1h
-`)
+`))
 	}
 	for _, app := range []string{"apps", "second-apps"} {
 		name := "hello"

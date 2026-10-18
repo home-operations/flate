@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -88,7 +89,7 @@ data:
 				status = store.StatusFailed
 			}
 			st.UpdateStatus(src.Named(), status, "chart source")
-			assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, status)
+			assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, status)
 			assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
 			for _, warning := range st.Warnings() {
 				assert.Equal(t, warning.Count, 1)

@@ -5,13 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 var (
-	hrParent = Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "monitoring", Name: "grafana-operator"}
-	hrID     = manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "monitoring", Name: "grafana-operator"}
-	ksParent = Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "apps"}
+	hrParent = Parent{NamedResource: testutil.HelmReleaseID("monitoring", "grafana-operator")}
+	hrID     = testutil.HelmReleaseID("monitoring", "grafana-operator")
+	ksParent = Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
 )
 
 func hrDocs(n int) []Doc {

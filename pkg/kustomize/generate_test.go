@@ -1,10 +1,11 @@
 package kustomize
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -73,27 +74,6 @@ func existingKustomization(resources ...string) string {
 		}
 	}
 	return strings.Join(lines, "\n") + "\n"
-}
-
-// writeTree materializes files (relative path -> contents) under a fresh temp
-// dir, returning the symlink-resolved root (macOS /var -> /private/var) so the
-// path flux's secure FS confirms matches what the test passes in.
-func writeTree(t *testing.T, files map[string]string) string {
-	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("evalsymlinks tempdir: %v", err)
-	}
-	for rel, body := range files {
-		p := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-			t.Fatalf("mkdir %s: %v", p, err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			t.Fatalf("write %s: %v", p, err)
-		}
-	}
-	return root
 }
 
 // ksDoc wraps an inner spec in a full Flux Kustomization document.
@@ -304,7 +284,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := writeTree(t, tc.files)
+			root := testutil.WriteTree(t, tc.files)
 			doc := ksDoc(tc.spec)
 
 			gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: deepCopyDoc(t, doc)})
@@ -335,7 +315,7 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := writeTree(t, map[string]string{
+			root := testutil.WriteTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("deployment.yaml", "role.yaml", "gateway.yaml"),
 				"deployment.yaml":    "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: deployment}\n",
 				"role.yaml":          "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: role}\n",
@@ -368,7 +348,7 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 // scanned as a manifest and the build fails.
 func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	t.Parallel()
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		".sops.yaml": "creation_rules:\n  - path_regex: .*\n    age: age1example\n",
 		"cm.yaml":    cmYAML("config"),
 	})
@@ -409,7 +389,7 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 // it. The parent lists the subpackage once, never its kustomization.yaml.
 func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
 	t.Parallel()
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		// Parent dir intentionally has NO kustomization.yaml -> auto-generate.
 		"cnpg/kustomization.yaml":  existingKustomization("./app/cm.yaml"),
 		"cnpg/app/cm.yaml":         cmYAML("cnpg-cm"),

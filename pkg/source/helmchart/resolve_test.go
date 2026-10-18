@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,11 +52,7 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 	r.Interval = metav1.Duration{Duration: time.Hour} // fresh window
 
 	root := t.TempDir()
-	cache, err := sourcecache.New(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := cachetest.New(t, root, sourcecache.New)
 
 	cold := fetcherWithCache(t, r, cache)
 	if _, err := cold.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
@@ -85,11 +82,7 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 	r.Interval = metav1.Duration{}
 
 	root := t.TempDir()
-	cache, err := sourcecache.New(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := cachetest.New(t, root, sourcecache.New)
 	for i := range 2 {
 		f := fetcherWithCache(t, r, cache)
 		if _, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
@@ -109,11 +102,7 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 	r.Interval = metav1.Duration{Duration: time.Hour}
 
 	root := t.TempDir()
-	cache, err := sourcecache.New(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := cachetest.New(t, root, sourcecache.New)
 	cold := fetcherWithCache(t, r, cache)
 	if _, err := cold.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("cold Fetch: %v", err)
@@ -136,11 +125,7 @@ func TestResolveChart_ExactVersionForever(t *testing.T) {
 	srv, indexes, charts := startHelmRepoCounted(t, data, chartDigest(data))
 	repo := httpRepo(srv.URL)
 	repo.Interval = metav1.Duration{}
-	c, err := sourcecache.New(t.Context(), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = c.Close() })
+	c := cachetest.New(t, t.TempDir(), sourcecache.New)
 	for range 2 {
 		f := fetcherWithCache(t, repo, c)
 		f.disableChartDigestTracking = true

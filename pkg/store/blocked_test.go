@@ -8,14 +8,15 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 	st := New()
-	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
-	a := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "a"}
-	b := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "b"}
+	id := testutil.HelmReleaseID("", "consumer")
+	a := testutil.HelmReleaseID("", "a")
+	b := testutil.HelmReleaseID("", "b")
 	deps := []manifest.NamedResource{b, a}
 	err := fmt.Errorf("reconcile: %w", &manifest.DependencyFailedError{Parent: id, Failed: deps})
 	st.UpdateFailure(id, err)
@@ -50,8 +51,8 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 
 func TestUpdateFailure_Transitions(t *testing.T) {
 	t.Parallel()
-	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
-	dep := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "dep"}
+	id := testutil.HelmReleaseID("", "consumer")
+	dep := testutil.HelmReleaseID("", "dep")
 	for _, tc := range []struct {
 		name   string
 		write  func(*Store)
@@ -119,7 +120,7 @@ func TestUpdateFailure_DeleteAndLateWrite(t *testing.T) {
 	st := New()
 	obj := &manifest.HelmRelease{Name: "consumer"}
 	id := obj.Named()
-	dep := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "dep"}
+	dep := testutil.HelmReleaseID("", "dep")
 	err := &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}}
 	st.AddObject(obj)
 	st.UpdateFailure(id, err)
@@ -152,9 +153,9 @@ func (e fixedFailureMessage) Unwrap() error { return e.cause }
 func TestUpdateFailure_StatusEvents(t *testing.T) {
 	t.Parallel()
 	st := New()
-	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
-	a := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "a"}
-	b := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "b"}
+	id := testutil.HelmReleaseID("", "consumer")
+	a := testutil.HelmReleaseID("", "a")
+	b := testutil.HelmReleaseID("", "b")
 	var events []StatusInfo
 	st.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		info := payload.(StatusInfo)
@@ -199,7 +200,7 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	st.AddObject(obj)
 	errs := make([]*manifest.DependencyFailedError, 2)
 	for i := range errs {
-		dep := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: fmt.Sprintf("dep-%d", i)}
+		dep := testutil.HelmReleaseID("", fmt.Sprintf("dep-%d", i))
 		errs[i] = &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}}
 	}
 	check := func(info StatusInfo) {

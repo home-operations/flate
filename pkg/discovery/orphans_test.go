@@ -14,12 +14,8 @@ import (
 func TestPromoteOrphans_ChecksEachSiblingsProducer(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "apps/bundle.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: self, namespace: authored}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
----
-apiVersion: helm.toolkit.fluxcd.io/v2
+	testutil.WriteFile(t, dir, "apps/bundle.yaml", testutil.KustomizationYAML("self", "authored", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")+"---\n"+
+		`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: child, namespace: apps}
 spec:
@@ -31,8 +27,8 @@ spec:
 	st := store.New()
 	admitDiscoveryForTest(st, dir)
 	l := loader.New(st)
-	self := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "self"}
-	child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+	self := testutil.KustomizationID("apps", "self")
+	child := testutil.HelmReleaseID("apps", "child")
 	for _, id := range []manifest.NamedResource{self, child} {
 		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml"}
 		if id == self {
@@ -56,12 +52,8 @@ spec:
 func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	body := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: self, namespace: apps}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
----
-apiVersion: helm.toolkit.fluxcd.io/v2
+	body := testutil.KustomizationYAML("self", "apps", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n") + "---\n" +
+		`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: child, namespace: apps}
 spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: source}}}}
@@ -87,7 +79,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	l.FinalizeIndex(dir, nil)
 	self := ks.Named()
 	st.DeleteObject(self)
-	child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+	child := testutil.HelmReleaseID("apps", "child")
 	for _, id := range []manifest.NamedResource{self, child} {
 		l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 	}
@@ -139,11 +131,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			testutil.WriteFile(t, dir, "bundle.yaml", body)
 			if scenario == "graph-owned" {
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
-				ksDoc, err := manifest.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: owner, namespace: flux-system}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
-`))
+				ksDoc, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")))
 				if err != nil {
 					t.Fatal(err)
 				}

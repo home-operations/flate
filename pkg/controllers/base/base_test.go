@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -92,7 +93,7 @@ func TestRunWithStatusOutcome_Panic(t *testing.T) {
 func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
+	id := testutil.HelmReleaseID("ns", "ghost")
 	called := false
 	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 		func(_ context.Context, _ *manifest.HelmRelease) error {
@@ -417,7 +418,7 @@ func TestFingerprintDedup(t *testing.T) {
 		t.Errorf("match: handled=%v err=%v; want true,nil", handled, err)
 	}
 	// No artifact for the id → render (not handled).
-	none := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "none"}
+	none := testutil.KustomizationID("ns", "none")
 	if _, handled, _ := c.FingerprintDedup(none, []string{"one"}, emit); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}

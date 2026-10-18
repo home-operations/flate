@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -68,11 +69,7 @@ func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
 	writeFlatopsOverlay(t, root, "apps")
 	writeFile(t, root, "apps/apps/namespace.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
 	const definition = "apps/apps/apps/ks.yaml"
-	writeFile(t, root, definition, `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child}
-spec: {path: ./leaf}
-`)
+	writeFile(t, root, definition, testutil.KustomizationYAML("child", "", "  {path: ./leaf}\n"))
 	writeFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
 
 	s := store.New()
@@ -96,7 +93,7 @@ spec: {path: ./leaf}
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: child.Name}
+			id := testutil.KustomizationID(tc.namespace, child.Name)
 			if _, ok := s.Get[*manifest.Kustomization](id); ok != tc.want {
 				t.Errorf("stored identity %s present=%t, want %t", id, ok, tc.want)
 			}
@@ -130,19 +127,10 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 			st.AddObject(source)
 			l := loaderFixture(st, nil)
 			l.SourceRoot = root
-			doc := fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: gpu-operator, namespace: %q}
-spec: {path: ./output, sourceRef: {kind: GitRepository, name: view}}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: explicit, namespace: %q}
-spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}
-`, tc.authored, tc.authored)
+			doc := testutil.KustomizationYAML("gpu-operator", fmt.Sprintf("%q", tc.authored), "  {path: ./output, sourceRef: {kind: GitRepository, name: view}}\n") + "---\n" + testutil.KustomizationYAML("explicit", fmt.Sprintf("%q", tc.authored), "  {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}\n")
 			check := func(ns string) {
 				for _, name := range []string{"gpu-operator", "explicit"} {
-					id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: ns, Name: name}
+					id := testutil.KustomizationID(ns, name)
 					want := ns
 					if name == "explicit" {
 						want = "authored"
@@ -162,7 +150,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 						if staleNS == ns {
 							continue
 						}
-						stale := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: staleNS, Name: name}
+						stale := testutil.KustomizationID(staleNS, name)
 						_, indexed := l.Index.Lookup(stale)
 						if st.GetObject(stale) != nil || indexed {
 							t.Fatalf("retained stale %s", stale)
@@ -178,7 +166,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 					}
 					if version == 0 {
 						input["apps/gpu-operator/kustomization.yaml"].Data = []byte("resources: [gpu-operator/ks.yaml, removed.yaml, bad.yaml]\n")
-						input["apps/gpu-operator/removed.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: removed}\nspec: {path: ./output}\n")}
+						input["apps/gpu-operator/removed.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML("removed", "", "  {path: ./output}\n"))}
 						input["apps/gpu-operator/bad.yaml"] = &fstest.MapFile{Data: []byte("metadata: [\n")}
 					}
 					if ns != "" {
@@ -202,7 +190,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 					if version == 0 {
 						removedNS = ""
 					}
-					removed := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: removedNS, Name: "removed"}
+					removed := testutil.KustomizationID(removedNS, "removed")
 					_, indexed := l.Index.Lookup(removed)
 					if (st.GetObject(removed) != nil) != (version == 0) || indexed != (version == 0) {
 						t.Fatalf("removed declaration: store=%t index=%t version=%d", st.GetObject(removed) != nil, indexed, version)
@@ -220,7 +208,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 				st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "removed", LocalRoot: root, LocalPath: local})
 				l.ApplyNamespaces(root)
 				for _, name := range []string{"gpu-operator", "explicit"} {
-					id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: name}
+					id := testutil.KustomizationID("", name)
 					_, indexed := l.Index.Lookup(id)
 					if st.GetObject(id) != nil || indexed {
 						t.Fatalf("%s survived mount removal", id)

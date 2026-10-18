@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-	gogit "github.com/go-git/go-git/v5"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -84,9 +83,7 @@ spec:
 func crdFixture(t *testing.T, mode string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if _, err := gogit.PlainInit(dir, false); err != nil {
-		t.Fatal(err)
-	}
+	testutil.GitInit(t, dir)
 	testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n")
 	rs := strings.ReplaceAll(issueResourceSet, "        interval: 1h\n", "        suspend: true\n        interval: 1h\n")
@@ -311,7 +308,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			s := store.New()
 			tasks := task.NewBounded(2)
 			o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
-			parent := ksID("parent")
+			parent := testutil.KustomizationID("flux-system", "parent")
 			s.UpdateStatus(parent, store.StatusReady, "")
 			opts := resourcesetctrl.Options{AllowMissingCRDs: true, ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }, RawSink: func(owner, parent manifest.NamedResource, doc map[string]any) {
 				o.rsRawSink.Record(owner, parent, resourceset.DedupKey(doc), doc)
@@ -408,9 +405,7 @@ func TestMissingCRDs_SharedWarningsAndOutput(t *testing.T) {
 	var first *Result
 	cache := t.TempDir()
 	dir := t.TempDir()
-	if _, err := gogit.PlainInit(dir, false); err != nil {
-		t.Fatal(err)
-	}
+	testutil.GitInit(t, dir)
 	for range 2 {
 		testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
 		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n")

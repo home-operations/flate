@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -65,12 +67,12 @@ func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ sour
 // the updated filter state.
 func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "kubernetes/flux/cluster/ks.yaml"), clusterKS)
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/default/homepage/ks.yaml"), homepageKS)
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/default/homepage/repos/ocirepository.yaml"), ociRepo)
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/default/homepage/config/kustomization.yaml"), "resources: []\n")
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"), "resources: []\n")
-	mustWrite(t, filepath.Join(dir, "kubernetes/apps/networking/echo.yaml"), echoCM)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/flux/cluster/ks.yaml"), clusterKS)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/ks.yaml"), homepageKS)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/repos/ocirepository.yaml"), ociRepo)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/config/kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"), "resources: []\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/networking/echo.yaml"), echoCM)
 
 	o, err := orchestrator.New(t.Context(), orchestrator.Config{
 		Path:        dir,
@@ -95,22 +97,16 @@ func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) 
 	}
 }
 
-const clusterKS = `---
-apiVersion: source.toolkit.fluxcd.io/v1
+var clusterKS = "---\n" +
+	`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
   name: flux-system
   namespace: flux-system
 spec:
   url: https://example.test/cluster.git
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: cluster-apps
-  namespace: flux-system
-spec:
-  interval: 10m
+` + "---\n" +
+	testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps
   prune: true
   sourceRef:
@@ -118,34 +114,24 @@ spec:
     name: flux-system
     namespace: flux-system
   targetNamespace: default
-`
+`)
 
-const homepageKS = `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: homepage-config
-spec:
-  interval: 10m
+var homepageKS = "---\n" +
+	testutil.KustomizationYAML("homepage-config", "", `  interval: 10m
   path: ./kubernetes/apps/default/homepage/config
   prune: true
   sourceRef:
     kind: OCIRepository
     name: homepage-config
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: homepage
-spec:
-  interval: 10m
+`) + "---\n" +
+	testutil.KustomizationYAML("homepage", "", `  interval: 10m
   path: ./kubernetes/apps/default/homepage
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`
+`)
 
 const ociRepo = `---
 apiVersion: source.toolkit.fluxcd.io/v1beta2
@@ -167,13 +153,3 @@ metadata:
 data:
   msg: hello
 `
-
-func mustWrite(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}

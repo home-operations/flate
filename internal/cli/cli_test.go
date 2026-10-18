@@ -78,17 +78,7 @@ func writeMultiNamespaceFixture(t *testing.T) string {
 		{name: "apps-a", namespace: "alpha", path: "apps-a"},
 		{name: "apps-b", namespace: "beta", path: "apps-b"},
 	} {
-		testutil.WriteFileAt(t, filepath.Join(k8s, "flux", tc.name+".yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: `+tc.name+`
-  namespace: `+tc.namespace+`
-spec:
-  interval: 10m
-  path: ./`+tc.path+`
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+		testutil.WriteFileAt(t, filepath.Join(k8s, "flux", tc.name+".yaml"), testutil.KustomizationYAML(tc.name, tc.namespace, "  interval: 10m\n  path: ./"+tc.path+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 		testutil.WriteFileAt(t, filepath.Join(k8s, tc.path, "kustomization.yaml"), "resources:\n- cm.yaml\n")
 		testutil.WriteFileAt(t, filepath.Join(k8s, tc.path, "cm.yaml"), `---
 apiVersion: v1
@@ -324,7 +314,7 @@ func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 // TestRun_GetKS_YAML exercises -o yaml on a list verb.
 func TestRun_GetKS_YAML(t *testing.T) {
 	path := writeFixture(t)
-	testutil.WriteFile(t, path, "nosrc.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nosrc, namespace: flux-system}\nspec: {path: ./apps, suspend: true}\n")
+	testutil.WriteFile(t, path, "nosrc.yaml", testutil.KustomizationYAML("nosrc", "flux-system", "  {path: ./apps, suspend: true}\n"))
 	stdout, _, code := runCLI(t, "get", "ks", "--path", path, "-o", "yaml")
 	if code != 0 {
 		t.Fatalf("get ks -o yaml exited %d", code)
@@ -403,19 +393,14 @@ func writeUnreadableSecretFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	k8s := filepath.Join(root, "kubernetes")
-	testutil.WriteFileAt(t, filepath.Join(k8s, "flux", "cluster.yaml"), `---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
+	testutil.WriteFileAt(t, filepath.Join(k8s, "flux", "cluster.yaml"), testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: Secret
         name: cluster-secrets
-`)
+`))
 	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "kustomization.yaml"), "resources:\n- cm.yaml\n")
 	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
 apiVersion: v1
@@ -529,7 +514,7 @@ func TestRun_DiffKS_TwoTreesNoDelta(t *testing.T) {
 	current := writeFixture(t)
 	// Copy fixture into a sibling tempdir to act as --path-orig.
 	orig := t.TempDir()
-	copyTree(t, current, orig)
+	testutil.CopyTree(t, current, orig)
 	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig)
 	if code != 0 {
 		t.Fatalf("identical-tree diff exited %d: %s", code, stderr)
@@ -542,7 +527,7 @@ func TestRun_DiffKS_TwoTreesNoDelta(t *testing.T) {
 func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 	current := writeMultiNamespaceFixture(t)
 	orig := t.TempDir()
-	copyTree(t, current, orig)
+	testutil.CopyTree(t, current, orig)
 	if err := os.RemoveAll(filepath.Join(current, "apps-b")); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +547,7 @@ func TestRun_DiffImages_RespectsNamespaceFailures(t *testing.T) {
 func TestDiff_OutputStyles(t *testing.T) {
 	current := writeFixture(t)
 	orig := t.TempDir()
-	copyTree(t, current, filepath.Join(orig, "kubernetes"))
+	testutil.CopyTree(t, current, filepath.Join(orig, "kubernetes"))
 	testutil.WriteFileAt(t, filepath.Join(orig, "kubernetes", "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
@@ -603,28 +588,6 @@ data:
 	human, _, _ := runCLI(t, "diff", "ks", "-o", "human", "--path", current, "--path-orig", origPath)
 	if def == "" || def != human {
 		t.Errorf("default diff output should equal -o human:\ndefault:\n%s\nhuman:\n%s", def, human)
-	}
-}
-
-func copyTree(t *testing.T, src, dst string) {
-	t.Helper()
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, p)
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o750)
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0o600)
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -827,14 +790,7 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 
 func TestRun_ConventionalIgnore(t *testing.T) {
 	path := writeFixture(t)
-	testutil.WriteFile(t, path, "flux/extra.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps-extra, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+	testutil.WriteFile(t, path, "flux/extra.yaml", testutil.KustomizationYAML("apps-extra", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	testutil.WriteFile(t, path, ".krmignore", "flux/extra.yaml\n")
 	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path, "-o", "name")
 	if code != 0 || strings.Contains(stdout, "apps-extra") || !strings.Contains(stdout, "apps") {
@@ -844,13 +800,7 @@ spec:
 
 func TestRun_TestNamed_MatchingFailureFromOtherKind(t *testing.T) {
 	root := writeFixture(t)
-	testutil.WriteFile(t, root, "flux/ghost.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: ghost, namespace: flux-system}
-spec:
-  path: ./missing-ghost
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, root, "flux/ghost.yaml", testutil.KustomizationYAML("ghost", "flux-system", "  path: ./missing-ghost\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	stdout, stderr, code := runCLI(t, "test", "hr", "ghost", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
 	if code != 1 || !strings.Contains(stderr, `no HelmRelease named "ghost"`) || stdout != "" {
 		t.Fatalf("other-kind diagnostic satisfied named roster: exit=%d stdout=%s stderr=%s", code, stdout, stderr)

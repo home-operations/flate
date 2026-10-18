@@ -120,7 +120,7 @@ func testRenderFrame(tb testing.TB, snap readSetSnapshot, output []byte) []byte 
 func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 	t.Parallel()
 	t.Logf("render persistence eligible=%v", renderPersistenceEligible(t))
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		"selected/kustomization.yaml": "resources: [../child]\n",
 		"child/kustomization.yaml":    "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../cm.yaml\ngenerators: [../plugins]\npatches:\n  - path: ../patch.yaml\n",
 		"plugins/kustomization.yaml":  "resources: [g.yaml]\n",
@@ -215,7 +215,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 // changes invalidate persisted renders after re-admission.
 func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 	t.Parallel()
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		"a.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n",
 		"b.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n",
 		".sourceignore": "# excludes nothing yet\n",
@@ -290,14 +290,14 @@ func TestRenderFlux_MemoryOwnerUnchanged(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	rootA := writeTree(t, files)
+	rootA := testutil.WriteTree(t, files)
 	plain := newTestTreeCache(t, "")
 	outPlain, err := RenderFlux(ctx, plain, RenderRequest{Source: localSource(t, rootA), Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("plain render: %v", err)
 	}
 
-	rootB := writeTree(t, files)
+	rootB := testutil.WriteTree(t, files)
 	cached := newTestTreeCache(t, t.TempDir())
 	outCached, err := RenderFlux(ctx, cached, RenderRequest{Source: localSource(t, rootB), Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
 	if err != nil {
@@ -415,7 +415,7 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 						files["plugins/g.yaml"] = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: [" + ref + "]\n"
 					}
 					files["kustomization.yaml"] = kustomization
-					root := writeTree(t, files)
+					root := testutil.WriteTree(t, files)
 					cacheDir := t.TempDir()
 
 					newCache := func(storage string) *TreeCache {
@@ -545,7 +545,7 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 
 func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
 	t.Parallel()
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": existingKustomization("cm.yaml"),
 		"cm.yaml":            cmYAML("fresh"),
 	})
@@ -580,7 +580,7 @@ func TestRenderFlux_CacheFrames(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := writeTree(t, map[string]string{
+			root := testutil.WriteTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("cm.yaml"),
 				"cm.yaml":            cmYAML("fresh"),
 			})
@@ -646,7 +646,7 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 	for _, validate := range []bool{false, true} {
 		t.Run(fmt.Sprintf("validation_%t", validate), func(t *testing.T) {
 			eligible := renderPersistenceEligible(t)
-			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
 			cache := newTestTreeCache(t, t.TempDir())
 			key := sourcecache.BlobKey{Content: renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoRawSpec, SubPath: "."}, root, nil), PersistOnly: true}
 			frame := testRenderFrame(t, readSetSnapshot{Files: []fileEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}}}, []byte("VALIDATED\n"))
@@ -744,7 +744,7 @@ func TestRenderFlux_CacheStorageFailures(t *testing.T) {
 	for _, fault := range []string{"lookup", "publication"} {
 		t.Run(fault, func(t *testing.T) {
 			t.Parallel()
-			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
 			cacheDir := t.TempDir()
 			cache := newTestTreeCache(t, cacheDir)
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}
@@ -821,7 +821,7 @@ func TestRenderFlux_RemoteCacheReachability(t *testing.T) {
 			if scenario == "local-removes" {
 				control = "resources: ['" + srv.URL + "/child.yaml']\n"
 			}
-			root := writeTree(t, map[string]string{"kustomization.yaml": control, "local.yaml": cmYAML("local")})
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": control, "local.yaml": cmYAML("local")})
 			cacheDir := t.TempDir()
 			parentChanged := false
 			newCache := func() *TreeCache {
@@ -967,7 +967,7 @@ func TestRenderFlux_RemoteCacheLocalAttribution(t *testing.T) {
 				files["other.yaml"] = cmYAML("other")
 				want = "name: other"
 			}
-			root := writeTree(t, files)
+			root := testutil.WriteTree(t, files)
 			var linked fs.FS
 			if scenario == "source-link" {
 				links := tree.NewBuilder(memoryTree(t, files))
@@ -1130,7 +1130,7 @@ func TestRenderFlux_RemoteCacheLocalAttribution(t *testing.T) {
 		}
 	})
 	t.Run("nested-snapshot-observations", func(t *testing.T) {
-		root := writeTree(t, map[string]string{"local.txt": "source", "view-more-data/file": "prefix", "listed/one": "one", "walked/one": "one", "node": "file"})
+		root := testutil.WriteTree(t, map[string]string{"local.txt": "source", "view-more-data/file": "prefix", "listed/one": "one", "walked/one": "one", "node": "file"})
 		lower := os.DirFS(root)
 		rec := newReadSet(root)
 		view := newTreeFS(lower, root, rec)
@@ -1260,7 +1260,7 @@ func TestRenderFlux_RemoteCacheIsolation(t *testing.T) {
 	requests := make([]RenderRequest, 2)
 	for i := range requests {
 		name := fmt.Sprintf("local-%d", i)
-		root := writeTree(t, map[string]string{
+		root := testutil.WriteTree(t, map[string]string{
 			"kustomization.yaml": "resources: [" + name + ".yaml]\nconfigMapGenerator: [{name: generated, files: ['first=" + srv.URL + "/shared', 'second=" + srv.URL + "/shared', 'distinct=" + srv.URL + "/" + name + "']}]\n",
 			name + ".yaml":       cmYAML(name),
 		})

@@ -32,7 +32,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 				}
 				t.Run(fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers), func(t *testing.T) {
 					root := t.TempDir()
-					gate, child := ksID("gate"), ksID("child")
+					gate, child := testutil.KustomizationID("flux-system", "gate"), testutil.KustomizationID("flux-system", "child")
 					testutil.WriteFile(t, root, "flux/gate.yaml", strings.Replace(ksYAML("gate", "unused", ""), "spec:\n", "spec:\n  suspend: true\n", 1))
 					for _, name := range []string{"child", "dependent", "independent"} {
 						dep := ""
@@ -72,7 +72,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					var outcome schedule.Outcome
 					var blocked []manifest.NamedResource
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
-						outcome, blocked, _ = (dagDispatcher{o}).Dispatch(ctx, ksID("dependent"), manifest.DrainNone)
+						outcome, blocked, _ = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.DrainNone)
 					})
 					o.tasks.BlockTillDone()
 					if outcome != schedule.OutcomeBlocked || !slices.Contains(blocked, child) {
@@ -136,7 +136,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					}
 					for _, name := range []string{"dependent", "independent"} {
 						id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
-						if o.store.GetObject(id) == nil || len(res.Manifests[ksID(name)]) != 1 {
+						if o.store.GetObject(id) == nil || len(res.Manifests[testutil.KustomizationID("flux-system", name)]) != 1 {
 							t.Fatalf("active output missing: %s", id)
 						}
 					}
@@ -204,7 +204,7 @@ data:
 	if ctx.Err() != nil || len(res.Failed) != 0 {
 		t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
 	}
-	for _, id := range []manifest.NamedResource{ksID("apps"), {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}} {
+	for _, id := range []manifest.NamedResource{testutil.KustomizationID("flux-system", "apps"), testutil.HelmReleaseID("flux-system", "app")} {
 		info, ok := o.Store().GetStatus(id)
 		if !ok || info.Status != store.StatusReady {
 			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
@@ -214,7 +214,7 @@ data:
 	if !ok || cm.Data["greeting"] != "hello" {
 		t.Fatalf("shared values were not rendered: %+v", cm)
 	}
-	ksArt := o.store.GetArtifact(ksID("apps")).(*store.KustomizationArtifact)
+	ksArt := o.store.GetArtifact(testutil.KustomizationID("flux-system", "apps")).(*store.KustomizationArtifact)
 	var childDoc map[string]any
 	for _, doc := range ksArt.Manifests {
 		if manifest.DocKind(doc) == manifest.KindHelmRelease {
@@ -228,7 +228,7 @@ data:
 	if ns != "flux-system" {
 		t.Fatalf("release document namespace = %q", ns)
 	}
-	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
+	hrID := testutil.HelmReleaseID("flux-system", "app")
 	childBefore := manifest.DeepCopyMap(childDoc)
 	hrArt := o.store.GetArtifact(hrID).(*store.HelmReleaseArtifact)
 	retained := make([]map[string]any, len(hrArt.Manifests))
@@ -243,7 +243,7 @@ data:
 		t.Fatal("bare chart child lost release namespace identity")
 	}
 	o.store.DeleteObject(bare)
-	o.ksc.Emit(ksID("apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"}, false)
+	o.ksc.Emit(testutil.KustomizationID("flux-system", "apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"}, false)
 	_, replay := o.hrc.Emit(hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace}, false)
 	if o.store.GetObject(bare) == nil {
 		t.Fatal("replay lost release namespace identity")
@@ -270,21 +270,13 @@ data:
 
 }
 
-// ksYAML is a minimal Kustomization manifest for the dag tests.
 func ksYAML(name, path, dependsOn string) string {
 	dep := ""
 	if dependsOn != "" {
 		dep = "  dependsOn:\n    - name: " + dependsOn + "\n"
 	}
-	return "apiVersion: kustomize.toolkit.fluxcd.io/v1\n" +
-		"kind: Kustomization\n" +
-		"metadata:\n  name: " + name + "\n  namespace: flux-system\n" +
-		"spec:\n  path: ./" + path + "\n" + dep +
-		"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
-}
-
-func ksID(name string) manifest.NamedResource {
-	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+	return testutil.KustomizationYAML(name, "flux-system", "  path: ./"+path+"\n"+dep+
+		"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
 }
 
 // TestDAG_RenderEmittedDependencyResolves is the KS-A2 scenario: a consumer
@@ -314,14 +306,14 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	if msg, ok := o.preflightFailure(ksID("consumer")); ok {
+	if msg, ok := o.preflightFailure(testutil.KustomizationID("flux-system", "consumer")); ok {
 		t.Fatalf("consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
 	if err := o.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	for _, name := range []string{"produced", "consumer", "producer"} {
-		info, ok := o.Store().GetStatus(ksID(name))
+		info, ok := o.Store().GetStatus(testutil.KustomizationID("flux-system", name))
 		if !ok || info.Status != store.StatusReady {
 			t.Fatalf("%s status = (%+v, %v), want Ready under dag", name, info, ok)
 		}
@@ -356,11 +348,11 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	if res == nil {
 		t.Fatal("Render returned nil result")
 	}
-	leafInfo, ok := res.Failed[ksID("leaf")]
+	leafInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "leaf")]
 	if !ok || !strings.Contains(leafInfo.Message, "dependency not found") {
 		t.Fatalf("leaf: want FAILED 'dependency not found', got %+v (ok=%v)", leafInfo, ok)
 	}
-	midInfo, ok := res.Failed[ksID("mid")]
+	midInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "mid")]
 	if !ok || !strings.Contains(midInfo.Message, "leaf") {
 		t.Fatalf("mid: want FAILED cascading leaf's failure, got %+v (ok=%v)", midInfo, ok)
 	}
@@ -442,7 +434,7 @@ spec:
 			t.Fatalf("provider count=%d, want %d", count, depth+1)
 		}
 		proofs := 0
-		for _, doc := range res.Manifests[ksID("apps")] {
+		for _, doc := range res.Manifests[testutil.KustomizationID("flux-system", "apps")] {
 			if doc["kind"] == "Widget" {
 				proofs++
 			}
@@ -450,7 +442,7 @@ spec:
 		if proofs != depth {
 			t.Fatalf("rendered provider proofs=%d, want %d", proofs, depth)
 		}
-		output, err := json.Marshal(res.Manifests[ksID("apps")])
+		output, err := json.Marshal(res.Manifests[testutil.KustomizationID("flux-system", "apps")])
 		if err != nil {
 			t.Fatal(err)
 		}

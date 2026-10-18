@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
@@ -46,42 +47,20 @@ func TestRun_PinnedArtifactDiscovery(t *testing.T) {
 			entry := "flux"
 			if tc.revealed {
 				entry = "sources"
-				testutil.WriteFile(t, root, "flux/entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: entry, namespace: flux-system}
-spec: {path: ./sources, sourceRef: {kind: GitRepository, name: flux-system}}
-`)
+				testutil.WriteFile(t, root, "flux/entry.yaml", testutil.KustomizationYAML("entry", "flux-system", "  {path: ./sources, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 			}
 			testutil.WriteFile(t, root, entry+"/pinned.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
 spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: parent, namespace: flux-system}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}
-`)
-			child := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child}
-spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}
-`
+`+"---\n"+
+				testutil.KustomizationYAML("parent", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n"))
+			child := testutil.KustomizationYAML("child", "", "  {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}\n")
 			testutil.WriteFile(t, root, "apps/child.yaml", child)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n")
 			testutil.WriteFile(t, root, "apps/input.txt", "pinned")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {value: pinned}\n")
-			wt, err := repo.Worktree()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wt.Add("."); err != nil {
-				t.Fatal(err)
-			}
-			hash, err := wt.Commit("pinned", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			hash := testutil.GitCommitAll(t, repo, "pinned", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
 			if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash)); err != nil {
 				t.Fatal(err)
 			}
@@ -95,12 +74,7 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			testutil.WriteFile(t, root, "apps/phantom.yaml", strings.Replace(child, "name: child", "name: phantom", 1))
 			testutil.WriteFile(t, root, "apps/input.txt", "dirty")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [phantom.yaml, child.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=dirty]\n- name: phantom-generated\n  literals: [value=dirty]\n")
-			if _, err := wt.Add("."); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wt.Commit("head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(2, 0)}}); err != nil {
-				t.Fatal(err)
-			}
+			testutil.GitCommitAll(t, repo, "head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(2, 0)}})
 			st := store.New()
 			foreignSource := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			st.AddObject(foreignSource)
@@ -119,9 +93,9 @@ spec: {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: 
 			if st.GetArtifact(foreignSource.Named()) != foreignArtifact {
 				t.Fatal("pinned source replaced a foreign artifact")
 			}
-			parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "parent"}
-			childID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "child"}
-			phantom := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "phantom"}
+			parent := testutil.KustomizationID("flux-system", "parent")
+			childID := testutil.KustomizationID("", "child")
+			phantom := testutil.KustomizationID("", "phantom")
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
 			artifact := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
 			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
@@ -209,15 +183,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				}
 				ignore := "apps/excluded.txt\n"
 				repository.Ignore = &ignore
-				owner, err := sourcecache.New(t.Context(), "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() {
-					if err := owner.Close(); err != nil {
-						t.Error(err)
-					}
-				})
+				owner := cachetest.New(t, "", sourcecache.New)
 				result, err := baseline.AutoResolve(t.Context(), root, tc.base, owner)
 				if err != nil {
 					t.Fatal(err)
@@ -412,7 +378,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			}
 			l := loader.New(st)
 			l.FinalizeIndex(root, nil)
-			child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "release"}
+			child := testutil.HelmReleaseID("apps", "release")
 			owners, _ := l.Index.OwnersOfFile("apps/release.yaml")
 			parent := manifest.NamedResource{}
 			for _, owner := range owners {
@@ -560,15 +526,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		if art.Key != "" || !art.InputAlias || art.LocalRoot != root || art.LocalPath == root {
 			t.Fatalf("alias coordinates: %+v", art)
 		}
-		owner, err := sourcecache.New(t.Context(), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := owner.Close(); err != nil {
-				t.Error(err)
-			}
-		})
+		owner := cachetest.New(t, "", sourcecache.New)
 		cli, err := helm.NewClient(owner)
 		if err != nil {
 			t.Fatal(err)
@@ -662,27 +620,14 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 func discoveryRefFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	repo, err := git.PlainInit(root, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := testutil.GitInit(t, root)
 	for i, value := range []string{"A", "B"} {
 		testutil.WriteFile(t, root, "value.txt", value)
 		testutil.WriteFile(t, root, "apps/value.txt", value)
 		testutil.WriteFile(t, root, "apps/ignored.txt", value)
 		testutil.WriteFile(t, root, "apps/excluded.txt", value)
 		testutil.WriteFile(t, root, ".sourceignore", "apps/ignored.txt\n")
-		if _, err := wt.Add("."); err != nil {
-			t.Fatal(err)
-		}
-		hash, err := wt.Commit(value, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		hash := testutil.GitCommitAll(t, repo, value, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
 		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName([]string{"v1.0.0", "v2.0.0"}[i]), hash)); err != nil {
 			t.Fatal(err)
 		}

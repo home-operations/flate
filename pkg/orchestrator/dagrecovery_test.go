@@ -47,7 +47,7 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 			o.store.AddObject(obj)
 			assert.Equal(t, slices.Contains(o.seedNodes(), obj.Named()), tc.fetcher)
 			obj = &manifest.ExternalArtifact{Name: "arriving", Namespace: "apps"}
-			producer, consumer := ksID("producer"), ksID("consumer")
+			producer, consumer := testutil.KustomizationID("flux-system", "producer"), testutil.KustomizationID("flux-system", "consumer")
 			attempted := make(chan struct{})
 			var dispatched atomic.Int64
 			var completed atomic.Bool
@@ -95,7 +95,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	}
 	o.configureControllers()
 	d := dagDispatcher{o}
-	victim, ghost := ksID("consumer"), ksID("ghost")
+	victim, ghost := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "ghost")
 	out, deps, rerun := d.Dispatch(t.Context(), victim, manifest.DrainCascade)
 	if rerun || out != schedule.OutcomeDependencyFailed || !slices.Equal(deps, []manifest.NamedResource{ghost}) {
 		t.Fatalf("derived failure = %v/%v, want ghost blocker", out, deps)
@@ -198,7 +198,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	victim := ksID("app")
+	victim := testutil.KustomizationID("flux-system", "app")
 	unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); ok && id == victim && info.Status == store.StatusReady {
 			o.store.Refire(id)

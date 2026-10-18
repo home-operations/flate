@@ -55,7 +55,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				ks.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "pinned", Namespace: "flux-system"}
 			}
 			st.AddObject(ks)
-			child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+			child := testutil.HelmReleaseID("apps", "child")
 			data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "data"}
 			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "generated"}
 			l := loaderFixture(st, map[manifest.NamedResource]string{child: prefix + "hr.yaml", data: prefix + "cm.yaml"})
@@ -567,7 +567,7 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 func TestStrictParent_SkipsSelf(t *testing.T) {
 	t.Parallel()
 	prefixes := []manifest.KSClaim{
-		{ID: manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "self"}, Prefix: "apps/team-a/"},
+		{ID: testutil.KustomizationID("flux-system", "self"), Prefix: "apps/team-a/"},
 	}
 	self := prefixes[0].ID
 	if _, ok := manifest.StrictParent(prefixes, "apps/team-a/ks.yaml", self, nil); ok {
@@ -668,7 +668,7 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 	s.AddObject(ks)
 
 	prefixes := Claims(s, "")
-	hr := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "flux-instance"}
+	hr := testutil.HelmReleaseID("", "flux-instance")
 	parent, ok := manifest.StrictParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr, nil)
 	if !ok {
 		t.Fatalf("expected the absolute spec.path KS to parent its helm-release.yaml; prefixes=%v", prefixes)

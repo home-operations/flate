@@ -159,13 +159,13 @@ spec:
 			}
 			for _, id := range []manifest.NamedResource{
 				{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
-				{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"},
+				testutil.HelmReleaseID("flux-system", "demo"),
 			} {
 				if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || store.IsSkipped(info) {
 					t.Errorf("%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
 				}
 			}
-			hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"}
+			hrID := testutil.HelmReleaseID("flux-system", "demo")
 			if docs := res.Manifests[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
 				t.Fatalf("HelmRelease output = %+v, want the chart's ConfigMap", docs)
 			}

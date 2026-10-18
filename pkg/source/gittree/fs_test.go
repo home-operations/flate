@@ -32,13 +32,6 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-func mustInit(t *testing.T, dir string) *git.Repository {
-	t.Helper()
-	r, err := git.PlainInit(dir, false)
-	assert.NoError(t, err)
-	return r
-}
-
 func admitLocal(t *testing.T, root string) (*store.SourceArtifact, error) {
 	t.Helper()
 	location, err := gitrepo.Locate(t.Context(), root, root)
@@ -638,7 +631,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("identity", func(t *testing.T) {
 		t.Parallel()
-		repo := mustInit(t, t.TempDir())
+		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
 		current := fstest.MapFS{"file": {Data: []byte("dirty")}}
@@ -709,7 +702,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			repo := mustInit(t, t.TempDir())
+			repo := testutil.GitInit(t, t.TempDir())
 			commit := craftedCommit(t, repo, object.TreeEntry{Name: tc.name, Mode: tc.mode})
 			input, identity, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{})
 			if tc.invalid {
@@ -735,7 +728,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		t.Parallel()
 		for _, live := range []bool{false, true} {
 			root := t.TempDir()
-			repo := mustInit(t, root)
+			repo := testutil.GitInit(t, root)
 			commit := craftedCommit(t, repo, object.TreeEntry{Name: "committed", Mode: filemode.Regular})
 			testutil.WriteFile(t, root, "old/file", "old")
 			testutil.WriteFile(t, root, ".sourceignore", "ignored/\n")
@@ -774,7 +767,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("committed tree overrides current", func(t *testing.T) {
 		t.Parallel()
-		repo := mustInit(t, t.TempDir())
+		repo := testutil.GitInit(t, t.TempDir())
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
 		currentCommit := craftedCommit(t, repo, object.TreeEntry{Name: "current", Mode: filemode.Regular})
 		current, _, err := New(t.Context(), backing, currentCommit, ViewOptions{})
@@ -790,7 +783,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("retained identity", func(t *testing.T) {
 		t.Parallel()
-		repo := mustInit(t, t.TempDir())
+		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		identity := "source-git-acquired@" + commit.String()
 		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Direct, Content: identity})
@@ -807,7 +800,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("source reuse", func(t *testing.T) {
 		t.Parallel()
-		repo := mustInit(t, t.TempDir())
+		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Source})
 		assert.NoError(t, err)
@@ -871,7 +864,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	t.Run("refresh before pinned construction", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		repo := mustInit(t, root)
+		repo := testutil.GitInit(t, root)
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "new", Mode: filemode.Regular})
 		testutil.WriteFile(t, root, "old", "old")
 		local, err := admitLocal(t, root)
@@ -888,7 +881,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("refresh snapshots", func(t *testing.T) {
 		t.Parallel()
-		repo := mustInit(t, t.TempDir())
+		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		opts := ViewOptions{Mode: Source, Current: fstest.MapFS{"file": {Data: []byte("dirty")}}, Sparse: []string{"file"}, Changes: []string{"file"}}
 		input, key, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, opts)
@@ -904,7 +897,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	t.Run("shaping", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		repo := mustInit(t, root)
+		repo := testutil.GitInit(t, root)
 		for _, name := range []string{"target", ".rootfile", ".hidden/file", "node_modules/file", "dir/file", "templates/file", "crds/file"} {
 			testutil.WriteFile(t, root, name, name)
 		}
@@ -913,11 +906,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		} {
 			assert.NoError(t, os.Symlink(target, filepath.Join(root, name)))
 		}
-		wt, err := repo.Worktree()
-		assert.NoError(t, err)
-		assert.NoError(t, wt.AddWithOptions(&git.AddOptions{All: true}))
-		commit, err := wt.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-		assert.NoError(t, err)
+		commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
 		for _, tc := range []struct {
 			name  string
 			opts  ViewOptions
@@ -990,7 +979,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
-				repo := mustInit(t, t.TempDir())
+				repo := testutil.GitInit(t, t.TempDir())
 				commit := craftedCommit(t, repo, object.TreeEntry{Name: "malicious", Mode: filemode.Symlink})
 				backing := repo.Storer.(*filesystem.Storage).Filesystem()
 				if tc.missing {
@@ -1015,7 +1004,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 	t.Run("missing ordinary body", func(t *testing.T) {
 		t.Parallel()
-		repo := mustInit(t, t.TempDir())
+		repo := testutil.GitInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		c, err := repo.CommitObject(commit)
 		assert.NoError(t, err)

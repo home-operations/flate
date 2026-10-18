@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
@@ -46,7 +47,7 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts FetchOptions) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
-	ts := task.NewBounded(0)
+	ts := task.NewBounded(2)
 	c := New(st, ts)
 	maps.Copy(c.Fetchers, fetchers)
 	c.Configure(opts, sourcecache.RetryConfig{Attempts: 3})
@@ -56,44 +57,6 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 		ts.BlockTillDone()
 	})
 	return c, st
-}
-
-// dispatchToFixpoint drives id through ReconcileNode with escalating drain
-// levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
-// until the node terminalizes (no blocked deps) or drain is exhausted, then
-// returns the final store status. Synchronous — replaces the event engine's
-// AddObject→listener→status-poll dispatch in unit tests.
-//
-// The source reconcile yields its worker slot around the fetch
-// (Tasks.YieldSlot), which corrupts semaphore accounting unless it runs inside
-// a Service.Go body that owns a slot. So each ReconcileNode call is dispatched
-// through c.Tasks.Go exactly as the production scheduler does (schedule.go),
-// and we block on its completion to keep the drive synchronous.
-func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
-	t.Helper()
-	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		if reconcileNode(t, c, id, drain) {
-			break
-		}
-	}
-	info, _ := st.GetStatus(id)
-	return info
-}
-
-// reconcileNode runs one ReconcileNode pass for id inside a Tasks.Go worker
-// (so the body's YieldSlot has a slot to release) and reports whether the node
-// terminalized (no blocked deps).
-func reconcileNode(t *testing.T, c *Controller, id manifest.NamedResource, drain manifest.DrainLevel) bool {
-	t.Helper()
-	var terminal bool
-	done := make(chan struct{})
-	c.Tasks.Go(t.Context(), "test/"+id.String(), func(ctx context.Context) {
-		blocked := c.ReconcileNode(ctx, id, drain)
-		terminal = len(blocked) == 0
-		close(done)
-	})
-	<-done
-	return terminal
 }
 
 func TestController_FetchesAndStoresArtifact(t *testing.T) {
@@ -125,7 +88,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 				pin.FS = nil
 				st.SetArtifact(repo.Named(), &pin)
 			}
-			if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
 			if f.retry.Attempts != 3 {
@@ -153,7 +116,7 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	}
 	st.AddObject(repo)
 
-	info := dispatchToFixpoint(t, c, st, repo.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -254,7 +217,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 		URL: "oci://example/img",
 	}
 	st.AddObject(oci)
-	if info := dispatchToFixpoint(t, c, st, oci.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: oci.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -330,7 +293,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
 			st.AddObject(repo)
 
-			if reconcileNode(t, c, repo.Named(), 0) {
+			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
 				t.Fatal("missing Secret must block while renders can still produce it")
 			}
 			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusPending {
@@ -340,7 +303,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			st.AddObject(&manifest.Secret{Name: "ca", Namespace: "ns"})
 			f.err = nil
 			f.artifact = &store.SourceArtifact{Kind: manifest.KindOCIRepository}
-			if !reconcileNode(t, c, repo.Named(), 0) {
+			if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
 				t.Fatal("source must finish after the Secret arrives")
 			}
 			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || store.IsSkipped(info) {
@@ -404,15 +367,15 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			st.AddObject(repo)
 			var info store.StatusInfo
 			if tt.plain {
-				info = dispatchToFixpoint(t, c, st, repo.Named())
+				info = controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
 			} else {
-				if reconcileNode(t, c, repo.Named(), manifest.DrainNone) {
+				if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, manifest.DrainNone) {
 					t.Fatal("must wait while renders can still supply Secret contents")
 				}
 				if pending, _ := st.GetStatus(repo.Named()); pending.Status != store.StatusPending {
 					t.Fatalf("status = %+v, want Pending", pending)
 				}
-				if !reconcileNode(t, c, repo.Named(), manifest.DrainCascade) {
+				if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, manifest.DrainCascade) {
 					t.Fatal("unavailable Secret must terminalize at the fixpoint")
 				}
 				info, _ = st.GetStatus(repo.Named())
@@ -483,7 +446,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
 			st.AddObject(repo)
 
-			if reconcileNode(t, c, repo.Named(), 0) {
+			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
 				t.Fatal("missing Secret must block before any registry fallback")
 			}
 			if f.fallbackCalls != 0 {
@@ -496,7 +459,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 				f.rendered = true
 				drain = manifest.DrainNone
 			}
-			if !reconcileNode(t, c, repo.Named(), drain) {
+			if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, drain) {
 				t.Fatal("source must terminalize")
 			}
 			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || store.IsSkipped(info) {
@@ -526,7 +489,7 @@ func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
 	st.AddObject(repo)
 
-	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady || !store.IsSkipped(info) {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || !store.IsSkipped(info) {
 		t.Fatalf("status = %+v, want Ready with a skip", info)
 	}
 	if f.fallbackCalls != 0 {
@@ -545,7 +508,7 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
 	st.AddObject(repo)
 
-	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady || !store.IsSkipped(info) {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || !store.IsSkipped(info) {
 		t.Fatalf("status = %+v, want Ready with a skip", info)
 	}
 	if f.fallbackCalls != 1 {
@@ -576,7 +539,7 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 		URL: "https://charts.example", Type: "default",
 	}
 	st.AddObject(repo)
-	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -602,7 +565,7 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 		Interval: metav1.Duration{Duration: time.Hour},
 	}
 	st.AddObject(reemit)
-	reconcileNode(t, c, repo.Named(), 0)
+	controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0)
 
 	mu.Lock()
 	defer mu.Unlock()

@@ -7,6 +7,7 @@ import (
 
 	gitlib "github.com/go-git/go-git/v5"
 
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -16,7 +17,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	root := t.TempDir()
 	mustInitRepoWithFiles(t, root, map[string]string{"hello.txt": "hello", "docs.tmp": "docs"})
 	commit := mustSetRefToHEAD(t, root, "refs/heads/other")
-	c := newGitCache(t, "")
+	c := cachetest.New(t, "", sourcecache.New)
 	f := &Fetcher{Cache: c}
 	base := &manifest.GitRepository{URL: "file://" + root, Reference: &manifest.GitRepositoryRef{Commit: commit}}
 	first, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.RetryConfig{})

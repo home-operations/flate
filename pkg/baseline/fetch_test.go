@@ -30,6 +30,8 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 // TestAutoResolve_ExplicitBaseFetchedFromOrigin pins the fetch fallback:
@@ -62,7 +64,7 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := historylessCheckout(t, url, "a.yaml", "pr-tip")
-			res, err := AutoResolve(t.Context(), dir, tc.base, testOwner(t, ""))
+			res, err := AutoResolve(t.Context(), dir, tc.base, cachetest.New(t, "", sourcecache.New))
 			if err != nil {
 				t.Fatalf("AutoResolve(--base=%s): %v", tc.base, err)
 			}
@@ -101,7 +103,7 @@ func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
 	initRepoWithFile(t, dir, "a.yaml", "pr-tip")
 	addOrigin(t, dir, filepath.Join(remote, ".git"))
 
-	res, err := AutoResolve(t.Context(), dir, "main", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve(--base=main): %v", err)
 	}
@@ -119,7 +121,7 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "nope", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "nope", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected error for a rev origin does not have")
 	}
@@ -136,7 +138,7 @@ func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
 	t.Parallel()
 	dir := historylessCheckout(t, "", "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "main", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected error without an origin remote")
 	}
@@ -154,7 +156,7 @@ func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected error for an unborn HEAD without --base")
 	}
@@ -172,9 +174,7 @@ func historylessCheckout(t *testing.T, url, path, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	testutil.WriteFileAt(t, filepath.Join(dir, path), content)
-	if _, err := git.PlainInit(dir, false); err != nil {
-		t.Fatal(err)
-	}
+	testutil.GitInit(t, dir)
 	if url != "" {
 		addOrigin(t, dir, url)
 	}

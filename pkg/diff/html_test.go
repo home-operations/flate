@@ -7,7 +7,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func htmlDoc(t *testing.T, y string) Doc {
@@ -16,7 +16,7 @@ func htmlDoc(t *testing.T, y string) Doc {
 	if err := yaml.Unmarshal([]byte(y), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	return Doc{Manifest: m, Parent: Parent{NamedResource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "apps", Name: "web"}}}
+	return Doc{Manifest: m, Parent: Parent{NamedResource: testutil.HelmReleaseID("apps", "web")}}
 }
 
 func renderHTMLString(t *testing.T, left, right []Doc) string {

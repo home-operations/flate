@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
@@ -20,13 +24,7 @@ func TestE2E_SubstitutionProducerRendering(t *testing.T) {
 			t.Run(kind+"/"+mode, func(t *testing.T) {
 				root := t.TempDir()
 				testutil.WriteSubstitutionProducerCluster(t, root, kind)
-				testutil.WriteFile(t, root, "flux/unrelated.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: unrelated, namespace: flux-system}
-spec:
-  path: ./unrelated
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+				testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "flux-system", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 				testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [deployment.yaml]\n")
 				testutil.WriteFile(t, root, "unrelated/deployment.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: unrelated-workload}\n")
 				consumer, err := os.ReadFile(filepath.Join(root, "flux/consumer.yaml"))
@@ -37,11 +35,7 @@ spec:
 				if mode == "inherited" {
 					testutil.WriteFile(t, root, "children/consumer.yaml", strings.Replace(string(consumer), postBuild, "", 1))
 					testutil.WriteFile(t, root, "children/kustomization.yaml", "resources: [consumer.yaml]\n")
-					testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: parent, namespace: flux-system}
-spec:
-  path: ./children
+					testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("parent", "flux-system", `  path: ./children
   sourceRef: {kind: GitRepository, name: flux-system}
   dependsOn: [{name: producer}]
   postBuild: {substituteFrom: [{kind: `+kind+`, name: settings, optional: true}]}
@@ -52,8 +46,7 @@ spec:
       kind: Kustomization
       metadata: {name: ignored}
       spec:
-        postBuild: {substituteFrom: [{kind: `+kind+`, name: settings, optional: true}]}
-`)
+        postBuild: {substituteFrom: [{kind: `+kind+", name: settings, optional: true}]}\n"))
 				} else {
 					testutil.WriteFile(t, root, "flux/consumer.yaml", strings.Replace(string(consumer), postBuild,
 						"  dependsOn: [{name: producer}]\n  postBuild: {substituteFrom: [{kind: "+kind+", name: settings, optional: true}]}\n", 1))
@@ -75,10 +68,11 @@ spec:
 				}
 				var original string
 				if mode == "path-orig" {
-					original = harness.CopyTree(t, root)
+					original = t.TempDir()
+					testutil.CopyTree(t, root, original)
 				}
-				repo := harness.GitInit(t, root)
-				harness.GitCommitAll(t, repo)
+				repo := testutil.GitInit(t, root)
+				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 				if mode == "diff" {
 					testutil.WriteFile(t, root, "app/cm.yaml", strings.Replace(deployment, "-old", "-new", 1))
 				} else {
@@ -155,7 +149,7 @@ func TestE2E_SubstitutionProducerTransformedNamespace(t *testing.T) {
 						{"producer", "data", ""},
 						{"consumer", "app", "  postBuild: {substituteFrom: [{kind: " + kind + ", name: settings}]}\n"},
 					} {
-						testutil.WriteFile(t, dir, "flux/"+ks.name+".yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+ks.name+", namespace: flux-system}\nspec:\n  path: ./"+ks.path+"\n"+ks.postBuild)
+						testutil.WriteFile(t, dir, "flux/"+ks.name+".yaml", testutil.KustomizationYAML(ks.name, "flux-system", "  path: ./"+ks.path+"\n"+ks.postBuild))
 					}
 					testutil.WriteFile(t, dir, "data/kustomization.yaml", "namespace: flux-system\nresources: [settings.yaml]\n")
 					testutil.WriteFile(t, dir, "data/settings.yaml", "apiVersion: v1\nkind: "+kind+"\nmetadata: {name: settings, namespace: original}\ndata: {VERSION: "+version+"}\n")
@@ -179,7 +173,7 @@ func TestE2E_SubstitutionProducerTransformedNamespace(t *testing.T) {
 func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteSubstitutionCycleCluster(t, root)
-	testutil.WriteFile(t, root, "flux/consumer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: flux-system}\nspec:\n  path: ./app\n  dependsOn: [{name: a}]\n")
+	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  dependsOn: [{name: a}]\n"))
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n")
 	var want string

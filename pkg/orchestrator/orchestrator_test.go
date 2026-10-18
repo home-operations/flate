@@ -21,10 +21,9 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
-	"github.com/go-git/go-git/v5"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
@@ -241,18 +240,7 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 
 func TestOrchestrator_SimpleCluster(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -308,20 +296,12 @@ func TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout(t *testing.T) {
 	// NOT listed in flux/kustomization.yaml (it's surfaced by the
 	// bootstrap-sibling scan), so rendering ./flux does not re-emit the
 	// peers — isolating the file-index parent edge this fix targets.
-	testutil.WriteFile(t, dir, "flux/repo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: config-a, namespace: flux-system}
-spec:
-  path: ./flux
+	testutil.WriteFile(t, dir, "flux/repo.yaml", testutil.KustomizationYAML("config-a", "flux-system", `  path: ./flux
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: config-b, namespace: flux-system}
-spec:
-  path: ./flux
+`)+"---\n"+
+		testutil.KustomizationYAML("config-b", "flux-system", `  path: ./flux
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+`))
 	testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "flux/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -330,15 +310,7 @@ data: {k: v}
 `)
 	// Downstream consumer dependsOn one of the peers — the cascade victim
 	// if config-a deadlocks.
-	testutil.WriteFile(t, dir, "consumer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  path: ./apps
-  dependsOn:
-    - name: config-a
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, dir, "consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  dependsOn:\n    - name: config-a\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -360,7 +332,7 @@ data: {k: v}
 		t.Fatalf("Run: %v", err)
 	}
 	for _, name := range []string{"config-a", "config-b", "consumer"} {
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
+		id := testutil.KustomizationID("flux-system", name)
 		info, ok := o.Store().GetStatus(id)
 		if !ok || info.Status != store.StatusReady {
 			t.Fatalf("%s status = (%+v, %v), want Ready (mutual-parent deadlock regressed?)", id, info, ok)
@@ -377,16 +349,8 @@ data: {k: v}
 // before its subtree is scanned.
 func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := git.PlainInit(dir, false); err != nil {
-		t.Fatal(err)
-	}
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps/test
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.GitInit(t, dir)
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps/test\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	// Bare apps/test → its network/ subdir is a kustomize base. echo is listed
 	// and rendered; tunnel is commented out (a disabled app).
 	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -396,20 +360,8 @@ resources:
   - ./echo.yaml
   # - ./tunnel.yaml
 `)
-	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/echo.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: echo, namespace: network}
-spec:
-  path: ./kubernetes/apps/base/echo
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
-	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/tunnel.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: tunnel, namespace: network}
-spec:
-  path: ./kubernetes/apps/base/tunnel
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/echo.yaml", testutil.KustomizationYAML("echo", "network", "  path: ./kubernetes/apps/base/echo\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/tunnel.yaml", testutil.KustomizationYAML("tunnel", "network", "  path: ./kubernetes/apps/base/tunnel\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "kubernetes/apps/base/echo/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/base/echo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: echo-cm}\ndata: {k: v}\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
@@ -428,12 +380,12 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 	// echo is listed → reconciled.
-	echoID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "network", Name: "echo"}
+	echoID := testutil.KustomizationID("network", "echo")
 	if _, ok := o.Store().GetStatus(echoID); !ok {
 		t.Errorf("listed KS echo should be reconciled")
 	}
 	// tunnel is commented out → never discovered or reconciled.
-	tunnelID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "network", Name: "tunnel"}
+	tunnelID := testutil.KustomizationID("network", "tunnel")
 	if o.Store().GetObject(tunnelID) != nil {
 		t.Errorf("commented-out KS tunnel must not reach the store")
 	}
@@ -453,18 +405,12 @@ spec:
 func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 	writeCluster := func(t *testing.T, dir string) {
 		t.Helper()
-		testutil.WriteFile(t, dir, "kubernetes/flux/cluster/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+		testutil.WriteFile(t, dir, "kubernetes/flux/cluster/ks.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 		testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 		testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, namespace: default}\ndata: {k: v}\n")
 	}
-	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	rendersDemo := func(t *testing.T, cfg Config) bool {
 		t.Helper()
 		o, err := New(t.Context(), cfg)
@@ -505,17 +451,13 @@ spec:
 // cluster-apps renders and emits the CM.
 func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: ConfigMap
         name: cluster-settings
-`)
+`))
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
 	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/kustomization.yaml",
@@ -536,7 +478,7 @@ spec:
 	if err := o.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	ksID := testutil.KustomizationID("flux-system", "cluster-apps")
 	if info, ok := o.Store().GetStatus(ksID); !ok || info.Status != store.StatusReady {
 		t.Fatalf("cluster-apps status = (%+v, %v), want Ready (self-substitute deadlock regressed?)", info, ok)
 	}
@@ -553,17 +495,13 @@ spec:
 // cluster-settings, so nothing produces ConfigMap/flux-system/cluster-settings.
 func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-apps, namespace: flux-system}
-spec:
-  path: ./kubernetes/apps
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
       - kind: ConfigMap
         name: cluster-settings
-`)
+`))
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
@@ -579,7 +517,7 @@ spec:
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = o.Run(ctx) // reconcile failure is recorded in status, not returned
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	ksID := testutil.KustomizationID("flux-system", "cluster-apps")
 	info, ok := o.Store().GetStatus(ksID)
 	if !ok || info.Status != store.StatusFailed {
 		t.Fatalf("cluster-apps status = (%+v, %v), want Failed (absent substituteFrom CM must fail loud)", info, ok)
@@ -598,7 +536,7 @@ spec:
 // post-run errgroup pass used to perform serially in store order.
 func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 	t.Parallel()
-	parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	parent := testutil.KustomizationID("flux-system", "apps")
 	ownerA := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
 	ownerB := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}
 	mkDoc := func(owner string) map[string]any {
@@ -656,18 +594,7 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 // to scrape o.Store().GetArtifact(id) per-kind after Run.
 func TestOrchestrator_Render(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -687,7 +614,7 @@ data: {k: v}
 	if res == nil {
 		t.Fatal("Render returned nil Result")
 	}
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ksID := testutil.KustomizationID("flux-system", "apps")
 	mans, ok := res.Manifests[ksID]
 	if !ok {
 		t.Fatalf("Result.Manifests missing %s; keys=%v", ksID, keysOf(res.Manifests))
@@ -712,15 +639,7 @@ data: {k: v}
 
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `namespace: flux-system
 resources: [rsip.yaml]
 generatorOptions:
@@ -780,7 +699,7 @@ spec:
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	ksID := testutil.KustomizationID("flux-system", "apps")
 	if owner, ok := o.Store().EmittedParent(rsID); !ok || owner != ksID {
 		t.Errorf("ResourceSet owner = (%v, %v), want %s", owner, ok, ksID)
 	}
@@ -829,19 +748,7 @@ spec:
   secretRef:
     name: ghcr-creds
 `)
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: private-app
-  namespace: default
-spec:
-  interval: 5m
-  path: ./
-  sourceRef:
-    kind: OCIRepository
-    name: private-app
-    namespace: default
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
 
 	o, err := New(t.Context(), Config{
 		Path:                dir,
@@ -856,7 +763,7 @@ spec:
 	}
 
 	ociID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "default", Name: "private-app"}
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "default", Name: "private-app"}
+	ksID := testutil.KustomizationID("default", "private-app")
 
 	if _, failed := res.Failed[ociID]; failed {
 		t.Errorf("OCIRepository must not be in Failed when --allow-missing-secrets is on; got %v", res.Failed[ociID])
@@ -922,7 +829,7 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
+	hrID := testutil.HelmReleaseID("default", "demo")
 	if _, failed := res.Failed[hrID]; failed {
 		t.Errorf("HR must propagate skip before helm.Template runs; got %v", res.Failed[hrID])
 	}
@@ -968,13 +875,7 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
 	dir := t.TempDir()
 
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: cluster-apps
-  namespace: flux-system
-spec:
-  interval: 10m
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps
   prune: true
   sourceRef:
@@ -985,21 +886,8 @@ spec:
     substituteFrom:
       - kind: ConfigMap
         name: cluster-settings
-`)
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-vars.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: cluster-vars
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./kubernetes/flux/vars
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+`))
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-vars.yaml", testutil.KustomizationYAML("cluster-vars", "flux-system", "  interval: 10m\n  path: ./kubernetes/flux/vars\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	testutil.WriteFile(t, dir, "kubernetes/flux/vars/kustomization.yaml", `namespace: flux-system
 components:
   - ../../components/cluster-settings
@@ -1019,20 +907,14 @@ data:
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", `resources:
   - communication/ntfy/ks.yaml
 `)
-	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: ntfy
-  namespace: communication
-spec:
-  interval: 10m
+	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/ks.yaml", testutil.KustomizationYAML("ntfy", "communication", `  interval: 10m
   path: ./kubernetes/apps/communication/ntfy/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`)
+`))
 	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/app/kustomization.yaml", `resources:
   - helmrelease.yaml
 `)
@@ -1064,7 +946,7 @@ spec:
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	producerID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-vars"}
+	producerID := testutil.KustomizationID("flux-system", "cluster-vars")
 	f := o.filter
 	if f == nil {
 		t.Fatalf("filter returned nil; ExternalChanges should have activated changed-only mode")
@@ -1100,20 +982,7 @@ spec:
 // with a fake FileOwnerLookup would still pass).
 func TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner(t *testing.T) {
 	writeTree := func(dir, value string) {
-		testutil.WriteFile(t, dir, "clusters/prod/flux-system/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./apps/prod
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+		testutil.WriteFile(t, dir, "clusters/prod/flux-system/apps.yaml", testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps/prod\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 		testutil.WriteFile(t, dir, "apps/prod/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -1153,7 +1022,7 @@ data:
 	if f == nil {
 		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
 	}
-	apps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "apps", Namespace: "flux-system"}
+	apps := testutil.KustomizationID("flux-system", "apps")
 	if !f.ShouldReconcile(apps) {
 		t.Fatalf("KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
 	}
@@ -1179,18 +1048,7 @@ data:
 func TestOrchestrator_BootstrapIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	origDir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -1201,18 +1059,7 @@ data: {k: v}
 	// Baseline with different content forces changed-only mode, which
 	// makes buildChangeFilter actually construct a filter we can pin
 	// across the two Bootstrap calls.
-	testutil.WriteFile(t, origDir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./other
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, origDir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./other\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 
 	o, err := New(t.Context(), Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
 	if err != nil {
@@ -1259,7 +1106,7 @@ spec:
 	// duplicated, never dropped. The Store is keyed by NamedResource
 	// so a true duplicate would be a no-op; this check pins that the
 	// canonical id is reachable post second-Bootstrap.
-	appsID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	appsID := testutil.KustomizationID("flux-system", "apps")
 	if got := o.Store().GetObject(appsID); got == nil {
 		t.Errorf("apps KS missing after second Bootstrap")
 	}
@@ -1284,15 +1131,7 @@ spec:
 
 func writeDigestTrackingTree(t *testing.T, root string) {
 	t.Helper()
-	testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: flux-system}
-  postBuild:
-    substitute: {GATE: "true"}
-`)
+	testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substitute: {GATE: \"true\"}\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
 }
 
@@ -1336,7 +1175,7 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 						assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 					}
 					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, want)
-					id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
+					id := testutil.HelmReleaseID("flux-system", "flux-instance")
 					assert.Equal(t, o.store.GetObject(id) == nil, covered)
 					_, indexed := o.index.Lookup(id)
 					assert.Equal(t, indexed, true)
@@ -1479,7 +1318,7 @@ spec:
 				if err != nil {
 					t.Fatal(err)
 				}
-				id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "flux-instance"}
+				id := testutil.HelmReleaseID("flux-system", "flux-instance")
 				hr, ok := o.store.Get[*manifest.HelmRelease](id)
 				if !ok {
 					t.Fatal("qualifying rendered release missing")
@@ -1489,7 +1328,7 @@ spec:
 				assert.Equal(t, strings.Contains(patches[0].(map[string]any)["patch"].(string), "DisableChartDigestTracking=true"), true)
 				assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
-				ks := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+				ks := testutil.KustomizationID("flux-system", "apps")
 				docs := slices.Clone(res.Manifests[ks])
 				slices.SortFunc(docs, func(a, b map[string]any) int {
 					return strings.Compare(a["kind"].(string), b["kind"].(string))
@@ -1665,11 +1504,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
-			c, err := sourcecache.New(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = c.Close() })
+			c := cachetest.New(t, "", sourcecache.New)
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
 			tree := Tree{RepoRoot: root}

@@ -1,9 +1,11 @@
 package helmrelease
 
 import (
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
@@ -56,7 +58,7 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 }
 
 func BenchmarkCollectHRDeps(b *testing.B) {
-	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "target"}
+	id := testutil.HelmReleaseID("apps", "target")
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
@@ -81,7 +83,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			st := store.New()
 			c := &Controller{Controller: base.New(st, nil, "helmrelease")}
-			parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent"}
+			parent := testutil.HelmReleaseID("apps", "parent")
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()
 			for b.Loop() {

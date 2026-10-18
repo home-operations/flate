@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -74,7 +76,7 @@ func TestRenderFlux_Metadata(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			root := writeTree(t, map[string]string{
+			root := testutil.WriteTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": tc.fixture,
 			})
 			spec := map[string]any{"path": "./"}

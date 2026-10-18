@@ -14,6 +14,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -69,7 +71,7 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				assert.NoError(t, os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:])))
 				absent = append(absent, entry.Hash)
 			}
-			res, err := AutoResolve(t.Context(), root, pin.String(), testOwner(t, ""))
+			res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
 			assert.NoError(t, err)
 			if res.BaseInput.Key == "" || res.Source.Key != "" || res.BaseInput.Revision != pin.String() || res.BaseInput.LocalRoot != root {
 				t.Fatalf("baseline identity = %+v; current identity = %+v", res.BaseInput, res.Source)
@@ -136,7 +138,7 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			} else {
 				testutil.WriteFile(t, root, ".sourceignore", "apps/b.yaml\n")
 			}
-			res, err := AutoResolve(t.Context(), root, pin.String(), testOwner(t, ""))
+			res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
 			assert.NoError(t, err)
 			assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
 			testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")

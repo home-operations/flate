@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -19,15 +20,11 @@ var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 // codes are zero-width and must not count against the terminal budget.
 func visibleLen(s string) int { return len([]rune(ansiRE.ReplaceAllString(s, ""))) }
 
-func barID(name string) manifest.NamedResource {
-	return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
-}
-
 // inflightModel builds a model with names tracked as in-flight (Pending).
 func inflightModel(color bool, names ...string) barModel {
 	m := newBarModel(color)
 	for _, n := range names {
-		m.track(barID(n), store.StatusInfo{Status: store.StatusPending})
+		m.track(testutil.KustomizationID("ns", n), store.StatusInfo{Status: store.StatusPending})
 	}
 	return m
 }
@@ -144,7 +141,7 @@ func TestSummarizeInflight(t *testing.T) {
 func TestModel_Counts(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
-	a, b, s := barID("a"), barID("b"), barID("suspended")
+	a, b, s := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "suspended")
 	m.track(a, store.StatusInfo{Status: store.StatusPending})
 	m.track(b, store.StatusInfo{Status: store.StatusPending})
 	m.track(a, store.StatusInfo{Status: store.StatusReady})
@@ -165,7 +162,7 @@ func TestModel_Counts(t *testing.T) {
 func TestModel_DedupAndInflight(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
-	a := barID("a")
+	a := testutil.KustomizationID("ns", "a")
 	m.track(a, store.StatusInfo{Status: store.StatusPending})
 	if got := m.inflightLabels(); len(got) != 1 || got[0] != "a" {
 		t.Fatalf("in-flight after Pending = %v, want [a]", got)
@@ -193,9 +190,9 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 			t.Parallel()
 			m := inflightModel(false, tc.names...)
 			first := time.Unix(1, 0)
-			m.first[barID("bravo")] = first
-			m.first[barID("charlie")] = first
-			m.first[barID("alpha")] = first.Add(time.Second)
+			m.first[testutil.KustomizationID("ns", "bravo")] = first
+			m.first[testutil.KustomizationID("ns", "charlie")] = first
+			m.first[testutil.KustomizationID("ns", "alpha")] = first.Add(time.Second)
 			assert.Diff(t, m.inflightLabels(), []string{"bravo", "charlie", "alpha"})
 		})
 	}
@@ -207,7 +204,7 @@ func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 	boot := manifest.BootstrapSourceID
 	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}
 	declared := []manifest.NamedResource{
-		barID("declared"),
+		testutil.KustomizationID("ns", "declared"),
 		{Group: "foreign.example", Kind: chart.Kind, Namespace: chart.Namespace, Name: chart.Name},
 		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "ordinary"},
 		{Group: boot.Group, Kind: boot.Kind, Namespace: "other", Name: boot.Name},

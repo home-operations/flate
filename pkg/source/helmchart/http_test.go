@@ -1,7 +1,6 @@
 package helmchart
 
 import (
-	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -53,11 +53,7 @@ func newHTTPFetcher(t *testing.T, r *manifest.HelmRepository) *Fetcher {
 func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets source.SecretGetter) *Fetcher {
 	t.Helper()
 	root := t.TempDir()
-	c, err := sourcecache.New(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = c.Close() })
+	c := cachetest.New(t, root, sourcecache.New)
 	f, cleanup := New(secrets, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c})
 	t.Cleanup(cleanup)
 	return f
@@ -330,24 +326,10 @@ func chartDigest(b []byte) string {
 
 func buildChartTarGz(t *testing.T, name, version string) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-	files := map[string]string{
+	return testutil.TarGz(t, map[string]string{
 		name + "/Chart.yaml":             "apiVersion: v2\nname: " + name + "\nversion: " + version + "\n",
 		name + "/templates/_helpers.tpl": "",
-	}
-	for path, body := range files {
-		if err := tw.WriteHeader(&tar.Header{Name: path, Typeflag: tar.TypeReg, Size: int64(len(body)), Mode: 0o644}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := io.WriteString(tw, body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_ = tw.Close()
-	_ = gw.Close()
-	return buf.Bytes()
+	}, 0o644, gzip.DefaultCompression)
 }
 
 func TestFetchHTTPChart_BasicAuth(t *testing.T) {
@@ -484,11 +466,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c, err := sourcecache.New(t.Context(), root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = c.Close() })
+				c := cachetest.New(t, root, sourcecache.New)
 				r := httpRepo(srv.URL)
 				f, cleanup := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c, Network: new(source.Network)})
 				t.Cleanup(cleanup)
@@ -795,11 +773,7 @@ func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
 						r.CertSecretRef = &manifest.LocalObjectReference{Name: "auth"}
 						secret.StringData["ca.crt"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
 					}
-					c, err := sourcecache.New(t.Context(), "")
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() { _ = c.Close() })
+					c := cachetest.New(t, "", sourcecache.New)
 					f, cleanup := New(func(_, _ string) *manifest.Secret { return secret }, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: c, Network: &network})
 					t.Cleanup(cleanup)
 					if route == "index" {
@@ -807,7 +781,7 @@ func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					_, err = f.Fetch(t.Context(), helmChart("repo", "chart", "1.0.0"), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+					_, err := f.Fetch(t.Context(), helmChart("repo", "chart", "1.0.0"), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
 					terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 					wantIndex := int32(0)
 					if route == "chart" {

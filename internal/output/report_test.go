@@ -8,16 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func ks(name string) manifest.NamedResource {
-	return manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
-}
-
 func TestEncoderReport_WarningsSection(t *testing.T) {
 	t.Parallel()
-	hr := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: "app"}
+	hr := testutil.HelmReleaseID("default", "app")
 	warns := []manifest.Warning{
 		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
 		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"}, // global
@@ -54,9 +51,9 @@ func TestEncoderReport_WarningCount(t *testing.T) {
 func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 	t.Parallel()
 	m := Model{
-		Primary: []Primary{{ID: ks("root"), Msg: " may not add resource with an already registered id: X \n\t\n" +
-			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two ", Blocks: []manifest.NamedResource{ks("leaf"), ks("mid")}}},
-		Missing: []Missing{{ID: ks("missing"), RequiredBy: []manifest.NamedResource{ks("dependent")}}},
+		Primary: []Primary{{ID: testutil.KustomizationID("flux-system", "root"), Msg: " may not add resource with an already registered id: X \n\t\n" +
+			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two ", Blocks: []manifest.NamedResource{testutil.KustomizationID("flux-system", "leaf"), testutil.KustomizationID("flux-system", "mid")}}},
+		Missing: []Missing{{ID: testutil.KustomizationID("flux-system", "missing"), RequiredBy: []manifest.NamedResource{testutil.KustomizationID("flux-system", "dependent")}}},
 		Blocked: 3,
 	}
 	for _, color := range []bool{false, true} {
@@ -81,18 +78,15 @@ func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 
 func TestSummarize_KindOnCollision(t *testing.T) {
 	t.Parallel()
-	hr := func(namespace, name string) manifest.NamedResource {
-		return manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: namespace, Name: name}
-	}
 	tests := []struct {
 		name string
 		ids  []manifest.NamedResource // sorted, as Build delivers them
 		want string
 	}{
-		{"same name, different kind", []manifest.NamedResource{hr("flux-system", "acars"), ks("acars")}, "HelmRelease.helm.toolkit.fluxcd.io flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
-		{"same name, different group", []manifest.NamedResource{{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "acars"}, ks("acars")}, "Kustomization.example.test flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
-		{"same name, different namespace", []manifest.NamedResource{hr("default", "acars"), ks("acars")}, "default/acars, flux-system/acars"},
-		{"collision hidden by the cap", []manifest.NamedResource{hr("flux-system", "zzz"), ks("a"), ks("b"), ks("c"), ks("d"), ks("e"), ks("zzz")}, "HelmRelease.helm.toolkit.fluxcd.io flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more"},
+		{"same name, different kind", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "acars"), testutil.KustomizationID("flux-system", "acars")}, "HelmRelease.helm.toolkit.fluxcd.io flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
+		{"same name, different group", []manifest.NamedResource{{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "acars"}, testutil.KustomizationID("flux-system", "acars")}, "Kustomization.example.test flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
+		{"same name, different namespace", []manifest.NamedResource{testutil.HelmReleaseID("default", "acars"), testutil.KustomizationID("flux-system", "acars")}, "default/acars, flux-system/acars"},
+		{"collision hidden by the cap", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "zzz"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b"), testutil.KustomizationID("flux-system", "c"), testutil.KustomizationID("flux-system", "d"), testutil.KustomizationID("flux-system", "e"), testutil.KustomizationID("flux-system", "zzz")}, "HelmRelease.helm.toolkit.fluxcd.io flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

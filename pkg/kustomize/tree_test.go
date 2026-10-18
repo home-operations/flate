@@ -17,6 +17,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -42,23 +43,9 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 	}
 }
 
-func newTestCache(tb testing.TB, root string) *cache.Cache {
-	tb.Helper()
-	owner, err := cache.New(tb.Context(), root)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() {
-		if err := owner.Close(); err != nil {
-			tb.Error(err)
-		}
-	})
-	return owner
-}
-
 func newTestTreeCache(tb testing.TB, root string) *TreeCache {
 	tb.Helper()
-	c := NewTreeCache(newTestCache(tb, root), nil)
+	c := NewTreeCache(cachetest.New(tb, root, cache.New), nil)
 	tb.Cleanup(c.Close)
 	return c
 }
@@ -273,7 +260,7 @@ func TestTreeCache_CloseAdmissionRace(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
 			t.Parallel()
-			owner := newTestCache(t, "")
+			owner := cachetest.New(t, "", cache.New)
 			for range 40 {
 				c := NewTreeCache(owner, nil)
 				c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {

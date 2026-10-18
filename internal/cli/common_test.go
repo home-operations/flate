@@ -257,14 +257,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 
 func TestResolveBaseline_FullTree(t *testing.T) {
 	root := t.TempDir()
-	repo, err := git.PlainInit(root, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, ".git/config", "[invalid\n")
 	c := commonFlags{path: root, pathRoot: "stale",
 		pathOrigRoot: "stale", pathOrigSelfURLs: []string{"stale"}}
@@ -279,9 +272,8 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	assert.Equal(t, c.pathOrigRoot, "")
 	assert.Equal(t, c.pathOrigSelfURLs == nil, true)
 	testutil.WriteFile(t, root, ".git/config", "[core]\nrepositoryformatversion = 0\n")
-	_, err = wt.Commit("fixture", &git.CommitOptions{AllowEmptyCommits: true,
+	testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{AllowEmptyCommits: true,
 		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-	assert.Equal(t, err, nil)
 	c.base = "HEAD"
 	cleanup, err := resolveBaseline(t.Context(), &c, false)
 	defer func() {
@@ -444,7 +436,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
 		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs}, cfg)
 	assert.NoError(t, err)
-	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "gitops-system", Name: "apps"}
+	id := testutil.KustomizationID("gitops-system", "apps")
 	for i, side := range []orchestrator.Rendered{base, head} {
 		docs := side.Result.Manifests[id]
 		if len(docs) != 1 || docs[0]["data"].(map[string]any)["greeting"] != []string{"before", "hi"}[i] {

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -13,7 +14,7 @@ import (
 func BenchmarkScheduler_Run(b *testing.B) {
 	ids := make([]NodeID, 32)
 	for i := range ids {
-		ids[i] = id(fmt.Sprintf("node-%02d", i))
+		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("node-%02d", i))
 	}
 	d := dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		return OutcomeTerminal, nil, false
@@ -29,7 +30,7 @@ func BenchmarkScheduler_Run(b *testing.B) {
 }
 
 func BenchmarkScheduler_ContentRedispatch(b *testing.B) {
-	nid := id("content")
+	nid := testutil.KustomizationID("ns", "content")
 	b.ReportAllocs()
 	for b.Loop() {
 		var s *Scheduler
@@ -50,7 +51,7 @@ func BenchmarkScheduler_ContentRedispatch(b *testing.B) {
 
 func BenchmarkOnStatusWake(b *testing.B) {
 	s := New(task.NewBounded(2), nil)
-	dep := id("dependency")
+	dep := testutil.KustomizationID("ns", "dependency")
 	s.OnStatusWake(dep, true, false)
 	b.ReportAllocs()
 	for b.Loop() {
@@ -156,7 +157,7 @@ func BenchmarkComplete_Failed(b *testing.B) {
 	for _, fanIn := range []int{2, 32} {
 		previous := make([]NodeID, fanIn)
 		for i := range previous {
-			previous[i] = id(fmt.Sprintf("blocker-%02d", i))
+			previous[i] = testutil.KustomizationID("ns", fmt.Sprintf("blocker-%02d", i))
 		}
 		for _, tc := range []struct {
 			mode        string
@@ -174,7 +175,7 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				slices.Reverse(blocked)
 			}
 			if mode == "Replaced" {
-				blocked[tc.replacement] = id("replacement")
+				blocked[tc.replacement] = testutil.KustomizationID("ns", "replacement")
 				position := "First"
 				if tc.replacement == fanIn-1 {
 					position = "Last"
@@ -186,11 +187,11 @@ func BenchmarkComplete_Failed(b *testing.B) {
 				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
 					return OutcomeDependencyFailed, next, false
 				}))
-				nid := id("consumer")
+				nid := testutil.KustomizationID("ns", "consumer")
 				n := &node{id: nid}
 				s.nodes[nid] = n
 				for _, dep := range append(slices.Clone(previous), blocked...) {
-					s.failedIdx[dep] = map[NodeID]struct{}{id("other"): {}}
+					s.failedIdx[dep] = map[NodeID]struct{}{testutil.KustomizationID("ns", "other"): {}}
 				}
 				s.inFlight = 1
 				s.complete(nid, OutcomeDependencyFailed, previous, false)

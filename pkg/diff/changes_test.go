@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -29,7 +30,7 @@ func cmDoc(parent Parent, id manifest.NamedResource, dataVal, chart string) Doc 
 // drop of byte-identical resources.
 func TestChanges_Classification(t *testing.T) {
 	t.Parallel()
-	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
+	p := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps")}
 	left := []Doc{
 		cmDoc(p, manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
 		cmDoc(p, manifest.NamedResource{Name: "edit", Namespace: "ns"}, "old", ""),
@@ -56,7 +57,7 @@ func TestChanges_Classification(t *testing.T) {
 // reported — the diff stays churn-free.
 func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 	t.Parallel()
-	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
+	p := Parent{NamedResource: testutil.HelmReleaseID("ns", "app")}
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
 	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
 	if got := Changes(left, right, Options{StripAttrs: DefaultStripAttrs}); len(got) != 0 {
@@ -68,7 +69,7 @@ func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 // helm.sh/chart from the pre-strip manifest while Old/New are stripped.
 func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 	t.Parallel()
-	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
+	p := Parent{NamedResource: testutil.HelmReleaseID("ns", "app")}
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "app-1.0.0")}
 	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "app-2.0.0")}
 
@@ -93,7 +94,7 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 // hook constant-izes it so it no longer does.
 func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 	t.Parallel()
-	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
+	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
 	secret := func(val string) Doc {
 		return Doc{
 			Parent: p,
@@ -128,8 +129,8 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 // TestChanges_Sorted locks deterministic ordering by parent then identity.
 func TestChanges_Sorted(t *testing.T) {
 	t.Parallel()
-	pa := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "a"}
-	pb := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "b"}
+	pa := Parent{NamedResource: testutil.KustomizationID("ns", "a")}
+	pb := Parent{NamedResource: testutil.KustomizationID("ns", "b")}
 	left := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", "")}
 	right := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "2", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "2", "")}
 	foreign := cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "3", "")
@@ -144,7 +145,7 @@ func TestChanges_Sorted(t *testing.T) {
 
 func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 	t.Parallel()
-	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
+	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "shadowed", ""), cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "retained", "")}
 	for _, tt := range []struct {
 		name string

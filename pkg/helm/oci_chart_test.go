@@ -11,7 +11,9 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -67,7 +69,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			t.Parallel()
 
 			st, hr, dir := ociRenderFixture(t)
-			cli, err := NewClient(newTestCache(t, ""))
+			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +159,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 			st.SetArtifact(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
-			cli, err := NewClient(newTestCache(t, ""))
+			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 			if err != nil {
 				t.Fatal(err)
 			}

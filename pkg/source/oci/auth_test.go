@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/google/go-cmp/cmp"
 	"io"
 	"net"
 	"net/http"
@@ -18,12 +17,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -274,11 +276,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			t.Cleanup(srv.Close)
-			cache, err := sourcecache.New(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = cache.Close() })
+			cache := cachetest.New(t, "", sourcecache.New)
 			f := &Fetcher{Cache: cache, Secrets: func(_, name string) *manifest.Secret {
 				if name == "creds" && (tt.cert || tt.proxy || tt.canceled) {
 					return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": `{"auths":{"ghcr.io":{"username":"alice","password":"hunter2"}}}`}}
@@ -435,11 +433,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	host := mustURL(t, srv.URL).Host
 	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 	configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, auth)
-	cache, err := sourcecache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cache.Close() })
+	cache := cachetest.New(t, "", sourcecache.New)
 	var network source.Network
 	ociFetcher := &Fetcher{
 		Cache: cache, Network: &network,
@@ -630,11 +624,7 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 			if wave == "direct" {
 				t.Setenv("no_proxy", "*")
 			}
-			c, err := sourcecache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = c.Close() }()
+			c := cachetest.New(t, root, sourcecache.New)
 			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
 				config := fmt.Sprintf(`{"auths":{%q:{"username":"alice","password":%q}}}`, mustURL(t, srv.URL).Host, password.Load().(string))
@@ -677,11 +667,7 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			ca := testutil.SelfSignedCA(t)
 			config := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, config, `{"auths":{"ghcr.io":{"username":"alice","password":"test"}}}`)
-			c, err := sourcecache.New(t.Context(), t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = c.Close() }()
+			c := cachetest.New(t, t.TempDir(), sourcecache.New)
 			var lookups atomic.Int32
 			f := &Fetcher{Cache: c, RegistryConfig: config, Secrets: func(_, name string) *manifest.Secret {
 				lookups.Add(1)
@@ -695,7 +681,7 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 				s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
 				s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 			})
-			_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			_, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			if !ok || missing.RetryWithRegistryConfig == nil || lookups.Load() != 2 {
 				t.Fatalf("snapshot before handoff: reads=%d error=%v", lookups.Load(), err)

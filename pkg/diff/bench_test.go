@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 // BenchmarkDiff_LargeTree measures RenderDocs against two 100-resource
@@ -68,7 +68,7 @@ func BenchmarkNormalizeDocs(b *testing.B) {
 					},
 				},
 			},
-			Parent: Parent{NamedResource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i)}},
+			Parent: Parent{NamedResource: testutil.HelmReleaseID("default", fmt.Sprintf("hr-%d", i))},
 		})
 	}
 	attrs := []string{
@@ -94,7 +94,7 @@ func buildDiffCorpus(n, changeCount int) (left, right []Doc) {
 	right = make([]Doc, 0, n)
 	for i := range n {
 		name := fmt.Sprintf("cm-%d", i)
-		parent := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: fmt.Sprintf("hr-%d", i/10)}
+		parent := Parent{NamedResource: testutil.HelmReleaseID("default", fmt.Sprintf("hr-%d", i/10))}
 		baseValue := fmt.Sprintf("value-%d", i)
 		other := baseValue
 		if i < changeCount {

@@ -5,10 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // TestdataPath locates a fixture beneath the repository's testdata directory.
@@ -27,33 +23,6 @@ func TestdataPath(t *testing.T, sub string) string {
 	return ""
 }
 
-// GitInit initializes a Git repository at dir.
-func GitInit(t *testing.T, dir string) *gogit.Repository {
-	t.Helper()
-	repo, err := gogit.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return repo
-}
-
-// GitCommitAll commits the entire worktree with a fixed author and timestamp.
-func GitCommitAll(t *testing.T, repo *gogit.Repository) {
-	t.Helper()
-	wt, err := repo.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add("."); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Commit("init", &gogit.CommitOptions{
-		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // MutateFile replaces the first oldStr in path and fails if the sentinel is absent.
 func MutateFile(t *testing.T, path, oldStr, newStr string) {
 	t.Helper()
@@ -68,29 +37,4 @@ func MutateFile(t *testing.T, path, oldStr, newStr string) {
 	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// CopyTree copies src into an isolated temporary directory.
-func CopyTree(t *testing.T, src string) string {
-	t.Helper()
-	dst := t.TempDir()
-	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, p)
-		out := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(out, 0o750)
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(out, data, 0o600)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return dst
 }

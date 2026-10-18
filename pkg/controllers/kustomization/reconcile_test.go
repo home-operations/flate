@@ -16,6 +16,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -51,9 +53,7 @@ data: {greeting: hi}
 	s.SetArtifact(bootstrap.Named(), input)
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
-	owner, err := sourcecache.New(t.Context(), "")
-	assert.NoError(t, err)
-	t.Cleanup(func() { _ = owner.Close() })
+	owner := cachetest.New(t, "", sourcecache.New)
 	cache := kustomize.NewTreeCache(owner, nil)
 	t.Cleanup(cache.Close)
 
@@ -66,22 +66,6 @@ data: {greeting: hi}
 		tasks.BlockTillDone()
 	})
 	return c, s, root
-}
-
-// dispatchToFixpoint drives id through ReconcileNode with escalating drain
-// levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
-// until the node terminalizes (no blocked deps) or drain is exhausted, then
-// returns the final store status. Synchronous — replaces the event engine's
-// AddObject→listener→status-poll dispatch in unit tests.
-func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
-	t.Helper()
-	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
-			break
-		}
-	}
-	info, _ := st.GetStatus(id)
-	return info
 }
 
 const namespaceIdentityDocs = `apiVersion: v1
@@ -124,7 +108,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := dispatchToFixpoint(t, c, s, ks.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
@@ -239,7 +223,7 @@ data: {greeting: '%s'}
 			}
 			ks := obj.(*manifest.Kustomization)
 			s.AddObject(ks)
-			if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
 			art, _ := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact)
@@ -272,7 +256,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
@@ -336,7 +320,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -394,7 +378,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	if info := dispatchToFixpoint(t, c, s, ks.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 	firstFP := s.GetArtifact(ks.Named()).(*store.KustomizationArtifact).Fingerprint
@@ -450,7 +434,7 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := dispatchToFixpoint(t, c, s, ks.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -481,7 +465,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
-	info := dispatchToFixpoint(t, c, s, ks.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
@@ -503,7 +487,7 @@ func TestReconcile_Suspension(t *testing.T) {
 			},
 		}
 		s.AddObject(ks)
-		info := dispatchToFixpoint(t, c, s, ks.Named())
+		info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
 		if info.Status != store.StatusReady {
 			t.Fatalf("status = %+v, want StatusReady", info)
 		}
@@ -617,7 +601,7 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 	c, st, root := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", Contents: map[string]any{}}
 	st.AddObject(ks)
-	if info := dispatchToFixpoint(t, c, st, ks.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("first reconcile: %+v", info)
 	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Key: "released"})

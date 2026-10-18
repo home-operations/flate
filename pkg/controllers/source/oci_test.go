@@ -14,6 +14,7 @@ import (
 	"github.com/opencontainers/go-digest"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -68,11 +69,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			testutil.WriteFileAt(t, config, configJSON)
 			root := t.TempDir()
 			st := store.New()
-			cache, err := sourcecache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = cache.Close() })
+			cache := cachetest.New(t, root, sourcecache.New)
 			lookups := make(chan struct{}, 2)
 			release := make(chan struct{})
 			f := &oci.Fetcher{

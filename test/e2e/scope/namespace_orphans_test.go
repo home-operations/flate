@@ -1,8 +1,6 @@
 package scope
 
 import (
-	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -35,9 +33,9 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
-			testutil.WriteFile(t, root, "flux/parent.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: flux-system}\nspec:\n  path: ./apps\n"+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n")
+			testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./apps\n")+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, raw.yaml]\n")
-			testutil.WriteFile(t, root, "apps/child.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child"+tc.authored+"}\nspec:\n  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system}\n")
+			testutil.WriteFile(t, root, "apps/child.yaml", testutil.KustomizationYAML("child", strings.TrimPrefix(tc.authored, ", namespace: "), "  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			rawVersions := []string{"example.test/v1", "other.test/v1"}
 			rawBodies := []string{
 				"apiVersion: example.test/v1\nkind: Kustomization\nmetadata: {name: child" + tc.authored + "}\nspec: {value: first}\n",
@@ -358,7 +356,7 @@ func namespaceOrphanFixture(t *testing.T, scenario string) (string, string, []st
 	t.Setenv("NO_PROXY", "*")
 	t.Setenv("no_proxy", "*")
 	root, cache := t.TempDir(), t.TempDir()
-	harness.GitInit(t, root)
+	testutil.GitInit(t, root)
 	namespaces := []string{"demo"}
 	rawNS := ""
 	if scenario == "explicit" {
@@ -408,37 +406,14 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 				path += "-" + ns
 				overlay = "namespace: " + ns + "\n" + overlay
 			}
-			testutil.WriteFile(t, root, "flux/"+owner+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+owner+`, namespace: flux-system}
-spec:
- interval: 10m
- path: ./`+path+`
- sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+			testutil.WriteFile(t, root, "flux/"+owner+".yaml", testutil.KustomizationYAML(owner, "flux-system", " interval: 10m\n path: ./"+path+"\n sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 			testutil.WriteFile(t, root, path+"/kustomization.yaml", overlay)
 		}
 	}
-	var archive bytes.Buffer
-	gz := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gz)
-	for _, file := range []struct{ name, body string }{
-		{"demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n"},
-		{"demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-chart\n  namespace: {{ .Release.Namespace }}\ndata: {value: fixture}\n"},
-	} {
-		if err := tw.WriteHeader(&tar.Header{Name: file.name, Mode: 0o600, Size: int64(len(file.body))}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(file.body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
+	archive := testutil.TarGz(t, map[string]string{
+		"demo/Chart.yaml":        "apiVersion: v2\nname: demo\nversion: 0.1.0\n",
+		"demo/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-chart\n  namespace: {{ .Release.Namespace }}\ndata: {value: fixture}\n",
+	}, 0o600, gzip.DefaultCompression)
 	c, err := sourcecache.New(t.Context(), cache)
 	if err != nil {
 		t.Fatal(err)
@@ -446,8 +421,8 @@ spec:
 	repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
 	chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
 	r, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		_, err := w.Write(archive.Bytes())
-		return ocispec.Descriptor{Digest: digest.FromBytes(archive.Bytes()), Size: int64(archive.Len()), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
+		_, err := w.Write(archive)
+		return ocispec.Descriptor{Digest: digest.FromBytes(archive), Size: int64(len(archive)), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
 	})
 	if err != nil {
 		t.Fatal(err)

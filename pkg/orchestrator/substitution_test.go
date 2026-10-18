@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -25,7 +26,7 @@ import (
 )
 
 func substitutionKS(name, path, postBuild string) string {
-	return "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: " + name + ", namespace: apps}\nspec:\n  interval: 1m\n  path: ./" + path + "\n" + postBuild
+	return testutil.KustomizationYAML(name, "apps", "  interval: 1m\n  path: ./"+path+"\n"+postBuild)
 }
 
 func writeSubstitutionCluster(t *testing.T, root, reference, expression string) {
@@ -133,11 +134,7 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 			root := t.TempDir()
 			cfg := Config{Path: t.TempDir(), CacheDir: root, Substitute: map[string]string{"bad-name": "private-fixture-value"}}
 			if injected {
-				owner, err := sourcecache.New(t.Context(), root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = owner.Close() })
+				owner := cachetest.New(t, root, sourcecache.New)
 				cfg.Cache = owner
 			}
 			_, err := New(t.Context(), cfg)
@@ -179,7 +176,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+		id := testutil.KustomizationID("apps", "consumer")
 		if got := substitutionValue(t, res, id); got != "overlay" {
 			t.Fatalf("owned values changed: %q", got)
 		}
@@ -258,16 +255,12 @@ kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
   url: https://example.test/cluster.git
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  path: ./apps
+`+"---\n"+
+				testutil.KustomizationYAML("apps", "flux-system", `  path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substitute: {KEEP: "ok"}
-    substituteFrom: `+tt.references+"\n")
+    substituteFrom: `+tt.references+"\n"))
 			testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
 			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -309,7 +302,7 @@ spec:
 			if res == nil {
 				t.Fatal("missing render result")
 			}
-			demo := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+			demo := testutil.HelmReleaseID("apps", "demo")
 			if _, failed := res.Failed[demo]; failed == rescued {
 				t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
 			}
@@ -404,7 +397,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				t.Fatal("test requires unpromoted file identity")
 			}
 			if kind == "known Kustomization producer" {
-				producer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
+				producer := testutil.KustomizationID("apps", "producer")
 				if !o.filter.ShouldReconcile(producer) || !slices.Contains(o.filter.ProducersFor(input.Object.Named()), producer) {
 					t.Fatal("known producer selection/edge lost")
 				}
@@ -416,7 +409,7 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+			id := testutil.KustomizationID("apps", "consumer")
 			if got := substitutionValue(t, res, id); got != want {
 				t.Fatalf("repository precedence got %q, want %q", got, want)
 			}
@@ -503,7 +496,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+			consumer := testutil.KustomizationID("apps", "consumer")
 			if got := substitutionValue(t, res, consumer); got != "supplied" {
 				t.Fatalf("late producer revoked accepted source: %q", got)
 			}
@@ -540,7 +533,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+	child := testutil.KustomizationID("apps", "consumer")
 	if o.store.GetObject(child) != nil {
 		t.Fatal("consumer existed at bootstrap")
 	}
@@ -573,8 +566,8 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
-	stable := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "stable"}
+	consumer := testutil.KustomizationID("apps", "consumer")
+	stable := testutil.KustomizationID("apps", "stable")
 	for i, side := range []Rendered{base, head} {
 		want := "overlay-base"
 		if i == 1 {
@@ -613,7 +606,7 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+		id := testutil.KustomizationID("apps", "consumer")
 		if o.filter.ShouldReconcile(id) || len(res.Manifests) != 0 {
 			t.Fatal("external input/overlay selected unchanged consumer")
 		}
@@ -632,7 +625,7 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+	id := testutil.KustomizationID("apps", "consumer")
 	if got := substitutionValue(t, res, id); got != "last-gone" {
 		t.Fatalf("duplicate maps merged: %q", got)
 	}

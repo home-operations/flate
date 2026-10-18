@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -38,12 +41,8 @@ func TestE2E_SourceRef_EmptyPathMatchesRoot(t *testing.T) {
 	fixture := func(t *testing.T, field string) (string, *store.Store, *discovery.Result) {
 		t.Helper()
 		root := t.TempDir()
-		harness.GitInit(t, root)
-		testutil.WriteFile(t, root, "flux/root.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: root, namespace: flux-system}
-spec:
-`+field+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+		testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "flux/root.yaml", testutil.KustomizationYAML("root", "flux-system", "")+field+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   targetNamespace: apps
   postBuild: {substitute: {VALUE: source-root}}
 `)
@@ -53,13 +52,7 @@ kind: ConfigMap
 metadata: {name: root-owned}
 data: {value: '${VALUE}'}
 `)
-		testutil.WriteFile(t, root, "child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child, namespace: apps}
-spec:
-  path: ./leaf
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+		testutil.WriteFile(t, root, "child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 		testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf-owned}\n")
 		st := store.New()
@@ -80,8 +73,8 @@ spec:
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			root, st, res := fixture(t, path.field)
-			parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}
-			child := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
+			parent := testutil.KustomizationID("flux-system", "root")
+			child := testutil.KustomizationID("apps", "child")
 			record, _ := res.Index.Lookup(child)
 			if st.GetObject(child) == nil || record.Parent != parent {
 				t.Fatalf("source-root child not discovered or owned by root: parent=%v", record.Parent)
@@ -121,7 +114,7 @@ func TestE2E_SourceRef_PatchedStubKustomizationKeepsParentPath(t *testing.T) {
 	for _, concurrency := range []string{"2", "8"} {
 		t.Run("concurrency_"+concurrency, func(t *testing.T) {
 			root := t.TempDir()
-			harness.GitInit(t, root)
+			testutil.GitInit(t, root)
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", `resources: [root.yaml, tmpl.yaml]
 patches:
   - target:
@@ -137,20 +130,8 @@ patches:
         path: /spec/sourceRef
         value: {kind: GitRepository, name: flux-system}
 `)
-			testutil.WriteFile(t, root, "flux/root.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: root, namespace: flux-system}
-spec:
-  interval: 1m
-  prune: true
-  path: ./flux
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
-			testutil.WriteFile(t, root, "flux/tmpl.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: tmpl, namespace: flux-system}
-spec: {interval: 1m, prune: true}
-`)
+			testutil.WriteFile(t, root, "flux/root.yaml", testutil.KustomizationYAML("root", "flux-system", "  interval: 1m\n  prune: true\n  path: ./flux\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(t, root, "flux/tmpl.yaml", testutil.KustomizationYAML("tmpl", "flux-system", "  {interval: 1m, prune: true}\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: apps-cm, namespace: apps}\n")
 			testutil.WriteFile(t, root, "unrelated/broken.yaml", "invalid: [\n")
@@ -174,9 +155,9 @@ spec: {interval: 1m, prune: true}
 				}
 			}
 			assert.Diff(t, seen, map[manifest.NamedResource]bool{
-				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "root"}: true,
-				{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "tmpl"}: true,
-				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "apps-cm"}:                                               true,
+				testutil.KustomizationID("flux-system", "root"):                    true,
+				testutil.KustomizationID("flux-system", "tmpl"):                    true,
+				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "apps-cm"}: true,
 			})
 		})
 	}
@@ -205,28 +186,14 @@ func TestE2E_SourceRef_PinnedSourceDiscoveredAfterConsumer(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
+			repo := testutil.GitInit(t, root)
 			if _, err := repo.CreateRemote(&config.RemoteConfig{
 				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 			}); err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "flux/"+tt.appsFile, `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: pinned, namespace: flux-system}
-`)
-			testutil.WriteFile(t, root, "flux/"+tt.sourcesFile, `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+tt.sourcesName+`, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./sources
-  sourceRef: {kind: GitRepository, name: `+tt.sourceRefName+`, namespace: flux-system}
-`)
+			testutil.WriteFile(t, root, "flux/"+tt.appsFile, testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: pinned, namespace: flux-system}\n"))
+			testutil.WriteFile(t, root, "flux/"+tt.sourcesFile, testutil.KustomizationYAML(tt.sourcesName, "flux-system", "  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: "+tt.sourceRefName+", namespace: flux-system}\n"))
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			url, ref := stdcmp.Or(tt.sourceURL, "git://fixture.invalid/cluster"), "  ref: {tag: v1.0.0}\n"
 			if tt.noRef {
@@ -242,7 +209,7 @@ spec:
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
 			testutil.WriteFile(t, root, "apps/deleted.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: deleted, namespace: apps}\ndata: {value: pinned-deleted}\n")
 			testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra, namespace: apps}\ndata: {value: pinned-extra}\n")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
@@ -254,7 +221,7 @@ spec:
 				t.Fatal(err)
 			}
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
 			testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra\n")
 			transport := installSourceRefTransport(t, repo.Storer)
@@ -357,21 +324,14 @@ func TestE2E_SourceRef_HeldErrorScope(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
+			repo := testutil.GitInit(t, root)
 			if _, err := repo.CreateRemote(&config.RemoteConfig{
 				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 			}); err != nil {
 				t.Fatal(err)
 			}
 			writeConsumer := func(name, path, kind, sourceName string) {
-				testutil.WriteFile(t, root, "flux/"+name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+name+`, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./`+path+`
-  sourceRef: {kind: `+kind+`, name: `+sourceName+`}
-`)
+				testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  interval: 10m\n  path: ./"+path+"\n  sourceRef: {kind: "+kind+", name: "+sourceName+"}\n"))
 			}
 			heldPath, secondPath := "held", "second"
 			if tt.reversedPaths {
@@ -411,7 +371,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				testutil.WriteFile(t, root, path+"/kustomization.yaml", "resources: [extra.yaml]\n")
 				testutil.WriteFile(t, root, path+"/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra}\n")
 			}
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			testutil.WriteFile(t, root, heldPath+"/extra.yaml", "metadata: {name: held\n")
 			if tt.unreadable {
 				file := filepath.Join(root, secondPath+"/extra.yaml")
@@ -492,7 +452,7 @@ func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
+			repo := testutil.GitInit(t, root)
 			if _, err := repo.CreateRemote(&config.RemoteConfig{
 				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 			}); err != nil {
@@ -503,28 +463,14 @@ func TestE2E_SourceRef_HeldErrorAcrossNamespaces(t *testing.T) {
 				if namespace == "beta" {
 					suspend = "  suspend: true\n"
 				}
-				testutil.WriteFile(t, root, "flux/"+namespace+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: `+namespace+`}
-spec:
-  interval: 10m
-`+suspend+`  path: ./broken
-  sourceRef: {kind: GitRepository, name: cluster}
-`)
+				testutil.WriteFile(t, root, "flux/"+namespace+".yaml", testutil.KustomizationYAML("apps", namespace, "  interval: 10m\n"+suspend+"  path: ./broken\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
 			}
 			testutil.WriteFile(t, root, "flux/beta-repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: beta}
 spec: {interval: 10m, url: '`+tt.betaURL+`'}
 `)
-			testutil.WriteFile(t, root, "flux/sources.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: z-sources, namespace: alpha}
-spec:
-  interval: 10m
-  path: ./sources
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+			testutil.WriteFile(t, root, "flux/sources.yaml", testutil.KustomizationYAML("z-sources", "alpha", "  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -536,7 +482,7 @@ spec:
 `)
 			testutil.WriteFile(t, root, "broken/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "broken/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
@@ -545,7 +491,7 @@ spec:
 				t.Fatal(err)
 			}
 			harness.MutateFile(t, filepath.Join(root, "broken/cm.yaml"), "value: pinned", "value: newer")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			testutil.WriteFile(t, root, "broken/cm.yaml", "metadata: {name: broken\n")
 			l := loader.New(store.New())
 			l.SourceRoot = root
@@ -578,9 +524,7 @@ spec:
 				Path: filepath.Join(root, "flux"), Store: st,
 			})
 			for _, namespace := range []string{"alpha", "beta"} {
-				ks, ok := st.Get[*manifest.Kustomization](manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
-					Kind: manifest.KindKustomization, Namespace: namespace, Name: "apps",
-				})
+				ks, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID(namespace, "apps"))
 				if !ok || ks.SourceRef.Namespace != "" || ks.Path != "./broken" {
 					t.Fatalf("expected implicit source in consumer namespace, got %+v", ks)
 				}
@@ -624,7 +568,7 @@ spec:
 func TestE2E_SourceRef_HeldErrorRetainedByEmptyPath(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repo := harness.GitInit(t, root)
+	repo := testutil.GitInit(t, root)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
 		Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 	}); err != nil {
@@ -636,13 +580,7 @@ func TestE2E_SourceRef_HeldErrorRetainedByEmptyPath(t *testing.T) {
 		if path != "" {
 			pathField = "  path: " + path + "\n"
 		}
-		testutil.WriteFile(t, root, "flux/"+file, `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+name+`, namespace: flux-system}
-spec:
-  interval: 10m
-`+pathField+`  sourceRef: {kind: GitRepository, name: `+sourceName+`, namespace: flux-system}
-`)
+		testutil.WriteFile(t, root, "flux/"+file, testutil.KustomizationYAML(name, "flux-system", "  interval: 10m\n"+pathField+"  sourceRef: {kind: GitRepository, name: "+sourceName+", namespace: flux-system}\n"))
 	}
 	writeKS("a-x.yaml", "a-x", "./", "pinned")
 	writeKS("b-z.yaml", "b-z", "", "flux-system")
@@ -657,7 +595,7 @@ spec:
   ref: {tag: v1.0.0}
 `)
 	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: pinned}\n")
-	harness.GitCommitAll(t, repo)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	head, err := repo.Head()
 	if err != nil {
 		t.Fatal(err)
@@ -666,7 +604,7 @@ spec:
 		t.Fatal(err)
 	}
 	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
-	harness.GitCommitAll(t, repo)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
 	l := loader.New(store.New())
 	l.SourceRoot = root
@@ -699,7 +637,7 @@ func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
+			repo := testutil.GitInit(t, root)
 			if _, err := repo.CreateRemote(&config.RemoteConfig{
 				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 			}); err != nil {
@@ -708,26 +646,11 @@ func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
 			for _, ks := range []struct{ name, path string }{
 				{"probe", "ok"}, {"entry", "entries"}, {"stage", "stage"},
 			} {
-				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+ks.name+`, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./`+ks.path+`
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", testutil.KustomizationYAML(ks.name, "flux-system", "  interval: 10m\n  path: ./"+ks.path+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 			}
 			testutil.WriteFile(t, root, "entries/kustomization.yaml", "resources: [nested/child.yaml]\n")
 			testutil.WriteFile(t, root, "entries/nested/kustomization.yaml", "resources: [child.yaml]\n")
-			testutil.WriteFile(t, root, "entries/nested/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: a-held}
-spec:
-  interval: 10m
-  suspend: true
-  path: ./held
-  sourceRef: {kind: GitRepository, name: unknown`+tt.namespace+`}
-`)
+			testutil.WriteFile(t, root, "entries/nested/child.yaml", testutil.KustomizationYAML("a-held", "", "  interval: 10m\n  suspend: true\n  path: ./held\n  sourceRef: {kind: GitRepository, name: unknown"+tt.namespace+"}\n"))
 			testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [sources.yaml]\n")
 			sourceTargetNamespace := ""
 			if tt.namespaceFreeSource {
@@ -736,24 +659,10 @@ spec:
 					sourceTargetNamespace = "  targetNamespace: shifted\n"
 				}
 			}
-			testutil.WriteFile(t, root, "stage/sources.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: z-sources, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./sources
-`+sourceTargetNamespace+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+			testutil.WriteFile(t, root, "stage/sources.yaml", testutil.KustomizationYAML("z-sources", "flux-system", "  interval: 10m\n  path: ./sources\n")+sourceTargetNamespace+`  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [claim.yaml, repo.yaml]\n")
-			testutil.WriteFile(t, root, "sources/claim.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: claim, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./entries/nested
-  targetNamespace: shifted
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
+			testutil.WriteFile(t, root, "sources/claim.yaml", testutil.KustomizationYAML("claim", "flux-system", "  interval: 10m\n  path: ./entries/nested\n  targetNamespace: shifted\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 			sourceName, sourceMetadataNamespace := "pulse", ", namespace: flux-system"
 			if tt.pinned || tt.external {
 				sourceName, sourceMetadataNamespace = "unknown", ", namespace: shifted"
@@ -775,14 +684,14 @@ spec:
 			testutil.WriteFile(t, root, "ok/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\n")
 			testutil.WriteFile(t, root, "held/kustomization.yaml", "resources: [broken.yaml]\n")
 			testutil.WriteFile(t, root, "held/broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: held}\n")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
 			}
 			if tt.pinned {
 				testutil.WriteFile(t, root, "extra.txt", "second commit\n")
-				harness.GitCommitAll(t, repo)
+				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			}
 			if !tt.external {
 				harness.MutateFile(t, filepath.Join(root, "sources/repo.yaml"), "{branch: master}", "{commit: "+head.Hash().String()+"}")
@@ -809,7 +718,7 @@ spec:
 			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
 			})
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "shifted", Name: "a-held"}
+			id := testutil.KustomizationID("shifted", "a-held")
 			ks, ok := st.Get[*manifest.Kustomization](id)
 			if !ok || ks.Path != "./held" || ks.SourceRef.Name != "unknown" {
 				t.Fatalf("expected surviving consumer with inherited namespace and unchanged path/source, got %+v", ks)
@@ -846,62 +755,31 @@ func TestE2E_SourceRef_PinnedTreeReplacesHeldConsumer(t *testing.T) {
 		},
 		{
 			name: "replaced",
-			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: a-held, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./ok
-  sourceRef: {kind: GitRepository, name: flux-system}
-`,
+			held: testutil.KustomizationYAML("a-held", "flux-system", "  interval: 10m\n  path: ./ok\n  sourceRef: {kind: GitRepository, name: flux-system}\n"),
 			want: "value: ok-consumer",
 		},
 		{
 			name: "different_name", heldSource: "unknown",
 			survivorName: "b-survivor", survivorPath: "./apps/broken", survivorSource: "unknown",
-			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: b-survivor, namespace: flux-system}
-spec:
-  interval: 10m
-  suspend: true
-  path: ./apps/broken
-  sourceRef: {kind: GitRepository, name: unknown}
-`,
+			held: testutil.KustomizationYAML("b-survivor", "flux-system", "  interval: 10m\n  suspend: true\n  path: ./apps/broken\n  sourceRef: {kind: GitRepository, name: unknown}\n"),
 			want: "value: tagged",
 		},
 		{
 			name: "different_path", heldSource: "unknown",
 			survivorName: "a-held", survivorPath: "./ok", survivorSource: "unknown",
-			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: a-held, namespace: flux-system}
-spec:
-  interval: 10m
-  suspend: true
-  path: ./ok
-  sourceRef: {kind: GitRepository, name: unknown}
-`,
+			held: testutil.KustomizationYAML("a-held", "flux-system", "  interval: 10m\n  suspend: true\n  path: ./ok\n  sourceRef: {kind: GitRepository, name: unknown}\n"),
 			want: "value: tagged",
 		},
 		{
 			name: "different_source_ref", heldSource: "unknown",
 			survivorName: "a-held", survivorPath: "./apps/broken", survivorSource: "flux-system",
-			held: `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: a-held, namespace: flux-system}
-spec:
-  interval: 10m
-  suspend: true
-  path: ./apps/broken
-  sourceRef: {kind: GitRepository, name: flux-system}
-`,
+			held: testutil.KustomizationYAML("a-held", "flux-system", "  interval: 10m\n  suspend: true\n  path: ./apps/broken\n  sourceRef: {kind: GitRepository, name: flux-system}\n"),
 			want: "value: tagged",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
+			repo := testutil.GitInit(t, root)
 			if _, err := repo.CreateRemote(&config.RemoteConfig{
 				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 			}); err != nil {
@@ -912,25 +790,11 @@ spec:
 				{"z-pinned", "apps", "pinned"},
 				{"z-stage", "stage", "flux-system"},
 			} {
-				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: `+ks.name+`, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./`+ks.path+`
-  sourceRef: {kind: GitRepository, name: `+ks.source+`}
-`)
+				testutil.WriteFile(t, root, "flux/"+ks.name+".yaml", testutil.KustomizationYAML(ks.name, "flux-system", "  interval: 10m\n  path: ./"+ks.path+"\n  sourceRef: {kind: GitRepository, name: "+ks.source+"}\n"))
 			}
 			harness.MutateFile(t, filepath.Join(root, "flux/a-entry.yaml"), "interval: 10m", "interval: 10m\n  suspend: true")
 			testutil.WriteFile(t, root, "stage/kustomization.yaml", "resources: [ks.yaml]\n")
-			testutil.WriteFile(t, root, "stage/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: z-sources, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./sources
-  sourceRef: {kind: GitRepository, name: flux-system}
-`)
+			testutil.WriteFile(t, root, "stage/ks.yaml", testutil.KustomizationYAML("z-sources", "flux-system", "  interval: 10m\n  path: ./sources\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			testutil.WriteFile(t, root, "sources/kustomization.yaml", "resources: [repo.yaml]\n")
 			testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -947,7 +811,7 @@ spec:
 			testutil.WriteFile(t, root, "ok/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ok, namespace: apps}\ndata: {value: ok-consumer}\n")
 			testutil.WriteFile(t, root, "apps/broken/kustomization.yaml", "resources: [held.yaml, extra.yaml]\n")
 			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\n")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			head, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
@@ -956,16 +820,9 @@ spec:
 				t.Fatal(err)
 			}
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			heldSource := stdcmp.Or(tt.heldSource, "pinned")
-			testutil.WriteFile(t, root, "apps/broken/held.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: a-held, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./apps/broken
-  sourceRef: {kind: GitRepository, name: `+heldSource+`}
-`)
+			testutil.WriteFile(t, root, "apps/broken/held.yaml", testutil.KustomizationYAML("a-held", "flux-system", "  interval: 10m\n  path: ./apps/broken\n  sourceRef: {kind: GitRepository, name: "+heldSource+"}\n"))
 			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
 			l := loader.New(store.New())
@@ -996,7 +853,7 @@ spec:
 				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"], manifest.ErrInput) {
 					t.Fatalf("expected retained working-tree diagnostic, got %v", err)
 				}
-				id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: tt.survivorName}
+				id := testutil.KustomizationID("flux-system", tt.survivorName)
 				ks, ok := st.Get[*manifest.Kustomization](id)
 				if !ok || ks.Path != tt.survivorPath || ks.SourceRef.Name != tt.survivorSource || ks.SourceRef.Namespace != "" {
 					t.Fatalf("expected survivor with independently changed identity field, got %+v", ks)
@@ -1021,30 +878,16 @@ func TestE2E_SourceRef_PinnedFollowedSourceInheritsNamespace(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			repo := harness.GitInit(t, root)
+			repo := testutil.GitInit(t, root)
 			if _, err := repo.CreateRemote(&config.RemoteConfig{
 				Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 			}); err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: meta, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./clusters
-  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}
-`)
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("meta", "flux-system", "  interval: 10m\n  path: ./clusters\n  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}\n"))
 			if tt.sourceDir == "sub" {
 				testutil.WriteFile(t, root, "clusters/kustomization.yaml", "namespace: flux-system\nresources: [ks2.yaml]\n")
-				testutil.WriteFile(t, root, "clusters/ks2.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: sub}
-spec:
-  interval: 10m
-  path: ./sub
-  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}
-`)
+				testutil.WriteFile(t, root, "clusters/ks2.yaml", testutil.KustomizationYAML("sub", "", "  interval: 10m\n  path: ./sub\n  sourceRef: {kind: GitRepository, name: bootstrap, namespace: flux-system}\n"))
 			}
 			testutil.WriteFile(t, root, tt.sourceDir+"/kustomization.yaml", "namespace: flux-system\nresources: [repo.yaml, apps.yaml]\n")
 			testutil.WriteFile(t, root, tt.sourceDir+"/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
@@ -1055,18 +898,11 @@ spec:
   url: git://fixture.invalid/cluster
   ref: {tag: v1.0.0}
 `)
-			testutil.WriteFile(t, root, tt.sourceDir+"/apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps}
-spec:
-  interval: 10m
-  path: ./apps
-  sourceRef: {kind: GitRepository, name: cluster`+tt.namespace+`}
-`)
+			testutil.WriteFile(t, root, tt.sourceDir+"/apps.yaml", testutil.KustomizationYAML("apps", "", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster"+tt.namespace+"}\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			for _, version := range []string{"v1.0.0", "v2.0.0"} {
 				testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata:\n  value: "+version+"\n")
-				harness.GitCommitAll(t, repo)
+				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 				head, err := repo.Head()
 				if err != nil {
 					t.Fatal(err)
@@ -1100,7 +936,7 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 		}
 		harness.MutateFile(t, filepath.Join(root, "flux/entry.yaml"), "path: ./apps", "path: ./")
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [apps, flux/entry.yaml]\n")
-		harness.GitCommitAll(t, repo)
+		testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 		if hash == older {
 			ref, err := repo.Head()
 			if err != nil {
@@ -1130,14 +966,10 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 func TestE2E_SourceRef_PinnedPathIgnoresAddedDiscoveryObjects(t *testing.T) {
 	original, _, _, _ := sourceRefFixture(t)
 	current, _, _, _ := sourceRefFixture(t)
-	testutil.WriteFile(t, current, "apps/added-ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: added-ks, namespace: flux-system}
-spec:
-  path: ./apps/phantom
+	testutil.WriteFile(t, current, "apps/added-ks.yaml", testutil.KustomizationYAML("added-ks", "flux-system", `  path: ./apps/phantom
   sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
----
-apiVersion: source.toolkit.fluxcd.io/v1
+`)+"---\n"+
+		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: working, namespace: flux-system}
 spec: {url: 'git://fixture.invalid/cluster'}
@@ -1176,17 +1008,11 @@ spec:
 
 func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
 	root, repo, _, _ := sourceRefFixture(t)
-	testutil.WriteFile(t, root, "apps/child.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: child, namespace: flux-system}
-spec:
-  path: ./leaf
-  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
-`)
+	testutil.WriteFile(t, root, "apps/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
 	harness.MutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- child.yaml\n")
 	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {value: pinned-child}\n")
-	harness.GitCommitAll(t, repo)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	head, err := repo.Head()
 	if err != nil {
 		t.Fatal(err)
@@ -1197,7 +1023,7 @@ spec:
 	if err := os.Remove(filepath.Join(root, "apps/child.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	harness.GitCommitAll(t, repo)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
 	if !strings.Contains(out, "name: child-output") || !strings.Contains(out, "value: pinned-child") {
@@ -1237,7 +1063,7 @@ data:
   greeting: {{ .Values.greeting | quote }}
 `)
 		if hash == older {
-			harness.GitCommitAll(t, repo)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			ref, err := repo.Head()
 			if err != nil {
 				t.Fatal(err)
@@ -1284,9 +1110,9 @@ data:
 		}
 	}
 	want := map[manifest.NamedResource]int{
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:                                       1,
-		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "existing"}: 1,
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}:                                 1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:       1,
+		testutil.HelmReleaseID("apps", "existing"):                             1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}: 1,
 	}
 	if diff := cmp.Diff(want, ids); diff != "" {
 		t.Fatalf("pinned object ids (-want +got):\n%s\n%s", diff, out)
@@ -1296,7 +1122,7 @@ data:
 func sourceRefFixture(t *testing.T) (string, *gogit.Repository, plumbing.Hash, plumbing.Hash) {
 	t.Helper()
 	root := t.TempDir()
-	repo := harness.GitInit(t, root)
+	repo := testutil.GitInit(t, root)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
 		Name: "origin", URLs: []string{"git://fixture.invalid/cluster"},
 	}); err != nil {
@@ -1310,15 +1136,11 @@ spec:
   url: git://fixture.invalid/cluster
   ref: {tag: v1.0.0}
   ignore: '/ignored.txt'
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
+`+"---\n"+
+		testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./apps
   sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
-`)
+`))
 	testutil.WriteFile(t, root, "ignored.txt", "ignored by the source artifact\n")
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	var hashes [2]plumbing.Hash
@@ -1328,7 +1150,7 @@ kind: ConfigMap
 metadata: {name: hello, namespace: apps}
 data:
   value: `+version+"\n")
-		harness.GitCommitAll(t, repo)
+		testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 		head, err := repo.Head()
 		if err != nil {
 			t.Fatal(err)
@@ -1427,7 +1249,8 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 	if loader.calls.Load() != 0 {
 		t.Fatalf("local pin accessed transport %d times", loader.calls.Load())
 	}
-	exported := harness.CopyTree(t, root)
+	exported := t.TempDir()
+	testutil.CopyTree(t, root, exported)
 	if err := os.RemoveAll(filepath.Join(exported, ".git")); err != nil {
 		t.Fatal(err)
 	}
@@ -1457,14 +1280,7 @@ func TestE2E_PinnedDiff_RootPin(t *testing.T) {
 		if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
 			t.Fatal(err)
 		}
-		testutil.WriteFile(t, current, "flux/entry.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
-  interval: 10m
-  path: ./
-  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}
-`)
+		testutil.WriteFile(t, current, "flux/entry.yaml", testutil.KustomizationYAML("apps", "flux-system", "  interval: 10m\n  path: ./\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
 		testutil.WriteFile(t, current, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
@@ -1475,7 +1291,7 @@ spec:
   ignore: '/ignored.txt'
 `)
 		testutil.WriteFile(t, current, "kustomization.yaml", "resources: [apps, flux/entry.yaml, flux/repo.yaml]\n")
-		harness.GitCommitAll(t, repo)
+		testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 		if hash == older {
 			ref, err := repo.Head()
 			if err != nil {
@@ -1486,7 +1302,8 @@ spec:
 			}
 		}
 	}
-	original := harness.CopyTree(t, current)
+	original := t.TempDir()
+	testutil.CopyTree(t, current, original)
 	transport := installSourceRefTransport(t, repo.Storer)
 	harness.MutateFile(t, filepath.Join(current, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
 	for _, stage := range []string{"dirty-only", "tag-change"} {
@@ -1556,7 +1373,7 @@ func testPinnedProducerDiff(t *testing.T, deleted bool) {
 			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "name: hello, namespace: apps", "name: hello")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources:\n- cm.yaml\n")
 			if hash == older {
-				harness.GitCommitAll(t, repo)
+				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 				ref, err := repo.Head()
 				if err != nil {
 					t.Fatal(err)
@@ -1577,12 +1394,8 @@ metadata: {name: working, namespace: flux-system}
 spec:
   interval: 10m
   url: git://fixture.invalid/cluster
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: apps}
-spec:
-  interval: 10m
+`+"---\n"+
+			testutil.KustomizationYAML("consumer", "apps", `  interval: 10m
   path: ./consumer
   sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
   postBuild:
@@ -1590,7 +1403,7 @@ spec:
     substituteFrom:
       - kind: ConfigMap
         name: hello
-`)
+`))
 		testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
 		testutil.WriteFile(t, root, "consumer/cm.yaml", `apiVersion: v1
 kind: ConfigMap

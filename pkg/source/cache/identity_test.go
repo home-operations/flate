@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -73,7 +74,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	assert.Equal(t, identityA == "" || identityB == "" || identityA == identityB, false)
 	root := t.TempDir()
 	processIdentity = identityA
-	c := newCache(t, root)
+	c := cachetest.New(t, root, New)
 	key := BlobKey{Content: "render-input", PersistOnly: true}
 	r, _, _, err := c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
 	if err != nil {
@@ -87,7 +88,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		processIdentity = identity
-		c = newCache(t, root)
+		c = cachetest.New(t, root, New)
 		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
@@ -105,7 +106,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		processIdentity = identity
-		c = newCache(t, root)
+		c = cachetest.New(t, root, New)
 		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -120,7 +121,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	processIdentity = ""
-	c = newCache(t, root)
+	c = cachetest.New(t, root, New)
 	index := filepath.Join(c.root.Name(), indexPath())
 	before, err := os.ReadFile(index)
 	if err != nil {

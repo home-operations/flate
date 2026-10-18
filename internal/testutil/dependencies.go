@@ -155,12 +155,8 @@ func dependencyKS(name, path, dependsOn string) string {
 	if dependsOn != "" {
 		dep = "  dependsOn:\n  - name: " + dependsOn + "\n"
 	}
-	return `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: ` + name + `, namespace: flux-system}
-spec:
-  path: ./` + path + "\n" + dep +
-		"  sourceRef: {kind: GitRepository, name: shared, namespace: flux-system}\n"
+	return KustomizationYAML(name, "flux-system", "  path: ./"+path+"\n"+dep+
+		"  sourceRef: {kind: GitRepository, name: shared, namespace: flux-system}\n")
 }
 
 func writeDependencyChart(tb testing.TB, root string) {

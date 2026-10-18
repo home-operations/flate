@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -16,10 +17,6 @@ import (
 // that the dag engine's Classify reuses. They drive the kept non-blocking surface
 // — evaluateReadyExpr directly for projection/binding correctness, and Classify
 // for the readiness-gate semantics — rather than the deleted blocking Watch loop.
-
-func celDep(name string) manifest.NamedResource {
-	return manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: name}
-}
 
 // TestReadyExpr_ProjectsObservedGeneration: the common Flux readiness idiom
 // `status.observedGeneration == metadata.generation` projects and compares.
@@ -58,7 +55,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	dep := celDep("infra")
+	dep := testutil.KustomizationID("ns", "infra")
 	s.UpdateStatus(dep, store.StatusFailed, "still rolling out") // built-in says Failed
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
@@ -77,7 +74,7 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 func TestReadyExpr_CompileError(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	dep := celDep("x")
+	dep := testutil.KustomizationID("ns", "x")
 	s.UpdateStatus(dep, store.StatusReady, "ok")
 
 	if _, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep); err == nil {
@@ -96,7 +93,7 @@ func TestReadyExpr_CompileError(t *testing.T) {
 func TestReadyExpr_NonBoolResult(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	dep := celDep("x")
+	dep := testutil.KustomizationID("ns", "x")
 	s.UpdateStatus(dep, store.StatusReady, "ok")
 
 	_, err := evaluateReadyExpr(`dep.metadata.name`, s, manifest.NamedResource{}, dep) // string, not bool
@@ -115,7 +112,7 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	dep := celDep("infra")
+	dep := testutil.KustomizationID("ns", "infra")
 	s.UpdateStatus(dep, store.StatusReady, "")
 
 	w := &Waiter{Store: s}
@@ -134,7 +131,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	dep := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	dep := testutil.KustomizationID("ns", "child")
 	s.AddObject(&manifest.Kustomization{
 		Name: "child", Namespace: "ns",
 		Labels:      map[string]string{"tier": "data"},
@@ -158,8 +155,8 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	self := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
-	dep := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
+	self := testutil.KustomizationID("ns", "parent")
+	dep := testutil.KustomizationID("ns", "child")
 	s.UpdateStatus(self, store.StatusReady, "")
 	s.UpdateStatus(dep, store.StatusReady, "")
 

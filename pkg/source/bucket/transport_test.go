@@ -19,6 +19,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -170,11 +171,7 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 		if !ok || !terminal.Attempted {
 			t.Fatalf("seed: %v", err)
 		}
-		c, err := cache.New(t.Context(), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = c.Close() }()
+		c := cachetest.New(t, "", cache.New)
 		start := time.Now()
 		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
@@ -242,11 +239,7 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 			if wave == "direct" {
 				t.Setenv("no_proxy", "*")
 			}
-			c, err := cache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = c.Close() }()
+			c := cachetest.New(t, root, cache.New)
 			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
 				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca}}

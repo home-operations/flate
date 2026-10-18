@@ -7,6 +7,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -88,14 +89,12 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	input, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	owner, err := sourcecache.New(t.Context(), "")
-	assert.NoError(t, err)
-	t.Cleanup(func() { _ = owner.Close() })
+	owner := cachetest.New(t, "", sourcecache.New)
 	trees := kustomize.NewTreeCache(owner, nil)
 	t.Cleanup(trees.Close)
 	c := New(st, task.NewBounded(2), trees, false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
-	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec: {path: app, postBuild: {substituteStrategy: Always}}\n"))
+	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n")))
 	if err != nil {
 		t.Fatal(err)
 	}

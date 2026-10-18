@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -314,7 +315,7 @@ func TestStore_Refire_NoopMissingID(t *testing.T) {
 func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
+	id := testutil.KustomizationID("flux-system", "apps")
 
 	count := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
@@ -338,7 +339,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	// but listeners that need finer granularity (depwait's CEL path)
 	// re-query GetConditions to see the change.
 	s := New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	id := testutil.KustomizationID("ns", "k")
 	s.UpdateStatus(id, StatusPending, "starting")
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
@@ -354,7 +355,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	id := testutil.KustomizationID("ns", "k")
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		statusEvents++
@@ -373,7 +374,7 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
+	id := testutil.KustomizationID("ns", "k")
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) { statusEvents++ }, false)
 
@@ -544,7 +545,7 @@ func TestStore_SetArtifact(t *testing.T) {
 func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := testutil.KustomizationID("flux-system", "apps")
 	makeArt := func() *KustomizationArtifact {
 		return &KustomizationArtifact{
 			Path: "./apps",
@@ -596,7 +597,7 @@ func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
 func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := testutil.KustomizationID("flux-system", "apps")
 
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)

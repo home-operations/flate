@@ -6,6 +6,7 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,7 +21,7 @@ func BenchmarkCollectDeps_Scope(b *testing.B) {
 				opts := base.Options{}
 				if hasParent {
 					opts.ParentOf = func(manifest.NamedResource) (manifest.NamedResource, bool) {
-						return manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}, true
+						return testutil.KustomizationID("ns", "parent"), true
 					}
 				}
 				c.Configure(Options{Options: opts})

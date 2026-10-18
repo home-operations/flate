@@ -18,6 +18,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -30,7 +31,7 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	commitA := initRepoWithFile(t, dir, "a.yaml", "original")
 	writeAndCommit(t, dir, "a.yaml", "updated")
 
-	res, err := AutoResolve(t.Context(), dir, commitA.String(), testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, commitA.String(), cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestAutoResolve_SelfURLsCarryRemotes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := AutoResolve(t.Context(), dir, commit.String(), testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, commit.String(), cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -130,7 +131,7 @@ func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
 	// Move forward on the local branch.
 	writeAndCommit(t, dir, "a.yaml", "diverged")
 
-	res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestAutoResolve_OriginHEAD(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
 	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "main"), mainCommit)
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
 
-	res, err := AutoResolve(t.Context(), dir, "main", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve(--base=main) should fall back to origin/main: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestAutoResolve_ExplicitBaseNeitherLocalNorRemote(t *testing.T) {
 	initRepoWithFile(t, dir, "a.yaml", "base")
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "nonexistent", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "nonexistent", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected error for unresolvable --base")
 	}
@@ -230,7 +231,7 @@ func TestAutoResolve_OriginMainFallback(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestAutoResolve_Ladder(t *testing.T) {
 				})
 			}
 
-			res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+			res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 			if err != nil {
 				t.Fatalf("AutoResolve: %v", err)
 			}
@@ -320,7 +321,7 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 		t.Fatalf("detach HEAD: %v", err)
 	}
 
-	res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -334,12 +335,12 @@ func TestAutoResolve_NoGit(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFileAt(t, filepath.Join(dir, "f.yaml"), "x")
-	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not inside a git working tree") {
 		t.Errorf("error %q: should explain why and suggest --path-orig / --base", err)
 	}
 	assert.Equal(t, os.Symlink(".git", filepath.Join(dir, ".git")), nil)
-	res, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	assert.Equal(t, errors.Is(err, manifest.ErrInput) && errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, res == nil, true)
 }
@@ -353,7 +354,7 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	}
 	// No upstream, no origin refs → the resolution ladder falls
 	// through; the shallow detection fires last.
-	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
@@ -371,7 +372,7 @@ func TestAutoResolve_NoUpstream(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
-	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected no-upstream error")
 	}
@@ -398,7 +399,7 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 	if err := os.Mkdir(sibling, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	_, err := AutoResolve(t.Context(), sibling, "", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), sibling, "", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected error for path outside repo")
 	}
@@ -411,7 +412,7 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	cluster := filepath.Join(dir, "kubernetes", "flux", "cluster")
 	link := filepath.Join(t.TempDir(), "cluster")
 	assert.NoError(t, os.Symlink(cluster, link))
-	result, err := AutoResolve(t.Context(), link, commit.String(), testOwner(t, ""))
+	result, err := AutoResolve(t.Context(), link, commit.String(), cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +436,7 @@ func TestAutoResolve_NoGitMarker(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
-	res, err := AutoResolve(t.Context(), dir, commit.String(), testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, commit.String(), cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -453,28 +454,15 @@ func TestAutoResolve_NoGitMarker(t *testing.T) {
 func TestAutoResolve_PreservesExecutableBit(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	r, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := testutil.GitInit(t, dir)
 	script := filepath.Join(dir, "run.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add("run.sh"); err != nil {
-		t.Fatal(err)
-	}
-	commit, err := wt.Commit("init", &git.CommitOptions{
+	commit := testutil.GitCommitAll(t, r, "init", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := AutoResolve(t.Context(), dir, commit.String(), testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), dir, commit.String(), cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -503,7 +491,7 @@ func TestAutoResolve_LinkedWorktree(t *testing.T) {
 
 	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
 
-	res, err := AutoResolve(t.Context(), wtDir, "", testOwner(t, ""))
+	res, err := AutoResolve(t.Context(), wtDir, "", cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatalf("AutoResolve in linked worktree: %v", err)
 	}
@@ -535,7 +523,7 @@ func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
 	}
 	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
 
-	_, err := AutoResolve(t.Context(), wtDir, "", testOwner(t, ""))
+	_, err := AutoResolve(t.Context(), wtDir, "", cachetest.New(t, "", sourcecache.New))
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
@@ -544,49 +532,22 @@ func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
 	}
 }
 
-// --- helpers --------------------------------------------------------
-
 func initRepoWithFile(t *testing.T, dir, path, content string) plumbing.Hash {
 	t.Helper()
-	r, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := testutil.GitInit(t, dir)
 	testutil.WriteFileAt(t, filepath.Join(dir, path), content)
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add(path); err != nil {
-		t.Fatal(err)
-	}
-	hash, err := wt.Commit("init", &git.CommitOptions{
+	return testutil.GitCommitAll(t, r, "init", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return hash
 }
 
 func writeAndCommit(t *testing.T, dir, path, content string) plumbing.Hash {
 	t.Helper()
 	testutil.WriteFileAt(t, filepath.Join(dir, path), content)
 	r := openHelper(t, dir)
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add(path); err != nil {
-		t.Fatal(err)
-	}
-	hash, err := wt.Commit("update", &git.CommitOptions{
+	return testutil.GitCommitAll(t, r, "update", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return hash
 }
 
 func openHelper(t *testing.T, dir string) *git.Repository {
@@ -653,18 +614,6 @@ func linkedWorktree(t *testing.T, mainDir, name string, branch plumbing.Referenc
 	return wtDir
 }
 
-func testOwner(t *testing.T, root string) *sourcecache.Cache {
-	t.Helper()
-	owner, err := sourcecache.New(t.Context(), root)
-	assert.NoError(t, err)
-	t.Cleanup(func() {
-		if err := owner.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return owner
-}
-
 func TestResolve_RetainedConfiguration(t *testing.T) {
 	t.Parallel()
 	for _, route := range []string{"upstream", "origin"} {
@@ -691,7 +640,7 @@ func TestResolve_RetainedConfiguration(t *testing.T) {
 			assert.NoError(t, err)
 			location := input.FS.(*gittree.FS).Location()
 			assert.NoError(t, os.Remove(filepath.Join(root, ".git", "config")))
-			resolved, err := resolve(t.Context(), location, explicit, testOwner(t, ""))
+			resolved, err := resolve(t.Context(), location, explicit, cachetest.New(t, "", sourcecache.New))
 			assert.NoError(t, err)
 			assert.Equal(t, resolved.Hash, base)
 			if route == "upstream" {

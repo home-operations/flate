@@ -39,7 +39,7 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					}
 					o.configureControllers()
 					d := dagDispatcher{o}
-					producer, consumer := ksID("producer"), ksID("consumer")
+					producer, consumer := testutil.KustomizationID("flux-system", "producer"), testutil.KustomizationID("flux-system", "consumer")
 					release := make(chan struct{})
 					o.tasks.Go(ctx, "producer", func(ctx context.Context) {
 						select {
@@ -91,7 +91,7 @@ func TestRender_SubstitutionProducerFailures(t *testing.T) {
 			testutil.WriteFile(t, root, "data/kustomization.yaml", "namespace: flux-system\nresources: [missing.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+map[string]string{manifest.KindConfigMap: "configMapGenerator", manifest.KindSecret: "secretGenerator"}[kind]+":\n- name: settings\n  envs: [version.env]\n")
 			o := newSubstitutionOrchestrator(t, Config{Path: root})
 			res, err := o.Render(t.Context())
-			consumer, producer := ksID("consumer"), ksID("producer")
+			consumer, producer := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "producer")
 			if err == nil || !slices.Contains(res.Blocked[consumer], producer) || len(res.Manifests[consumer]) != 0 {
 				t.Fatalf("failed producer did not block consumer: error=%v blocked=%v manifests=%v", err, res.Blocked, res.Manifests[consumer])
 			}

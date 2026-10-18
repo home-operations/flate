@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -22,7 +23,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			parent := Parent{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "a"}
+			parent := Parent{NamedResource: testutil.HelmReleaseID("ns", "a")}
 			left := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
 			left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
 			parent.Group, parent.Name = tt.parentGroup, tt.parentName
@@ -66,7 +67,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 
 func TestPair_PathIsPresentation(t *testing.T) {
 	t.Parallel()
-	leftParent := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "old/apps"}
+	leftParent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "old/apps"}
 	for _, tt := range []struct {
 		name, path, resource, parent string
 	}{
@@ -123,7 +124,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 }
 
 func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
-	parent := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "./apps"}
+	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "./apps"}
 	for _, side := range []string{"left", "right"} {
 		t.Run(side, func(t *testing.T) {
 			var logs bytes.Buffer

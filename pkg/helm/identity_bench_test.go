@@ -2,10 +2,13 @@ package helm
 
 import (
 	"fmt"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"os"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func BenchmarkLoadChart_Mode(b *testing.B) {
@@ -17,7 +20,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 				if disk {
 					root = b.TempDir()
 				}
-				owner := newTestCache(b, root)
+				owner := cachetest.New(b, root, sourcecache.New)
 				resolver := benchChartResolver(b, dir, os.DirFS(dir))
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
 				newClient := func() *Client {
@@ -59,7 +62,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				if disk {
 					root = b.TempDir()
 				}
-				cli, err := NewClient(newTestCache(b, root))
+				cli, err := NewClient(cachetest.New(b, root, sourcecache.New))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -82,7 +85,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-	cli, err := NewClient(newTestCache(b, ""))
+	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
 	if err != nil {
 		b.Fatal(err)
 	}

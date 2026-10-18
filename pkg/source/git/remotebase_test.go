@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -19,7 +20,7 @@ import (
 func newRemoteBaseFetcher(t *testing.T) *Fetcher {
 	t.Helper()
 	root := t.TempDir()
-	return &Fetcher{Cache: newGitCache(t, root)}
+	return &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 }
 
 func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {

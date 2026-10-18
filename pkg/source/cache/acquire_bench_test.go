@@ -1,13 +1,13 @@
 package cache
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"io"
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -24,16 +24,7 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 			}
 			b.Cleanup(func() { _ = c.Close() })
 			var buf bytes.Buffer
-			tw := tar.NewWriter(&buf)
-			if err := tw.WriteHeader(&tar.Header{Name: "file", Size: 4096, Mode: 0o600}); err != nil {
-				b.Fatal(err)
-			}
-			if _, err := tw.Write(make([]byte, 4096)); err != nil {
-				b.Fatal(err)
-			}
-			if err := tw.Close(); err != nil {
-				b.Fatal(err)
-			}
+			testutil.WriteTar(b, &buf, map[string]string{"file": string(make([]byte, 4096))}, 0o600)
 			key := ArchiveKey{Content: "source-benchmark"}
 			input, _, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, producer(buf.Bytes(), ocispec.Descriptor{}))
 			if err != nil {

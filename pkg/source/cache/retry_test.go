@@ -27,6 +27,8 @@ import (
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -162,7 +164,9 @@ func fastRetry(attempts int) RetryConfig {
 }
 
 func TestAcquire_RetrySequence(t *testing.T) {
+	t.Parallel()
 	t.Run("persistence", func(t *testing.T) {
+		t.Parallel()
 		for _, disk := range []bool{false, true} {
 			for _, tc := range []struct {
 				name     string
@@ -182,46 +186,49 @@ func TestAcquire_RetrySequence(t *testing.T) {
 				{"nested non-attempt", &TerminalError{Err: errors.Join(connReset(), &TerminalError{Err: connReset()}), Attempted: true}, 1, false},
 			} {
 				t.Run(fmt.Sprintf("%t/%s", disk, tc.name), func(t *testing.T) {
-					root := ""
-					if disk {
-						root = t.TempDir()
-					}
-					c := newCache(t, root)
-					calls := 0
-					for i := range 2 {
-						_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "eligibility"}, Policy{Retry: fastRetry(3)}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-							calls++
-							_, _ = io.WriteString(w, "partial")
-							return ocispec.Descriptor{}, tc.cause
-						})
-						want := tc.attempts * (i + 1)
-						if disk && tc.record {
-							want = 1
+					t.Parallel()
+					synctest.Test(t, func(t *testing.T) {
+						root := ""
+						if disk {
+							root = t.TempDir()
 						}
-						if calls != want || err == nil || !errors.Is(err, manifest.ErrFlux) {
-							t.Fatalf("calls=%d, want=%d, error=%v", calls, want, err)
-						}
-						if !disk || !tc.record || i == 0 {
-							if !errors.Is(err, tc.cause) {
-								t.Fatalf("live cause lost: %v", err)
+						c := cachetest.New(t, root, New)
+						calls := 0
+						for i := range 2 {
+							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "eligibility"}, Policy{Retry: fastRetry(3)}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+								calls++
+								_, _ = io.WriteString(w, "partial")
+								return ocispec.Descriptor{}, tc.cause
+							})
+							want := tc.attempts * (i + 1)
+							if disk && tc.record {
+								want = 1
+							}
+							if calls != want || err == nil || !errors.Is(err, manifest.ErrFlux) {
+								t.Fatalf("calls=%d, want=%d, error=%v", calls, want, err)
+							}
+							if !disk || !tc.record || i == 0 {
+								if !errors.Is(err, tc.cause) {
+									t.Fatalf("live cause lost: %v", err)
+								}
 							}
 						}
-					}
-					if disk {
-						desc, err := c.store.Resolve(t.Context(), manifest.Fingerprint(struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"eligibility"}}))
-						if tc.record && (err != nil || desc.MediaType != ocispec.MediaTypeImageManifest) || !tc.record && !errors.Is(err, errdef.ErrNotFound) {
-							t.Fatalf("eligibility descriptor=%+v, error=%v", desc, err)
-						}
-						files, err := os.ReadDir(filepath.Join(c.root.Name(), ociDir))
-						if err != nil {
-							t.Fatal(err)
-						}
-						for _, file := range files {
-							if strings.HasPrefix(file.Name(), "acquire-") {
-								t.Fatalf("failed sink remains: %s", file.Name())
+						if disk {
+							desc, err := c.store.Resolve(t.Context(), manifest.Fingerprint(struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"eligibility"}}))
+							if tc.record && (err != nil || desc.MediaType != ocispec.MediaTypeImageManifest) || !tc.record && !errors.Is(err, errdef.ErrNotFound) {
+								t.Fatalf("eligibility descriptor=%+v, error=%v", desc, err)
+							}
+							files, err := os.ReadDir(filepath.Join(c.root.Name(), ociDir))
+							if err != nil {
+								t.Fatal(err)
+							}
+							for _, file := range files {
+								if strings.HasPrefix(file.Name(), "acquire-") {
+									t.Fatalf("failed sink remains: %s", file.Name())
+								}
 							}
 						}
-					}
+					})
 				})
 			}
 		}
@@ -239,41 +246,44 @@ func TestAcquire_RetrySequence(t *testing.T) {
 		{"permanent", 3, 4, 1, errors.Join(manifest.ErrInput, connReset())},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := newCache(t, "")
-			calls := 0
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
-				calls++
-				if ctx.Err() != nil {
-					t.Error(ctx.Err())
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := cachetest.New(t, "", New)
+				calls := 0
+				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					calls++
+					if ctx.Err() != nil {
+						t.Error(ctx.Err())
+					}
+					if calls <= tc.failures {
+						_, _ = io.WriteString(w, "partial")
+						return ocispec.Descriptor{}, tc.failure
+					}
+					_, err := io.WriteString(w, "complete")
+					return ocispec.Descriptor{}, err
+				})
+				if calls != tc.want {
+					t.Fatalf("calls=%d, want %d", calls, tc.want)
 				}
-				if calls <= tc.failures {
-					_, _ = io.WriteString(w, "partial")
-					return ocispec.Descriptor{}, tc.failure
+				if tc.failures < tc.want {
+					if err != nil {
+						t.Fatal(err)
+					}
+					body, readErr := io.ReadAll(r)
+					closeErr := r.Close()
+					if string(body) != "complete" || readErr != nil || closeErr != nil {
+						t.Fatalf("body=%q, errors=%v/%v", body, readErr, closeErr)
+					}
+				} else {
+					if !errors.Is(err, tc.failure) || !errors.Is(err, manifest.ErrFlux) {
+						t.Fatalf("error identity: %v", err)
+					}
+					terminal, ok := errors.AsType[*TerminalError](err)
+					if ok != retryable(tc.failure) || ok && !terminal.Attempted {
+						t.Fatalf("terminal=%+v, error=%v", terminal, err)
+					}
 				}
-				_, err := io.WriteString(w, "complete")
-				return ocispec.Descriptor{}, err
 			})
-			if calls != tc.want {
-				t.Fatalf("calls=%d, want %d", calls, tc.want)
-			}
-			if tc.failures < tc.want {
-				if err != nil {
-					t.Fatal(err)
-				}
-				body, readErr := io.ReadAll(r)
-				closeErr := r.Close()
-				if string(body) != "complete" || readErr != nil || closeErr != nil {
-					t.Fatalf("body=%q, errors=%v/%v", body, readErr, closeErr)
-				}
-			} else {
-				if !errors.Is(err, tc.failure) || !errors.Is(err, manifest.ErrFlux) {
-					t.Fatalf("error identity: %v", err)
-				}
-				terminal, ok := errors.AsType[*TerminalError](err)
-				if ok != retryable(tc.failure) || ok && !terminal.Attempted {
-					t.Fatalf("terminal=%+v, error=%v", terminal, err)
-				}
-			}
 		})
 	}
 }
@@ -287,7 +297,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 				t.Run(fmt.Sprintf("%d/%s", callers, child), func(t *testing.T) {
 					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
-						c := newCache(t, t.TempDir())
+						c := cachetest.New(t, t.TempDir(), New)
 						fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, connReset() }
 						r, _, outerID, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{}, producer(nil, ocispec.Descriptor{}))
 						if err != nil {
@@ -373,7 +383,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 	for _, attempted := range []bool{false, true} {
 		t.Run(fmt.Sprint(attempted), func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, "")
+			c := cachetest.New(t, "", New)
 			cause := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 			terminal := &TerminalError{Err: cause, Attempted: attempted}
 			calls := 0
@@ -391,7 +401,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 	for _, attempts := range []int{1, 3} {
 		t.Run(fmt.Sprintf("child-%d", attempts), func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, "")
+			c := cachetest.New(t, "", New)
 			outer, inner := 0, 0
 			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
 				outer++
@@ -417,9 +427,11 @@ func TestAcquire_RetryFreshArchive(t *testing.T) {
 			if disk {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			calls := 0
-			payload := archive(t, "file", "complete")
+			var payloadTar bytes.Buffer
+			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "complete"}, 0o644)
+			payload := payloadTar.Bytes()
 			input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "partial"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
 				calls++
 				if calls == 1 {
@@ -446,7 +458,7 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/reverse-%t", concurrency, reverse), func(t *testing.T) {
 				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
-					c := newCache(t, "")
+					c := cachetest.New(t, "", New)
 					started := make(chan struct{})
 					release := make(chan struct{})
 					done := make(chan error, concurrency)
@@ -518,7 +530,7 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 func TestAcquire_BackoffReleasesKey(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		c := newCache(t, "")
+		c := cachetest.New(t, "", New)
 		done := make(chan error, 1)
 		calls := 0
 		go func() {
@@ -551,7 +563,7 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				c := newCache(t, "")
+				c := cachetest.New(t, "", New)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				done := make(chan error, concurrency)
@@ -631,7 +643,7 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 			if disk {
 				root = t.TempDir()
 			}
-			c := newCache(t, root)
+			c := cachetest.New(t, root, New)
 			calls := 0
 			g, _, err := c.Git(t.Context(), GitKey{Content: "partial-git", RecurseSubmodules: true}, Policy{MaxAge: Forever, Retry: fastRetry(2)}, func(_ context.Context, _ storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 				calls++
@@ -680,7 +692,7 @@ func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				c := newCache(t, root)
+				c := cachetest.New(t, root, New)
 				synctest.Test(t, func(t *testing.T) {
 					canceled, release := make(chan struct{}), make(chan struct{})
 					done := make(chan error, concurrency)
@@ -730,7 +742,7 @@ func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
 func TestAcquire_BackoffResets(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		c := newCache(t, "")
+		c := cachetest.New(t, "", New)
 		for range 2 {
 			calls := 0
 			start := time.Now()

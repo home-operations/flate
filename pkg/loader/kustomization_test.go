@@ -115,7 +115,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l := loaderFixture(store.New(), nil)
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "stray"}
+			id := testutil.KustomizationID("", "stray")
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
 			rendererFixture(t, l, dir, nil)
 			if got := l.Index.Records[id].Excluded; got != tc.want {
@@ -205,7 +205,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	t.Run("load missing mounted child", func(t *testing.T) {
 		t.Parallel()
 		child := filepath.Join(committed, "child")
-		testutil.WriteFile(t, child, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: decoy}\nspec: {path: ./apps}\n")
+		testutil.WriteFile(t, child, "ks.yaml", testutil.KustomizationYAML("decoy", "", "  {path: ./apps}\n"))
 		st := store.New()
 		input := &store.SourceArtifact{LocalPath: committed, FS: fstest.MapFS{
 			"Kustomization": {Data: []byte("namespace: committed\n")},
@@ -362,7 +362,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 				for _, name := range []string{"first", "second"} {
 					input := fstest.MapFS{
 						"kustomization.yaml": {Data: []byte("namespace: " + name + "\nresources: [ks.yaml, child]\n")},
-						"ks.yaml":            {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: " + name + "}\nspec: {path: ./apps}\n")},
+						"ks.yaml":            {Data: []byte(testutil.KustomizationYAML(name, "", "  {path: ./apps}\n"))},
 					}
 					if name == "second" {
 						input["child/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: replacement\n")}
@@ -404,7 +404,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 					if name == "first" && child != nil || name == "second" && (child == nil || child.Namespace != "replacement") {
 						t.Fatalf("%s source retained a stale miss: %v", name, child)
 					}
-					id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: name}
+					id := testutil.KustomizationID("", name)
 					if _, ok := l.Index.Lookup(id); !ok || st.GetObject(id) == nil {
 						t.Fatalf("%s replacement object was not stored and indexed", name)
 					}
@@ -441,10 +441,10 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		root, unrelated := t.TempDir(), t.TempDir()
 		for _, dir := range []string{root, unrelated} {
 			testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks.yaml]\n")
-			testutil.WriteFile(t, dir, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent}\nspec: {path: ./apps}\n")
+			testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("parent", "", "  {path: ./apps}\n"))
 		}
 		testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: [ks.yaml]\n")
-		testutil.WriteFile(t, root, "child/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: stale}\nspec: {path: ./apps}\n")
+		testutil.WriteFile(t, root, "child/ks.yaml", testutil.KustomizationYAML("stale", "", "  {path: ./apps}\n"))
 		st := store.New()
 		admitForTest(st, root)
 		location, err := gitrepo.Locate(t.Context(), unrelated, unrelated)
@@ -471,7 +471,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		}
 		backing := t.TempDir()
 		testutil.WriteFile(t, backing, "kustomization.yaml", "resources: [ks.yaml]\n")
-		testutil.WriteFile(t, backing, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nested}\nspec: {path: ./apps}\n")
+		testutil.WriteFile(t, backing, "ks.yaml", testutil.KustomizationYAML("nested", "", "  {path: ./apps}\n"))
 		location, err = gitrepo.Locate(t.Context(), backing, backing)
 		if err != nil {
 			t.Fatal(err)
@@ -490,7 +490,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		if l.documents.views[artifact.LocalPath] == artifact.FS || l.documents.mountedRoot(filepath.Join(root, "child/ks.yaml")) != artifact.LocalPath {
 			t.Fatal("late native mount did not bind its own private operation view")
 		}
-		id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "nested"}
+		id := testutil.KustomizationID("", "nested")
 		record, indexed := l.Index.Lookup(id)
 		if !indexed || record.Path != filepath.Join(root, "child/ks.yaml") || st.GetObject(id) == nil {
 			t.Fatalf("nested mount did not supply its object and index: %+v", record)

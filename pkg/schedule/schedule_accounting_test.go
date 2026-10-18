@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -31,7 +32,7 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 			ids := make([]NodeID, depth)
 			indexes := make(map[NodeID]int, depth)
 			for i := range depth {
-				ids[i] = id(fmt.Sprintf("stage-%02d", i))
+				ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("stage-%02d", i))
 				indexes[ids[i]] = i
 			}
 			s = New(tasks, dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
@@ -57,7 +58,7 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 				})
 				if round == i {
 					emitted[i] = true
-					s.OnArrival(id(fmt.Sprintf("provider-%02d", i)), false)
+					s.OnArrival(testutil.KustomizationID("ns", fmt.Sprintf("provider-%02d", i)), false)
 					return OutcomeTerminal, nil, true
 				}
 				if round == 0 {
@@ -85,7 +86,7 @@ func TestRedispatch_QueueCauses(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/content_%v", transition, content), func(t *testing.T) {
 				t.Parallel()
 				s := New(task.NewBounded(2), nil)
-				nid, dep := id("selector"), id("dependency")
+				nid, dep := testutil.KustomizationID("ns", "selector"), testutil.KustomizationID("ns", "dependency")
 				n := &node{id: nid, state: stateRunning, rerun: true, productive: true, contentRequested: content}
 				s.nodes[nid] = n
 				s.inFlight = 1
@@ -143,7 +144,7 @@ func TestRedispatch_BlockedDependencyRetries(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			var s *Scheduler
-			victim, producer, dep := id("a-consumer"), id("z-producer"), id("data")
+			victim, producer, dep := testutil.KustomizationID("ns", "a-consumer"), testutil.KustomizationID("ns", "z-producer"), testutil.KustomizationID("ns", "data")
 			var runs atomic.Int64
 			started := make(chan struct{})
 			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
@@ -202,7 +203,7 @@ func TestRedispatch_SlotWaitPreservesContent(t *testing.T) {
 		})
 		<-occupied
 	}
-	victim := id("waiting")
+	victim := testutil.KustomizationID("ns", "waiting")
 	var runs atomic.Int64
 	s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		runs.Add(1)
@@ -233,7 +234,7 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 	var active, runs atomic.Int64
 	started, held := make(chan struct{}, 2), make(chan struct{}, 2)
 	gate := make(chan struct{})
-	x, y := id("x"), id("y")
+	x, y := testutil.KustomizationID("ns", "x"), testutil.KustomizationID("ns", "y")
 	data := func(nid NodeID) NodeID { return NodeID{Kind: "ConfigMap", Name: nid.Name} }
 	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		if ctx.Err() != nil {
@@ -319,7 +320,7 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 	counts := map[NodeID]int{}
 	started := make(chan struct{}, 2)
 	gate := make(chan struct{})
-	x, y := id("x"), id("y")
+	x, y := testutil.KustomizationID("ns", "x"), testutil.KustomizationID("ns", "y")
 	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 		active.Add(1)
 		defer active.Add(-1)
@@ -375,7 +376,7 @@ func TestRedispatch_RunnableUpgradeAtCap(t *testing.T) {
 		t.Run(fmt.Sprintf("charged_%v", charged), func(t *testing.T) {
 			t.Parallel()
 			s := New(task.NewBounded(2), nil)
-			n := &node{id: id("queued"), state: stateRunnable, redispatches: maxRedispatches, queuedCharged: charged}
+			n := &node{id: testutil.KustomizationID("ns", "queued"), state: stateRunnable, redispatches: maxRedispatches, queuedCharged: charged}
 			s.nodes[n.id] = n
 			s.runq = []NodeID{n.id}
 			s.OnArrival(n.id, true)
@@ -407,7 +408,7 @@ func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
 			t.Run(fmt.Sprintf("state_%d/content_first_%v", state, contentFirst), func(t *testing.T) {
 				t.Parallel()
 				s := New(task.NewBounded(2), nil)
-				nid, dep := id("consumer"), id("dependency")
+				nid, dep := testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "dependency")
 				n := &node{id: nid, state: state}
 				s.nodes[nid] = n
 				if state == stateParked || state == stateRunning {
@@ -445,10 +446,10 @@ func TestProgress_RunnableUpgrade(t *testing.T) {
 			t.Run(fmt.Sprintf("charged_%v/cap_%v", charged, atCap), func(t *testing.T) {
 				t.Parallel()
 				s := New(task.NewBounded(2), nil)
-				dep, nid := id("dependency"), id("consumer")
+				dep, nid := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "consumer")
 				n := &node{id: nid, state: stateRunning}
 				s.nodes[nid], s.inFlight = n, 1
-				s.OnArrival(id("unrelated"), false)
+				s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 				s.complete(nid, OutcomeDependencyFailed, []NodeID{dep}, false)
 				assert.Equal(t, n.conservativeUsed, true)
 				assert.Equal(t, n.redispatches, 0)
@@ -484,7 +485,7 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			dep, consumer, producer := id("dependency"), id("consumer"), id("producer")
+			dep, consumer, producer := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "producer")
 			requested, applied := make(chan struct{}), make(chan struct{})
 			var runs, active atomic.Int64
 			var s *Scheduler
@@ -497,7 +498,7 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 						if round == 1 {
 							s.OnStatusWake(dep, true, false)
 						} else {
-							s.OnArrival(id("unrelated"), false)
+							s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 						}
 						select {
 						case applied <- struct{}{}:
@@ -536,7 +537,7 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 			defer cancel()
 			tasks := task.NewBounded(workers)
 			upgraded, entered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			dep, consumer := id("dependency"), id("consumer")
+			dep, consumer := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "consumer")
 			var active, runs atomic.Int64
 			s := New(tasks, dispatchFunc(func(ctx context.Context, _ NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
 				assert.Equal(t, active.Load(), int64(1))
@@ -547,7 +548,7 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 			}))
 			n := &node{id: consumer, state: stateRunning}
 			s.nodes[consumer], s.inFlight = n, 1
-			s.OnArrival(id("unrelated"), false)
+			s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 			s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
 			tasks.Go(ctx, "producer", func(ctx context.Context) {
 				active.Add(1)
@@ -576,17 +577,17 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 func TestProgress_ContentPreservesConservativeRetry(t *testing.T) {
 	t.Parallel()
 	s := New(task.NewBounded(2), nil)
-	dep, consumer := id("dependency"), id("consumer")
+	dep, consumer := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "consumer")
 	n := &node{id: consumer, state: stateRunning}
 	s.nodes[consumer], s.inFlight = n, 1
 	s.OnArrival(consumer, true)
-	s.OnArrival(id("unrelated"), false)
+	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 	s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
 	assert.Equal(t, n.conservativeUsed, false)
 	assert.Equal(t, n.redispatches, 1)
 	n.state, n.startedAt, n.queuedCharged = stateRunning, s.generation, false
 	s.inFlight = 1
-	s.OnArrival(id("unrelated"), false)
+	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
 	s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
 	assert.Equal(t, n.conservativeUsed, true)
 	assert.Equal(t, n.redispatches, 1)

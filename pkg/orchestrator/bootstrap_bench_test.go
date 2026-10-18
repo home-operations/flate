@@ -2,8 +2,9 @@ package orchestrator
 
 import (
 	"fmt"
-	"github.com/home-operations/flate/internal/testutil"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 )
 
 func BenchmarkBootstrap_ChartDigestTracking(b *testing.B) {

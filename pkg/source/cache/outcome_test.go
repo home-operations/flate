@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -115,7 +116,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			live := outcomeFailure(tc.cause)
 			o := newOutcome(live, time.Now().UTC(), 1, ocispec.Descriptor{})
 			if o == nil {
@@ -263,7 +264,7 @@ func TestOutcome_Exclusions(t *testing.T) {
 
 func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
 	t.Parallel()
-	c := newCache(t, t.TempDir())
+	c := cachetest.New(t, t.TempDir(), New)
 	ctx, cancel := context.WithCancel(t.Context())
 	_, _, _, err := c.Blob(ctx, BlobKey{Content: "cancel-record"}, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
 		cancel()
@@ -356,7 +357,7 @@ func TestOutcome_ReadBoundsAndIntegrity(t *testing.T) {
 	for _, scenario := range []string{"exact bounds", "config one over", "manifest one over", "negative size", "missing config", "missing manifest", "config digest", "manifest digest", "config short", "config trailing", "missing layer"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 			config, data, _ := o.encode()
 			var m ocispec.Manifest
@@ -474,7 +475,7 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 	for _, scenario := range append(scenarios, slices.Sorted(maps.Keys(invalidCauses))...) {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 			_, data, _ := o.encode()
 			var m ocispec.Manifest
@@ -567,7 +568,7 @@ func TestOutcome_PublicationFailure(t *testing.T) {
 	for _, scenario := range []string{"tag", "push", "existing config corrupt"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			live := outcomeFailure(connReset())
 			o := newOutcome(live, time.Now().UTC(), 1, ocispec.Descriptor{})
 			switch scenario {
@@ -615,7 +616,7 @@ func TestOutcome_WriteBounds(t *testing.T) {
 		for _, extra := range []int{0, 1} {
 			t.Run(fmt.Sprintf("%s/%d", tc.name, extra), func(t *testing.T) {
 				t.Parallel()
-				c := newCache(t, t.TempDir())
+				c := cachetest.New(t, t.TempDir(), New)
 				o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 				config, data, _ := o.encode()
 				if tc.media == outcomeConfig {
@@ -644,7 +645,7 @@ func TestOutcome_WriteBounds(t *testing.T) {
 	for _, size := range []int{outcomeConfigLimit, outcomeConfigLimit + 1} {
 		t.Run(fmt.Sprintf("record/%d", size), func(t *testing.T) {
 			t.Parallel()
-			c := newCache(t, t.TempDir())
+			c := cachetest.New(t, t.TempDir(), New)
 			o := &outcome{record: outcomeRecord{Version: 1, Completed: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Count: 1, Cause: outcomeCause{Kind: "terminal", Children: []outcomeCause{{Kind: "join"}}}}}
 			for range 6 {
 				child := outcomeCause{Kind: "reset"}
@@ -702,7 +703,7 @@ func TestOutcome_WriteBounds(t *testing.T) {
 
 func TestOutcome_LastGoodRedaction(t *testing.T) {
 	t.Parallel()
-	c := newCache(t, t.TempDir())
+	c := cachetest.New(t, t.TempDir(), New)
 	r, _, id, err := c.Blob(t.Context(), BlobKey{Content: "last-good"}, Policy{}, producer([]byte("held"), ocispec.Descriptor{Annotations: map[string]string{"fixture-secret": "fixture-secret", prefix + "chart-url": "https://fixture-secret"}}))
 	if err != nil {
 		t.Fatal(err)
@@ -761,7 +762,7 @@ func TestOutcome_AcquisitionValidity(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				root := t.TempDir()
-				c := newCache(t, root)
+				c := cachetest.New(t, root, New)
 				o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 				switch scenario {
 				case "future":
@@ -796,7 +797,7 @@ func TestOutcome_AcquisitionValidity(t *testing.T) {
 					if err := c.Close(); err != nil {
 						t.Fatal(err)
 					}
-					c = newCache(t, root)
+					c = cachetest.New(t, root, New)
 				}
 				calls := 0
 				_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "validity"}, Policy{MaxAge: Forever, Retry: fastRetry(2)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {

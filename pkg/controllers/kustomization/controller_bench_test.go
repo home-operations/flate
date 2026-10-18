@@ -3,6 +3,7 @@ package kustomization
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -13,7 +14,7 @@ import (
 )
 
 func BenchmarkCollectDeps(b *testing.B) {
-	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "target"}
+	id := testutil.KustomizationID("apps", "target")
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := New(st, nil, nil, false)

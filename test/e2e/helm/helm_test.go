@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
@@ -22,7 +26,8 @@ func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 }
 
 func TestE2E_BuildHR(t *testing.T) {
-	dir := harness.CopyTree(t, harness.TestdataPath(t, "simple"))
+	dir := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
 	testutil.WriteFile(t, dir, "charts/mychart/templates/secret.yaml", `apiVersion: v1
 kind: Secret
 metadata: {name: demo-secret}
@@ -67,7 +72,8 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 		{"included", "Secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := harness.CopyTree(t, harness.TestdataPath(t, "simple"))
+			dir := t.TempDir()
+			testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
 			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
 			out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", dir,
 				"--skip-kinds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
@@ -108,8 +114,9 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 
 func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string) {
 	t.Helper()
-	dir := harness.CopyTree(t, src)
-	repo := harness.GitInit(t, dir)
-	harness.GitCommitAll(t, repo)
+	dir := t.TempDir()
+	testutil.CopyTree(t, src, dir)
+	repo := testutil.GitInit(t, dir)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	return filepath.Join(dir, "flux"), dir
 }

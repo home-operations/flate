@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -28,7 +29,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			baseRoot, headRoot := t.TempDir(), t.TempDir()
 			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
-			changed := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "app-a"}
+			changed := testutil.KustomizationID("flux-system", "app-a")
 			same := changed
 			same.Name = "app-b"
 			const url = "git://fixture.invalid/cluster"
@@ -62,10 +63,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				}
 			case "authored_pins", "committed_detection":
 				headRoot = baseRoot
-				repo, err := git.PlainInit(headRoot, false)
-				assert.NoError(t, err)
-				wt, err := repo.Worktree()
-				assert.NoError(t, err)
+				repo := testutil.GitInit(t, headRoot)
 				var baseHash plumbing.Hash
 				for i, value := range []string{"A", "B", "C"} {
 					writeCluster(t, headRoot, value, "same")
@@ -77,10 +75,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 						ref = "v2"
 					}
 					testutil.WriteFile(t, headRoot, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {tag: "+ref+"}}\n")
-					_, err = wt.Add(".")
-					assert.NoError(t, err)
-					hash, err := wt.Commit(value, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
-					assert.NoError(t, err)
+					hash := testutil.GitCommitAll(t, repo, value, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
 					if i == 0 {
 						baseHash = hash
 					}
@@ -88,9 +83,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 						assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(fmt.Sprintf("v%d", i+1)), hash)))
 					}
 				}
-				cfg.Cache, err = sourcecache.New(t.Context(), "")
-				assert.NoError(t, err)
-				t.Cleanup(func() { _ = cfg.Cache.Close() })
+				cfg.Cache = cachetest.New(t, "", sourcecache.New)
 				selected, err := baseline.AutoResolve(t.Context(), headRoot, baseHash.String(), cfg.Cache)
 				assert.NoError(t, err)
 				cfg.BaseInput, cfg.Input = selected.BaseInput, selected.Source

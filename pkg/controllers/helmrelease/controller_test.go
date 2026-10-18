@@ -3,7 +3,6 @@ package helmrelease
 import (
 	"context"
 	"errors"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"os"
 	"slices"
 	"sync"
@@ -11,6 +10,10 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 	"time"
+
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -98,11 +101,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	t.Helper()
 	st := store.New()
 	ts := task.NewBounded(2)
-	owner, err := sourcecache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = owner.Close() })
+	owner := cachetest.New(t, "", sourcecache.New)
 	hc, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
@@ -129,22 +128,6 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 		ts.BlockTillDone()
 	})
 	return c, st
-}
-
-// dispatchToFixpoint drives id through ReconcileNode with escalating drain
-// levels (none→cascade→force), mirroring the scheduler's structural fixpoint,
-// until the node terminalizes (no blocked deps) or drain is exhausted, then
-// returns the final store status. Synchronous — replaces the event engine's
-// AddObject→listener→status-poll dispatch in unit tests.
-func dispatchToFixpoint(t *testing.T, c *Controller, st *store.Store, id manifest.NamedResource) store.StatusInfo {
-	t.Helper()
-	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		if blocked := c.ReconcileNode(context.Background(), id, drain); len(blocked) == 0 {
-			break
-		}
-	}
-	info, _ := st.GetStatus(id)
-	return info
 }
 
 func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
@@ -425,7 +408,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			c, st := newTestController(t, filter)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}
 			st.AddObject(hr)
-			info := dispatchToFixpoint(t, c, st, hr.Named())
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 			if info.Status != store.StatusReady || info.Message != tc.name {
 				t.Fatalf("status = %+v, want Ready/%s", info, tc.name)
 			}
@@ -488,7 +471,7 @@ data:
 	}
 	st.AddObject(hr)
 
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
@@ -513,13 +496,13 @@ data:
 	hr = hr.Clone()
 	hr.Labels = map[string]string{"owner": "re-emitted"}
 	st.AddObject(hr)
-	assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, store.StatusReady)
+	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
 	assert.Equal(t, st.GetArtifact(hr.Named()), store.Artifact(art))
 	assert.Diff(t, st.Warnings(), warnings)
 	hr = hr.Clone()
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
 	st.AddObject(hr)
-	assert.Equal(t, dispatchToFixpoint(t, c, st, hr.Named()).Status, store.StatusReady)
+	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render" && w.Count == 1
 	}) {
@@ -605,7 +588,7 @@ data:
 	}
 	st.AddObject(hr)
 
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady || store.IsSkipped(info) {
 		t.Fatalf("status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)", info)
 	}
@@ -649,7 +632,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	}
 	st.AddObject(hr)
 
-	info := dispatchToFixpoint(t, c, st, hr.Named())
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status == store.StatusReady {
 		t.Fatalf("status = %+v, want failure (missing no-producer Secret must not be silently omitted)", info)
 	}
@@ -777,11 +760,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	ts := task.NewBounded(2)
-	owner, err := sourcecache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = owner.Close() })
+	owner := cachetest.New(t, "", sourcecache.New)
 	hc, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
@@ -792,12 +771,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 	// and AddEmitted is exercised). Use a parent HR in the keep set as a
 	// "primary" emitter — Filter.AddEmitted propagates keep when the emitter
 	// is primary.
-	parent := manifest.NamedResource{
-		Group:     manifest.HelmReleaseDomain,
-		Kind:      manifest.KindHelmRelease,
-		Namespace: "flux-system",
-		Name:      "tofu",
-	}
+	parent := testutil.HelmReleaseID("flux-system", "tofu")
 	sourceFiles := map[manifest.NamedResource]string{
 		parent: "apps/tofu/helmrelease.yaml",
 	}
@@ -882,18 +856,14 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	ts := task.NewBounded(0)
-	owner, err := sourcecache.New(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = owner.Close() })
+	owner := cachetest.New(t, "", sourcecache.New)
 	hc, err := helm.NewClient(owner)
 	if err != nil {
 		t.Fatalf("helm.NewClient: %v", err)
 	}
 	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
 
-	parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "tofu"}
+	parent := testutil.HelmReleaseID("flux-system", "tofu")
 	filter := change.NewFilter(change.NewSet([]string{"apps/tofu/helmrelease.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "apps/tofu/helmrelease.yaml"}}}, testutil.MapLister{})
 	c := New(base.New(st, ts, "helmrelease"), hc, helm.Options{}, false)
 	c.Configure(ReconcileOptions{Filter: filter})
@@ -961,7 +931,7 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
 	assert.Equal(t, testing.AllocsPerRun(100, func() { c.collectDeps(hr) }), float64(1))
 	got := c.collectDeps(hr)
-	assert.Diff(t, got, []manifest.DependencyRef{{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "other"}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "second"}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "third"}})
+	assert.Diff(t, got, []manifest.DependencyRef{{NamedResource: testutil.HelmReleaseID("default", "other")}, {NamedResource: testutil.HelmReleaseID("default", "second")}, {NamedResource: testutil.HelmReleaseID("default", "third")}})
 	got[0].Name = "mutated"
 	assert.Equal(t, hr.DependsOn[0].Name, "other")
 }
@@ -1001,7 +971,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	if info := dispatchToFixpoint(t, c, st, hr.Named()); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -1042,17 +1012,17 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 
 func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
 	t.Parallel()
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	parent := testutil.KustomizationID("apps", "parent")
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }})
 	ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported"}, {Kind: manifest.KindSecret, Name: "owned"}, {Kind: manifest.KindSecret, Name: "unreadable"}}}
 	st.AddObject(ks)
-	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), true)
+	assert.Equal(t, c.parentReadsUnreadableSecret(testutil.HelmReleaseID("apps", "app")), true)
 	c.substitutionSources = map[manifest.NamedResource]manifest.BaseManifest{
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}:      &manifest.Secret{},
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}: &manifest.Secret{},
 	}
-	assert.Equal(t, c.parentReadsUnreadableSecret(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "app"}), false)
+	assert.Equal(t, c.parentReadsUnreadableSecret(testutil.HelmReleaseID("apps", "app")), false)
 	assert.Equal(t, len(ks.PostBuild.SubstituteFrom), 3)
 }
 

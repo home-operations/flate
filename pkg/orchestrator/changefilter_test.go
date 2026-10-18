@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -40,37 +38,29 @@ func TestIntegration_DiffWidensToRepoRootForSiblingCheckouts(t *testing.T) {
 	origRoot := t.TempDir()
 	currRoot := t.TempDir()
 	for _, root := range []string{origRoot, currRoot} {
-		if _, err := git.PlainInit(root, false); err != nil {
-			t.Fatal(err)
-		}
+		testutil.GitInit(t, root)
 	}
 
 	// Identical Flux bootstrap on both sides — the cluster subdir
 	// content is byte-identical, so a literal subdir-vs-subdir diff
 	// would return zero.
-	bootstrap := `---
-apiVersion: source.toolkit.fluxcd.io/v1
+	bootstrap := "---\n" +
+		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
   name: flux-system
   namespace: flux-system
 spec:
   url: https://example.test/cluster.git
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: cluster-apps
-  namespace: flux-system
-spec:
-  interval: 10m
+` + "---\n" +
+		testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/foo
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-`
+`)
 	testutil.WriteFile(t, origRoot, filepath.Join("kubernetes/flux/cluster.yaml"), bootstrap)
 	testutil.WriteFile(t, currRoot, filepath.Join("kubernetes/flux/cluster.yaml"), bootstrap)
 
@@ -134,9 +124,7 @@ data:
 	if f == nil {
 		t.Fatal("expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter")
 	}
-	clusterApps := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io",
-		Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps",
-	}
+	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	if !f.ShouldReconcile(clusterApps) {
 		t.Errorf("cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root")
 	}

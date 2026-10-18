@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -121,7 +122,7 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 			counter := &pinTransport{Transport: client.Protocols["file"], refusal: tc.refusal}
 			client.InstallProtocol("pin", counter)
 			t.Cleanup(func() { client.InstallProtocol("pin", nil) })
-			f := &Fetcher{Cache: newGitCache(t, "")}
+			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
 				Name: "pin", URL: "pin://" + parent, Reference: &manifest.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
 			}, sourcecache.RetryConfig{})

@@ -1,7 +1,6 @@
 package substitution
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -17,13 +16,7 @@ func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
 			if kind == "configMapGenerator" {
 				refKind = "ConfigMap"
 			}
-			testutil.WriteFile(t, root, "flux/ks.yaml", fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  path: ./apps
-  postBuild: {substituteFrom: [{kind: %s, name: creds}]}
-`, refKind))
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n"))
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux]\n"+kind+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n")
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
 			testutil.WriteFile(t, root, "values.yaml", "enabled: ENC[AES256_GCM,data:fixture,type:str]\n")
@@ -41,13 +34,7 @@ spec:
 
 func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: consumer, namespace: flux-system}
-spec:
-  path: ./apps
-  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}
-`)
+	testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}\n"))
 	testutil.WriteFile(t, root, "secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: creds, namespace: flux-system}\ndata: {VALUE: QQ==, EMPTY: invalid-base64!}\nstringData: {VALUE: B, EMPTY: ''}\n")
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}\n")

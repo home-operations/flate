@@ -2,9 +2,10 @@ package change
 
 import (
 	"fmt"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"path/filepath"
 	"testing"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
@@ -55,7 +56,7 @@ func BenchmarkBuildOwnership(b *testing.B) {
 // the unit cost the resolve BFS pays per kept entry.
 func BenchmarkTransitiveDeps(b *testing.B) {
 	s := store.New()
-	id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	id := testutil.KustomizationID("flux-system", "apps")
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system"},

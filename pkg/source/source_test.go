@@ -1,7 +1,6 @@
 package source
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -89,16 +89,10 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 
 func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	t.Parallel()
-	owner, err := sourcecache.New(t.Context(), "")
-	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	owner := cachetest.New(t, "", sourcecache.New)
 	acquired, _, _, err := owner.Acquire(t.Context(), sourcecache.ArchiveKey{Content: "admission"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		tw := tar.NewWriter(w)
-		if err := tw.WriteHeader(&tar.Header{Name: "file", Mode: 0o600, Size: 7}); err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		_, err := io.WriteString(tw, "content")
-		return ocispec.Descriptor{}, errors.Join(err, tw.Close())
+		testutil.WriteTar(t, w, map[string]string{"file": "content"}, 0o600)
+		return ocispec.Descriptor{}, nil
 	})
 	assert.NoError(t, err)
 	r, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "blob"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {

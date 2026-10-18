@@ -12,7 +12,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
@@ -66,7 +68,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\n")
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}

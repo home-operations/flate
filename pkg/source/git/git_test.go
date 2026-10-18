@@ -25,6 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -67,7 +69,7 @@ func TestFetcher_PackedContent(t *testing.T) {
 				if mode == "disk" {
 					root = t.TempDir()
 				}
-				f := &Fetcher{Cache: newGitCache(t, root)}
+				f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 				art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL}, sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
 				if attempts == 1 {
 					if err == nil || art != nil || acquisitions.Load() != 1 {
@@ -104,19 +106,8 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r, err := git.PlainOpen(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wt.Add("."); err != nil {
-		t.Fatal(err)
-	}
 	mustCommitFile(t, src, "hello.txt", "hi")
-	f := &Fetcher{Cache: newGitCache(t, "")}
+	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +142,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := newGitCache(t, t.TempDir())
+	cache := cachetest.New(t, t.TempDir(), sourcecache.New)
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL: "file://" + src,
@@ -243,7 +234,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			src := t.TempDir()
 			mustInitRepo(t, src)
 			initial := mustHead(t, src)
-			f := &Fetcher{Cache: newGitCache(t, t.TempDir()), Depth: tc.depth}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Depth: tc.depth}
 			repo := &manifest.GitRepository{
 				Name: "test", Namespace: "flux-system", URL: "file://" + src,
 				Interval: metav1.Duration{Duration: tc.interval}, RecurseSubmodules: tc.recurse,
@@ -349,7 +340,7 @@ func TestFetcher_References(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &Fetcher{Cache: newGitCache(t, t.TempDir()), Depth: tc.depth}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Depth: tc.depth}
 			repo := &manifest.GitRepository{Name: "test", Namespace: "flux-system", URL: "file://" + src, Reference: tc.ref, SparseCheckout: tc.sparse}
 			if tc.warmCommit != "" {
 				unconstrained := *repo
@@ -389,7 +380,7 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 		"apps-extra/manifest.yaml": "kind: ConfigMap",
 		"infra/c/manifest.yaml":    "kind: ConfigMap",
 	})
-	f := &Fetcher{Cache: newGitCache(t, t.TempDir())}
+	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	for _, prefix := range []string{"apps/a", "apps"} {
 		t.Run(prefix, func(t *testing.T) {
 			t.Parallel()
@@ -427,7 +418,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 	})
 
 	patterns := "*.tmp\ndocs/\n"
-	cache := newGitCache(t, t.TempDir())
+	cache := cachetest.New(t, t.TempDir(), sourcecache.New)
 	repo := &manifest.GitRepository{
 		Name: "test", Namespace: "flux-system",
 		URL:    "file://" + src,
@@ -458,7 +449,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
-	cache := newGitCache(t, t.TempDir())
+	cache := cachetest.New(t, t.TempDir(), sourcecache.New)
 	patterns := "/*\n!/hello.txt\n"
 	commit := mustHead(t, src)
 	repo := &manifest.GitRepository{
@@ -487,35 +478,15 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 	}
 }
 
-// mustInitRepoWithFiles creates a git repo at dir with the given
-// {path: contents} entries committed as one revision.
 func mustInitRepoWithFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
-	r, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatalf("PlainInit: %v", err)
-	}
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatalf("Worktree: %v", err)
-	}
+	r := testutil.GitInit(t, dir)
 	for path, content := range files {
-		full := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
-		if _, err := wt.Add(path); err != nil {
-			t.Fatalf("Add %s: %v", path, err)
-		}
+		testutil.WriteFile(t, dir, path, content)
 	}
-	if _, err := wt.Commit("init", &git.CommitOptions{
+	testutil.GitCommitAll(t, r, "init", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-	}); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
+	})
 }
 
 // mustTagHEAD creates an annotated tag pointing at the worktree HEAD
@@ -571,60 +542,19 @@ func mustCommitFile(t *testing.T, dir, name, content string) string {
 	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatalf("Worktree: %v", err)
-	}
-	if _, err := wt.Add(name); err != nil {
-		t.Fatalf("Add %s: %v", name, err)
-	}
-	hash, err := wt.Commit("update "+name, &git.CommitOptions{
+	hash := testutil.GitCommitAll(t, r, "update "+name, &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(1, 0)},
 	})
-	if err != nil {
-		t.Fatalf("Commit %s: %v", name, err)
-	}
 	return hash.String()
 }
 
-// mustInitRepo creates a minimal git repo at dir with one file and one
-// commit.
 func mustInitRepo(t *testing.T, dir string) {
 	t.Helper()
-	r, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatalf("PlainInit: %v", err)
-	}
-	hello := filepath.Join(dir, "hello.txt")
-	if err := os.WriteFile(hello, []byte("hi"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	wt, err := r.Worktree()
-	if err != nil {
-		t.Fatalf("Worktree: %v", err)
-	}
-	if _, err := wt.Add("hello.txt"); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	if _, err := wt.Commit("init", &git.CommitOptions{
+	r := testutil.GitInit(t, dir)
+	testutil.WriteFile(t, dir, "hello.txt", "hi")
+	testutil.GitCommitAll(t, r, "init", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-	}); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-}
-
-func newGitCache(tb testing.TB, root string) *sourcecache.Cache {
-	tb.Helper()
-	c, err := sourcecache.New(tb.Context(), root)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() {
-		if err := c.Close(); err != nil {
-			tb.Error(err)
-		}
 	})
-	return c
 }
 
 func mustSetRefToHEAD(t *testing.T, dir, refName string) string {

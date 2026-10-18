@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -17,7 +18,7 @@ func TestCollectManifests_FailedHelmReleaseEmitsNothing(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 
-	ready := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "app", Name: "ready"}
+	ready := testutil.HelmReleaseID("app", "ready")
 	st.AddObject(&manifest.HelmRelease{Name: ready.Name, Namespace: ready.Namespace})
 	st.SetArtifact(ready, &store.HelmReleaseArtifact{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "ready-cm"}},
@@ -26,7 +27,7 @@ func TestCollectManifests_FailedHelmReleaseEmitsNothing(t *testing.T) {
 
 	// A stale artifact from a transient pre-substitution render that passed
 	// schema; the canonical substituted render then failed and marked it Failed.
-	failedHR := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "app", Name: "broken"}
+	failedHR := testutil.HelmReleaseID("app", "broken")
 	st.AddObject(&manifest.HelmRelease{Name: failedHR.Name, Namespace: failedHR.Namespace})
 	st.SetArtifact(failedHR, &store.HelmReleaseArtifact{Manifests: []map[string]any{
 		{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "broken-deploy"}},
@@ -35,7 +36,7 @@ func TestCollectManifests_FailedHelmReleaseEmitsNothing(t *testing.T) {
 
 	// A FAILED Kustomization with an artifact must still surface — the gate is
 	// HelmRelease-scoped (a KS render is a different lifecycle).
-	failedKS := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	failedKS := testutil.KustomizationID("flux-system", "apps")
 	st.AddObject(&manifest.Kustomization{Name: failedKS.Name, Namespace: failedKS.Namespace})
 	st.SetArtifact(failedKS, &store.KustomizationArtifact{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "apps"}},

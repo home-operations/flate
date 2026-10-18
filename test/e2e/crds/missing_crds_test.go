@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	gogit "github.com/go-git/go-git/v5"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
@@ -63,16 +61,8 @@ spec:
 func missingCRDRepo(t *testing.T, rs string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if _, err := gogit.PlainInit(dir, false); err != nil {
-		t.Fatal(err)
-	}
-	testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
-spec:
- path: ./apps
- sourceRef: {kind: GitRepository, name: flux-system}
-`)
+	testutil.GitInit(t, dir)
+	testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("apps", "flux-system", " path: ./apps\n sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n")
 	testutil.WriteFile(t, dir, "apps/rs.yaml", rs)
 	return dir

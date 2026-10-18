@@ -1,17 +1,13 @@
 package helm
 
 import (
-	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
-	"errors"
 	"io"
 	"io/fs"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -49,39 +45,26 @@ data:
 	return st, hr, dir
 }
 
-func newTestCache(tb testing.TB, root string) *cache.Cache {
+func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 	tb.Helper()
-	owner, err := cache.New(tb.Context(), root)
+	files := make(map[string]string)
+	err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(input, name)
+		if err != nil {
+			return err
+		}
+		files[name] = string(data)
+		return nil
+	})
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() {
-		if err := owner.Close(); err != nil {
-			tb.Error(err)
-		}
-	})
-	return owner
-}
-
-func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
-	tb.Helper()
 	acquired, _, _, err := owner.Acquire(tb.Context(), cache.ArchiveKey{Content: tb.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-		tw := tar.NewWriter(w)
-		err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
-			if err != nil || entry.IsDir() {
-				return err
-			}
-			data, err := fs.ReadFile(input, name)
-			if err != nil {
-				return err
-			}
-			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data))}); err != nil {
-				return err
-			}
-			_, err = tw.Write(data)
-			return err
-		})
-		return ocispec.Descriptor{}, errors.Join(err, tw.Close())
+		testutil.WriteTar(tb, w, files, 0o600)
+		return ocispec.Descriptor{}, nil
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -91,11 +74,8 @@ func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 
 func chartArchive(tb testing.TB, input fs.FS) []byte {
 	tb.Helper()
-	var buf bytes.Buffer
-	gw, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
-	assert.NoError(tb, err)
-	tw := tar.NewWriter(gw)
-	err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+	files := make(map[string]string)
+	err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}
@@ -103,12 +83,11 @@ func chartArchive(tb testing.TB, input fs.FS) []byte {
 		if err != nil {
 			return err
 		}
-		if err := tw.WriteHeader(&tar.Header{Name: "chart/" + name, Mode: 0o600, Size: int64(len(data))}); err != nil {
-			return err
-		}
-		_, err = tw.Write(data)
-		return err
+		files["chart/"+name] = string(data)
+		return nil
 	})
-	assert.NoError(tb, errors.Join(err, tw.Close(), gw.Close()))
-	return buf.Bytes()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return testutil.TarGz(tb, files, 0o600, gzip.NoCompression)
 }

@@ -20,8 +20,8 @@ func TestOrchestratorExistence_PromotionDoesNotAdmitControllerSiblings(t *testin
 kind: ConfigMap
 metadata: {name: selected, namespace: apps}
 data: {value: selected}
----
-apiVersion: helm.toolkit.fluxcd.io/v2
+`+"---\n"+
+		`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: raw-hr, namespace: apps}
 spec:
@@ -29,18 +29,14 @@ spec:
     spec:
       chart: charts/demo
       sourceRef: {kind: GitRepository, name: source, namespace: apps}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: raw-ks, namespace: apps}
-spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
----
-apiVersion: fluxcd.controlplane.io/v1
+`+"---\n"+
+		testutil.KustomizationYAML("raw-ks", "apps", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")+"---\n"+
+		`apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: raw-rs, namespace: apps}
 spec: {}
----
-apiVersion: seaweed.seaweedfs.com/v1
+`+"---\n"+
+		`apiVersion: seaweed.seaweedfs.com/v1
 kind: Bucket
 metadata: {name: foreign-source, namespace: apps}
 spec: {}
@@ -58,8 +54,8 @@ spec: {}
 		t.Fatal("selected data must be admitted")
 	}
 	for _, excluded := range []manifest.NamedResource{
-		{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "raw-hr"},
-		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "raw-ks"},
+		testutil.HelmReleaseID("apps", "raw-hr"),
+		testutil.KustomizationID("apps", "raw-ks"),
 		{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "apps", Name: "raw-rs"},
 		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "apps", Name: "foreign-source"},
 	} {
@@ -155,7 +151,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			idx := loader.New(store.New())
-			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
+			id := testutil.HelmReleaseID(tc.recorded, "target")
 			if tc.raw {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: "target.yaml"}
 			} else {

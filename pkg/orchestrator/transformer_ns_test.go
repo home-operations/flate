@@ -52,18 +52,7 @@ resources:
 	// Leaf Flux KS — no targetNamespace in the file; it is supplied by
 	// the overlay's transformer. No other KS covers its path, so flate
 	// has no structural parent to gate its first render on.
-	testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: myapp
-  namespace: flux-system
-spec:
-  path: ./apps/myapp/myapp/app
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
+	testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", testutil.KustomizationYAML("myapp", "flux-system", "  path: ./apps/myapp/myapp/app\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/myapp/myapp/app/kustomization.yaml", "resources:\n  - ./helmrelease.yaml\n")
 	// Namespace-less, suspended HR — suspend keeps the controller from
 	// reaching for a chart, so the test asserts the rendered namespace
@@ -88,7 +77,7 @@ spec:
 		t.Fatalf("Render: %v", err)
 	}
 
-	canonical := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "myns", Name: "myapp"}
+	canonical := testutil.KustomizationID("myns", "myapp")
 	if o.store.GetObject(canonical) == nil {
 		t.Error("transformer-projected Kustomization is missing")
 	}
@@ -98,14 +87,14 @@ spec:
 		t.Error("authored Kustomization identity survived the namespace transformer")
 	}
 
-	namespaced := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "myns", Name: "myapp"}
+	namespaced := testutil.HelmReleaseID("myns", "myapp")
 	if o.store.GetObject(namespaced) == nil {
 		t.Errorf("expected HelmRelease at myns/myapp; HR objects in store: %v",
 			hrIDs(o))
 	}
 
 	// The empty-namespace phantom must never reach the store.
-	phantom := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "", Name: "myapp"}
+	phantom := testutil.HelmReleaseID("", "myapp")
 	if obj := o.store.GetObject(phantom); obj != nil {
 		t.Errorf("empty-namespace HelmRelease phantom present in store: %v", phantom)
 	}
@@ -117,16 +106,7 @@ spec:
 	}
 
 	testutil.WriteFile(t, dir, "apps/shared/kustomization.yaml", "namespace: other\nresources: [../myapp/myapp/ks.yaml]\npatches:\n- target: {kind: Kustomization}\n  patch: |-\n    - op: add\n      path: /spec/targetNamespace\n      value: other\n")
-	testutil.WriteFile(t, dir, "cluster/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-a, namespace: flux-system}
-spec: {path: ./apps/myapp}
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: cluster-b, namespace: flux-system}
-spec: {path: ./apps/shared}
-`)
+	testutil.WriteFile(t, dir, "cluster/ks.yaml", testutil.KustomizationYAML("cluster-a", "flux-system", "  {path: ./apps/myapp}\n")+"---\n"+testutil.KustomizationYAML("cluster-b", "flux-system", "  {path: ./apps/shared}\n"))
 	path := dir + "/cluster"
 	o, err = New(t.Context(), Config{Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4})
 	if err != nil {
@@ -150,15 +130,7 @@ spec: {path: ./apps/shared}
 	}
 
 	t.Run("changed_only_second_source", func(t *testing.T) {
-		testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: myapp, namespace: flux-system}
-spec:
-  path: ./apps/myapp/myapp/app
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-`)
+		testutil.WriteFile(t, dir, "apps/myapp/myapp/ks.yaml", testutil.KustomizationYAML("myapp", "flux-system", "  path: ./apps/myapp/myapp/app\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 		for _, ns := range []string{"myns", "other"} {
 			testutil.WriteFile(t, dir, "cluster/source-"+ns+".yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -190,15 +162,15 @@ spec:
 			if len(owners) != 0 || len(ancestors) != 0 {
 				t.Fatalf("source fixture %s has unrelated ownership selection", source)
 			}
-			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: ns, Name: "myapp"}
+			id := testutil.KustomizationID(ns, "myapp")
 			record, ok = o.index.Lookup(id)
 			t.Logf("consumer %s: indexed=%t File=%s Authored=%s Refs=%v", id, ok, record.File, record.Authored, record.Refs)
-			authored := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "myapp"}
+			authored := testutil.KustomizationID("flux-system", "myapp")
 			if !ok || record.File != "apps/myapp/myapp/ks.yaml" || record.Authored != authored || !slices.Equal(record.Refs, []manifest.NamedResource{source}) {
 				t.Errorf("projected consumer %s: indexed=%t record=%+v", id, ok, record)
 			}
 		}
-		other := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "other", Name: "myapp"}
+		other := testutil.KustomizationID("other", "myapp")
 		t.Logf("dirty=%s ShouldReconcile(%s)=%t keep=%v", dirty, other, o.filter.ShouldReconcile(other), o.filter.KeepNames())
 		if !o.filter.Enabled() || !o.filter.ShouldReconcile(other) {
 			t.Errorf("second-source change did not select %s", other)

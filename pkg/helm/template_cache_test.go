@@ -17,6 +17,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -81,7 +82,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				t.Parallel()
 				st, hr, dir := ociRenderFixture(t)
 				original := hr.Clone()
-				cli, err := NewClient(newTestCache(t, t.TempDir()))
+				cli, err := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -167,7 +168,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 		first := &store.SourceArtifact{FS: observed, Key: "untrusted", Revision: "6.15.0@" + digest, Digest: digest}
 		second := &store.SourceArtifact{Revision: "invalid", FS: fstest.MapFS{}}
 		resolver := &changingChartResolver{SourceResolver: NewStoreSourceResolver(st), artifacts: []*store.SourceArtifact{first, second}}
-		cli, err := NewClient(newTestCache(t, ""))
+		cli, err := NewClient(cachetest.New(t, "", cache.New))
 		assert.NoError(t, err)
 		cli.SetSourceResolver(resolver)
 		out, err := cli.Template(t.Context(), hr, nil, Options{})
@@ -193,7 +194,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: kind, Name: "podinfo"}
 			}
 			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
-			cli, err := NewClient(newTestCache(t, ""))
+			cli, err := NewClient(cachetest.New(t, "", cache.New))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -432,7 +433,7 @@ metadata:
 data:
   greeting: {{ .Values.greeting }}
 `)
-			owner := newTestCache(t, root)
+			owner := cachetest.New(t, root, cache.New)
 			cli, err := NewClient(owner)
 			if err != nil {
 				t.Fatal(err)
@@ -442,7 +443,7 @@ data:
 			chartRoot := ""
 			if backing == "acquired" {
 				chartRoot = t.TempDir()
-				input = acquireChartFS(t, newTestCache(t, chartRoot), input)
+				input = acquireChartFS(t, cachetest.New(t, chartRoot, cache.New), input)
 			} else {
 				base := input
 				input = chartOpenFS{FS: base, open: func(name string) (fs.File, error) {
@@ -497,7 +498,7 @@ data:
 			if err := owner.Close(); err != nil {
 				t.Fatal(err)
 			}
-			cli, err = NewClient(newTestCache(t, root))
+			cli, err = NewClient(cachetest.New(t, root, cache.New))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -564,7 +565,7 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 	st.SetArtifact(manifest.NamedResource{
 		Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
-	owner := newTestCache(t, "")
+	owner := cachetest.New(t, "", cache.New)
 	newClient := func() *Client {
 		cli, err := NewClient(owner)
 		if err != nil {
@@ -606,7 +607,7 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 			testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 			testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: fresh}\n")
 			root := t.TempDir()
-			owner := newTestCache(t, root)
+			owner := cachetest.New(t, root, cache.New)
 			cli, err := NewClient(owner)
 			if err != nil {
 				t.Fatal(err)

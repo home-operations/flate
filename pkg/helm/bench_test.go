@@ -13,7 +13,9 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -41,7 +43,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(newTestCache(b, b.TempDir()))
+	cli, err := NewClient(cachetest.New(b, b.TempDir(), sourcecache.New))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
@@ -81,7 +83,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 // iteration runs action.Install.RunWithContext without retained completed output.
 func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(newTestCache(b, ""))
+	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
@@ -139,7 +141,7 @@ spec:
 				for i := range count {
 					testutil.WriteFile(b, dir, fmt.Sprintf("mychart/crds/%d.yaml", i), crd)
 				}
-				cli, err := NewClient(newTestCache(b, ""))
+				cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -171,7 +173,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		b.Skip("acquired render benchmark requires identified build metadata from a clean checkout")
 	}
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(newTestCache(b, b.TempDir()))
+	cli, err := NewClient(cachetest.New(b, b.TempDir(), sourcecache.New))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
@@ -226,7 +228,7 @@ func BenchmarkLoadChart_Cached_Acquired(b *testing.B) {
 func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 	b.Helper()
 	chartDir := stageBenchChartDir(b)
-	cli, err := NewClient(newTestCache(b, ""))
+	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}

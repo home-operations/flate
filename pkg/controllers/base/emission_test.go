@@ -9,6 +9,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -70,7 +71,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				c := New(s, nil, "test")
 				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "apps", Name: "parent"}
 				rs := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "rs"}
-				consumer := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
+				consumer := testutil.HelmReleaseID("apps", "child")
 				source := &manifest.Bucket{Name: "shared", Namespace: "apps"}
 				s.AddObject(source)
 				s.UpdateStatus(source.Named(), store.StatusReady, "unchanged")
@@ -132,7 +133,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	c := New(s, nil, "test")
-	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+	parent := testutil.KustomizationID("apps", "parent")
 	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings"}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
@@ -232,7 +233,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 		{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "valid"}, "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},
 		{"apiVersion": "v1", "kind": "Secret", "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},
 	}
-	parent := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "parent"}
+	parent := testutil.HelmReleaseID("ns", "parent")
 	children, retained := c.Emit(parent, docs, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "effective"}, true)
 	if len(children) != 1 || len(retained) != 2 {
 		t.Fatalf("children=%d retained=%d", len(children), len(retained))

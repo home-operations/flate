@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -21,8 +22,8 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			st := store.New()
 			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
 			id := obj.Named()
-			old := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "old"}
-			fresh := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "fresh"}
+			old := testutil.HelmReleaseID("apps", "old")
+			fresh := testutil.HelmReleaseID("apps", "fresh")
 			if mode != "vanished" {
 				st.AddObject(obj)
 			}

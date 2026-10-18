@@ -1,9 +1,10 @@
 package discovery
 
 import (
+	"os"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"os"
 )
 
 func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]string {

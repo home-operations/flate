@@ -31,8 +31,8 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 			if err := o.Bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			a := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "a"}
-			if o.store.GetObject(a) != nil || parentsForTest(o.index)[a] != ksID("apps") {
+			a := testutil.HelmReleaseID("flux-system", "a")
+			if o.store.GetObject(a) != nil || parentsForTest(o.index)[a] != testutil.KustomizationID("flux-system", "apps") {
 				t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
 			}
 			res, err := o.Render(t.Context())
@@ -40,7 +40,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 				t.Fatalf("Render err=%v failures=%v blockers=%v", err, res.Failed, res.Blocked)
 			}
 			for _, name := range []string{"a", "b"} {
-				id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: name}
+				id := testutil.HelmReleaseID("flux-system", name)
 				hr, ok := o.store.Get[*manifest.HelmRelease](id)
 				if !ok {
 					t.Fatalf("HR missing: %s", id)
@@ -81,7 +81,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 					t.Fatalf("HR status=%+v", info)
 				}
 			}
-			if info, _ := o.store.GetStatus(ksID("apps")); info.Status != store.StatusReady {
+			if info, _ := o.store.GetStatus(testutil.KustomizationID("flux-system", "apps")); info.Status != store.StatusReady {
 				t.Fatalf("enclosing KS status=%+v", info)
 			}
 		})
@@ -108,11 +108,11 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					t.Fatal("snapshot result missing")
 				}
 				st := side.Store()
-				selected := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "selected"}
+				selected := testutil.HelmReleaseID("flux-system", "selected")
 				for _, id := range []manifest.NamedResource{
-					ksID("monitor-a"), ksID("monitor-b"),
-					{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "monitor-a"},
-					{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "monitor-b"},
+					testutil.KustomizationID("flux-system", "monitor-a"), testutil.KustomizationID("flux-system", "monitor-b"),
+					testutil.HelmReleaseID("flux-system", "monitor-a"),
+					testutil.HelmReleaseID("flux-system", "monitor-b"),
 					{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "excluded-values"},
 				} {
 					if (id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.filter.ShouldReconcile(id) {
@@ -136,7 +136,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				if side.Err != nil || len(side.Result.Failed) != 0 || len(side.Result.Blocked) != 0 {
 					t.Fatalf("excluded chain contaminated snapshot: error=%v failures=%v", side.Err, side.Result.Failed)
 				}
-				if st.GetArtifact(ksID("selected")) == nil {
+				if st.GetArtifact(testutil.KustomizationID("flux-system", "selected")) == nil {
 					t.Fatal("selected KS was skipped instead of reconciled")
 				}
 				chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared-chart"}
@@ -151,7 +151,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					t.Fatal("excluded source sibling was fetched")
 				}
 				for _, id := range []manifest.NamedResource{
-					selected, ksID("selected"),
+					selected, testutil.KustomizationID("flux-system", "selected"),
 					{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared"},
 				} {
 					if st.GetObject(id) == nil || !side.filter.ShouldReconcile(id) {
@@ -168,7 +168,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 			if !broken {
 				for i, side := range []Rendered{base, head} {
 					batches := canonicalBatches(side.Result)
-					if len(batches) != 2 || batches[0].Parent != (manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "selected"}) || batches[1].Parent != ksID("selected") {
+					if len(batches) != 2 || batches[0].Parent != (testutil.HelmReleaseID("flux-system", "selected")) || batches[1].Parent != testutil.KustomizationID("flux-system", "selected") {
 						t.Fatalf("unexpected selected producer batches: %+v", batches)
 					}
 					if len(batches[0].Documents) != 1 || len(batches[1].Documents) != 2 {
@@ -214,12 +214,12 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "invalid.yaml") || strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
 			t.Fatalf("selected malformed reference lost its source: %v", err)
 		}
-		if info := res.Failed[ksID("peer")]; !strings.Contains(info.Message, "missing.yaml") {
+		if info := res.Failed[testutil.KustomizationID("flux-system", "peer")]; !strings.Contains(info.Message, "missing.yaml") {
 			t.Fatalf("input error overwrote the reader's render failure: %+v", info)
 		}
 		runs := []Rendered{{Orchestrator: o, Result: res, Err: err}}
 		for _, name := range []string{"apps", "good"} {
-			_, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{ksID(name)}, nil)
+			_, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{testutil.KustomizationID("flux-system", name)}, nil)
 			if remainder != nil || (selectedErr != nil) != (name == "apps") {
 				t.Fatalf("selection %s: error=%v remainder=%v", name, selectedErr, remainder)
 			}
@@ -240,7 +240,7 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 		t.Fatal("selected unknown ordering target was ignored")
 	}
 	for _, side := range []Rendered{base, head} {
-		info := side.Result.Failed[ksID("selected")]
+		info := side.Result.Failed[testutil.KustomizationID("flux-system", "selected")]
 		if info.Status != store.StatusFailed || !strings.Contains(info.Message, "unknown: dependency not found") {
 			t.Fatalf("missing target diagnosis lost: %+v", info)
 		}

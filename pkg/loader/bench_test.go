@@ -49,13 +49,7 @@ func BenchmarkLoad_DeepComponents(b *testing.B) {
 func BenchmarkParseFile_Kustomization(b *testing.B) {
 	dir := b.TempDir()
 	path := filepath.Join(dir, "ks.yaml")
-	body := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  interval: 10m
+	body := testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./apps
   prune: true
   sourceRef:
@@ -71,7 +65,7 @@ spec:
   dependsOn:
   - name: cluster-config
     namespace: flux-system
-`
+`)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		b.Fatal(err)
 	}
@@ -260,21 +254,7 @@ func synthLargeRepo(b *testing.B, root string) {
 		}
 		testutil.WriteFile(b, root, base+"/kustomization.yaml",
 			"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n"+resources.String())
-		testutil.WriteFile(b, root, base+"/ks.yaml", fmt.Sprintf(
-			`apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: app-%d
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./apps/app-%d
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`, i, i))
+		testutil.WriteFile(b, root, base+"/ks.yaml", testutil.KustomizationYAML("app-"+fmt.Sprintf("%d", i), "flux-system", "  interval: 10m\n  path: ./apps/app-"+fmt.Sprintf("%d", i)+"\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 		if i < nHR {
 			testutil.WriteFile(b, root, base+"/hr.yaml", fmt.Sprintf(
 				`apiVersion: helm.toolkit.fluxcd.io/v2

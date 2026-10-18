@@ -7,7 +7,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestTemplate_Deterministic(t *testing.T) {
@@ -38,7 +40,7 @@ data:
   port: {{ get .Values.ports (keys .Values.ports | first) | quote }}
 `)
 
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	hr := newHR()
@@ -64,7 +66,7 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  cleartext: {{ encryptAES \"key\" .Values.plaintext | decryptAES \"key\" | quote }}\n")
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}

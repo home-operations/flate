@@ -1,16 +1,15 @@
 package oci
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/internal/fetcherr"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source"
 	"io"
 	"io/fs"
 	"net"
@@ -19,12 +18,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
 	"time"
+
+	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/source"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -36,19 +41,47 @@ import (
 	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
-// TestFetcher_ExtractsLayerWithoutTitleAnnotation regresses the silent
-// no-op that Zariel/home-ops hit on flux-manifests: every blob in a
-// Flux OCIRepository artifact lacks `org.opencontainers.image.title`.
-// orasfile's default in-memory fallback used to swallow them, leaving
-// the slot empty and `kustomize build` rendering zero manifests
-// without failing. With content/oci.Store (see oci.go) blobs land at
-// `slot/blobs/<algo>/<hex>` regardless of annotations.
 func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	t.Parallel()
 
-	layerBytes := mustTarGz(t, map[string]string{
-		"gotk-components.yaml": "kind: ConfigMap\n",
-	})
+	names := []string{"gotk-components.yaml", "kustomization.yaml", "namespace.yaml"}
+	bodies := []string{
+		"kind: ConfigMap\n",
+		"resources: [gotk-components.yaml, namespace.yaml]\n",
+		"kind: Namespace\nmetadata: {name: flux-system}\n",
+	}
+	files := make(map[string]string, len(names))
+	for i, name := range names {
+		files[name] = bodies[i]
+	}
+	reversed := make(map[string]string, len(files))
+	for _, name := range slices.Backward(names) {
+		reversed[name] = files[name]
+	}
+	layerBytes := testutil.TarGz(t, files, 0o644, gzip.DefaultCompression)
+	if other := testutil.TarGz(t, reversed, 0o644, gzip.DefaultCompression); !bytes.Equal(layerBytes, other) {
+		t.Fatal("equal file maps produced different gzip bytes")
+	}
+	gr, err := gzip.NewReader(bytes.NewReader(layerBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gr)
+	for _, name := range names {
+		header, err := tr.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name != name || header.Typeflag != tar.TypeReg || header.Mode != 0o644 {
+			t.Fatalf("tar header=%+v, want regular %s mode 0644", header, name)
+		}
+	}
+	if header, err := tr.Next(); !errors.Is(err, io.EOF) {
+		t.Fatalf("extra tar entry=%+v, error=%v", header, err)
+	}
+	if err := gr.Close(); err != nil {
+		t.Fatal(err)
+	}
 	configBytes := []byte(`{"created":"2026-01-01T00:00:00Z"}`)
 	manifestBytes := mustManifestJSON(t,
 		manifestBlob{data: configBytes, mediaType: "application/vnd.cncf.flux.config.v1+json"},
@@ -57,7 +90,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: newSourceCache(t)}
+	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name:      "flux-manifests",
 		Namespace: "flux-system",
@@ -76,7 +109,6 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		t.Fatal("Fetch returned no artifact")
 	}
 
-	// Observable proof that the layer made it to disk and got extracted.
 	got, err := fs.ReadFile(art.FS, "gotk-components.yaml")
 	if err != nil {
 		t.Fatalf("expected extracted gotk-components.yaml under %s: %v\nslot contents: %v",
@@ -86,8 +118,6 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		t.Errorf("gotk-components.yaml = %q, want %q", got, want)
 	}
 
-	// OCI layout artifacts should be wiped after extract so kustomize /
-	// downstream consumers see only the artifact's own files.
 	for _, name := range []string{"blobs", "index.json", "oci-layout"} {
 		if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("leftover OCI layout artifact in slot: %s (err: %v)", name, err)
@@ -104,12 +134,12 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	t.Parallel()
 
-	layerBytes := mustTarGz(t, map[string]string{
+	layerBytes := testutil.TarGz(t, map[string]string{
 		"blobs/should-survive.yaml": "kind: ConfigMap\nmetadata:\n  name: survives\n",
 		"index.json":                `{"user": "data"}`,
 		"oci-layout":                "user-owned content",
 		"kustomization.yaml":        "resources:\n- blobs/should-survive.yaml\n",
-	})
+	}, 0o644, gzip.DefaultCompression)
 	configBytes := []byte(`{}`)
 	manifestBytes := mustManifestJSON(t,
 		manifestBlob{data: configBytes, mediaType: "application/vnd.cncf.flux.config.v1+json"},
@@ -117,7 +147,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	)
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: newSourceCache(t)}
+	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name:      "collider",
 		Namespace: "test",
@@ -184,7 +214,7 @@ func TestFetcher_Freshness(t *testing.T) {
 				}
 				handler.ServeHTTP(w, r)
 			})
-			f := &Fetcher{Cache: newSourceCache(t)}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 			repo := &manifest.OCIRepository{
 				Name: "freshness", Namespace: "test",
 				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
@@ -294,7 +324,7 @@ type fakeOCIArtifact struct {
 
 func newFakeOCIArtifact(t *testing.T, files map[string]string) fakeOCIArtifact {
 	t.Helper()
-	layer := mustTarGz(t, files)
+	layer := testutil.TarGz(t, files, 0o644, gzip.DefaultCompression)
 	config := []byte(`{}`)
 	manifest := mustManifestJSON(t,
 		manifestBlob{data: config, mediaType: "application/vnd.cncf.flux.config.v1+json"},
@@ -408,22 +438,8 @@ func mustReadFile(t *testing.T, input fs.FS, path string) string {
 	return string(b)
 }
 
-func newSourceCache(t *testing.T) *sourcecache.Cache {
-	t.Helper()
-	c, err := sourcecache.New(t.Context(), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := c.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return c
-}
-
 func TestFetcher_CacheIsolatesSources(t *testing.T) {
-	c := newSourceCache(t)
+	c := cachetest.New(t, t.TempDir(), sourcecache.New)
 	f := &Fetcher{Cache: c}
 	var keys []string
 	for _, body := range []string{"first", "second"} {
@@ -502,7 +518,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 				t.Parallel()
 				honest := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 				broken := honest
-				payload := mustTarGz(t, map[string]string{"app.yaml": "version: v2\n"})
+				payload := testutil.TarGz(t, map[string]string{"app.yaml": "version: v2\n"}, 0o644, gzip.DefaultCompression)
 				if corruption != "digest" {
 					if corruption == "gzip header" {
 						payload = []byte{0x1f, 0x8b}
@@ -818,7 +834,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			if name == "digest selectors" {
 				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: art.manifestDigest}
 			}
-			f := &Fetcher{Cache: newSourceCache(t)}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 			got, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if name == "unmatched" {
 				if err == nil {
@@ -919,7 +935,7 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			if route == "copy" {
 				repo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
 			}
-			f := &Fetcher{Cache: newSourceCache(t), Network: &network}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: &network}
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
 			if route == "fallback" {
 				repo.SecretRef = &manifest.LocalObjectReference{Name: "missing"}

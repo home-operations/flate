@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"errors"
@@ -19,7 +18,9 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -90,7 +91,7 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,21 +108,9 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 		data := []byte("apiVersion: v2\nname: " + name + "\nversion: " + version + "\n")
 		input := fstest.MapFS{"Chart.yaml": {Data: data}}
 		if name == "invalid-archive" {
-			var buf bytes.Buffer
-			gw := gzip.NewWriter(&buf)
-			tw := tar.NewWriter(gw)
-			if err := tw.WriteHeader(&tar.Header{Name: name + "/Chart.yaml", Size: int64(len(data)), Mode: 0o644}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := tw.Write(data); err != nil {
-				t.Fatal(err)
-			}
-			if err := errors.Join(tw.Close(), gw.Close()); err != nil {
-				t.Fatal(err)
-			}
-			input = fstest.MapFS{"chart.tgz": {Data: buf.Bytes()}}
+			input = fstest.MapFS{"chart.tgz": {Data: testutil.TarGz(t, map[string]string{name + "/Chart.yaml": string(data)}, 0o644, gzip.DefaultCompression)}}
 		}
-		art := &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: key, FS: acquireChartFS(t, newTestCache(t, ""), input)}
+		art := &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: key, FS: acquireChartFS(t, cachetest.New(t, "", sourcecache.New), input)}
 		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: name, Namespace: "test"}, art)
 		hr := &manifest.HelmRelease{Namespace: "test", Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: name}}
 		loaded, err := cli.loadChart(t.Context(), hr)
@@ -141,7 +130,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 }
 
 func BenchmarkLoadChart_FSWarm(b *testing.B) {
-	cli, err := NewClient(newTestCache(b, ""))
+	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -197,19 +186,11 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 		assert.Equal(t, bytesRead, archive.MaxDecompressedChartSize+1)
 	})
 	t.Run("valid reload", func(t *testing.T) {
-		var buf bytes.Buffer
-		gw, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
-		assert.NoError(t, err)
-		tw := tar.NewWriter(gw)
-		data := []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")
-		assert.NoError(t, tw.WriteHeader(&tar.Header{Name: "chart/Chart.yaml", Mode: 0o600, Size: int64(len(data))}))
-		_, err = tw.Write(data)
-		assert.NoError(t, err)
-		assert.NoError(t, tw.Close())
-		assert.NoError(t, gw.Close())
+		data := "apiVersion: v2\nname: chart\nversion: 1.0.0\n"
+		payload := testutil.TarGz(t, map[string]string{"chart/Chart.yaml": data}, 0o600, gzip.NoCompression)
 		assert.Equal(t, int64(len(data)) < archive.MaxDecompressedChartSize, true)
-		assert.Equal(t, int64(buf.Len()) < archive.MaxDecompressedChartSize, true)
-		input := fstest.MapFS{"chart.tgz": {Data: buf.Bytes()}}
+		assert.Equal(t, int64(len(payload)) < archive.MaxDecompressedChartSize, true)
+		input := fstest.MapFS{"chart.tgz": {Data: payload}}
 		captured, missing, err := captureChart(input, "chart.tgz")
 		assert.NoError(t, err)
 		assert.Equal(t, missing, false)
@@ -217,7 +198,7 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, loaded.Metadata.Name, "chart")
 		assert.Equal(t, loaded.Metadata.Version, "1.0.0")
-		assert.Equal(t, bytes.Equal(captured.archive, buf.Bytes()), true)
+		assert.Equal(t, bytes.Equal(captured.archive, payload), true)
 		warm, missing, err := captureChart(input, "chart.tgz")
 		assert.NoError(t, err)
 		assert.Equal(t, missing, false)
@@ -299,7 +280,7 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	owner := newTestCache(t, "")
+	owner := cachetest.New(t, "", sourcecache.New)
 	cli, err := NewClient(owner)
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +305,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 	t.Parallel()
 	roots := []string{t.TempDir(), t.TempDir()}
 	st := store.New()
-	cli, err := NewClient(newTestCache(t, ""))
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "n", Name: "chart"}
@@ -339,17 +320,8 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		{roots[0], "2.0.0", 1},
 		{roots[1], "3.0.0", 1},
 	} {
-		var buf bytes.Buffer
-		gw, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
-		assert.NoError(t, err)
-		tw := tar.NewWriter(gw)
-		data := []byte("apiVersion: v2\nname: chart\nversion: " + tc.version + "\n")
-		assert.NoError(t, tw.WriteHeader(&tar.Header{Name: "chart/Chart.yaml", Mode: 0o600, Size: int64(len(data))}))
-		_, err = tw.Write(data)
-		assert.NoError(t, err)
-		assert.NoError(t, tw.Close())
-		assert.NoError(t, gw.Close())
-		testutil.WriteFile(t, tc.root, "chart.tgz", buf.String())
+		payload := testutil.TarGz(t, map[string]string{"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: " + tc.version + "\n"}, 0o600, gzip.NoCompression)
+		testutil.WriteFile(t, tc.root, "chart.tgz", string(payload))
 		stamp := time.Unix(tc.stamp, 0)
 		filename := filepath.Join(tc.root, "chart.tgz")
 		assert.NoError(t, os.Chtimes(filename, stamp, stamp))
@@ -378,7 +350,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 
 func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
 	st := store.New()
-	client, err := NewClient(newTestCache(t, ""))
+	client, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	client.SetSourceResolver(NewStoreSourceResolver(st))
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}
@@ -469,7 +441,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, string(laterChart.Dependencies()[0].Templates[0].Data), "new")
 		clear(reads)
-		cli, err := NewClient(newTestCache(t, ""))
+		cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 		assert.NoError(t, err)
 		st := store.New()
 		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
@@ -505,7 +477,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		assert.Equal(t, captured.fingerprint(), key)
 		assert.Equal(t, bytesRead, int64(len(data)))
 		bytesRead = 0
-		cli, err := NewClient(newTestCache(t, ""))
+		cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 		assert.NoError(t, err)
 		st := store.New()
 		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: "chart.tgz", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}
@@ -587,7 +559,7 @@ func TestLoadFSChart_FailureRecovery(t *testing.T) {
 				t.Cleanup(func() { archive.MaxDecompressedChartSize = old })
 				input[".helmignore"] = &fstest.MapFile{Data: bytes.Repeat([]byte("#"), 65)}
 			}
-			cli, err := NewClient(newTestCache(t, ""))
+			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 			assert.NoError(t, err)
 			st := store.New()
 			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo"}}

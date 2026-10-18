@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/go-git/go-git/v5/plumbing"
 	"sigs.k8s.io/yaml"
 
@@ -24,7 +26,7 @@ import (
 const allowlistIgnore = "# Exclude all\n/*\n# Include manifest directories\n!/clusters/\n!/charts/x/\n"
 
 func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		".sourceignore":         allowlistIgnore,
 		"clusters/dev/cm.yaml":  cmYAML("dev"),
 		"bundles/common/a.yaml": cmYAML("a"),
@@ -120,7 +122,7 @@ func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 // filtered it.
 func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	t.Parallel()
-	root := writeTree(t, map[string]string{
+	root := testutil.WriteTree(t, map[string]string{
 		".sourceignore":                       allowlistIgnore,
 		"bundles/common/kustomization.yaml":   existingKustomization("cm.yaml"),
 		"bundles/common/cm.yaml":              cmYAML("common"),
@@ -184,7 +186,7 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			root := writeTree(t, map[string]string{
+			root := testutil.WriteTree(t, map[string]string{
 				".sourceignore": "b.yaml\n",
 				"a.yaml":        cmYAML("a"),
 				"b.yaml":        cmYAML("b"),
@@ -275,7 +277,7 @@ configMapGenerator:
 			if tc.ignore != nil {
 				files[".sourceignore"] = *tc.ignore
 			}
-			root := writeTree(t, files)
+			root := testutil.WriteTree(t, files)
 			artifact := localSource(t, root)
 			if tc.shaped {
 				input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: artifact.FS, Ignore: tc.extra})

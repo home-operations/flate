@@ -11,6 +11,7 @@ import (
 
 	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -77,7 +78,7 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	cache := newGitCache(t, root)
+	cache := cachetest.New(t, root, sourcecache.New)
 	f := &Fetcher{Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",

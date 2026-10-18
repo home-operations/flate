@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -49,7 +50,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 		t.Run(fmt.Sprint(hasParent), func(t *testing.T) {
 			t.Parallel()
 			c := New(store.New(), task.NewBounded(2), true)
-			parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
+			parent := testutil.KustomizationID("apps", "parent")
 			calls := 0
 			c.Configure(Options{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { calls++; return parent, hasParent }})
 			dependency := &manifest.Kustomization{Name: "pending", Namespace: "apps"}

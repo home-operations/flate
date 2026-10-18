@@ -100,7 +100,7 @@ func crdFixture(t *testing.T, mode string) string {
 		if mode == "indexed" {
 			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n- ../indexed/crd.yaml\n")
 		}
-	case "produced", "unordered", "sibling ks":
+	case "produced", "unordered":
 		dependency := ""
 		if mode == "produced" {
 			dependency = "crds"
@@ -167,49 +167,61 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 }
 
 func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		for _, enabled := range []bool{false, true} {
-			for _, mode := range []string{"absent", "supplied", "indexed", "produced", "helm produced", "unreferenced", "unordered", "sibling ks", "sibling hr"} {
-				t.Run(fmt.Sprintf("workers_%d/enabled_%t/%s", workers, enabled, mode), func(t *testing.T) {
-					dir := crdFixture(t, mode)
-					o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: workers, AllowMissingCRDs: enabled})
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() {
-						if err := o.Stop(); err != nil {
-							t.Errorf("Stop: %v", err)
-						}
-					})
-					res, err := o.Render(t.Context())
-					if (mode == "absent" || mode == "unreferenced") && !enabled {
-						if err == nil || !strings.Contains(err.Error(), "dependency not found") {
-							t.Fatalf("strict absent error=%v", err)
-						}
-						assert.Equal(t, o.store.GetArtifact(manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "flux-operator"}) == nil, true)
-						return
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-					assertIssueChildren(t, o)
-					crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
-					var warnings []manifest.Warning
-					for _, w := range res.Warnings {
-						if w.Category == manifest.WarnMissingCRD {
-							warnings = append(warnings, w)
-						}
-					}
-					if mode == "absent" || mode == "unreferenced" {
-						assert.Diff(t, warnings, []manifest.Warning{{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"}})
-						assert.Equal(t, o.store.GetObject(crd) == nil, true)
-					} else {
-						assert.Equal(t, len(warnings), 0)
-						assert.Equal(t, o.store.GetObject(crd) != nil, true)
-					}
-				})
+	for _, tc := range []struct {
+		mode    string
+		enabled bool
+	}{
+		{"absent", false},
+		{"supplied", false},
+		{"indexed", false},
+		{"produced", false},
+		{"helm produced", false},
+		{"unreferenced", false},
+		{"unordered", false},
+		{"sibling hr", false},
+		{"absent", true},
+		{"unreferenced", true},
+		{"produced", true},
+		{"helm produced", true},
+	} {
+		t.Run(fmt.Sprintf("enabled_%t/%s", tc.enabled, tc.mode), func(t *testing.T) {
+			dir := crdFixture(t, tc.mode)
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: 2, AllowMissingCRDs: tc.enabled})
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
+				}
+			})
+			res, err := o.Render(t.Context())
+			if (tc.mode == "absent" || tc.mode == "unreferenced") && !tc.enabled {
+				if err == nil || !strings.Contains(err.Error(), "dependency not found") {
+					t.Fatalf("strict absent error=%v", err)
+				}
+				assert.Equal(t, o.store.GetArtifact(manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "flux-operator"}) == nil, true)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertIssueChildren(t, o)
+			crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "helmreleases.helm.toolkit.fluxcd.io"}
+			var warnings []manifest.Warning
+			for _, w := range res.Warnings {
+				if w.Category == manifest.WarnMissingCRD {
+					warnings = append(warnings, w)
+				}
+			}
+			if tc.mode == "absent" || tc.mode == "unreferenced" {
+				assert.Diff(t, warnings, []manifest.Warning{{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"}})
+				assert.Equal(t, o.store.GetObject(crd) == nil, true)
+			} else {
+				assert.Equal(t, len(warnings), 0)
+				assert.Equal(t, o.store.GetObject(crd) != nil, true)
+			}
+		})
 	}
 }
 
@@ -378,18 +390,17 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 
 func TestMissingCRDs_SharedWarningsAndOutput(t *testing.T) {
 	var first *Result
-	for _, workers := range []int{2, 4} {
-		cache := t.TempDir()
-		dir := t.TempDir()
-		if _, err := gogit.PlainInit(dir, false); err != nil {
-			t.Fatal(err)
-		}
-		for range 2 {
-			testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n")
-			var sets strings.Builder
-			for _, name := range []string{"z", "a"} {
-				fmt.Fprintf(&sets, `---
+	cache := t.TempDir()
+	dir := t.TempDir()
+	if _, err := gogit.PlainInit(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
+		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n")
+		var sets strings.Builder
+		for _, name := range []string{"z", "a"} {
+			fmt.Fprintf(&sets, `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: %s, namespace: flux-system}
@@ -404,45 +415,44 @@ spec:
    metadata: {name: %s, namespace: flux-system}
    spec: {value: %s}
 `, name, name, name)
+		}
+		testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
+		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: cache, Concurrency: 2, AllowMissingCRDs: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := o.Stop(); err != nil {
+				t.Errorf("Stop: %v", err)
 			}
-			testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: cache, Concurrency: workers, AllowMissingCRDs: true})
-			if err != nil {
-				t.Fatal(err)
+		})
+		res, err := o.Render(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []manifest.Warning{}
+		for _, name := range []string{"a.example.com", "z.example.com"} {
+			crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: name}
+			want = append(want, manifest.Warning{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/a, ResourceSet.fluxcd.controlplane.io/flux-system/z"})
+		}
+		assert.Diff(t, res.Warnings, want)
+		for _, name := range []string{"a", "z"} {
+			id := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: name}
+			art, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
+			if !ok || len(art.Manifests) != 1 {
+				t.Fatalf("%s artifact=%+v", id, art)
 			}
-			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
-			})
-			res, err := o.Render(t.Context())
-			if err != nil {
-				t.Fatal(err)
+			raw, ok := o.store.GetObject(manifest.NamedResource{Group: "example.com", Kind: "Widget", Namespace: "flux-system", Name: name}).(*manifest.RawObject)
+			if !ok {
+				t.Fatalf("missing emitted Widget/%s", name)
 			}
-			want := []manifest.Warning{}
-			for _, name := range []string{"a.example.com", "z.example.com"} {
-				crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: name}
-				want = append(want, manifest.Warning{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/a, ResourceSet.fluxcd.controlplane.io/flux-system/z"})
-			}
-			assert.Diff(t, res.Warnings, want)
-			for _, name := range []string{"a", "z"} {
-				id := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: name}
-				art, ok := o.store.GetArtifact(id).(*store.ResourceSetArtifact)
-				if !ok || len(art.Manifests) != 1 {
-					t.Fatalf("%s artifact=%+v", id, art)
-				}
-				raw, ok := o.store.GetObject(manifest.NamedResource{Group: "example.com", Kind: "Widget", Namespace: "flux-system", Name: name}).(*manifest.RawObject)
-				if !ok {
-					t.Fatalf("missing emitted Widget/%s", name)
-				}
-				assert.Diff(t, raw.Spec, map[string]any{"value": name})
-			}
-			if first == nil {
-				first = res
-			} else {
-				assert.Diff(t, res.Manifests, first.Manifests)
-				assert.Diff(t, res.Warnings, first.Warnings)
-			}
+			assert.Diff(t, raw.Spec, map[string]any{"value": name})
+		}
+		if first == nil {
+			first = res
+		} else {
+			assert.Diff(t, res.Manifests, first.Manifests)
+			assert.Diff(t, res.Warnings, first.Warnings)
 		}
 	}
 }

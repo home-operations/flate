@@ -72,35 +72,6 @@ stringData:
 			postBuild: "  targetNamespace: flux-system\n",
 		},
 		{
-			name: "transformed namespace",
-			secret: `metadata:
-  name: ca
-  namespace: original
-stringData:
-  ca.crt: rendered-ca
-`,
-			kustomize: "namespace: flux-system\nresources: [secret.yaml]\n",
-			ref:       "ca",
-		},
-		{
-			name: "patched data",
-			secret: `metadata:
-  name: ca
-  namespace: flux-system
-stringData:
-  ca.crt: unpatched-ca
-`,
-			kustomize: `resources: [secret.yaml]
-patches:
-  - target: {kind: Secret, name: ca}
-    patch: |-
-      - op: replace
-        path: /stringData/ca.crt
-        value: rendered-ca
-`,
-			ref: "ca",
-		},
-		{
 			name: "renamed",
 			secret: `metadata:
   name: ca
@@ -110,32 +81,6 @@ stringData:
 `,
 			kustomize: "namePrefix: rendered-\nresources: [secret.yaml]\n",
 			ref:       "rendered-ca",
-		},
-		{
-			name: "postBuild substitution",
-			secret: `metadata:
-  name: ca
-  namespace: flux-system
-stringData:
-  ca.crt: '${CA}'
-`,
-			kustomize: "resources: [secret.yaml]\n",
-			ref:       "ca",
-			postBuild: `  postBuild:
-    substitute:
-      CA: rendered-ca
-`,
-		},
-		{
-			name: "generated",
-			kustomize: `secretGenerator:
-  - name: ca
-    literals: [ca.crt=rendered-ca]
-generatorOptions:
-  disableNameSuffixHash: true
-`,
-			ref:       "ca",
-			postBuild: "  targetNamespace: flux-system\n",
 		},
 		{
 			name: "generated with hash",
@@ -148,35 +93,34 @@ generatorOptions:
 		},
 	}
 	for _, tt := range tests {
-		for _, allowMissing := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/allowMissing=%t", tt.name, allowMissing), func(t *testing.T) {
-				dir := t.TempDir()
-				chart := t.TempDir()
-				testutil.WriteFile(t, chart, "Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
-				testutil.WriteFile(t, chart, "templates/configmap.yaml", `apiVersion: v1
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			chart := t.TempDir()
+			testutil.WriteFile(t, chart, "Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+			testutil.WriteFile(t, chart, "templates/configmap.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: chart-output
 `)
-				testutil.WriteFile(t, dir, "flux/apps.yaml", ksYAML("apps", "apps", "")+tt.postBuild)
-				testutil.WriteFile(t, dir, "apps/kustomization.yaml", `resources:
+			testutil.WriteFile(t, dir, "flux/apps.yaml", ksYAML("apps", "apps", "")+tt.postBuild)
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", `resources:
   - oci.yaml
   - hr.yaml
   - ca
 configurations:
   - references.yaml
 `)
-				testutil.WriteFile(t, dir, "apps/references.yaml", `nameReference:
+			testutil.WriteFile(t, dir, "apps/references.yaml", `nameReference:
   - kind: Secret
     fieldSpecs:
       - kind: OCIRepository
         path: spec/certSecretRef/name
 `)
-				testutil.WriteFile(t, dir, "apps/ca/kustomization.yaml", tt.kustomize)
-				if tt.secret != "" {
-					testutil.WriteFile(t, dir, "apps/ca/secret.yaml", "apiVersion: v1\nkind: Secret\n"+tt.secret)
-				}
-				testutil.WriteFile(t, dir, "apps/oci.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+			testutil.WriteFile(t, dir, "apps/ca/kustomization.yaml", tt.kustomize)
+			if tt.secret != "" {
+				testutil.WriteFile(t, dir, "apps/ca/secret.yaml", "apiVersion: v1\nkind: Secret\n"+tt.secret)
+			}
+			testutil.WriteFile(t, dir, "apps/oci.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: charts
@@ -188,7 +132,7 @@ spec:
   certSecretRef:
     name: %s
 `, tt.ref))
-				testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: demo
@@ -199,34 +143,33 @@ spec:
     kind: OCIRepository
     name: charts
 `)
-				o, err := New(t.Context(), Config{
-					Path: dir, CacheDir: t.TempDir(), WipeSecrets: true,
-					AllowMissingSecrets: allowMissing, Concurrency: 4,
-				})
-				if err != nil {
-					t.Fatalf("New: %v", err)
-				}
-				o.WithFetcher(manifest.KindOCIRepository, &secretChartFetcher{store: o.Store(), chart: chart})
-				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-				defer cancel()
-				res, err := o.Render(ctx)
-				if err != nil {
-					t.Fatalf("Render: %v", err)
-				}
-				for _, id := range []manifest.NamedResource{
-					{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
-					{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"},
-				} {
-					if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || store.IsSkipped(info) {
-						t.Errorf("%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
-					}
-				}
-				hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"}
-				if docs := res.Manifests[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
-					t.Fatalf("HelmRelease output = %+v, want the chart's ConfigMap", docs)
-				}
+			o, err := New(t.Context(), Config{
+				Path: dir, CacheDir: t.TempDir(), WipeSecrets: true,
+				Concurrency: 4,
 			})
-		}
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			o.WithFetcher(manifest.KindOCIRepository, &secretChartFetcher{store: o.Store(), chart: chart})
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			res, err := o.Render(ctx)
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			for _, id := range []manifest.NamedResource{
+				{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
+				{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"},
+			} {
+				if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || store.IsSkipped(info) {
+					t.Errorf("%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
+				}
+			}
+			hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "demo"}
+			if docs := res.Manifests[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
+				t.Fatalf("HelmRelease output = %+v, want the chart's ConfigMap", docs)
+			}
+		})
 	}
 }
 

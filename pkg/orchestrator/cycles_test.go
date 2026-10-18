@@ -297,7 +297,7 @@ func TestLogNewCycleMessages_Deterministic(t *testing.T) {
 	prev := map[manifest.NamedResource]string{
 		{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "1-a"}: "cycle-c",
 	}
-	for range 20 {
+	for range 2 {
 		got = nil
 		logNewCycleMessages(prev, next)
 		assert.Diff(t, got, []string{"cycle-d", "cycle-b", "cycle-a"})

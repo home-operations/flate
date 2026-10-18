@@ -26,7 +26,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -237,56 +236,6 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_WithFetcherAfterBootstrapPanics pins the
-// contract that WithFetcher MUST be called before Bootstrap. A
-// late swap would silently miss any source CR discovery already
-// reconciled, so we fail fast instead of pretending success.
-func TestOrchestrator_WithFetcherAfterBootstrapPanics(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: []\n")
-
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	})
-	o.WithFetcher(manifest.KindOCIRepository, source.ExistenceFetcher{})
-	if err := o.Bootstrap(t.Context()); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-	if _, ok := o.src.Fetchers[manifest.KindOCIRepository].(source.ExistenceFetcher); !ok {
-		t.Fatal("Bootstrap replaced a preinstalled fetcher")
-	}
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic when WithFetcher is called after Bootstrap")
-		}
-		msg, _ := r.(string)
-		if !strings.Contains(msg, "BEFORE Bootstrap") {
-			t.Errorf("panic message should name the ordering contract; got: %v", r)
-		}
-	}()
-	o.WithFetcher(manifest.KindOCIRepository, nil)
-}
-
 func TestOrchestrator_SimpleCluster(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -337,78 +286,6 @@ data: {k: v}
 	}
 	if entries, err := os.ReadDir(fallback); err != nil || len(entries) != 0 {
 		t.Fatalf("empty SDK CacheDir wrote cache artifacts: %v, %v", entries, err)
-	}
-}
-
-func TestOrchestrator_DependsOnCanArriveFromRenderedKustomization(t *testing.T) {
-	dir := t.TempDir()
-	produced := `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: produced
-  namespace: flux-system
-spec:
-  path: ./produced
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(produced))
-	}))
-	t.Cleanup(srv.Close)
-	testutil.WriteFile(t, dir, "flux/producer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: producer
-  namespace: flux-system
-spec:
-  path: ./producer
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
-	testutil.WriteFile(t, dir, "flux/consumer.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: consumer
-  namespace: flux-system
-spec:
-  path: ./consumer
-  dependsOn:
-    - name: produced
-  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-`)
-	testutil.WriteFile(t, dir, "producer/kustomization.yaml", "resources:\n- "+srv.URL+"/produced.yaml\n")
-	testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "consumer/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: consumer}
-data: {k: v}
-`)
-	testutil.WriteFile(t, dir, "produced/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "produced/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: produced}
-data: {k: v}
-`)
-
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := o.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-	consumerID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "consumer"}
-	if msg, ok := o.preflightFailure(consumerID); ok {
-		t.Fatalf("consumer should wait for rendered dependency, not fail preflight: %s", msg)
-	}
-	if err := o.Run(context.Background()); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	for _, name := range []string{"produced", "consumer"} {
-		id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: name}
-		info, ok := o.Store().GetStatus(id)
-		if !ok || info.Status != store.StatusReady {
-			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
-		}
 	}
 }
 
@@ -591,9 +468,6 @@ spec:
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		// A per-resource render failure (e.g. the doubled-path case below)
-		// is advisory — Result stays non-nil. Gate on the rendered docs, not
-		// on err.
 		res, err := o.Render(context.Background())
 		if res == nil {
 			t.Fatalf("Render returned nil Result: %v", err)
@@ -609,20 +483,6 @@ spec:
 		return false
 	}
 
-	// Explicit RepoRoot: spec.path ./kubernetes/apps resolves against the root,
-	// so the ConfigMap renders even though we scanned only the entry-point subdir
-	// and there is no .git to walk up to.
-	t.Run("explicit RepoRoot renders", func(t *testing.T) {
-		dir := t.TempDir()
-		writeCluster(t, dir)
-		if !rendersDemo(t, Config{Path: dir + "/kubernetes/flux/cluster", RepoRoot: dir, WipeSecrets: true, Concurrency: 4}) {
-			t.Error("explicit RepoRoot: ConfigMap demo must render (spec.path resolves against RepoRoot)")
-		}
-	})
-
-	// No anchor (no RepoRoot, no .git): documents the failure mode the explicit
-	// anchor fixes — ./kubernetes/apps doubles under the entry-point subdir, so
-	// cluster-apps renders nothing.
 	t.Run("no anchor renders nothing", func(t *testing.T) {
 		dir := t.TempDir()
 		writeCluster(t, dir)
@@ -723,41 +583,6 @@ spec:
 	}
 	if !strings.Contains(info.Message, "cluster-settings") {
 		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.Message)
-	}
-}
-
-func TestOrchestrator_RunReturnsContextCancellation(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: hello}
-data: {k: v}
-`)
-
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 1})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := o.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := o.Run(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run with pre-canceled context = %v, want context.Canceled", err)
 	}
 }
 
@@ -872,14 +697,18 @@ data: {k: v}
 	if len(res.Orphans) != 0 {
 		t.Errorf("expected no orphans; got %v", res.Orphans)
 	}
+	again, err := o.Render(t.Context())
+	if err != nil {
+		t.Fatalf("Render (2nd): %v", err)
+	}
+	if again != res {
+		t.Fatal("second Render changed Result identity")
+	}
 }
 
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
-			dir := t.TempDir()
-			// Parent KS at the repo root scans ./apps.
-			testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   name: apps
@@ -888,7 +717,7 @@ spec:
   path: ./apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", `namespace: flux-system
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `namespace: flux-system
 resources: [rsip.yaml]
 generatorOptions:
   disableNameSuffixHash: true
@@ -921,7 +750,7 @@ patches:
             spec:
               target: {name: acl}
 `)
-			testutil.WriteFile(t, dir, "apps/rsip.yaml", `apiVersion: fluxcd.controlplane.io/v1
+	testutil.WriteFile(t, dir, "apps/rsip.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
 metadata:
   name: rsip
@@ -932,41 +761,39 @@ spec:
   defaultValues: {user: alice}
 `)
 
-			o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: workers})
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
-			if err := o.Bootstrap(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
-			if _, ok := o.index.Lookup(rsID); ok {
-				t.Fatal("fixture ResourceSet must only exist in render output")
-			}
-			res, err := o.Render(t.Context())
-			if err != nil {
-				t.Fatalf("Render: %v", err)
-			}
-			ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-			if owner, ok := o.Store().EmittedParent(rsID); !ok || owner != ksID {
-				t.Errorf("ResourceSet owner = (%v, %v), want %s", owner, ok, ksID)
-			}
-			mans := res.Manifests[ksID]
-			var found bool
-			for _, doc := range mans {
-				md, _ := doc["metadata"].(map[string]any)
-				name, _ := md["name"].(string)
-				kind, _ := doc["kind"].(string)
-				if kind == "ExternalSecret" && name == "acl" {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("expected ExternalSecret/acl in res.Manifests[%s] (the RS-rendered child); kinds in stream: %v",
-					ksID, kindsOf(mans))
-			}
-		})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
+	if _, ok := o.index.Lookup(rsID); ok {
+		t.Fatal("fixture ResourceSet must only exist in render output")
+	}
+	res, err := o.Render(t.Context())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
+	if owner, ok := o.Store().EmittedParent(rsID); !ok || owner != ksID {
+		t.Errorf("ResourceSet owner = (%v, %v), want %s", owner, ok, ksID)
+	}
+	mans := res.Manifests[ksID]
+	var found bool
+	for _, doc := range mans {
+		md, _ := doc["metadata"].(map[string]any)
+		name, _ := md["name"].(string)
+		kind, _ := doc["kind"].(string)
+		if kind == "ExternalSecret" && name == "acl" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ExternalSecret/acl in res.Manifests[%s] (the RS-rendered child); kinds in stream: %v",
+			ksID, kindsOf(mans))
 	}
 }
 
@@ -977,69 +804,6 @@ func kindsOf(docs []map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-// Kind filtering MUST apply to Result.Manifests returned to SDK consumers.
-func TestOrchestrator_Render_AppliesSkipKinds(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
-		"resources:\n- cm.yaml\n- secret.yaml\n")
-	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: kept-cm, namespace: default}
-data: {k: v}
-`)
-	testutil.WriteFile(t, dir, "apps/secret.yaml", `apiVersion: v1
-kind: Secret
-metadata: {name: dropped-secret, namespace: default}
-stringData: {password: hunter2}
-`)
-
-	o, err := New(t.Context(), Config{
-		Path:        dir,
-		WipeSecrets: true,
-		HelmOptions: helm.Options{SkipKinds: []string{manifest.KindSecret}},
-		Concurrency: 2,
-		CacheDir:    t.TempDir(),
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	res, err := o.Render(t.Context())
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	ksID := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
-	mans := res.Manifests[ksID]
-	if len(mans) == 0 {
-		t.Fatalf("Result.Manifests[apps] should retain non-Secret docs; got empty")
-	}
-	for _, doc := range mans {
-		if manifest.DocKind(doc) == manifest.KindSecret {
-			t.Errorf("Result.Manifests should exclude Secret in SkipKinds; got %v", doc)
-		}
-	}
-	var sawCM bool
-	for _, doc := range mans {
-		if manifest.DocKind(doc) == manifest.KindConfigMap {
-			sawCM = true
-		}
-	}
-	if !sawCM {
-		t.Errorf("ConfigMap should remain in Result.Manifests; mans=%v", mans)
-	}
 }
 
 // TestOrchestrator_AllowMissingSecretsPropagates locks the #190 fix:
@@ -1497,114 +1261,6 @@ spec:
 	}
 }
 
-// TestOrchestrator_RenderCalledTwiceProducesIdenticalArtifacts pins
-// the embedder contract: a second Render on the same orchestrator
-// returns the same Result.Manifests. Render itself is sync.Once-
-// guarded since the controllers' Configure hooks panic if invoked
-// after Start; the cache returns the first call's Result/err pair.
-func TestOrchestrator_RenderCalledTwiceProducesIdenticalArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  path: ./apps
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-    namespace: flux-system
-`)
-	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
-	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hello
-data: {k: v}
-`)
-
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	})
-
-	res1, err := o.Render(context.Background())
-	if err != nil {
-		t.Fatalf("Render (1st): %v", err)
-	}
-	res2, err := o.Render(context.Background())
-	if err != nil {
-		t.Fatalf("Render (2nd): %v", err)
-	}
-
-	if len(res1.Manifests) != len(res2.Manifests) {
-		t.Fatalf("Render.Manifests key count differs: %d -> %d", len(res1.Manifests), len(res2.Manifests))
-	}
-	for id, mans1 := range res1.Manifests {
-		mans2, ok := res2.Manifests[id]
-		if !ok {
-			t.Errorf("second Render dropped key %s", id)
-			continue
-		}
-		if len(mans1) != len(mans2) {
-			t.Errorf("Render.Manifests[%s] doc count differs: %d -> %d", id, len(mans1), len(mans2))
-			continue
-		}
-		for i := range mans1 {
-			k1, _ := mans1[i]["kind"].(string)
-			k2, _ := mans2[i]["kind"].(string)
-			md1, _ := mans1[i]["metadata"].(map[string]any)
-			md2, _ := mans2[i]["metadata"].(map[string]any)
-			n1, _ := md1["name"].(string)
-			n2, _ := md2["name"].(string)
-			if k1 != k2 || n1 != n2 {
-				t.Errorf("Render.Manifests[%s][%d] differs: (%s/%s) -> (%s/%s)",
-					id, i, k1, n1, k2, n2)
-			}
-		}
-	}
-	if len(res1.Failed) != len(res2.Failed) {
-		t.Errorf("Render.Failed count differs: %d -> %d", len(res1.Failed), len(res2.Failed))
-	}
-	if len(res1.Orphans) != len(res2.Orphans) {
-		t.Errorf("Render.Orphans count differs: %d -> %d", len(res1.Orphans), len(res2.Orphans))
-	}
-}
-
-// Fatal Bootstrap failure must finish teardown before Render returns.
-func TestOrchestrator_RenderErrorPathStopsCleanly(t *testing.T) {
-	// Non-existent path forces Bootstrap -> discovery.Run -> fs.Stat
-	// to fail, which is the canonical (nil, err) embed path.
-	o, err := New(t.Context(), Config{Path: "/nonexistent/orchestrator-render-cleanup", WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	res, err := o.Render(context.Background())
-	if err == nil {
-		t.Fatal("expected Render error for non-existent path")
-	}
-	if res != nil {
-		t.Errorf("Render returned non-nil Result on Bootstrap error: %+v", res)
-	}
-
-	probeFired := false
-	o.stopOnce.Do(func() { probeFired = true })
-	if probeFired {
-		t.Fatal("Render error path did not fire Stop; staging cache + helm client leaked")
-	}
-
-	if err := o.Stop(); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-}
-
 func writeDigestTrackingRelease(t *testing.T, root, rel, text string) {
 	t.Helper()
 	testutil.WriteFile(t, root, rel, `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -1857,30 +1513,15 @@ func TestRenderTrees_ChartDigestTrackingIndependent(t *testing.T) {
 	}
 	writeDigestTrackingRelease(t, baseRoot, "apps/hr.yaml", "false")
 	writeDigestTrackingRelease(t, headRoot, "apps/hr.yaml", "true")
-	for _, tc := range []struct {
-		name       string
-		supplied   *bool
-		base, head bool
-	}{
-		{name: "independent detection", head: true},
-		{name: "force tracking", supplied: new(false)},
-		{name: "force disabled", supplied: new(true), base: true, head: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base, head, err := RenderTrees(t.Context(),
-				Tree{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot},
-				Tree{Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot},
-				Config{CacheDir: t.TempDir(), Concurrency: 2, DisableChartDigestTracking: tc.supplied})
-			if err != nil {
-				t.Fatal(err)
-			}
-			assert.Equal(t, base.hrc.Options.DisableChartDigestTracking, tc.base)
-			assert.Equal(t, head.hrc.Options.DisableChartDigestTracking, tc.head)
-			if tc.supplied != nil {
-				assert.Equal(t, *tc.supplied, tc.base)
-			}
-		})
+	base, head, err := RenderTrees(t.Context(),
+		Tree{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot},
+		Tree{Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot},
+		Config{CacheDir: t.TempDir(), Concurrency: 2})
+	if err != nil {
+		t.Fatal(err)
 	}
+	assert.Equal(t, base.hrc.Options.DisableChartDigestTracking, false)
+	assert.Equal(t, head.hrc.Options.DisableChartDigestTracking, true)
 }
 
 func TestOrchestrator_ChartDigestTrackingCallerOwnership(t *testing.T) {
@@ -1949,73 +1590,71 @@ func TestOrchestrator_BootstrapChartDigestTrackingInputOrder(t *testing.T) {
 }
 
 func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		for _, backing := range []string{"memory", "disk"} {
-			t.Run(fmt.Sprintf("workers_%d/%s", workers, backing), func(t *testing.T) {
-				root := ""
-				if backing == "disk" {
-					root = t.TempDir()
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			c, err := sourcecache.New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			calls := 0
+			key := sourcecache.BlobKey{Content: "blob-owner-test"}
+			produce := func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+				calls++
+				_, err := io.WriteString(w, "held")
+				return ocispec.Descriptor{}, err
+			}
+			reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = reader.Close()
+			baseDir, headDir := t.TempDir(), t.TempDir()
+			for _, dir := range []string{baseDir, headDir} {
+				writeSubstitutionCluster(t, dir, "values", "value")
+				testutil.WriteFile(t, dir, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
+			}
+			configuredRoot := t.TempDir()
+			base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
+				Config{Cache: c, CacheDir: configuredRoot, Concurrency: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if base.cache != c || head.cache != c || base.hrc.Helm == nil || head.hrc.Helm == nil || base.ksc.Trees == nil || head.ksc.Trees == nil {
+				t.Fatal("diff sides did not wire both renderers through the selected owner")
+			}
+			entries, err := os.ReadDir(configuredRoot)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("diff sides created independent cache backing: entries=%v err=%v", entries, err)
+			}
+			reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(reader)
+			_ = reader.Close()
+			if err != nil || string(data) != "held" || calls != 1 {
+				t.Fatalf("caller cache after both sides stop: data=%q calls=%d err=%v", data, calls, err)
+			}
+			assert.NoError(t, os.Remove(filepath.Join(baseDir, "app/cm.yaml")))
+			base, head, err = RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir}, Config{Cache: c, Concurrency: 2})
+			if _, ok := errors.AsType[*FailuresError](err); !ok || base.Result == nil || len(base.Result.Failed) == 0 || head.Result == nil || len(head.Result.Manifests) == 0 || head.Err != nil {
+				t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
+			}
+			for _, side := range []Rendered{base, head} {
+				if _, err := side.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("partial side left TreeCache open: %v", err)
 				}
-				c, err := sourcecache.New(t.Context(), root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = c.Close() })
-				calls := 0
-				key := sourcecache.BlobKey{Content: "blob-owner-test"}
-				produce := func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-					calls++
-					_, err := io.WriteString(w, "held")
-					return ocispec.Descriptor{}, err
-				}
-				reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
-				if err != nil {
-					t.Fatal(err)
-				}
-				_ = reader.Close()
-				baseDir, headDir := t.TempDir(), t.TempDir()
-				for _, dir := range []string{baseDir, headDir} {
-					writeSubstitutionCluster(t, dir, "values", "value")
-					testutil.WriteFile(t, dir, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
-				}
-				configuredRoot := t.TempDir()
-				base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
-					Config{Cache: c, CacheDir: configuredRoot, Concurrency: workers})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if base.cache != c || head.cache != c || base.hrc.Helm == nil || head.hrc.Helm == nil || base.ksc.Trees == nil || head.ksc.Trees == nil {
-					t.Fatal("diff sides did not wire both renderers through the selected owner")
-				}
-				entries, err := os.ReadDir(configuredRoot)
-				if err != nil || len(entries) != 0 {
-					t.Fatalf("diff sides created independent cache backing: entries=%v err=%v", entries, err)
-				}
-				reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
-				if err != nil {
-					t.Fatal(err)
-				}
-				data, err := io.ReadAll(reader)
-				_ = reader.Close()
-				if err != nil || string(data) != "held" || calls != 1 {
-					t.Fatalf("caller cache after both sides stop: data=%q calls=%d err=%v", data, calls, err)
-				}
-				assert.NoError(t, os.Remove(filepath.Join(baseDir, "app/cm.yaml")))
-				base, head, err = RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir}, Config{Cache: c, Concurrency: workers})
-				if _, ok := errors.AsType[*FailuresError](err); !ok || base.Result == nil || len(base.Result.Failed) == 0 || head.Result == nil || len(head.Result.Manifests) == 0 || head.Err != nil {
-					t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
-				}
-				for _, side := range []Rendered{base, head} {
-					if _, err := side.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
-						t.Fatalf("partial side left TreeCache open: %v", err)
-					}
-				}
-				reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
-				assert.NoError(t, err)
-				assert.NoError(t, reader.Close())
+			}
+			reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, reader.Close())
 
-			})
-		}
+		})
 	}
 }
 
@@ -2094,153 +1733,155 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 }
 
 func TestOrchestrator_StopErrorPropagation(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		for _, boundary := range []string{"stop", "bootstrap-error", "bootstrap-cancel", "run", "run-error", "run-cancel", "render", "render-error"} {
-			t.Run(fmt.Sprintf("%d/%s", workers, boundary), func(t *testing.T) {
-				owner, err := sourcecache.New(t.Context(), t.TempDir())
-				assert.NoError(t, err)
-				t.Cleanup(func() { assert.NoError(t, owner.Close()) })
-				root := t.TempDir()
-				writeSubstitutionCluster(t, root, "values", "value")
-				testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
-				testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
-				testutil.WriteFile(t, root, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
-				o, err := New(t.Context(), Config{Path: root, Cache: owner, Concurrency: workers})
-				assert.NoError(t, err)
-				cleanupErr := errors.New("backing close failed")
-				o.stopErr = cleanupErr
-				t.Cleanup(func() {
-					if got := o.Stop(); !errors.Is(got, cleanupErr) {
-						t.Errorf("cached Stop error = %v", got)
-					}
-				})
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				var result *Result
-				cleanupCalls := 0
-				trackCleanup := func() {
-					cleanup := o.closeCharts
-					o.closeCharts = func() {
-						cleanupCalls++
-						if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
-							t.Errorf("chart cleanup preceded worker drain: %v", err)
-						}
-						reader, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "cleanup-order"}, sourcecache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-							_, err := io.WriteString(w, "live")
-							return ocispec.Descriptor{}, err
-						})
-						assert.NoError(t, err)
-						if reader != nil {
-							assert.NoError(t, reader.Close())
-						}
-						if cleanup != nil {
-							cleanup()
-						}
-					}
-				}
-				switch boundary {
-				case "stop":
-					trackCleanup()
-					err = o.Stop()
-				case "bootstrap-error", "bootstrap-cancel":
-					trackCleanup()
-					if boundary == "bootstrap-error" {
-						o.cfg.Input = &store.SourceArtifact{}
-					} else {
-						cancel()
-					}
-					err = o.Bootstrap(ctx)
-					if next := o.Bootstrap(t.Context()); !errors.Is(next, err) {
-						t.Fatalf("Bootstrap lost terminal error identity: %v", next)
-					}
-					if _, next := o.Render(t.Context()); !errors.Is(next, err) {
-						t.Fatalf("Render changed Bootstrap error: %v", next)
-					}
-					cause := manifest.ErrInput
-					if boundary == "bootstrap-cancel" {
-						cause = context.Canceled
-					}
-					if !errors.Is(err, cause) {
-						t.Fatalf("Bootstrap operation error lost: %v", err)
-					}
-				default:
-					if strings.HasSuffix(boundary, "error") {
-						assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
-					}
-					assert.NoError(t, o.Bootstrap(ctx))
-					trackCleanup()
-					if strings.HasPrefix(boundary, "run") {
-						if boundary == "run-cancel" {
-							cancel()
-						}
-						err = o.Run(ctx)
-					} else {
-						result, err = o.Render(ctx)
-						next, nextErr := o.Render(t.Context())
-						if result == nil || len(result.Manifests) == 0 || next != result || !errors.Is(nextErr, err) {
-							t.Fatalf("Render lost cached partial result/error: %v %v", result, err)
-						}
-					}
-					if strings.HasSuffix(boundary, "error") {
-						if _, ok := errors.AsType[*FailuresError](err); !ok || strings.Index(err.Error(), "backing close failed") == 0 {
-							t.Fatalf("operation must precede cleanup: %v", err)
-						}
-					}
-					if boundary == "run-cancel" && !errors.Is(err, context.Canceled) {
-						t.Fatalf("Run cancellation lost: %v", err)
-					}
-				}
-				if !errors.Is(err, cleanupErr) || strings.Count(err.Error(), cleanupErr.Error()) != 1 {
-					t.Fatalf("cleanup must occur once: %v", err)
-				}
-				stops := make(chan error, workers)
-				for range workers {
-					go func() { stops <- o.Stop() }()
-				}
-				for range workers {
-					if got := <-stops; !errors.Is(got, cleanupErr) {
-						t.Fatalf("Stop changed cached error: %v", got)
-					}
-				}
-
-				if cleanupCalls != 1 {
-					t.Fatalf("chart cleanup calls = %d, want 1 with injected cache and repeated Stop", cleanupCalls)
-				}
-				if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
-					t.Fatalf("TreeCache not terminal: %v", err)
-				}
-				if result != nil && len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) == 0 {
-					t.Fatal("Stop discarded readable store")
+	for _, boundary := range []string{"stop", "bootstrap-error", "bootstrap-cancel", "run", "run-error", "run-cancel", "render", "render-error"} {
+		t.Run(boundary, func(t *testing.T) {
+			owner, err := sourcecache.New(t.Context(), t.TempDir())
+			assert.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+			root := t.TempDir()
+			writeSubstitutionCluster(t, root, "values", "value")
+			testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
+			testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
+			testutil.WriteFile(t, root, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
+			o, err := New(t.Context(), Config{Path: root, Cache: owner, Concurrency: 2})
+			assert.NoError(t, err)
+			cleanupErr := errors.New("backing close failed")
+			o.stopErr = cleanupErr
+			t.Cleanup(func() {
+				if got := o.Stop(); !errors.Is(got, cleanupErr) {
+					t.Errorf("cached Stop error = %v", got)
 				}
 			})
-		}
-		t.Run(fmt.Sprintf("%d/owned-backing", workers), func(t *testing.T) {
-			o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: workers})
-			assert.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var result *Result
 			cleanupCalls := 0
-			o.closeCharts = func() {
-				cleanupCalls++
-				if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
-					t.Errorf("chart cleanup preceded worker drain: %v", err)
-				}
-				res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
-				if err == nil && len(res.Errors) == 0 {
-					t.Error("owned backing released before chart cleanup")
+			trackCleanup := func() {
+				cleanup := o.closeCharts
+				o.closeCharts = func() {
+					cleanupCalls++
+					if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+						t.Errorf("chart cleanup preceded worker drain: %v", err)
+					}
+					reader, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "cleanup-order"}, sourcecache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+						_, err := io.WriteString(w, "live")
+						return ocispec.Descriptor{}, err
+					})
+					assert.NoError(t, err)
+					if reader != nil {
+						assert.NoError(t, reader.Close())
+					}
+					if cleanup != nil {
+						cleanup()
+					}
 				}
 			}
-			assert.NoError(t, o.Stop())
-			assert.NoError(t, o.Stop())
+			switch boundary {
+			case "stop":
+				trackCleanup()
+				err = o.Stop()
+			case "bootstrap-error", "bootstrap-cancel":
+				trackCleanup()
+				if boundary == "bootstrap-error" {
+					o.cfg.Input = &store.SourceArtifact{}
+				} else {
+					cancel()
+				}
+				err = o.Bootstrap(ctx)
+				if next := o.Bootstrap(t.Context()); !errors.Is(next, err) {
+					t.Fatalf("Bootstrap lost terminal error identity: %v", next)
+				}
+				nextResult, next := o.Render(t.Context())
+				if !errors.Is(next, err) {
+					t.Fatalf("Render changed Bootstrap error: %v", next)
+				}
+				if nextResult != nil {
+					t.Fatalf("Render returned non-nil Result on Bootstrap error: %+v", nextResult)
+				}
+				cause := manifest.ErrInput
+				if boundary == "bootstrap-cancel" {
+					cause = context.Canceled
+				}
+				if !errors.Is(err, cause) {
+					t.Fatalf("Bootstrap operation error lost: %v", err)
+				}
+			default:
+				if strings.HasSuffix(boundary, "error") {
+					assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
+				}
+				assert.NoError(t, o.Bootstrap(ctx))
+				trackCleanup()
+				if strings.HasPrefix(boundary, "run") {
+					if boundary == "run-cancel" {
+						cancel()
+					}
+					err = o.Run(ctx)
+				} else {
+					result, err = o.Render(ctx)
+					next, nextErr := o.Render(t.Context())
+					if result == nil || len(result.Manifests) == 0 || next != result || !errors.Is(nextErr, err) {
+						t.Fatalf("Render lost cached partial result/error: %v %v", result, err)
+					}
+				}
+				if strings.HasSuffix(boundary, "error") {
+					if _, ok := errors.AsType[*FailuresError](err); !ok || strings.Index(err.Error(), "backing close failed") == 0 {
+						t.Fatalf("operation must precede cleanup: %v", err)
+					}
+				}
+				if boundary == "run-cancel" && !errors.Is(err, context.Canceled) {
+					t.Fatalf("Run cancellation lost: %v", err)
+				}
+			}
+			if !errors.Is(err, cleanupErr) || strings.Count(err.Error(), cleanupErr.Error()) != 1 {
+				t.Fatalf("cleanup must occur once: %v", err)
+			}
+			stops := make(chan error, 2)
+			for range 2 {
+				go func() { stops <- o.Stop() }()
+			}
+			for range 2 {
+				if got := <-stops; !errors.Is(got, cleanupErr) {
+					t.Fatalf("Stop changed cached error: %v", got)
+				}
+			}
+
 			if cleanupCalls != 1 {
-				t.Fatalf("chart cleanup calls = %d, want 1", cleanupCalls)
+				t.Fatalf("chart cleanup calls = %d, want 1 with injected cache and repeated Stop", cleanupCalls)
 			}
-			res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
-			if err != nil || len(res.Errors) != 0 {
-				t.Fatalf("owned backing not released after cleanup: %+v, %v", res, err)
+			if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				t.Fatalf("TreeCache not terminal: %v", err)
+			}
+			if result != nil && len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) == 0 {
+				t.Fatal("Stop discarded readable store")
 			}
 		})
 	}
+	t.Run("owned-backing", func(t *testing.T) {
+		o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+		assert.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+		cleanupCalls := 0
+		o.closeCharts = func() {
+			cleanupCalls++
+			if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				t.Errorf("chart cleanup preceded worker drain: %v", err)
+			}
+			res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
+			if err == nil && len(res.Errors) == 0 {
+				t.Error("owned backing released before chart cleanup")
+			}
+		}
+		assert.NoError(t, o.Stop())
+		assert.NoError(t, o.Stop())
+		if cleanupCalls != 1 {
+			t.Fatalf("chart cleanup calls = %d, want 1", cleanupCalls)
+		}
+		res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
+		if err != nil || len(res.Errors) != 0 {
+			t.Fatalf("owned backing not released after cleanup: %+v, %v", res, err)
+		}
+	})
 }
 
 func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {

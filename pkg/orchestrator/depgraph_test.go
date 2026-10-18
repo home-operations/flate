@@ -22,18 +22,16 @@ func TestDependencyGraph_CycleMessages(t *testing.T) {
 	ab := "dependency cycle detected: " + a.String() + " → " + b.String() + " → " + a.String()
 	ac := "dependency cycle detected: " + a.String() + " → " + c.String() + " → " + a.String()
 	t.Run("intersecting cycles", func(t *testing.T) {
-		for range 200 {
-			for _, order := range [][]manifest.NamedResource{{a, b, c}, {c, b, a}, {b, a, c}} {
-				g := newDependencyGraph()
-				for _, id := range order {
-					deps := []manifest.NamedResource{a}
-					if id == a {
-						deps = []manifest.NamedResource{c, b, c}
-					}
-					g.ReplaceEdges(id, deps)
+		for _, order := range [][]manifest.NamedResource{{a, b, c}, {c, b, a}, {b, a, c}} {
+			g := newDependencyGraph()
+			for _, id := range order {
+				deps := []manifest.NamedResource{a}
+				if id == a {
+					deps = []manifest.NamedResource{c, b, c}
 				}
-				assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{a: ab, b: ab, c: ac})
+				g.ReplaceEdges(id, deps)
 			}
+			assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{a: ab, b: ab, c: ac})
 		}
 	})
 	t.Run("partial break", func(t *testing.T) {

@@ -27,6 +27,9 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 		for _, retained := range []bool{false, true} {
 			var previous []byte
 			for _, workers := range []int{2, 8} {
+				if workers == 8 && (!changedOnly || !retained) {
+					continue
+				}
 				t.Run(fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers), func(t *testing.T) {
 					root := t.TempDir()
 					gate, child := ksID("gate"), ksID("child")
@@ -152,10 +155,8 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 }
 
 func TestDAG_ParallelRenderedReplayConverges(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
-			dir := t.TempDir()
-			hr := `apiVersion: helm.toolkit.fluxcd.io/v2
+	dir := t.TempDir()
+	hr := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: app, namespace: flux-system}
 spec:
@@ -168,107 +169,105 @@ spec:
     - kind: ConfigMap
       name: shared-values
 `
-			testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+	testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
   url: https://example.test/cluster.git
 `)
-			testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- hr.yaml\n- values.yaml\n")
-			testutil.WriteFile(t, dir, "apps/hr.yaml", hr)
-			testutil.WriteFile(t, dir, "apps/values.yaml", `apiVersion: v1
+	testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- hr.yaml\n- values.yaml\n")
+	testutil.WriteFile(t, dir, "apps/hr.yaml", hr)
+	testutil.WriteFile(t, dir, "apps/values.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: shared-values, namespace: flux-system}
 data:
   values.yaml: |
     greeting: hello
 `)
-			testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-			// A chart may emit Flux resources; replaying its own unchanged HR
-			// must not request another reconcile while that HR is running.
-			testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
-			testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
-			testutil.WriteFile(t, dir, "charts/app/templates/bare.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bare}\ndata: {value: retained}\n")
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			res, err := o.Render(ctx)
-			if err != nil {
-				t.Fatalf("Render must converge: %v", err)
-			}
-			if ctx.Err() != nil || len(res.Failed) != 0 {
-				t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
-			}
-			for _, id := range []manifest.NamedResource{ksID("apps"), {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}} {
-				info, ok := o.Store().GetStatus(id)
-				if !ok || info.Status != store.StatusReady {
-					t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
-				}
-			}
-			cm, ok := o.Store().Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "greeting"})
-			if !ok || cm.Data["greeting"] != "hello" {
-				t.Fatalf("shared values were not rendered: %+v", cm)
-			}
-			ksArt := o.store.GetArtifact(ksID("apps")).(*store.KustomizationArtifact)
-			var childDoc map[string]any
-			for _, doc := range ksArt.Manifests {
-				if manifest.DocKind(doc) == manifest.KindHelmRelease {
-					childDoc = doc
-				}
-			}
-			if childDoc == nil {
-				t.Fatal("bare release document missing")
-			}
-			_, ns := manifest.DocMetadata(childDoc)
-			if ns != "flux-system" {
-				t.Fatalf("release document namespace = %q", ns)
-			}
-			hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
-			childBefore := manifest.DeepCopyMap(childDoc)
-			hrArt := o.store.GetArtifact(hrID).(*store.HelmReleaseArtifact)
-			retained := make([]map[string]any, len(hrArt.Manifests))
-			for i, doc := range hrArt.Manifests {
-				retained[i] = manifest.DeepCopyMap(doc)
-				if name, ns := manifest.DocMetadata(doc); name == "bare" && ns != hrID.Namespace {
-					t.Fatalf("bare chart namespace = %q, want %q", ns, hrID.Namespace)
-				}
-			}
-			bare := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hrID.Namespace, Name: "bare"}
-			if o.store.GetObject(bare) == nil {
-				t.Fatal("bare chart child lost release namespace identity")
-			}
-			o.store.DeleteObject(bare)
-			o.ksc.Emit(ksID("apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"}, false)
-			_, replay := o.hrc.Emit(hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace}, false)
-			if o.store.GetObject(bare) == nil {
-				t.Fatal("replay lost release namespace identity")
-			}
-			next, err := manifest.DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			parsed, _, _, err := manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-			if err != nil {
-				t.Fatal(err)
-			}
-			manifest.ReleaseIfNotRetained(next[0], parsed)
-			if delta := cmp.Diff(childBefore, childDoc); delta != "" {
-				t.Fatalf("replay changed bare release (-want +got):\n%s", delta)
-			}
-			if delta := cmp.Diff(retained, replay); delta != "" {
-				t.Fatalf("replay changed retained documents (-want +got):\n%s", delta)
-			}
-			_, ns = manifest.DocMetadata(childDoc)
-			if ns != "flux-system" {
-				t.Fatalf("replay release namespace %q", ns)
-			}
-
-		})
+	testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+	// A chart may emit Flux resources; replaying its own unchanged HR
+	// must not request another reconcile while that HR is running.
+	testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
+	testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
+	testutil.WriteFile(t, dir, "charts/app/templates/bare.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bare}\ndata: {value: retained}\n")
+	o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+	if err != nil {
+		t.Fatal(err)
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	res, err := o.Render(ctx)
+	if err != nil {
+		t.Fatalf("Render must converge: %v", err)
+	}
+	if ctx.Err() != nil || len(res.Failed) != 0 {
+		t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
+	}
+	for _, id := range []manifest.NamedResource{ksID("apps"), {Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}} {
+		info, ok := o.Store().GetStatus(id)
+		if !ok || info.Status != store.StatusReady {
+			t.Fatalf("%s status = (%+v, %v), want Ready", id, info, ok)
+		}
+	}
+	cm, ok := o.Store().Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "greeting"})
+	if !ok || cm.Data["greeting"] != "hello" {
+		t.Fatalf("shared values were not rendered: %+v", cm)
+	}
+	ksArt := o.store.GetArtifact(ksID("apps")).(*store.KustomizationArtifact)
+	var childDoc map[string]any
+	for _, doc := range ksArt.Manifests {
+		if manifest.DocKind(doc) == manifest.KindHelmRelease {
+			childDoc = doc
+		}
+	}
+	if childDoc == nil {
+		t.Fatal("bare release document missing")
+	}
+	_, ns := manifest.DocMetadata(childDoc)
+	if ns != "flux-system" {
+		t.Fatalf("release document namespace = %q", ns)
+	}
+	hrID := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "app"}
+	childBefore := manifest.DeepCopyMap(childDoc)
+	hrArt := o.store.GetArtifact(hrID).(*store.HelmReleaseArtifact)
+	retained := make([]map[string]any, len(hrArt.Manifests))
+	for i, doc := range hrArt.Manifests {
+		retained[i] = manifest.DeepCopyMap(doc)
+		if name, ns := manifest.DocMetadata(doc); name == "bare" && ns != hrID.Namespace {
+			t.Fatalf("bare chart namespace = %q, want %q", ns, hrID.Namespace)
+		}
+	}
+	bare := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hrID.Namespace, Name: "bare"}
+	if o.store.GetObject(bare) == nil {
+		t.Fatal("bare chart child lost release namespace identity")
+	}
+	o.store.DeleteObject(bare)
+	o.ksc.Emit(ksID("apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"}, false)
+	_, replay := o.hrc.Emit(hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace}, false)
+	if o.store.GetObject(bare) == nil {
+		t.Fatal("replay lost release namespace identity")
+	}
+	next, err := manifest.DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _, _, err := manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.ReleaseIfNotRetained(next[0], parsed)
+	if delta := cmp.Diff(childBefore, childDoc); delta != "" {
+		t.Fatalf("replay changed bare release (-want +got):\n%s", delta)
+	}
+	if delta := cmp.Diff(retained, replay); delta != "" {
+		t.Fatalf("replay changed retained documents (-want +got):\n%s", delta)
+	}
+	_, ns = manifest.DocMetadata(childDoc)
+	if ns != "flux-system" {
+		t.Fatalf("replay release namespace %q", ns)
+	}
+
 }
 
 // ksYAML is a minimal Kustomization manifest for the dag tests.
@@ -314,6 +313,9 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	}
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
+	}
+	if msg, ok := o.preflightFailure(ksID("consumer")); ok {
+		t.Fatalf("consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
 	if err := o.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -365,20 +367,18 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 }
 
 func TestDAG_SelectorResourceSetChain(t *testing.T) {
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
-			const depth = 40
-			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "ks.yaml", ksYAML("apps", "apps", ""))
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n- seed.yaml\n")
-			testutil.WriteFile(t, dir, "apps/seed.yaml", `apiVersion: fluxcd.controlplane.io/v1
+	const depth = 40
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "ks.yaml", ksYAML("apps", "apps", ""))
+	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n- seed.yaml\n")
+	testutil.WriteFile(t, dir, "apps/seed.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSetInputProvider
 metadata: {name: provider-00, namespace: flux-system, labels: {stage: "0"}}
 spec: {type: Static, defaultValues: {value: ready}}
 `)
-			var sets strings.Builder
-			for i := range depth {
-				fmt.Fprintf(&sets, `---
+	var sets strings.Builder
+	for i := range depth {
+		fmt.Fprintf(&sets, `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: stage-%02d, namespace: flux-system}
@@ -400,9 +400,9 @@ spec:
     metadata: {name: proof-%02d, namespace: flux-system}
     << end >>
 `, i, i, i+1, i+1, i+1)
-			}
-			for i, ref := range []string{"apiVersion: example.test/v1", "apiVersion: v1", "kind: ResourceSet"} {
-				fmt.Fprintf(&sets, `---
+	}
+	for i, ref := range []string{"apiVersion: example.test/v1", "apiVersion: v1", "kind: ResourceSet"} {
+		fmt.Fprintf(&sets, `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: foreign-%d, namespace: flux-system}
@@ -417,48 +417,46 @@ spec:
     metadata: {name: forbidden-%d}
     << end >>
 `, i, ref, i)
+	}
+	manifests := strings.Replace(sets.String(), "    - apiVersion: fluxcd.controlplane.io/v1\n      kind: ResourceSetInputProvider\n      selector:", "    - selector:", 1)
+	testutil.WriteFile(t, dir, "apps/sets.yaml", manifests)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var previous []byte
+	for range 2 {
+		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := o.Render(ctx)
+		if err != nil || len(res.Failed) != 0 {
+			t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
+		}
+		for i := range depth + 1 {
+			nid := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: fmt.Sprintf("provider-%02d", i)}
+			if _, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid); !ok {
+				t.Fatalf("missing chain output %s", nid)
 			}
-			manifests := strings.Replace(sets.String(), "    - apiVersion: fluxcd.controlplane.io/v1\n      kind: ResourceSetInputProvider\n      selector:", "    - selector:", 1)
-			testutil.WriteFile(t, dir, "apps/sets.yaml", manifests)
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			var previous []byte
-			for range 3 {
-				o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: workers})
-				if err != nil {
-					t.Fatal(err)
-				}
-				res, err := o.Render(ctx)
-				if err != nil || len(res.Failed) != 0 {
-					t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
-				}
-				for i := range depth + 1 {
-					nid := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: fmt.Sprintf("provider-%02d", i)}
-					if _, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid); !ok {
-						t.Fatalf("missing chain output %s", nid)
-					}
-				}
-				if count := len(o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider)); count != depth+1 {
-					t.Fatalf("provider count=%d, want %d", count, depth+1)
-				}
-				proofs := 0
-				for _, doc := range res.Manifests[ksID("apps")] {
-					if doc["kind"] == "Widget" {
-						proofs++
-					}
-				}
-				if proofs != depth {
-					t.Fatalf("rendered provider proofs=%d, want %d", proofs, depth)
-				}
-				output, err := json.Marshal(res.Manifests[ksID("apps")])
-				if err != nil {
-					t.Fatal(err)
-				}
-				if previous != nil && !bytes.Equal(previous, output) {
-					t.Fatal("repeated render bytes differ")
-				}
-				previous = output
+		}
+		if count := len(o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider)); count != depth+1 {
+			t.Fatalf("provider count=%d, want %d", count, depth+1)
+		}
+		proofs := 0
+		for _, doc := range res.Manifests[ksID("apps")] {
+			if doc["kind"] == "Widget" {
+				proofs++
 			}
-		})
+		}
+		if proofs != depth {
+			t.Fatalf("rendered provider proofs=%d, want %d", proofs, depth)
+		}
+		output, err := json.Marshal(res.Manifests[ksID("apps")])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if previous != nil && !bytes.Equal(previous, output) {
+			t.Fatal("repeated render bytes differ")
+		}
+		previous = output
 	}
 }

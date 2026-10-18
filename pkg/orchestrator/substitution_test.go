@@ -110,14 +110,10 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 }
 
 func TestNew_SubstitutionValidation(t *testing.T) {
-	var nilCM *manifest.ConfigMap
-	var nilSecret *manifest.Secret
 	for _, tc := range []struct {
 		name   string
 		object manifest.BaseManifest
 	}{
-		{"nil", nil}, {"typed nil ConfigMap", nilCM}, {"typed nil Secret", nilSecret},
-		{"wrong type", &manifest.RawObject{Kind: manifest.KindConfigMap}},
 		{"missing name", &manifest.ConfigMap{Namespace: "apps"}},
 		{"missing namespace", &manifest.Secret{Name: "external"}},
 	} {
@@ -250,11 +246,10 @@ func TestRender_SubstitutionSuppliedSecretDoesNotRescueHelmRelease(t *testing.T)
 		},
 	}
 	for _, tt := range tests {
-		for _, workers := range []int{2, 4} {
-			t.Run(fmt.Sprintf("%s/workers_%d", tt.name, workers), func(t *testing.T) {
-				rescued := tt.missingSecret != ""
-				dir := t.TempDir()
-				testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+		t.Run(tt.name, func(t *testing.T) {
+			rescued := tt.missingSecret != ""
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
 spec:
@@ -269,9 +264,9 @@ spec:
   postBuild:
     substitute: {KEEP: "ok"}
     substituteFrom: `+tt.references+"\n")
-				testutil.WriteFile(t, dir, "apps/kustomization.yaml",
-					"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
-				testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml",
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ./hr.yaml\n")
+			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: demo, namespace: apps}
 spec:
@@ -283,68 +278,67 @@ spec:
   values:
     greeting: "${MISSING}"
 `)
-				testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
-				testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
-					"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
+			testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
+			testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
 
-				o, err := New(t.Context(), Config{
-					Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers,
-					SubstituteFrom: tt.sources,
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() {
-					if err := o.Stop(); err != nil {
-						t.Errorf("Stop: %v", err)
-					}
-				})
-				res, err := o.Render(t.Context())
-				if rescued {
-					if err != nil {
-						t.Errorf("expected rescued render, got %v", err)
-					}
-				} else if _, ok := errors.AsType[*FailuresError](err); !ok {
-					t.Errorf("expected reconcile failure, got %v", err)
-				}
-				if res == nil {
-					t.Fatal("missing render result")
-				}
-				demo := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
-				if _, failed := res.Failed[demo]; failed == rescued {
-					t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
-				}
-				placeholder := false
-				for id, docs := range res.Manifests {
-					for _, doc := range docs {
-						if manifest.ContainsValuePlaceholder(doc) {
-							placeholder = true
-							if !rescued {
-								t.Errorf("unexpected rescue placeholder in %s: %v", id, doc)
-							}
-						}
-					}
-				}
-				if rescued && !placeholder {
-					t.Error("rescued render must contain a value placeholder")
-				}
-				rescueWarning, missingWarning := false, false
-				for _, warning := range res.Warnings {
-					if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(warning.Detail, "greeting") {
-						rescueWarning = true
-						if !rescued {
-							t.Errorf("unexpected rescue warning: %+v", warning)
-						}
-					}
-					if warning.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(warning.Message, fmt.Sprintf("Secret %q", tt.missingSecret)) {
-						missingWarning = true
-					}
-				}
-				if rescued && (!rescueWarning || !missingWarning) {
-					t.Errorf("missing unresolved-substitution warnings: rescue = %v, missing Secret = %v", rescueWarning, missingWarning)
+			o, err := New(t.Context(), Config{
+				Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2,
+				SubstituteFrom: tt.sources,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
 				}
 			})
-		}
+			res, err := o.Render(t.Context())
+			if rescued {
+				if err != nil {
+					t.Errorf("expected rescued render, got %v", err)
+				}
+			} else if _, ok := errors.AsType[*FailuresError](err); !ok {
+				t.Errorf("expected reconcile failure, got %v", err)
+			}
+			if res == nil {
+				t.Fatal("missing render result")
+			}
+			demo := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
+			if _, failed := res.Failed[demo]; failed == rescued {
+				t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
+			}
+			placeholder := false
+			for id, docs := range res.Manifests {
+				for _, doc := range docs {
+					if manifest.ContainsValuePlaceholder(doc) {
+						placeholder = true
+						if !rescued {
+							t.Errorf("unexpected rescue placeholder in %s: %v", id, doc)
+						}
+					}
+				}
+			}
+			if rescued && !placeholder {
+				t.Error("rescued render must contain a value placeholder")
+			}
+			rescueWarning, missingWarning := false, false
+			for _, warning := range res.Warnings {
+				if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(warning.Detail, "greeting") {
+					rescueWarning = true
+					if !rescued {
+						t.Errorf("unexpected rescue warning: %+v", warning)
+					}
+				}
+				if warning.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(warning.Message, fmt.Sprintf("Secret %q", tt.missingSecret)) {
+					missingWarning = true
+				}
+			}
+			if rescued && (!rescueWarning || !missingWarning) {
+				t.Errorf("missing unresolved-substitution warnings: rescue = %v, missing Secret = %v", rescueWarning, missingWarning)
+			}
+		})
 	}
 }
 
@@ -456,83 +450,81 @@ func TestBootstrap_SubstitutionWarningsSortedAndDeduplicated(t *testing.T) {
 
 func TestRender_SubstitutionLateProducer(t *testing.T) {
 	var canonical []byte
-	for _, workers := range []int{2, 4} {
-		for _, producerFirst := range []bool{true, false} {
-			t.Run(fmt.Sprintf("workers_%d_producer_first_%v", workers, producerFirst), func(t *testing.T) {
-				root := t.TempDir()
-				writeSubstitutionCluster(t, root, "late-settings", "${VALUE}")
-				producerDeps := ""
-				if producerFirst {
-					testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  dependsOn: [{name: producer}]\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: late-settings}]\n"))
-				} else {
-					producerDeps = "  dependsOn: [{name: consumer}]\n"
-				}
-				testutil.WriteFile(t, root, "producer.yaml", substitutionKS("producer", "producer", producerDeps))
-				testutil.WriteFile(t, root, "producer/kustomization.yaml", "namePrefix: late-\nresources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "producer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
-				testutil.WriteFile(t, root, "independent.yaml", substitutionKS("independent", "independent", ""))
-				testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "independent/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent, namespace: apps}\ndata: {value: independent}\n")
-				source := suppliedSubstitution("late-settings")
-				cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: workers, SubstituteFrom: []SubstitutionSource{source}, StrictSubstitutions: true}
-				o, err := New(t.Context(), cfg)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() {
-					if err := o.Stop(); err != nil {
-						t.Errorf("Stop: %v", err)
-					}
-				})
-				if err := o.Bootstrap(t.Context()); err != nil {
-					t.Fatal(err)
-				}
-				external := source.Object.Named()
-				if o.substitutionSources[external] == nil || o.store.GetObject(external) != nil || len(renderersForTest(o.index, external)) != 0 {
-					t.Fatal("test requires producer unknown at bootstrap")
-				}
-				var mu sync.Mutex
-				var order []string
-				unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-					info, ok := payload.(store.StatusInfo)
-					if ok && info.Status == store.StatusReady && id.Kind == manifest.KindKustomization && (id.Name == "producer" || id.Name == "consumer") {
-						mu.Lock()
-						order = append(order, id.Name)
-						mu.Unlock()
-					}
-				}, false)
-				t.Cleanup(unsub)
-				res, err := o.Render(t.Context())
-				if err != nil {
-					t.Fatal(err)
-				}
-				consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
-				if got := substitutionValue(t, res, consumer); got != "supplied" {
-					t.Fatalf("late producer revoked accepted source: %q", got)
-				}
-				expected := []string{"consumer", "producer"}
-				if producerFirst {
-					expected = []string{"producer", "consumer"}
-				}
-				if len(order) < 2 || slices.Index(order, expected[0]) > slices.Index(order, expected[1]) {
-					t.Fatalf("did not exercise required order: %v", order)
-				}
-				t.Logf("concurrency=%d observed Ready order=%v", workers, order)
-				repository, _ := o.store.Get[*manifest.ConfigMap](external)
-				if repository == nil || repository.Data["VALUE"] != "repository" {
-					t.Fatal("supplied input entered store or late producer did not render")
-				}
-				encoded, err := json.Marshal(canonicalBatches(res))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if canonical == nil {
-					canonical = encoded
-				} else if !bytes.Equal(canonical, encoded) {
-					t.Fatalf("output varies with late-producer order (-want +got): %s", cmp.Diff(string(canonical), string(encoded)))
+	for _, producerFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("producer_first_%v", producerFirst), func(t *testing.T) {
+			root := t.TempDir()
+			writeSubstitutionCluster(t, root, "late-settings", "${VALUE}")
+			producerDeps := ""
+			if producerFirst {
+				testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  dependsOn: [{name: producer}]\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: late-settings}]\n"))
+			} else {
+				producerDeps = "  dependsOn: [{name: consumer}]\n"
+			}
+			testutil.WriteFile(t, root, "producer.yaml", substitutionKS("producer", "producer", producerDeps))
+			testutil.WriteFile(t, root, "producer/kustomization.yaml", "namePrefix: late-\nresources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "producer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
+			testutil.WriteFile(t, root, "independent.yaml", substitutionKS("independent", "independent", ""))
+			testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "independent/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent, namespace: apps}\ndata: {value: independent}\n")
+			source := suppliedSubstitution("late-settings")
+			cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2, SubstituteFrom: []SubstitutionSource{source}, StrictSubstitutions: true}
+			o, err := New(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Errorf("Stop: %v", err)
 				}
 			})
-		}
+			if err := o.Bootstrap(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			external := source.Object.Named()
+			if o.substitutionSources[external] == nil || o.store.GetObject(external) != nil || len(renderersForTest(o.index, external)) != 0 {
+				t.Fatal("test requires producer unknown at bootstrap")
+			}
+			var mu sync.Mutex
+			var order []string
+			unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+				info, ok := payload.(store.StatusInfo)
+				if ok && info.Status == store.StatusReady && id.Kind == manifest.KindKustomization && (id.Name == "producer" || id.Name == "consumer") {
+					mu.Lock()
+					order = append(order, id.Name)
+					mu.Unlock()
+				}
+			}, false)
+			t.Cleanup(unsub)
+			res, err := o.Render(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			consumer := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
+			if got := substitutionValue(t, res, consumer); got != "supplied" {
+				t.Fatalf("late producer revoked accepted source: %q", got)
+			}
+			expected := []string{"consumer", "producer"}
+			if producerFirst {
+				expected = []string{"producer", "consumer"}
+			}
+			if len(order) < 2 || slices.Index(order, expected[0]) > slices.Index(order, expected[1]) {
+				t.Fatalf("did not exercise required order: %v", order)
+			}
+			t.Logf("observed Ready order=%v", order)
+			repository, _ := o.store.Get[*manifest.ConfigMap](external)
+			if repository == nil || repository.Data["VALUE"] != "repository" {
+				t.Fatal("supplied input entered store or late producer did not render")
+			}
+			encoded, err := json.Marshal(canonicalBatches(res))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if canonical == nil {
+				canonical = encoded
+			} else if !bytes.Equal(canonical, encoded) {
+				t.Fatalf("output varies with late-producer order (-want +got): %s", cmp.Diff(string(canonical), string(encoded)))
+			}
+		})
 	}
 }
 

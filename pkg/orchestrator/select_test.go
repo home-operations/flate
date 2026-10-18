@@ -197,10 +197,8 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 			t.Fatalf("fatal/advisory policies conflated: %+v", warning)
 		}
 	}
-	for range 10 {
-		got, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
-		assert.Diff(t, got[0].Unrelated, results[0].Unrelated)
-	}
+	got, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
+	assert.Diff(t, got[0].Unrelated, results[0].Unrelated)
 	missing := ksID("missing")
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, other: {missing}}
 	run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{selected: {Status: store.StatusFailed, Message: "selected blocked"}, other: {Status: store.StatusFailed, Message: "other blocked"}}

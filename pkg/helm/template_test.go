@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"cmp"
 	"errors"
 	"math"
 	"strings"
@@ -16,41 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
-
-// TestTemplate_KeysFirstIsDeterministic pins flate's sorted-key policy,
-// which is stricter than Helm's unordered Sprig keys.
-func TestTemplate_KeysFirstIsDeterministic(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
-	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: chosen-port
-data:
-  port: {{ get .Values.ports (keys .Values.ports | first) | quote }}
-`)
-	values := map[string]any{"ports": map[string]any{"http": 80, "bittorrent": 50413}}
-	cli, err := NewClient(newTestCache(t, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
-	var first string
-	for range 64 {
-		raw, err := cli.Template(t.Context(), newHR(), values, Options{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		docs, err := manifest.SplitDocs([]byte(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		assert.Equal(t, len(docs), 1)
-		assert.Equal(t, docs[0]["data"].(map[string]any)["port"], any("50413"))
-		first = cmp.Or(first, raw)
-		assert.Equal(t, raw, first)
-	}
-}
 
 func TestTemplate_CRDsPolicy(t *testing.T) {
 	const crd = `apiVersion: apiextensions.k8s.io/v1

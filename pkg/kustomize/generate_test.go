@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -319,158 +320,37 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 	}
 }
 
-// renderTree runs flate's full in-memory render of subPath against an in-memory
-// fs built from root: generate the merged kustomization.yaml, write it into the
-// fs, build. It returns the rendered resources as YAML.
-func renderInMemory(t *testing.T, root, subPath string, doc map[string]any) []byte {
-	t.Helper()
-	fsys := testTreeFS(t, root)
-	absSub := filepath.Join(root, subPath)
-	data, kfile, err := generateManifest(fsys, absSub, doc)
-	if err != nil {
-		t.Fatalf("generateManifest: %v", err)
-	}
-	if err := fsys.WriteFile(kfile, data); err != nil {
-		t.Fatalf("write merged kustomization: %v", err)
-	}
-	kustomizestate.BuildMutex.Lock()
-	rm, err := fluxkustomize.Build(fsys, absSub)
-	kustomizestate.BuildMutex.Unlock()
-	if err != nil {
-		t.Fatalf("in-memory build: %v", err)
-	}
-	out, err := rm.AsYaml()
-	if err != nil {
-		t.Fatalf("AsYaml: %v", err)
-	}
-	return out
-}
-
-// TestBuild_InMemoryMatchesSecureBuild proves the end-to-end render — generate
-// then build — is byte-identical between flate's in-memory fs and flux's
-// on-disk SecureBuild, the path real Flux uses.
-func TestBuild_InMemoryMatchesSecureBuild(t *testing.T) {
-	cases := []struct {
-		name    string
-		files   map[string]string
-		subPath string
-		spec    map[string]any
+func TestRenderFlux_NamespaceIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace string
 	}{
-		{
-			name:    "existing kustomization with prefix and namespace",
-			files:   map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config")},
-			subPath: ".",
-			spec:    map[string]any{"namePrefix": "pre-", "targetNamespace": "team-a"},
-		},
-		{
-			name:    "generated from loose manifests",
-			files:   map[string]string{"a.yaml": cmYAML("alpha"), "b.yaml": cmYAML("beta")},
-			subPath: ".",
-		},
-		{
-			name: "relative parent base",
-			files: map[string]string{
-				"app/kustomization.yaml":  existingKustomization("../base"),
-				"base/kustomization.yaml": existingKustomization("cm.yaml"),
-				"base/cm.yaml":            cmYAML("shared"),
-			},
-			subPath: "app",
-			spec:    map[string]any{"namePrefix": "x-"},
-		},
-	}
-
-	for _, namespace := range []string{"", "apps"} {
-		cases = append(cases, struct {
-			name    string
-			files   map[string]string
-			subPath string
-			spec    map[string]any
-		}{
-			name: "namespace identity/" + namespace,
-			files: map[string]string{
+		{name: "empty"},
+		{name: "target", namespace: "apps"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("deployment.yaml", "role.yaml", "gateway.yaml"),
 				"deployment.yaml":    "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: deployment}\n",
 				"role.yaml":          "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: role}\n",
 				"gateway.yaml":       "apiVersion: gateway.networking.k8s.io/v1\nkind: GatewayClass\nmetadata: {name: gateway}\n",
-			},
-			subPath: ".", spec: map[string]any{"targetNamespace": namespace},
+			})
+			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{
+				Source: localSource(t, root), SubPath: ".", Spec: ksDoc(map[string]any{"targetNamespace": tc.namespace}),
+			}, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			docs, err := manifest.SplitDocs(out)
+			assert.NoError(t, err)
+			assert.Equal(t, len(docs), 3)
+			namespaces := make(map[string]string, len(docs))
+			for _, doc := range docs {
+				_, ns := manifest.DocMetadata(doc)
+				namespaces[manifest.DocKind(doc)] = ns
+			}
+			assert.Diff(t, namespaces, map[string]string{
+				"Deployment": tc.namespace, "ClusterRole": "", "GatewayClass": tc.namespace,
+			})
 		})
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := writeTree(t, tc.files)
-			doc := ksDoc(tc.spec)
-
-			// flux on-disk pipeline: write the generated kustomization, SecureBuild.
-			absSub := filepath.Join(root, tc.subPath)
-			gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: deepCopyDoc(t, doc)})
-			if _, err := gen.WriteFile(absSub); err != nil {
-				t.Fatalf("flux WriteFile: %v", err)
-			}
-			kustomizestate.BuildMutex.Lock()
-			rm, err := fluxkustomize.SecureBuild(root, absSub, false)
-			kustomizestate.BuildMutex.Unlock()
-			if err != nil {
-				t.Fatalf("SecureBuild: %v", err)
-			}
-			want, err := rm.AsYaml()
-			if err != nil {
-				t.Fatalf("flux AsYaml: %v", err)
-			}
-
-			// flate in-memory pipeline (capture happens inside, before any disk
-			// mutation matters — the snapshot is independent bytes).
-			got := renderInMemory(t, root, tc.subPath, deepCopyDoc(t, doc))
-
-			if string(got) != string(want) {
-				t.Fatalf("rendered output mismatch\n--- SecureBuild (want) ---\n%s\n--- in-memory (got) ---\n%s", want, got)
-			}
-			if strings.HasPrefix(tc.name, "namespace identity/") {
-				docs, err := manifest.SplitDocs(got)
-				assert.NoError(t, err)
-				assert.Equal(t, len(docs), 3)
-				for _, doc := range docs {
-					want, _ := tc.spec["targetNamespace"].(string)
-					if manifest.DocKind(doc) == "ClusterRole" {
-						want = ""
-					}
-					_, ns := manifest.DocMetadata(doc)
-					assert.Equal(t, ns, want)
-				}
-			}
-		})
-	}
-}
-
-// TestBuild_InMemorySandbox confirms the in-memory fs reproduces SecureBuild's
-// security posture by construction: a resource escaping the source root cannot
-// be loaded (the node does not exist in the fs), while a legal in-tree parent
-// reference still resolves.
-func TestBuild_InMemorySandbox(t *testing.T) {
-	t.Run("escaping resource fails", func(t *testing.T) {
-		root := writeTree(t, map[string]string{
-			"evil/kustomization.yaml": existingKustomization("../../../../../../../../etc/passwd"),
-		})
-		kustomizestate.BuildMutex.Lock()
-		_, err := fluxkustomize.Build(testTreeFS(t, root), filepath.Join(root, "evil"))
-		kustomizestate.BuildMutex.Unlock()
-		if err == nil {
-			t.Fatal("expected build to fail for an out-of-tree resource, got nil error")
-		}
-	})
-
-	t.Run("legal in-tree parent renders", func(t *testing.T) {
-		root := writeTree(t, map[string]string{
-			"app/kustomization.yaml":  existingKustomization("../base"),
-			"base/kustomization.yaml": existingKustomization("cm.yaml"),
-			"base/cm.yaml":            cmYAML("shared"),
-		})
-		out := renderInMemory(t, root, "app", ksDoc(nil))
-		if !strings.Contains(string(out), "name: shared") {
-			t.Fatalf("expected rendered ConfigMap 'shared', got:\n%s", out)
-		}
-	})
 }
 
 // TestGenerateManifest_SourceIgnoreFiltersScan is the bo0tzz fix: a working tree

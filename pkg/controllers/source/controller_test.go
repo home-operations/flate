@@ -161,7 +161,7 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	}
 }
 
-func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
+func TestController_ShortCircuitsToReady(t *testing.T) {
 	for _, suspended := range []bool{false, true} {
 		t.Run(fmt.Sprintf("suspend=%t", suspended), func(t *testing.T) {
 			objects := []manifest.BaseManifest{
@@ -201,6 +201,29 @@ func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("unchanged", func(t *testing.T) {
+		st := store.New()
+		tasks := task.NewBounded(2)
+		c := New(st, tasks)
+		f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
+		c.Fetchers[manifest.KindGitRepository] = f
+		c.SetFilter(change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{}))
+		t.Cleanup(func() { c.Close(); tasks.BlockTillDone() })
+		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
+		st.AddObject(repo)
+		c.StartLifecycle()
+		tasks.Go(t.Context(), repo.Named().String(), func(ctx context.Context) {
+			if deps := c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone); len(deps) != 0 {
+				t.Errorf("blocked source %s: %v", repo.Named(), deps)
+			}
+		})
+		tasks.BlockTillDone()
+		info, _ := st.GetStatus(repo.Named())
+		if info.Status != store.StatusReady || info.Message != "unchanged" || f.calls != 0 {
+			t.Fatalf("status=%+v fetch calls=%d, want Ready/unchanged calls=0", info, f.calls)
+		}
+	})
 }
 
 func TestController_UnregisteredKindIgnored(t *testing.T) {
@@ -281,102 +304,6 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 	}
 }
 
-func TestController_AllowMissingSecretsConvertsFailureToSkip(t *testing.T) {
-	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
-		manifest.ErrMissingSecret)}
-	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f},
-		FetchOptions{AllowMissingSecrets: true})
-
-	repo := &manifest.OCIRepository{
-		Name: "r", Namespace: "ns",
-		URL: "oci://example/img",
-	}
-	st.AddObject(repo)
-
-	info := dispatchToFixpoint(t, c, st, repo.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if !store.IsSkipped(info) {
-		t.Errorf("expected skipped status, got %+v", info)
-	}
-	if !strings.Contains(info.Message, "ghcr-creds") {
-		t.Errorf("skip message should preserve the underlying error; got %q", info.Message)
-	}
-	if art := st.GetArtifact(repo.Named()); art != nil {
-		t.Errorf("skipped source must not produce an artifact; got %+v", art)
-	}
-}
-
-func TestController_AllowMissingSecretsOffStillFails(t *testing.T) {
-	// Same error, but flag is off — should fail.
-	f := &fakeFetcher{err: fmt.Errorf("%w: OCIRepository ns/r: secret ns/ghcr-creds not found",
-		manifest.ErrMissingSecret)}
-	c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
-
-	repo := &manifest.OCIRepository{
-		Name: "r", Namespace: "ns",
-		URL: "oci://example/img",
-	}
-	st.AddObject(repo)
-
-	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusFailed {
-		t.Fatalf("status = %+v, want StatusFailed", info)
-	}
-}
-
-// Without the flag, a missing auth Secret declared by an in-repo producer
-// (recorded in the shared index) is skipped — the producer is positive
-// evidence it materializes live. The structured *src.MissingSecretError carries
-// the Secret identity the index lookup needs.
-func TestController_ProducerBackedMissingSecretSkippedWithoutFlag(t *testing.T) {
-	const secretRef = "ghcr-creds"
-	f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, secretRef, "not found")}
-	producers := &manifest.ProducerIndex{}
-	producers.Record(
-		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretRef},
-		manifest.NamedResource{
-			Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "ghcr-es"},
-	)
-	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f},
-		FetchOptions{Producers: producers}) // no flag
-
-	repo := &manifest.OCIRepository{
-		Name: "r", Namespace: "ns",
-		URL: "oci://example/img",
-	}
-	st.AddObject(repo)
-
-	info := dispatchToFixpoint(t, c, st, repo.Named())
-	if info.Status != store.StatusReady || !store.IsSkipped(info) {
-		t.Fatalf("status = %+v, want Ready+skipped (producer-backed secret)", info)
-	}
-	if art := st.GetArtifact(repo.Named()); art != nil {
-		t.Errorf("skipped source must not produce an artifact; got %+v", art)
-	}
-}
-
-// Fail-loud safety: without the flag, a missing auth Secret with NO declared
-// producer still fails — producer inference must not swallow a genuine error.
-func TestController_MissingSecretNoProducerFailsWithoutFlag(t *testing.T) {
-	f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ghcr-creds", "not found")}
-	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f},
-		FetchOptions{Producers: &manifest.ProducerIndex{}}) // no flag, empty index
-
-	repo := &manifest.OCIRepository{
-		Name: "r", Namespace: "ns",
-		URL: "oci://example/img",
-	}
-	st.AddObject(repo)
-
-	if info := dispatchToFixpoint(t, c, st, repo.Named()); info.Status != store.StatusFailed {
-		t.Fatalf("status = %+v, want StatusFailed (no producer → fail loud)", info)
-	}
-}
-
 func TestController_MissingSecretWaitsForRender(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -418,29 +345,42 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 }
 
 func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
-	tests := []struct {
+	for _, tt := range []struct {
 		name         string
 		present      bool
 		allowMissing bool
 		producer     bool
+		plain        bool
+		secret       string
 		wantSkip     bool
 	}{
-		{name: "missing"},
-		{name: "missing allowed", allowMissing: true, wantSkip: true},
-		{name: "missing producer backed", producer: true, wantSkip: true},
-		{name: "missing keys", present: true},
-		{name: "missing keys allowed", present: true, allowMissing: true, wantSkip: true},
-		{name: "missing keys producer backed", present: true, producer: true, wantSkip: true},
-	}
-	for _, tt := range tests {
+		{name: "missing", secret: "auth"},
+		{name: "missing allowed", secret: "auth", allowMissing: true, wantSkip: true},
+		{name: "missing producer backed", secret: "auth", producer: true, wantSkip: true},
+		{name: "missing keys", secret: "auth", present: true},
+		{name: "missing keys allowed", secret: "auth", present: true, allowMissing: true, wantSkip: true},
+		{name: "missing keys producer backed", secret: "auth", present: true, producer: true, wantSkip: true},
+		{name: "plain missing allowed", plain: true, secret: "ghcr-creds", allowMissing: true, wantSkip: true},
+		{name: "plain missing strict", plain: true, secret: "ghcr-creds"},
+		{name: "missing auth producer backed", secret: "ghcr-creds", producer: true, wantSkip: true},
+		{name: "missing auth no producer", secret: "ghcr-creds"},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			secret := &manifest.Secret{Name: "auth", Namespace: "ns"}
+			secret := &manifest.Secret{Name: tt.secret, Namespace: "ns"}
 			detail := "not found"
 			if tt.present {
 				detail = "missing username/password"
 			}
-			f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, secret.Name, detail)}
-			producers := &manifest.ProducerIndex{}
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
+			fetchErr := src.MissingSecretErr(repo.Named(), secret.Name, detail)
+			if tt.plain {
+				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
+			}
+			f := &fakeFetcher{err: fetchErr}
+			var producers *manifest.ProducerIndex
+			if !tt.plain {
+				producers = &manifest.ProducerIndex{}
+			}
 			if tt.producer {
 				producers.Record(secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
 			}
@@ -450,24 +390,34 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.present {
 				st.AddObject(secret)
 			}
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns"}
 			st.AddObject(repo)
-			if reconcileNode(t, c, repo.Named(), 0) {
-				t.Fatal("must wait while renders can still supply Secret contents")
+			var info store.StatusInfo
+			if tt.plain {
+				info = dispatchToFixpoint(t, c, st, repo.Named())
+			} else {
+				if reconcileNode(t, c, repo.Named(), manifest.DrainNone) {
+					t.Fatal("must wait while renders can still supply Secret contents")
+				}
+				if pending, _ := st.GetStatus(repo.Named()); pending.Status != store.StatusPending {
+					t.Fatalf("status = %+v, want Pending", pending)
+				}
+				if !reconcileNode(t, c, repo.Named(), manifest.DrainCascade) {
+					t.Fatal("unavailable Secret must terminalize at the fixpoint")
+				}
+				info, _ = st.GetStatus(repo.Named())
+				if f.calls != 2 {
+					t.Errorf("fetch calls = %d, want 2", f.calls)
+				}
 			}
-			if !reconcileNode(t, c, repo.Named(), 1) {
-				t.Fatal("unavailable Secret must terminalize at the fixpoint")
-			}
-			info, _ := st.GetStatus(repo.Named())
 			wantStatus := store.StatusFailed
 			if tt.wantSkip {
 				wantStatus = store.StatusReady
 			}
-			if info.Status != wantStatus || store.IsSkipped(info) != tt.wantSkip || !strings.Contains(info.Message, detail) {
-				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q", info, wantStatus, tt.wantSkip, detail)
+			if info.Status != wantStatus || store.IsSkipped(info) != tt.wantSkip || !strings.Contains(info.Message, detail) || !strings.Contains(info.Message, secret.Name) {
+				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
 			}
-			if f.calls != 2 {
-				t.Errorf("fetch calls = %d, want 2", f.calls)
+			if tt.wantSkip && st.GetArtifact(repo.Named()) != nil {
+				t.Fatal("skipped source must not produce an artifact")
 			}
 		})
 	}
@@ -588,34 +538,6 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 	}
 	if st.GetArtifact(repo.Named()) != nil {
 		t.Error("failed fallback must not store an artifact")
-	}
-}
-
-func TestController_ChangeFilterSkipsUnaffected(t *testing.T) {
-	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
-
-	// Filter that marks our repo as "no changes" — should short-circuit
-	// to Ready without fetching.
-	filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
-	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindGitRepository: f},
-		FetchOptions{Filter: filter})
-
-	repo := &manifest.GitRepository{
-		Name: "r", Namespace: "ns",
-		URL: "https://example/r.git",
-	}
-	st.AddObject(repo)
-
-	info := dispatchToFixpoint(t, c, st, repo.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if info.Message != "unchanged" {
-		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
-	}
-	if f.calls != 0 {
-		t.Errorf("filtered-out source must not fetch; calls=%d", f.calls)
 	}
 }
 

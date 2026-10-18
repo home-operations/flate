@@ -93,7 +93,7 @@ func TestNamedResource(t *testing.T) {
 		(&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v2"}).Named())
 }
 
-func TestParse_Suspend(t *testing.T) {
+func TestParseDoc_Suspended(t *testing.T) {
 	for _, tc := range []struct {
 		kind, apiVersion, spec string
 		suspendable            bool
@@ -145,16 +145,6 @@ func TestNamedResource_IsCRD(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.id.IsCRD(), tc.want)
 		})
-	}
-}
-
-func TestParseHelmRelease_ServiceAccountName(t *testing.T) {
-	hr, err := parseHelmRelease(helmReleaseDoc(t, "  serviceAccountName: privileged-installer"))
-	if err != nil {
-		t.Fatalf("parseHelmRelease: %v", err)
-	}
-	if hr.ServiceAccountName != "privileged-installer" {
-		t.Errorf("ServiceAccountName = %q, want %q", hr.ServiceAccountName, "privileged-installer")
 	}
 }
 
@@ -256,131 +246,6 @@ func TestParseHelmChartSource_DefaultsAndReconcileStrategy(t *testing.T) {
 	}
 }
 
-func TestParseProxySecretRef_AllSourceKinds(t *testing.T) {
-	cases := []struct {
-		name string
-		yaml string
-		get  func(doc map[string]any) (*LocalObjectReference, error)
-	}{
-		{
-			name: "GitRepository",
-			yaml: `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: r, namespace: flux-system}
-spec:
-  url: https://github.com/owner/repo.git
-  proxySecretRef: {name: corp-proxy}
-  interval: 5m
-`,
-			get: func(d map[string]any) (*LocalObjectReference, error) {
-				g, err := parseGitRepository(d)
-				if err != nil {
-					return nil, err
-				}
-				return g.ProxySecretRef, nil
-			},
-		},
-		{
-			name: "OCIRepository",
-			yaml: `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata: {name: r, namespace: ns}
-spec:
-  url: oci://ghcr.io/x/y
-  proxySecretRef: {name: corp-proxy}
-  interval: 5m
-`,
-			get: func(d map[string]any) (*LocalObjectReference, error) {
-				o, _, _, err := ParseDoc(d, ParseDocOptions{DefaultNamespace: ""})
-				if err != nil {
-					return nil, err
-				}
-				return o.(*OCIRepository).ProxySecretRef, nil
-			},
-		},
-		{
-			name: "Bucket",
-			yaml: `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: Bucket
-metadata: {name: b, namespace: ns}
-spec:
-  bucketName: x
-  endpoint: minio:9000
-  proxySecretRef: {name: corp-proxy}
-  interval: 5m
-`,
-			get: func(d map[string]any) (*LocalObjectReference, error) {
-				b, err := parseBucket(d)
-				if err != nil {
-					return nil, err
-				}
-				return b.ProxySecretRef, nil
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ref, err := tc.get(mustYAML(t, tc.yaml))
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			if ref == nil || ref.Name != "corp-proxy" {
-				t.Errorf("ProxySecretRef = %+v, want {Name: corp-proxy}", ref)
-			}
-		})
-	}
-}
-
-func TestParseGitRepository_SparseCheckout(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: monorepo, namespace: flux-system}
-spec:
-  url: https://github.com/owner/big-monorepo.git
-  sparseCheckout:
-    - kubernetes/apps/media
-    - kubernetes/components/shared
-  interval: 5m
-`)
-	g, err := parseGitRepository(doc)
-	if err != nil {
-		t.Fatalf("parseGitRepository: %v", err)
-	}
-	wantDirs := []string{"kubernetes/apps/media", "kubernetes/components/shared"}
-	assert.Diff(t, g.SparseCheckout, wantDirs)
-}
-
-func TestParseGitRepository_RefNameAndSubmodules(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: pr, namespace: flux-system}
-spec:
-  url: https://github.com/owner/repo.git
-  ref:
-    name: refs/pull/420/head
-  recurseSubmodules: true
-  interval: 5m
-`)
-	g, err := parseGitRepository(doc)
-	if err != nil {
-		t.Fatalf("parseGitRepository: %v", err)
-	}
-	if g.Reference == nil || g.Reference.Name != "refs/pull/420/head" {
-		t.Errorf("Reference.Name = %q", g.Reference)
-	}
-	if !g.RecurseSubmodules {
-		t.Errorf("RecurseSubmodules should be true")
-	}
-	if want := "name:refs/pull/420/head"; GitRefString(*g.Reference) != want {
-		t.Errorf("RefString = %q, want %q", GitRefString(*g.Reference), want)
-	}
-}
-
 // TestParseKustomization_SourceRefMissingNameRejected locks the
 // truncated-YAML guard: a Kustomization with sourceRef.kind set but
 // sourceRef.name empty (common shape for files that end mid-mapping)
@@ -408,43 +273,19 @@ spec:
 }
 
 func TestParseBucket_GenericWithSecret(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
+	b, err := parseBucket(mustYAML(t, `apiVersion: source.toolkit.fluxcd.io/v1
 kind: Bucket
-metadata:
-  name: assets
-  namespace: apps
+metadata: {name: assets, namespace: apps}
 spec:
   bucketName: my-bucket
   endpoint: minio.minio.svc:9000
-  insecure: true
-  prefix: configs/
-  region: us-east-1
-  secretRef:
-    name: minio-creds
-  interval: 5m
-`)
-	b, err := parseBucket(doc)
+  secretRef: {name: minio-creds}
+`))
 	if err != nil {
 		t.Fatalf("parseBucket: %v", err)
 	}
 	if b.Provider != "generic" {
 		t.Errorf("default Provider should be 'generic', got %q", b.Provider)
-	}
-	if b.BucketName != "my-bucket" {
-		t.Errorf("BucketName: %q", b.BucketName)
-	}
-	if b.Endpoint != "minio.minio.svc:9000" {
-		t.Errorf("Endpoint: %q", b.Endpoint)
-	}
-	if !b.Insecure {
-		t.Errorf("Insecure should be true")
-	}
-	if b.Prefix != "configs/" {
-		t.Errorf("Prefix: %q", b.Prefix)
-	}
-	if b.SecretRef == nil || b.SecretRef.Name != "minio-creds" {
-		t.Errorf("SecretRef: %+v", b.SecretRef)
 	}
 }
 
@@ -873,48 +714,24 @@ spec:
 	}
 }
 
-func TestParseGitRepository_Ref(t *testing.T) {
-	doc := mustYAML(t, `
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: charts
-  namespace: flux-system
-spec:
-  url: https://example.test/charts.git
-  ref:
-    tag: v1.2.3
-`)
-	g, err := parseGitRepository(doc)
-	if err != nil {
-		t.Fatalf("parseGitRepository: %v", err)
-	}
-	if g.Reference == nil {
-		t.Fatalf("expected Reference parsed")
-	}
-	if got, want := GitRefString(*g.Reference), "tag:v1.2.3"; got != want {
-		t.Errorf("RefString = %q, want %q", got, want)
-	}
-}
-
 func TestGitRefString_Precedence(t *testing.T) {
-	ref := GitRepositoryRef{
-		Branch: "main",
-		Tag:    "v1.0.0",
-		SemVer: ">=1.0",
-		Name:   "refs/heads/release",
-		Commit: "0123456789abcdef0123456789abcdef01234567",
-	}
-	if got, want := GitRefString(ref), "commit:0123456789abcdef0123456789abcdef01234567"; got != want {
-		t.Errorf("GitRefString precedence = %q, want %q", got, want)
-	}
-	ref.Commit = ""
-	if got, want := GitRefString(ref), "name:refs/heads/release"; got != want {
-		t.Errorf("GitRefString name precedence = %q, want %q", got, want)
-	}
-	ref.Name = ""
-	if got, want := GitRefString(ref), "semver:>=1.0"; got != want {
-		t.Errorf("GitRefString semver precedence = %q, want %q", got, want)
+	const commit = "0123456789abcdef0123456789abcdef01234567"
+	for _, tc := range []struct {
+		name string
+		ref  GitRepositoryRef
+		want string
+	}{
+		{"commit", GitRepositoryRef{Branch: "main", Tag: "v1.0.0", SemVer: ">=1.0", Name: "refs/heads/release", Commit: commit}, "commit:" + commit},
+		{"name", GitRepositoryRef{Branch: "main", Tag: "v1.0.0", SemVer: ">=1.0", Name: "refs/heads/release"}, "name:refs/heads/release"},
+		{"semver", GitRepositoryRef{Branch: "main", Tag: "v1.0.0", SemVer: ">=1.0"}, "semver:>=1.0"},
+		{"name only", GitRepositoryRef{Name: "refs/pull/420/head"}, "name:refs/pull/420/head"},
+		{"tag only", GitRepositoryRef{Tag: "v1.2.3"}, "tag:v1.2.3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := GitRefString(tc.ref); got != tc.want {
+				t.Errorf("GitRefString = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

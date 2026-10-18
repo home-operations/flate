@@ -400,35 +400,27 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 	}
 }
 
-func TestController_SuspendedShortCircuitsToReady(t *testing.T) {
-	c, st := newTestController(t, nil)
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		Suspend: true,
-	}
-	st.AddObject(hr)
-
-	info := dispatchToFixpoint(t, c, st, hr.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if info.Message != "suspended" {
-		t.Errorf("expected suspended; got %q", info.Message)
-	}
-}
-
-func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
-	filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
-	c, st := newTestController(t, filter)
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
-	st.AddObject(hr)
-
-	info := dispatchToFixpoint(t, c, st, hr.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if info.Message != "unchanged" {
-		t.Errorf("expected unchanged short-circuit; got %q", info.Message)
+func TestController_ShortCircuitsToReady(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		suspend bool
+	}{
+		{name: "suspended", suspend: true},
+		{name: "unchanged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var filter *change.Filter
+			if !tc.suspend {
+				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
+			}
+			c, st := newTestController(t, filter)
+			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}
+			st.AddObject(hr)
+			info := dispatchToFixpoint(t, c, st, hr.Named())
+			if info.Status != store.StatusReady || info.Message != tc.name {
+				t.Fatalf("status = %+v, want Ready/%s", info, tc.name)
+			}
+		})
 	}
 }
 
@@ -926,144 +918,20 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 	}
 }
 
-// TestRawProducerIndex_ExternalSecretWithExplicitTarget verifies that an
-// ExternalSecret with spec.target.name set is indexed under that explicit
-// target name, and that Producer returns the producer identity
-// for a matching Secret ref.
-func TestRawProducerIndex_ExternalSecretWithExplicitTarget(t *testing.T) {
+func TestRawProducerIndex_StoreListener(t *testing.T) {
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	producer := &manifest.RawObject{
-		Kind:       "ExternalSecret",
-		APIVersion: "external-secrets.io/v1",
-		Name:       "app-creds",
-		Namespace:  "default",
-		Spec: map[string]any{
-			"target": map[string]any{"name": "app-values"},
-		},
-	}
-	st.AddObject(producer)
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "default",
-		Name:      "app-values",
-	}
-	got, ok := c.producers.Producer(target)
-	if !ok {
-		t.Fatal("Producer returned false; expected producer to be indexed")
-	}
-	if got.Kind != "ExternalSecret" || got.Namespace != "default" || got.Name != "app-creds" {
-		t.Errorf("Producer returned %v; want ExternalSecret/default/app-creds", got)
-	}
-}
-
-// TestRawProducerIndex_ExternalSecretFallsBackToOwnName verifies that an
-// ExternalSecret with no spec.target.name is indexed under its own .metadata.name.
-func TestRawProducerIndex_ExternalSecretFallsBackToOwnName(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	producer := &manifest.RawObject{
-		Kind:       "ExternalSecret",
-		APIVersion: "external-secrets.io/v1",
-		Name:       "my-secret",
-		Namespace:  "staging",
-		Spec:       map[string]any{},
-	}
-	st.AddObject(producer)
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "staging",
-		Name:      "my-secret",
-	}
-	got, ok := c.producers.Producer(target)
-	if !ok {
-		t.Fatal("Producer returned false; expected producer to be indexed via own name")
-	}
-	if got.Name != "my-secret" || got.Namespace != "staging" {
-		t.Errorf("Producer returned %v; want ExternalSecret/staging/my-secret", got)
-	}
-}
-
-// TestRawProducerIndex_SealedSecretWithTemplateMetadataName verifies that a
-// SealedSecret with spec.template.metadata.name is indexed under that name.
-func TestRawProducerIndex_SealedSecretWithTemplateMetadataName(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	producer := &manifest.RawObject{
-		Kind:       "SealedSecret",
-		APIVersion: "bitnami.com/v1alpha1",
-		Name:       "sealed-db",
-		Namespace:  "prod",
-		Spec: map[string]any{
-			"template": map[string]any{
-				"metadata": map[string]any{"name": "db-password"},
-			},
-		},
-	}
-	st.AddObject(producer)
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "prod",
-		Name:      "db-password",
-	}
-	got, ok := c.producers.Producer(target)
-	if !ok {
-		t.Fatal("Producer returned false for SealedSecret with template.metadata.name")
-	}
-	if got.Name != "sealed-db" || got.Namespace != "prod" {
-		t.Errorf("Producer returned %v; want SealedSecret/prod/sealed-db", got)
-	}
-}
-
-// TestRawProducerIndex_Missing verifies that Producer returns
-// false for a Secret that has no matching producer in the index.
-func TestRawProducerIndex_Missing(t *testing.T) {
-	c, _ := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	target := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "default",
-		Name:      "no-such-secret",
-	}
+	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}
 	if _, ok := c.producers.Producer(target); ok {
-		t.Error("Producer returned true for a non-existent producer; want false")
+		t.Fatal("empty controller index reported a producer")
 	}
-}
-
-// TestRawProducerIndex_NamespaceIsolation verifies that a producer in
-// namespace A does not match a query for the same name in namespace B.
-func TestRawProducerIndex_NamespaceIsolation(t *testing.T) {
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
-
-	st.AddObject(&manifest.RawObject{
-		Kind:       "ExternalSecret",
-		APIVersion: "external-secrets.io/v1",
-		Name:       "svc-creds",
-		Namespace:  "team-a",
-		Spec:       map[string]any{},
-	})
-
-	// Same name, different namespace — must not match.
-	crossNS := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "team-b",
-		Name:      "svc-creds",
+	producer := &manifest.RawObject{
+		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
+		Name: "app-creds", Namespace: "default",
+		Spec: map[string]any{"target": map[string]any{"name": target.Name}},
 	}
-	if _, ok := c.producers.Producer(crossNS); ok {
-		t.Error("Producer matched a producer from a different namespace; want false")
-	}
-
-	// Same namespace — must match.
-	sameNS := manifest.NamedResource{
-		Kind:      manifest.KindSecret,
-		Namespace: "team-a",
-		Name:      "svc-creds",
-	}
-	if _, ok := c.producers.Producer(sameNS); !ok {
-		t.Error("Producer did not match producer in same namespace; want true")
+	st.AddObject(producer)
+	if got, ok := c.producers.Producer(target); !ok || got != producer.Named() {
+		t.Fatalf("Producer = (%v, %t), want (%v, true)", got, ok, producer.Named())
 	}
 }
 

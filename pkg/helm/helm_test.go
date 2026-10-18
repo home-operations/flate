@@ -12,6 +12,7 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	release "helm.sh/helm/v4/pkg/release/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -221,263 +222,163 @@ func TestReleaseManifest_HookSeparators(t *testing.T) {
 	}
 }
 
-// TestApplyHRCommonMetadata_OnRenderedChart locks that commonMetadata
-// labels/annotations merge onto real rendered chart output — the
-// post-render pass the helmrelease controller runs after Template and SplitDocs.
-func TestApplyHRCommonMetadata_OnRenderedChart(t *testing.T) {
-	cli := helmChartFixture(t)
-	hr := newHR()
-	hr.CommonMetadata = &helmv2.CommonMetadata{
-		Labels:      map[string]string{"team": "flate", "managed-by": "override"},
-		Annotations: map[string]string{"owner": "platform"},
-	}
-
-	raw, err := cli.Template(context.Background(), hr, nil, Options{NoHooks: true})
-	var docs []map[string]any
-	if err == nil {
-		docs, err = manifest.SplitDocs([]byte(raw))
-	}
-	if err != nil {
-		t.Fatalf("Template and SplitDocs: %v", err)
-	}
-	if len(docs) == 0 {
-		t.Fatal("expected at least one rendered doc")
-	}
-	ApplyHRCommonMetadata(docs, hr.CommonMetadata)
-	cm := docs[0]
-	md, _ := cm["metadata"].(map[string]any)
-	labels, _ := md["labels"].(map[string]any)
-	annotations, _ := md["annotations"].(map[string]any)
-	if labels["team"] != "flate" || labels["managed-by"] != "override" {
-		t.Errorf("commonMetadata.labels not merged: %v", labels)
-	}
-	if annotations["owner"] != "platform" {
-		t.Errorf("commonMetadata.annotations not merged: %v", annotations)
-	}
-}
-
-// TestApplyHROriginLabels_OnRenderedChart locks the helm-controller
-// OriginLabels post-renderer behavior: every rendered resource is
-// stamped with helm.toolkit.fluxcd.io/{name,namespace} so a real Flux
-// would identify it as owned by this HelmRelease.
-func TestApplyHROriginLabels_OnRenderedChart(t *testing.T) {
-	cli := helmChartFixture(t)
-	hr := newHR()
-	raw, err := cli.Template(context.Background(), hr, nil, Options{NoHooks: true})
-	var docs []map[string]any
-	if err == nil {
-		docs, err = manifest.SplitDocs([]byte(raw))
-	}
-	if err != nil {
-		t.Fatalf("Template and SplitDocs: %v", err)
-	}
-	if len(docs) == 0 {
-		t.Fatal("expected at least one rendered doc")
-	}
-	ApplyHROriginLabels(docs, hr)
-	for i, doc := range docs {
-		md, _ := doc["metadata"].(map[string]any)
-		labels, _ := md["labels"].(map[string]any)
-		if labels["helm.toolkit.fluxcd.io/name"] != hr.Name {
-			t.Errorf("doc[%d] missing/wrong helm.toolkit.fluxcd.io/name: %v", i, labels)
-		}
-		if labels["helm.toolkit.fluxcd.io/namespace"] != hr.Namespace {
-			t.Errorf("doc[%d] missing/wrong helm.toolkit.fluxcd.io/namespace: %v", i, labels)
-		}
-	}
-}
-
-// TestApplyHROriginLabels_WinsOverCommonMetadata locks the upstream
-// precedence rule: OriginLabels run AFTER CommonRenderer, so an
-// origin-key collision in CommonMetadata is silently overridden by the
-// origin value. Matches helm-controller/internal/postrender/build.go:46.
-func TestApplyHROriginLabels_WinsOverCommonMetadata(t *testing.T) {
-	cli := helmChartFixture(t)
-	hr := newHR()
-	hr.CommonMetadata = &helmv2.CommonMetadata{
-		Labels: map[string]string{
-			"helm.toolkit.fluxcd.io/name": "user-override-should-lose",
-			"team":                        "platform",
-		},
-	}
-	raw, err := cli.Template(context.Background(), hr, nil, Options{NoHooks: true})
-	var docs []map[string]any
-	if err == nil {
-		docs, err = manifest.SplitDocs([]byte(raw))
-	}
-	if err != nil {
-		t.Fatalf("Template and SplitDocs: %v", err)
-	}
-	ApplyHRCommonMetadata(docs, hr.CommonMetadata)
-	ApplyHROriginLabels(docs, hr)
-	md, _ := docs[0]["metadata"].(map[string]any)
-	labels, _ := md["labels"].(map[string]any)
-	if labels["helm.toolkit.fluxcd.io/name"] != hr.Name {
-		t.Errorf("origin label should win; got %v", labels["helm.toolkit.fluxcd.io/name"])
-	}
-	if labels["team"] != "platform" {
-		t.Errorf("non-colliding commonMetadata label dropped; got %v", labels["team"])
-	}
-}
-
-func TestApplyHRCommonMetadata_LabelsOnly(t *testing.T) {
-	docs := []map[string]any{
-		{"metadata": map[string]any{"name": "x"}},
-	}
-	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
-		Labels: map[string]string{"team": "flate"},
-	})
-	md := docs[0]["metadata"].(map[string]any)
-	labels, _ := md["labels"].(map[string]any)
-	if labels["team"] != "flate" {
-		t.Errorf("labels not merged: %v", labels)
-	}
-	if _, ok := md["annotations"]; ok {
-		t.Errorf("annotations key should not be created when input is empty: %v", md)
-	}
-}
-
-func TestApplyHRCommonMetadata_AnnotationsOnly(t *testing.T) {
-	docs := []map[string]any{
-		{"metadata": map[string]any{"name": "x"}},
-	}
-	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
-		Annotations: map[string]string{"owner": "platform"},
-	})
-	md := docs[0]["metadata"].(map[string]any)
-	annotations, _ := md["annotations"].(map[string]any)
-	if annotations["owner"] != "platform" {
-		t.Errorf("annotations not merged: %v", annotations)
-	}
-	if _, ok := md["labels"]; ok {
-		t.Errorf("labels key should not be created when input is empty: %v", md)
-	}
-}
-
-func TestApplyHRCommonMetadata_NilOrEmptyIsNoop(t *testing.T) {
-	docs := []map[string]any{
-		{"metadata": map[string]any{"name": "x"}},
-	}
-	original := docs[0]["metadata"].(map[string]any)
-	ApplyHRCommonMetadata(docs, nil)
-	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{})
-	if len(original) != 1 || original["name"] != "x" {
-		t.Errorf("metadata mutated by nil/empty CommonMetadata: %v", original)
-	}
-}
-
-func TestApplyHRCommonMetadata_CreatesMetadataWhenMissing(t *testing.T) {
-	docs := []map[string]any{{}} // no metadata
-	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
-		Labels: map[string]string{"team": "flate"},
-	})
-	md, ok := docs[0]["metadata"].(map[string]any)
-	if !ok {
-		t.Fatalf("metadata not created: %v", docs[0])
-	}
-	labels, _ := md["labels"].(map[string]any)
-	if labels["team"] != "flate" {
-		t.Errorf("labels not merged into newly-created metadata: %v", labels)
-	}
-}
-
-// TestApplyHRCommonMetadata_SkipsHooks locks the upstream contract:
-// commonMetadata + origin labels apply only to "real" workload
-// resources. Helm hooks (helm.sh/hook annotation) are skipped because
-// helm-controller's PostRenderStrategy is NoHooks — the chain is fed
-// only non-hook templates. Without this, flate stamped labels on
-// hooks that cluster-side Flux never adds.
-func TestApplyHRCommonMetadata_SkipsHooks(t *testing.T) {
-	docs := []map[string]any{
+func TestApplyHRMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		docs          string
+		common        *helmv2.CommonMetadata
+		origin        bool
+		renderedChart bool
+		want          string
+	}{
 		{
-			"kind": "Deployment",
-			"metadata": map[string]any{
-				"name": "real-workload",
-			},
-		},
-		{
-			"kind": "ConfigMap",
-			"metadata": map[string]any{
-				"name": "hook-cm",
-				"annotations": map[string]any{
-					"helm.sh/hook": "pre-install",
+			name:          "RenderedChart",
+			renderedChart: true,
+			common: &helmv2.CommonMetadata{
+				Labels: map[string]string{
+					"team": "flate", "managed-by": "override",
+					"helm.toolkit.fluxcd.io/name":      "user-override-should-lose",
+					"helm.toolkit.fluxcd.io/namespace": "user-override-should-lose",
 				},
+				Annotations: map[string]string{"owner": "platform"},
 			},
-		},
-	}
-	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
-		Labels: map[string]string{"team": "platform"},
-	})
-
-	workloadLabels := docs[0]["metadata"].(map[string]any)["labels"]
-	if workloadLabels == nil {
-		t.Fatal("workload doc lost its labels stamp")
-	}
-	if workloadLabels.(map[string]any)["team"] != "platform" {
-		t.Errorf("workload doc labels: %v", workloadLabels)
-	}
-
-	hookMd := docs[1]["metadata"].(map[string]any)
-	if _, ok := hookMd["labels"]; ok {
-		t.Errorf("hook doc should not receive commonMetadata stamp; got labels %v", hookMd["labels"])
-	}
-}
-
-// TestApplyHRCommonMetadata_SkipsCRDs locks the upstream behavior:
-// helm-controller's separate applyCRDs path uses setOriginVisitor for
-// origin labels but never CommonMetadata. flate must not stamp
-// commonMetadata onto CRDs — that produces labels real Flux doesn't
-// apply in cluster.
-func TestApplyHRCommonMetadata_SkipsCRDs(t *testing.T) {
-	docs := []map[string]any{
-		{
-			"kind":     "Deployment",
-			"metadata": map[string]any{"name": "real"},
+			origin: true,
+			want: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-cm
+  labels:
+    team: flate
+    managed-by: override
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: default
+  annotations: {owner: platform}
+data: {k: v}
+`,
 		},
 		{
-			"kind":     "CustomResourceDefinition",
-			"metadata": map[string]any{"name": "things.example.com"},
-		},
-	}
-	ApplyHRCommonMetadata(docs, &helmv2.CommonMetadata{
-		Labels: map[string]string{"team": "platform"},
-	})
-
-	if docs[0]["metadata"].(map[string]any)["labels"] == nil {
-		t.Error("workload doc lost its commonMetadata stamp")
-	}
-	crdMd := docs[1]["metadata"].(map[string]any)
-	if _, ok := crdMd["labels"]; ok {
-		t.Errorf("CRD should not receive commonMetadata stamp; got %v", crdMd["labels"])
-	}
-}
-
-// TestApplyHROriginLabels_SkipsHooks mirrors the commonMetadata
-// hook-exclusion above for the origin-labels pass.
-func TestApplyHROriginLabels_SkipsHooks(t *testing.T) {
-	docs := []map[string]any{
-		{
-			"kind":     "Deployment",
-			"metadata": map[string]any{"name": "real"},
+			name:   "LabelsOnly",
+			docs:   "metadata: {name: x}\n",
+			common: &helmv2.CommonMetadata{Labels: map[string]string{"team": "flate"}},
+			want:   "metadata: {name: x, labels: {team: flate}}\n",
 		},
 		{
-			"kind": "Job",
-			"metadata": map[string]any{
-				"name": "hook-job",
-				"annotations": map[string]any{
-					"helm.sh/hook": "pre-install",
-				},
+			name:   "AnnotationsOnly",
+			docs:   "metadata: {name: x}\n",
+			common: &helmv2.CommonMetadata{Annotations: map[string]string{"owner": "platform"}},
+			want:   "metadata: {name: x, annotations: {owner: platform}}\n",
+		},
+		{
+			name: "NilMetadata",
+			docs: "metadata: {name: x}\n",
+			want: "metadata: {name: x}\n",
+		},
+		{
+			name:   "EmptyMetadata",
+			docs:   "metadata: {name: x}\n",
+			common: &helmv2.CommonMetadata{},
+			want:   "metadata: {name: x}\n",
+		},
+		{
+			name:   "CreatesMetadataWhenMissing",
+			docs:   "kind: Deployment\n",
+			common: &helmv2.CommonMetadata{Labels: map[string]string{"team": "flate"}},
+			want:   "kind: Deployment\nmetadata: {labels: {team: flate}}\n",
+		},
+		{
+			name: "CommonMetadataSkipsHooksAndCRDs",
+			docs: `kind: Deployment
+metadata: {name: real}
+---
+kind: ConfigMap
+metadata: {name: hook-cm, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata: {name: things.example.com}
+`,
+			common: &helmv2.CommonMetadata{
+				Labels:      map[string]string{"team": "platform"},
+				Annotations: map[string]string{"owner": "platform"},
 			},
+			want: `kind: Deployment
+metadata: {name: real, labels: {team: platform}, annotations: {owner: platform}}
+---
+kind: ConfigMap
+metadata: {name: hook-cm, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata: {name: things.example.com}
+`,
 		},
-	}
-	ApplyHROriginLabels(docs, &manifest.HelmRelease{Name: "demo", Namespace: "apps"})
-
-	if _, ok := docs[0]["metadata"].(map[string]any)["labels"]; !ok {
-		t.Error("workload doc lost its origin labels")
-	}
-	hookMd := docs[1]["metadata"].(map[string]any)
-	if _, ok := hookMd["labels"]; ok {
-		t.Errorf("hook doc should not receive origin labels; got %v", hookMd["labels"])
+		{
+			name: "OriginLabelsSkipHooks",
+			docs: `kind: Deployment
+metadata: {name: real}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+`,
+			origin: true,
+			want: `kind: Deployment
+metadata:
+  name: real
+  labels: {helm.toolkit.fluxcd.io/name: demo, helm.toolkit.fluxcd.io/namespace: default}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+`,
+		},
+		{
+			name: "CommonThenOrigin",
+			docs: `kind: Deployment
+metadata: {name: real, labels: {app: retained}}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata: {name: things.example.com}
+`,
+			common: &helmv2.CommonMetadata{
+				Labels:      map[string]string{"team": "platform"},
+				Annotations: map[string]string{"owner": "platform"},
+			},
+			origin: true,
+			want: `kind: Deployment
+metadata:
+  name: real
+  labels: {app: retained, team: platform, helm.toolkit.fluxcd.io/name: demo, helm.toolkit.fluxcd.io/namespace: default}
+  annotations: {owner: platform}
+---
+kind: Job
+metadata: {name: hook-job, annotations: {helm.sh/hook: pre-install}}
+---
+kind: CustomResourceDefinition
+metadata:
+  name: things.example.com
+  labels: {helm.toolkit.fluxcd.io/name: demo, helm.toolkit.fluxcd.io/namespace: default}
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hr := newHR()
+			hr.CommonMetadata = tc.common
+			raw := tc.docs
+			if tc.renderedChart {
+				var err error
+				raw, err = helmChartFixture(t).Template(t.Context(), hr, nil, Options{NoHooks: true})
+				assert.NoError(t, err)
+			}
+			docs, err := manifest.SplitDocs([]byte(raw))
+			assert.NoError(t, err)
+			want, err := manifest.SplitDocs([]byte(tc.want))
+			assert.NoError(t, err)
+			ApplyHRCommonMetadata(docs, hr.CommonMetadata)
+			if tc.origin {
+				ApplyHROriginLabels(docs, hr)
+			}
+			assert.Diff(t, docs, want)
+		})
 	}
 }
 

@@ -249,7 +249,10 @@ func TestRenderFlux_ExoticNames(t *testing.T) {
 }
 
 func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
-	b := tree.NewBuilder(memoryTree(t, map[string]string{"base/cm.yaml": cmYAML("wrong"), "deep/base/cm.yaml": cmYAML("correct"), "deep/inner/file": "inner"}))
+	b := tree.NewBuilder(memoryTree(t, map[string]string{
+		"base/cm.yaml": cmYAML("wrong"), "deep/base/cm.yaml": cmYAML("correct"), "deep/inner/file": "inner",
+		"escape/kustomization.yaml": existingKustomization("../../../../../../../../etc/passwd"),
+	}))
 	if err := b.AddSymlink("alias", "deep/inner"); err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +266,7 @@ func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
 		want    error
 	}{
 		{"alias/../base", nil}, {"loop", tree.ErrLoop}, {"../outside", tree.ErrEscape},
+		{"escape", tree.ErrEscape},
 	} {
 		t.Run(tc.subPath, func(t *testing.T) {
 			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: treeRef(lower, "pin"), Label: "/virtual", SubPath: tc.subPath, Spec: demoRawSpec}, sourcecache.RetryConfig{})

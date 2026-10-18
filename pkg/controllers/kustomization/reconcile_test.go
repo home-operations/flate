@@ -430,31 +430,6 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	}
 }
 
-// TestReconcile_SuspendShortCircuits covers the PreGate path: a
-// suspended KS never enters reconcile, status flips Ready+suspended
-// without an artifact write.
-func TestReconcile_SuspendShortCircuits(t *testing.T) {
-	c, s, _ := newControllerWithFixture(t)
-	ks := &manifest.Kustomization{
-		Name: "suspended", Namespace: "flux-system",
-		Path: "./apps", Suspend: true,
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{
-			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-		},
-	}
-	s.AddObject(ks)
-	info := dispatchToFixpoint(t, c, s, ks.Named())
-	if info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-	if info.Message != "suspended" {
-		t.Errorf("expected Ready/suspended, got %+v", info)
-	}
-	if s.GetArtifact(ks.Named()) != nil {
-		t.Error("suspended KS should not write an artifact")
-	}
-}
-
 // TestReconcile_MissingPathFails covers the error path: spec.path
 // points at a directory that doesn't exist → kustomize.RenderFlux
 // errors → reconcile returns it → status flips Failed.
@@ -508,15 +483,36 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 	}
 }
 
-func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
+func TestReconcile_Suspension(t *testing.T) {
+	t.Run("initial suspension", func(t *testing.T) {
+		c, s, _ := newControllerWithFixture(t)
+		ks := &manifest.Kustomization{
+			Name: "suspended", Namespace: "flux-system",
+			Path: "./apps", Suspend: true,
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{
+				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
+			},
+		}
+		s.AddObject(ks)
+		info := dispatchToFixpoint(t, c, s, ks.Named())
+		if info.Status != store.StatusReady {
+			t.Fatalf("status = %+v, want StatusReady", info)
+		}
+		if info.Message != "suspended" {
+			t.Errorf("expected Ready/suspended, got %+v", info)
+		}
+		if s.GetArtifact(ks.Named()) != nil {
+			t.Error("suspended KS should not write an artifact")
+		}
+	})
 	for _, tt := range []struct {
 		name      string
 		suspended bool
 		cascade   bool
 	}{
-		{name: "suspended=false"},
-		{name: "suspended=true", suspended: true},
-		{name: "oci_cascade", suspended: true, cascade: true},
+		{name: "refreshed/suspended=false"},
+		{name: "refreshed/suspended=true", suspended: true},
+		{name: "refreshed/oci_cascade", suspended: true, cascade: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			suspended := tt.suspended

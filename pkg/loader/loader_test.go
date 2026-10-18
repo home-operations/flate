@@ -433,15 +433,16 @@ spec:
 	}
 }
 
-// TestLoader_SkipsConfigMapGeneratorDataFile mirrors the home-ops
-// repo shape that triggered #192: a `kustomization.yaml` declares a
-// `configMapGenerator.files` entry pointing at a YAML data file
-// whose top level is a sequence (e.g. webhook hook definitions).
-// flate's loader walks every .yaml under --path, but this one is
-// data — not a manifest — and must not trip the generic decode.
-func TestLoader_SkipsConfigMapGeneratorDataFile(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+func TestLoader_GeneratorDataFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		want  []manifest.NamedResource
+	}{
+		{
+			name: "SkipsConfigMapGeneratorDataFile",
+			files: map[string]string{
+				"kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./helmrelease.yaml
@@ -449,8 +450,8 @@ configMapGenerator:
   - name: notifier-configmap
     files:
       - hooks.yaml=./resources/hooks.yaml
-`)
-	testutil.WriteFile(t, dir, "helmrelease.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+`,
+				"helmrelease.yaml": `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: notifier, namespace: default}
 spec:
@@ -458,107 +459,50 @@ spec:
     spec:
       chart: foo
       sourceRef: {kind: HelmRepository, name: r, namespace: ns}
-`)
-	// Top-level YAML sequence — a valid data file but not a manifest.
-	// Without the data-file pre-pass this trips
-	// "cannot construct !!seq into map[string]interface {}".
-	testutil.WriteFile(t, dir, "resources/hooks.yaml", `---
+`,
+				"resources/hooks.yaml": `---
 - id: radarr-pushover
   execute-command: /config/radarr-pushover.sh
 - id: seerr-pushover
   execute-command: /config/seerr-pushover.sh
-`)
-
-	s := store.New()
-	l := New(s)
-	n, err := l.Load(t.Context(), dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if n != 0 || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
-		t.Errorf("generator scan: admitted=%d records=%v errors=%v", n, l.Index.Records, l.Index.Errors)
-	}
-	if _, ok := l.Index.Lookup(manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}); !ok {
-		t.Errorf("HelmRelease should still be indexed")
-	}
-}
-
-// TestLoader_SkipsSecretGeneratorDataFile is the secretGenerator twin
-// — same exclusion logic, different kustomize field.
-func TestLoader_SkipsSecretGeneratorDataFile(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-secretGenerator:
-  - name: tls-bundle
-    files:
-      - ca.crt=./data/ca.crt
-    envs:
-      - ./data/extra.env
-`)
-	// `.crt` extension — loader wouldn't try to parse it anyway, so
-	// this just verifies the exclusion is harmless when extension
-	// already excludes the file.
-	testutil.WriteFile(t, dir, "data/ca.crt", "-----BEGIN CERTIFICATE-----\n")
-	// `.env` is also not in manifestExtensions; same point.
-	testutil.WriteFile(t, dir, "data/extra.env", "FOO=bar\n")
-	// But: an arbitrary .yaml data file (e.g. a sealed-secret payload
-	// chunk) WOULD be parsed without the exclusion.
-	testutil.WriteFile(t, dir, "data/raw.yaml", "this: is: not: valid: yaml: ::\n")
-	// Override kustomization to also use the .yaml data file so it
-	// goes through the secretGenerator.files exclusion.
-	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+`,
+			},
+			want: []manifest.NamedResource{{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "notifier"}},
+		},
+		{
+			name: "SkipsSecretGeneratorDataFile",
+			files: map[string]string{
+				"kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 secretGenerator:
   - name: tls-bundle
     files:
       - raw.yaml=./data/raw.yaml
-`)
-
-	s := store.New()
-	l := New(s)
-	if _, err := l.Load(t.Context(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(l.Index.Errors) != 0 {
-		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
-	}
-}
-
-// TestLoader_GeneratorFilesKeyParsing covers the "KEY=PATH" entry
-// shape: the loader must strip the optional `KEY=` prefix before
-// resolving the path, otherwise the exclusion never matches and the
-// data file goes through the generic decode.
-func TestLoader_GeneratorFilesKeyParsing(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+`,
+				"data/raw.yaml": "this: is: not: valid: yaml: ::\n",
+			},
+			want: nil,
+		},
+		{
+			name: "GeneratorFilesKeyParsing",
+			files: map[string]string{
+				"kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 configMapGenerator:
   - name: with-keys
     files:
       - keyed=./data/keyed.yaml
       - ./data/unkeyed.yaml
-`)
-	testutil.WriteFile(t, dir, "data/keyed.yaml", "- top: level\n- seq: here\n")
-	testutil.WriteFile(t, dir, "data/unkeyed.yaml", "- another: top\n- level: seq\n")
-
-	s := store.New()
-	l := New(s)
-	if _, err := l.Load(t.Context(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(l.Index.Errors) != 0 {
-		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
-	}
-}
-
-// TestLoader_ResourceWinsOverGenerator pins the conflict-resolution
-// rule from the design: if the same path is declared as both
-// `resources:` AND `configMapGenerator.files:`, the resource
-// interpretation wins. Pathological but legal per the kustomize spec.
-func TestLoader_ResourceWinsOverGenerator(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+`,
+				"data/keyed.yaml":   "- top: level\n- seq: here\n",
+				"data/unkeyed.yaml": "- another: top\n- level: seq\n",
+			},
+			want: nil,
+		},
+		{
+			name: "ResourceWinsOverGenerator",
+			files: map[string]string{
+				"kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./shared.yaml
@@ -566,37 +510,18 @@ configMapGenerator:
   - name: also-used-as-data
     files:
       - ./shared.yaml
-`)
-	testutil.WriteFile(t, dir, "shared.yaml", `apiVersion: v1
+`,
+				"shared.yaml": `apiVersion: v1
 kind: ConfigMap
 metadata: {name: shared, namespace: ns}
-`)
-	s := store.New()
-	l := New(s)
-	if _, err := l.Load(t.Context(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(l.Index.Errors) != 0 {
-		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
-	}
-	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "shared"}); !ok {
-		t.Errorf("a path declared in both resources: and configMapGenerator must still load as a resource")
-	}
-}
-
-// TestLoader_NestedKustomizationDataFile checks that a data file
-// declared by a kustomization.yaml deep in the tree is excluded
-// during the load of a higher-level --path. Same exclusion logic;
-// just verifies the pre-pass actually walks recursively.
-//
-// manifest.yaml must be declared in resources for the loader to
-// pick it up — the orphan-skip rule (issue #342) skips YAMLs in a
-// kustomization-governed directory that aren't referenced. Without
-// the resources entry, manifest.yaml would be a toggle-stub orphan
-// and correctly excluded.
-func TestLoader_NestedKustomizationDataFile(t *testing.T) {
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "apps/notifier/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+`,
+			},
+			want: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "shared"}},
+		},
+		{
+			name: "NestedKustomizationDataFile",
+			files: map[string]string{
+				"apps/notifier/kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./manifest.yaml
@@ -604,22 +529,35 @@ configMapGenerator:
   - name: cm
     files:
       - hooks.yaml=./resources/hooks.yaml
-`)
-	testutil.WriteFile(t, dir, "apps/notifier/resources/hooks.yaml", `- id: a\n- id: b\n`)
-	testutil.WriteFile(t, dir, "apps/notifier/manifest.yaml", `apiVersion: v1
+`,
+				"apps/notifier/resources/hooks.yaml": `- id: a\n- id: b\n`,
+				"apps/notifier/manifest.yaml": `apiVersion: v1
 kind: ConfigMap
 metadata: {name: real, namespace: ns}
-`)
-	s := store.New()
-	l := New(s)
-	if _, err := l.Load(t.Context(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(l.Index.Errors) != 0 {
-		t.Fatalf("generator data was decoded as a manifest: %v", l.Index.Errors)
-	}
-	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "real"}); !ok {
-		t.Errorf("the real manifest under the same kustomization dir must still load")
+`,
+			},
+			want: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "real"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for path, content := range tc.files {
+				testutil.WriteFile(t, dir, path, content)
+			}
+			l := New(store.New())
+			n, err := l.Load(t.Context(), dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if n != 0 || len(l.Index.Records) != len(tc.want) || len(l.Index.Errors) != 0 {
+				t.Fatalf("generator scan: admitted=%d records=%v errors=%v, want %v", n, l.Index.Records, l.Index.Errors, tc.want)
+			}
+			for _, id := range tc.want {
+				if _, ok := l.Index.Lookup(id); !ok {
+					t.Errorf("resource %v must still be indexed", id)
+				}
+			}
+		})
 	}
 }
 

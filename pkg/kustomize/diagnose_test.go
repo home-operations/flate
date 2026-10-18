@@ -133,26 +133,26 @@ func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 
 func TestRenderFlux_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
 	root := t.TempDir()
-	for i := range 80 {
-		var body strings.Builder
-		for j := range 4 {
-			name := fmt.Sprintf("cm-%02d-%d", i, j)
-			if i == 70 && j == 0 {
-				name = "cm-03-0"
-			}
-			body.WriteString(cmYAML(name) + "---\n")
-		}
-		dir := fmt.Sprintf("apps/k%02d/", i)
-		testutil.WriteFile(t, root, dir+"kustomization.yaml", existingKustomization("cm.yaml"))
-		testutil.WriteFile(t, root, dir+"cm.yaml", body.String())
+	var body strings.Builder
+	for i := range dupDiagBuildLimit + 1 {
+		body.WriteString(cmYAML(fmt.Sprintf("cm-%03d", i)) + "---\n")
 	}
+	testutil.WriteFile(t, root, "apps/k00/kustomization.yaml", existingKustomization("cm.yaml"))
+	testutil.WriteFile(t, root, "apps/k00/cm.yaml", body.String())
+	testutil.WriteFile(t, root, "apps/k01/kustomization.yaml", existingKustomization("cm.yaml"))
+	testutil.WriteFile(t, root, "apps/k01/cm.yaml", cmYAML("cm-000"))
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", existingKustomization("k00", "k01"))
 	_, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected duplicate-id failure")
 	}
-	for _, producer := range []string{"./apps/k03", "./apps/k70"} {
-		if !strings.Contains(err.Error(), producer) {
-			t.Errorf("missing producer %s: %v", producer, err)
+	_, diagnostic, ok := strings.Cut(err.Error(), "duplicate resource(s) produced by multiple accumulated paths:")
+	if !ok {
+		t.Fatalf("missing diagnostic attribution: %v", err)
+	}
+	for _, producer := range []string{"./apps/k00", "./apps/k01"} {
+		if !strings.Contains(diagnostic+"\n", "\n      - "+producer+"\n") {
+			t.Errorf("diagnostic missing producer %s: %s", producer, diagnostic)
 		}
 	}
 }

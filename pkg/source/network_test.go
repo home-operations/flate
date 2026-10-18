@@ -46,8 +46,10 @@ func requireNetworkTerminal(t *testing.T, err, cause error, attempted bool) {
 }
 
 func TestNetwork_AdmissionWave(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }))
 			t.Cleanup(srv.Close)
 			var n Network
@@ -100,6 +102,7 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 			}
 		})
 		t.Run(fmt.Sprintf("late-dial-%d", concurrency), func(t *testing.T) {
+			t.Parallel()
 			var n Network
 			var calls atomic.Int32
 			cause := networkTimeout()
@@ -134,6 +137,7 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 }
 
 func TestNetwork_RouteIdentity(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, first, second, proxy, nextProxy string
 		suppressed                            bool
@@ -157,6 +161,7 @@ func TestNetwork_RouteIdentity(t *testing.T) {
 		{name: "proxy-password", first: "http://origin.test", second: "http://origin.test", proxy: "http://a:first@proxy.test", nextProxy: "http://a:second@proxy.test"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var n Network
 			cause, observed := networkTimeout(), errors.New("healthy route attempted")
 			calls, proxyCalls := 0, 0
@@ -199,9 +204,11 @@ func TestNetwork_RouteIdentity(t *testing.T) {
 }
 
 func TestNetwork_AttemptLiveness(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, deadline := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d/deadline-%t", concurrency, deadline), func(t *testing.T) {
+				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					var n Network
 					entered, release, finished := make(chan struct{}, concurrency), make(chan struct{}), make(chan struct{}, concurrency)
@@ -269,6 +276,7 @@ func TestNetwork_AttemptLiveness(t *testing.T) {
 		{"tls", &tls.CertificateVerificationError{Err: errors.New("certificate rejected")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var n Network
 			calls := 0
 			tr, _ := NewHTTPTransport(nil, nil)
@@ -305,6 +313,7 @@ func (pendingDeadline) Err() error                    { return nil }
 func (pendingDeadline) Value(any) any                 { return nil }
 
 func TestNetwork_DeadlinePublicationRace(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var network Network
 		tr, _ := NewHTTPTransport(nil, nil)
@@ -332,6 +341,7 @@ func TestNetwork_DeadlinePublicationRace(t *testing.T) {
 }
 
 func TestNetwork_RedirectEndpoint(t *testing.T) {
+	t.Parallel()
 	var network Network
 	var dials atomic.Int32
 	cause := networkTimeout()
@@ -366,8 +376,10 @@ func TestNetwork_RedirectEndpoint(t *testing.T) {
 }
 
 func TestNetwork_ResponseFailures(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"auth", "status", "body"} {
 		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				hits.Add(1)

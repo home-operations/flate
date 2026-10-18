@@ -10,12 +10,14 @@ import (
 )
 
 func TestMissingSecretErr(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ kind, name, want string }{
 		{manifest.KindOCIRepository, "r", "flux error: missing secret: OCIRepository ns/r: secret ns/ghcr-creds not found"},
 		{manifest.KindOCIRepository, "ns/r", "flux error: missing secret: OCIRepository ns/ns/r: secret ns/ghcr-creds not found"},
 		{manifest.KindHelmRepository, "HelmRepository ns/r", "flux error: missing secret: HelmRepository ns/HelmRepository ns/r: secret ns/ghcr-creds not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			owner := manifest.NamedResource{Group: "input.example", Kind: tc.kind, Namespace: "ns", Name: tc.name}
 			err := MissingSecretErr(owner, "ghcr-creds", "not found")
 			if got := err.Error(); got != tc.want {
@@ -41,9 +43,11 @@ func TestMissingSecretErr(t *testing.T) {
 }
 
 func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
+	t.Parallel()
 	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
 	for _, value := range []string{"", "..PLACEHOLDER_username..", base64.StdEncoding.EncodeToString([]byte("..PLACEHOLDER_username..")), "invalid-base64!"} {
 		t.Run(value, func(t *testing.T) {
+			t.Parallel()
 			sec := &manifest.Secret{Name: "metadata-secret", Namespace: "elsewhere", Data: map[string]any{"username": value}, StringData: map[string]any{"password": "plain"}}
 			username, password, err := BasicAuthFromSecret(sec, owner, "creds")
 			missing, ok := errors.AsType[*MissingSecretError](err)
@@ -58,6 +62,7 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 		})
 	}
 	t.Run("valid", func(t *testing.T) {
+		t.Parallel()
 		sec := &manifest.Secret{StringData: map[string]any{"username": "user", "password": "plain"}}
 		username, password, err := BasicAuthFromSecret(sec, owner, "creds")
 		if err != nil || username != "user" || password != "plain" {

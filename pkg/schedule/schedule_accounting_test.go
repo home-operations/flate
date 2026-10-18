@@ -79,9 +79,11 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 }
 
 func TestRedispatch_QueueCauses(t *testing.T) {
+	t.Parallel()
 	for _, transition := range []string{"immediate", "parked", "recheck", "sweep", "cascade", "force", "runnable"} {
 		for _, content := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/content_%v", transition, content), func(t *testing.T) {
+				t.Parallel()
 				s := New(task.NewBounded(2), nil)
 				nid, dep := id("selector"), id("dependency")
 				n := &node{id: nid, state: stateRunning, rerun: true, productive: true, contentRequested: content}
@@ -368,8 +370,10 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 }
 
 func TestRedispatch_RunnableUpgradeAtCap(t *testing.T) {
+	t.Parallel()
 	for _, charged := range []bool{false, true} {
 		t.Run(fmt.Sprintf("charged_%v", charged), func(t *testing.T) {
+			t.Parallel()
 			s := New(task.NewBounded(2), nil)
 			n := &node{id: id("queued"), state: stateRunnable, redispatches: maxRedispatches, queuedCharged: charged}
 			s.nodes[n.id] = n
@@ -390,15 +394,18 @@ func TestRedispatch_RunnableUpgradeAtCap(t *testing.T) {
 }
 
 func TestOutcome_Compatibility(t *testing.T) {
+	t.Parallel()
 	if OutcomeTerminal != 0 || OutcomeBlocked != 1 || OutcomeDependencyFailed != 2 || OutcomeTerminalNoop != 3 {
 		t.Fatal("Outcome values must retain public numeric compatibility")
 	}
 }
 
 func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
+	t.Parallel()
 	for _, state := range []nodeState{stateParked, stateRunnable, stateRunning, stateTerminal} {
 		for _, contentFirst := range []bool{false, true} {
 			t.Run(fmt.Sprintf("state_%d/content_first_%v", state, contentFirst), func(t *testing.T) {
+				t.Parallel()
 				s := New(task.NewBounded(2), nil)
 				nid, dep := id("consumer"), id("dependency")
 				n := &node{id: nid, state: state}
@@ -432,9 +439,11 @@ func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
 }
 
 func TestProgress_RunnableUpgrade(t *testing.T) {
+	t.Parallel()
 	for _, charged := range []bool{false, true} {
 		for _, atCap := range []bool{false, true} {
 			t.Run(fmt.Sprintf("charged_%v/cap_%v", charged, atCap), func(t *testing.T) {
+				t.Parallel()
 				s := New(task.NewBounded(2), nil)
 				dep, nid := id("dependency"), id("consumer")
 				n := &node{id: nid, state: stateRunning}
@@ -565,6 +574,7 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 }
 
 func TestProgress_ContentPreservesConservativeRetry(t *testing.T) {
+	t.Parallel()
 	s := New(task.NewBounded(2), nil)
 	dep, consumer := id("dependency"), id("consumer")
 	n := &node{id: consumer, state: stateRunning}

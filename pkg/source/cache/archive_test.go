@@ -16,8 +16,10 @@ import (
 )
 
 func TestAcquire_ArchiveNames(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
 		t.Run(backing.name, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, backing.root)
 			for _, tc := range []struct {
 				name, entry string
@@ -31,6 +33,7 @@ func TestAcquire_ArchiveNames(t *testing.T) {
 				{name: "normalized_file", entry: "././dir/file", kind: tar.TypeReg},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
 					var data bytes.Buffer
 					w := tar.NewWriter(&data)
 					h := &tar.Header{Name: tc.entry, Typeflag: tc.kind, Mode: 0o600}

@@ -19,6 +19,7 @@ func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { ret
 func (indexedOrderingDeps) Promote(manifest.NamedResource) bool            { return false }
 
 func TestCollectDeps_OrderingFilter(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                      string
 		active, selected, indexed bool
@@ -36,6 +37,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed, retain: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			target := &manifest.Kustomization{Name: "target", Namespace: "apps", Path: "./target"}
 			if tc.present {

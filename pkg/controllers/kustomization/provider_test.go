@@ -18,6 +18,7 @@ import (
 )
 
 func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, group, kind, namespace, ref string
 		accepted                          bool
@@ -29,6 +30,7 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 		{"wrong name", "", "ConfigMap", "apps", "other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			c := New(st, task.NewBounded(2), nil, true)
 			source := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
@@ -44,6 +46,7 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 }
 
 func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ external, late manifest.BaseManifest }{
 		{&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}},
 			&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "late"}}},
@@ -51,6 +54,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "late"}}},
 	} {
 		t.Run(tc.external.Named().Kind, func(t *testing.T) {
+			t.Parallel()
 			external := tc.external
 			st := store.New()
 			other := external.WithNamespace("other")
@@ -74,6 +78,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 }
 
 func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${MISSING}'}\n")

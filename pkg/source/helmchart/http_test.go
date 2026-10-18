@@ -64,6 +64,7 @@ func newHTTPFetcherWithSecrets(t *testing.T, r *manifest.HelmRepository, secrets
 }
 
 func TestFetchHTTPChart(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, hits := startHelmRepo(t, chartBytes, chartDigest(chartBytes))
 	f := newHTTPFetcher(t, httpRepo(srv.URL))
@@ -91,12 +92,14 @@ func TestFetchHTTPChart(t *testing.T) {
 }
 
 func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, data string }{
 		{"empty", ""},
 		{"malformed", "["},
 		{"no api version", "entries: {}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var attempts atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if attempts.Add(1) == 1 {
@@ -152,6 +155,7 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 }
 
 func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, _ := startHelmRepo(t, chartBytes, "deadbeefdeadbeef") // index advertises a wrong digest
 	f := newHTTPFetcher(t, httpRepo(srv.URL))
@@ -162,6 +166,7 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 }
 
 func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, _ := startHelmRepo(t, chartBytes, "")
 	repo := httpRepo(srv.URL)
@@ -177,6 +182,7 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 }
 
 func TestFetchHTTPChart_SecretReferences(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, state string
 		cert        bool
@@ -191,6 +197,7 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 		{name: "cert absent", state: "absent", cert: true, missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r := httpRepo("https://charts.example")
 			secret := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first"}}
 			f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
@@ -284,9 +291,11 @@ func startHelmRepoSubpath(t *testing.T, prefix string, chartBytes []byte, indexD
 // last path segment and fetches from host root (404). Helm and Flux force a
 // trailing slash before resolving; flate must match.
 func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 
 	t.Run("no trailing slash", func(t *testing.T) {
+		t.Parallel()
 		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 		f := newHTTPFetcher(t, httpRepo(srv.URL+"/charts"))
 		art, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
@@ -302,6 +311,7 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 	})
 
 	t.Run("trailing slash", func(t *testing.T) {
+		t.Parallel()
 		srv, hits := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 		f := newHTTPFetcher(t, httpRepo(srv.URL+"/charts/"))
 		if _, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); err != nil {
@@ -399,6 +409,7 @@ func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 }
 
 func TestFetchHTTPChart_BasicAuthOtherHost(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	for _, tc := range []struct {
 		name            string
@@ -409,6 +420,7 @@ func TestFetchHTTPChart_BasicAuthOtherHost(t *testing.T) {
 		{name: "forwarded with passCredentials", passCredentials: true, wantAuth: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var gotAuth bool
 			chartSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _, gotAuth = r.BasicAuth()
@@ -520,6 +532,7 @@ func TestFetchHTTPChart_CancellationDoesNotPublish(t *testing.T) {
 }
 
 func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	var version atomic.Int32
 	version.Store(1)
@@ -565,8 +578,10 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 }
 
 func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{200, 201, 204, 299, 300, 400, 401, 403, 404, 429, 499, 500, 599, 600} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			t.Parallel()
 			r := &httpRepository{HelmRepository: httpRepo("https://charts.invalid"), client: &http.Client{Transport: chartTransport(func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Body: io.NopCloser(strings.NewReader("content"))}, nil
 			})}}
@@ -678,6 +693,7 @@ func TestFetchHTTPChart_TruncatedOutcomeReplay(t *testing.T) {
 
 }
 func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
+	t.Parallel()
 	failed := make(chan struct{})
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -722,10 +738,12 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 }
 
 func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"index", "chart"} {
 		for _, authenticated := range []bool{false, true} {
 			for _, customTLS := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/auth-%t/tls-%t", route, authenticated, customTLS), func(t *testing.T) {
+					t.Parallel()
 					var network source.Network
 					var indexHits, chartHits, dials atomic.Int32
 					cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}

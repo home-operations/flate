@@ -9,6 +9,7 @@ import (
 )
 
 func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, path, source, component string
 		want                          []string
@@ -21,6 +22,7 @@ func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
 		{name: "outside", path: "./apps", component: "../../outside", want: []string{"apps/"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ks := &Kustomization{Name: "root", Path: tc.path, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: tc.source}, Components: []string{tc.component}}
 			claims := BuildKSClaims([]*Kustomization{ks}, nil)
 			var prefixes []string
@@ -38,6 +40,7 @@ func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
 }
 
 func TestNormalizeClaimBase(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in, want string
 	}{
@@ -65,6 +68,7 @@ func TestNormalizeClaimBase(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
 			if got := NormalizeClaimBase(tc.in); got != tc.want {
 				t.Errorf("NormalizeClaimBase(%q) = %q, want %q", tc.in, got, tc.want)
 			}

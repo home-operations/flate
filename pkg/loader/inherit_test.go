@@ -21,6 +21,7 @@ import (
 var writeFile = testutil.WriteFile
 
 func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		hrDir  string
@@ -115,6 +116,7 @@ func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
 		}, scans: []string{"apps", "base"}, want: []string{""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for file, body := range tc.files {
 				testutil.WriteFile(t, root, file, body)
@@ -275,6 +277,7 @@ spec:
 	}
 
 	t.Run("subtree_availability", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "flux/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: flux-system}\nspec: {path: ./apps, targetNamespace: media, sourceRef: {kind: OCIRepository, name: source}}\n")
 		testutil.WriteFile(t, root, "kubernetes/apps/kustomization.yaml", "resources: [child.yaml, explicit.yaml]\n")
@@ -360,6 +363,7 @@ spec:
 	})
 
 	t.Run("stale_declaration", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		writeFile(t, root, "apps/kustomization.yaml", "namespace: immich\nresources: [ks.yaml]\n")
 		writeFile(t, root, "apps/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -391,6 +395,7 @@ spec: {path: ./output, targetNamespace: pg}
 }
 
 func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		kind, spec string
 	}{
@@ -400,6 +405,7 @@ func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
 		{manifest.KindExternalArtifact, "{}"},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "namespace: apps\nresources: [source.yaml]\n")
 			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: "+tc.kind+"\nmetadata: {name: source}\nspec: "+tc.spec+"\n")
@@ -433,8 +439,10 @@ func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
 }
 
 func TestApplyNamespaceInheritance_LateFallback(t *testing.T) {
+	t.Parallel()
 	for _, owned := range []bool{false, true} {
 		t.Run(fmt.Sprintf("owned_%t", owned), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/objects.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet

@@ -44,8 +44,10 @@ func TestCollectDeps_ScopeAndImmutability(t *testing.T) {
 }
 
 func TestCollectDeps_ParentAndInputs(t *testing.T) {
+	t.Parallel()
 	for _, hasParent := range []bool{false, true} {
 		t.Run(fmt.Sprint(hasParent), func(t *testing.T) {
+			t.Parallel()
 			c := New(store.New(), task.NewBounded(2), true)
 			parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 			calls := 0

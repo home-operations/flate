@@ -17,6 +17,7 @@ import (
 )
 
 func TestBuildIdentity_Stable(t *testing.T) {
+	t.Parallel()
 	info := &debug.BuildInfo{
 		Main: debug.Module{Path: flateModule, Version: "(devel)"},
 		Settings: []debug.BuildSetting{
@@ -33,6 +34,7 @@ func TestBuildIdentity_Stable(t *testing.T) {
 }
 
 func TestBuildIdentity_Dirty(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		info *debug.BuildInfo
@@ -52,6 +54,7 @@ func TestBuildIdentity_Dirty(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, buildIdentity(tc.info), "")
 		})
 	}
@@ -151,6 +154,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 }
 
 func TestBuildIdentity_Dependency(t *testing.T) {
+	t.Parallel()
 	info := &debug.BuildInfo{
 		Main: debug.Module{Path: "example.com/sdk", Version: "(devel)"},
 		Deps: []*debug.Module{{Path: flateModule, Version: "v0.6.5"}},

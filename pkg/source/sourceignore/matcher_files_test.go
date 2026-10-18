@@ -18,6 +18,7 @@ import (
 )
 
 func TestNewFS_Parity(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		files map[string]string
@@ -73,6 +74,7 @@ func TestNewFS_Parity(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for rel, body := range tc.files {
 				testutil.WriteFile(t, root, rel, body)
@@ -146,6 +148,7 @@ func TestNewFS_Parity(t *testing.T) {
 }
 
 func TestNewFS_ReadErrors(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, ".sourceignore", "*.tmp\n")
 	testutil.WriteFile(t, root, "app/.sourceignore", "!keep.tmp\n")
@@ -165,6 +168,7 @@ func TestNewFS_ReadErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			matcher, err := NewFS(tc.input, tc.files, "!keep.tmp\n", true)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("NewFS error = %v, want %v", err, tc.wantErr)
@@ -205,6 +209,7 @@ func (f ignoreReadErrorFS) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 func TestNewFS_Evidence(t *testing.T) {
+	t.Parallel()
 	files := []string{"z/.sourceignore", "app/deep/.sourceignore", "app/.sourceignore", ".sourceignore", "missing/.sourceignore"}
 	want := []struct{ Path, Data string }{
 		{".sourceignore", "# root \xff\r\n*.tmp\r\nignored.yaml\r\n"},
@@ -217,6 +222,7 @@ func TestNewFS_Evidence(t *testing.T) {
 		files []string
 	}{{"walked", nil}, {"listed", files}} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			data := fstest.MapFS{".git/.sourceignore": {Data: []byte("*.yaml\n")}}
 			for _, file := range want {
 				data[file.Path] = &fstest.MapFile{Data: []byte(file.Data)}

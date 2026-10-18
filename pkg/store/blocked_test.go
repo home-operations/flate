@@ -49,6 +49,7 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 }
 
 func TestUpdateFailure_Transitions(t *testing.T) {
+	t.Parallel()
 	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
 	dep := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "dep"}
 	for _, tc := range []struct {
@@ -73,6 +74,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 		{"refire", func(st *Store) { st.Refire(id) }, StatusPending, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := New()
 			st.AddObject(&manifest.HelmRelease{Name: id.Name})
 			st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}})
@@ -113,6 +115,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 }
 
 func TestUpdateFailure_DeleteAndLateWrite(t *testing.T) {
+	t.Parallel()
 	st := New()
 	obj := &manifest.HelmRelease{Name: "consumer"}
 	id := obj.Named()
@@ -147,6 +150,7 @@ func (fixedFailureMessage) Error() string   { return "dependencies failed" }
 func (e fixedFailureMessage) Unwrap() error { return e.cause }
 
 func TestUpdateFailure_StatusEvents(t *testing.T) {
+	t.Parallel()
 	st := New()
 	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "consumer"}
 	a := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "a"}
@@ -188,6 +192,7 @@ func TestUpdateFailure_StatusEvents(t *testing.T) {
 }
 
 func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
+	t.Parallel()
 	st := New()
 	obj := &manifest.HelmRelease{Name: "consumer"}
 	id := obj.Named()

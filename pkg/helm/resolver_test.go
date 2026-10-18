@@ -20,6 +20,7 @@ import (
 // source CRs through the canonical Store, eliminating the duplicate
 // push-registries.
 func TestSourceResolver_NoAddCallsNeeded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
 name: mychart

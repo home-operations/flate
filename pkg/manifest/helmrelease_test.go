@@ -7,6 +7,7 @@ import (
 )
 
 func TestHelmRelease_UsesDirectOCIRepository(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, refKind, repoKind, apiVersion string
 		want                                bool
@@ -20,6 +21,7 @@ func TestHelmRelease_UsesDirectOCIRepository(t *testing.T) {
 		{name: "synthesized OCI", repoKind: KindOCIRepository},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			hr := &HelmRelease{Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: tc.repoKind}}
 			if tc.refKind != "" {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{APIVersion: tc.apiVersion, Kind: tc.refKind, Name: "chart"}

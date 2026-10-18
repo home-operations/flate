@@ -477,6 +477,7 @@ func TestProgress_UnwatchedData(t *testing.T) {
 }
 
 func TestProgress_IdleInterest(t *testing.T) {
+	t.Parallel()
 	s := New(task.NewBounded(2), nil)
 	n := &node{id: id("consumer"), state: stateTerminal}
 	dep := id("dependency")
@@ -492,6 +493,7 @@ func TestProgress_IdleInterest(t *testing.T) {
 }
 
 func TestProgress_BlockerSlicesImmutable(t *testing.T) {
+	t.Parallel()
 	s := New(task.NewBounded(2), nil)
 	a, b := id("a-dependency"), id("b-dependency")
 	blocked := []NodeID{a, a, b}

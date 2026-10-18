@@ -23,6 +23,7 @@ func hrDocs(n int) []Doc {
 }
 
 func TestSuppression_String(t *testing.T) {
+	t.Parallel()
 	s := Suppression{Parent: hrParent, Side: SideCurrent, Count: 11, Reason: "chart source\n  not ready"}
 	want := "HelmRelease.helm.toolkit.fluxcd.io monitoring/grafana-operator: 11 objects not rendered on the current side; diff suppressed (chart source not ready)"
 	if got := s.String(); got != want {
@@ -34,6 +35,7 @@ func TestSuppression_String(t *testing.T) {
 }
 
 func TestSuppression_StringBothAndEmpty(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		note Suppression
 		want string
@@ -54,6 +56,7 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 
 // Suppression headers must remain visible even when no changes render.
 func TestRenderDocs_SuppressionHeader(t *testing.T) {
+	t.Parallel()
 	parent := ksParent
 	parent.Path = "apps/<path>"
 	l := []Doc{cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "old", ""), cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "before", "")}
@@ -150,6 +153,7 @@ data.k  (v1/ConfigMap/apps/other)
 `},
 	} {
 		t.Run(cmp.Or(string(tc.format), "default"), func(t *testing.T) {
+			t.Parallel()
 			out, err := RenderDocs(l, r, Options{Format: tc.format, Suppressed: suppressed})
 			if err != nil {
 				t.Fatalf("render: %v", err)
@@ -177,6 +181,7 @@ data.k  (v1/ConfigMap/apps/other)
 	}
 
 	t.Run("html", func(t *testing.T) {
+		t.Parallel()
 		out, err := RenderDocs(l, r, Options{Format: FormatHTML, Suppressed: suppressed})
 		if err != nil {
 			t.Fatalf("render: %v", err)
@@ -187,6 +192,7 @@ data.k  (v1/ConfigMap/apps/other)
 	})
 
 	t.Run("suppression alone still emits", func(t *testing.T) {
+		t.Parallel()
 		out, err := RenderDocs(nil, nil, Options{Format: FormatHTML, Suppressed: suppressed})
 		if err != nil {
 			t.Fatal(err)

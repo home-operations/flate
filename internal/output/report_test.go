@@ -16,6 +16,7 @@ func ks(name string) manifest.NamedResource {
 }
 
 func TestEncoderReport_WarningsSection(t *testing.T) {
+	t.Parallel()
 	hr := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "default", Name: "app"}
 	warns := []manifest.Warning{
 		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
@@ -41,6 +42,7 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 }
 
 func TestEncoderReport_WarningCount(t *testing.T) {
+	t.Parallel()
 	warns := []manifest.Warning{{Category: manifest.WarnPathConfig, Message: "same root", Count: 4}}
 	var b bytes.Buffer
 	_ = (Encoder{Writer: &b}).Report(Model{Warnings: warns})
@@ -50,6 +52,7 @@ func TestEncoderReport_WarningCount(t *testing.T) {
 }
 
 func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
+	t.Parallel()
 	m := Model{
 		Primary: []Primary{{ID: ks("root"), Msg: " may not add resource with an already registered id: X \n\t\n" +
 			"duplicate resource(s) produced by multiple accumulated paths:\n  - ./one\n  - ./two ", Blocks: []manifest.NamedResource{ks("leaf"), ks("mid")}}},
@@ -58,6 +61,7 @@ func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 	}
 	for _, color := range []bool{false, true} {
 		t.Run(fmt.Sprint(color), func(t *testing.T) {
+			t.Parallel()
 			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization.kustomize.toolkit.fluxcd.io", color) + "  flux-system/root  may not add resource with an already registered id: X\n" +
 				"         duplicate resource(s) produced by multiple accumulated paths:\n         - ./one\n         - ./two" +
 				"\n         " + Dim("blocks flux-system/leaf, flux-system/mid", color) +
@@ -76,6 +80,7 @@ func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 }
 
 func TestSummarize_KindOnCollision(t *testing.T) {
+	t.Parallel()
 	hr := func(namespace, name string) manifest.NamedResource {
 		return manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: namespace, Name: name}
 	}
@@ -91,6 +96,7 @@ func TestSummarize_KindOnCollision(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := summarize(tc.ids); got != tc.want {
 				t.Errorf("summarize = %q, want %q", got, tc.want)
 			}
@@ -99,6 +105,7 @@ func TestSummarize_KindOnCollision(t *testing.T) {
 }
 
 func TestDocument(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		blocks []string
@@ -112,6 +119,7 @@ func TestDocument(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := Document(tc.blocks...); got != tc.want {
 				t.Errorf("Document(%q) = %q, want %q", tc.blocks, got, tc.want)
 			}
@@ -120,6 +128,7 @@ func TestDocument(t *testing.T) {
 }
 
 func TestVerdict(t *testing.T) {
+	t.Parallel()
 	pass := func(s string, _ bool) string { return s }
 	c := func(n int, label string) Count { return Count{N: n, Label: label, Paint: pass} }
 
@@ -142,6 +151,7 @@ func TestVerdict(t *testing.T) {
 }
 
 func TestEncoderErrors_NonResourceDiagnostics(t *testing.T) {
+	t.Parallel()
 	closeErr := errors.New("cache close failed")
 	for _, tc := range []struct {
 		name string
@@ -153,6 +163,7 @@ func TestEncoderErrors_NonResourceDiagnostics(t *testing.T) {
 		{name: "joined", err: errors.Join(closeErr, errors.New("cancelled")), want: "flate error: cache close failed\ncancelled\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b}).Errors(tc.err); err != nil {
 				t.Fatal(err)

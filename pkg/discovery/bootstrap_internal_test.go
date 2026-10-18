@@ -51,6 +51,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 	}
 	for _, scenario := range []string{"supplied", "preseeded", "disk"} {
 		t.Run("input precedence/"+scenario, func(t *testing.T) {
+			t.Parallel()
 			root := filepath.Join(t.TempDir(), ".flate-base", "missing")
 			seedRoot := filepath.Join(t.TempDir(), "preseeded")
 			st := store.New()

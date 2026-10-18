@@ -143,6 +143,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 }
 
 func TestController_FetchErrorMarksFailed(t *testing.T) {
+	t.Parallel()
 	f := &fakeFetcher{err: errors.New("boom")}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 
@@ -162,8 +163,10 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 }
 
 func TestController_ShortCircuitsToReady(t *testing.T) {
+	t.Parallel()
 	for _, suspended := range []bool{false, true} {
 		t.Run(fmt.Sprintf("suspend=%t", suspended), func(t *testing.T) {
+			t.Parallel()
 			objects := []manifest.BaseManifest{
 				&manifest.GitRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/repo.git", Suspend: suspended},
 				&manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/charts", Suspend: suspended},
@@ -188,6 +191,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			ts.BlockTillDone()
 			for _, obj := range objects {
 				t.Run(obj.Named().Kind, func(t *testing.T) {
+					t.Parallel()
 					info, _ := st.GetStatus(obj.Named())
 					message, calls := "", 1
 					if suspended {
@@ -203,6 +207,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 	}
 
 	t.Run("unchanged", func(t *testing.T) {
+		t.Parallel()
 		st := store.New()
 		tasks := task.NewBounded(2)
 		c := New(st, tasks)
@@ -227,6 +232,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 }
 
 func TestController_UnregisteredKindIgnored(t *testing.T) {
+	t.Parallel()
 	// Register an OCIRepository fetcher so the controller is alive but has no
 	// entry for KindGitRepository. Under the dag scheduler the source controller
 	// only exposes ReconcileNode for registered kinds (Owns), so the
@@ -263,6 +269,7 @@ func TestController_UnregisteredKindIgnored(t *testing.T) {
 // parses to a RawObject, so the kind's Fetcher would reject it with
 // "unexpected payload". Owns keeps the scheduler from ever dispatching it.
 func TestController_OwnsExcludesForeignKind(t *testing.T) {
+	t.Parallel()
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindBucket}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindBucket: f})
 
@@ -305,6 +312,7 @@ func TestController_OwnsExcludesForeignKind(t *testing.T) {
 }
 
 func TestController_MissingSecretWaitsForRender(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		allowMissing bool
@@ -314,6 +322,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ca", "not found")}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
@@ -345,6 +354,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 }
 
 func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name         string
 		present      bool
@@ -366,6 +376,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 		{name: "missing auth no producer", secret: "ghcr-creds"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			secret := &manifest.Secret{Name: tt.secret, Namespace: "ns"}
 			detail := "not found"
 			if tt.present {
@@ -455,6 +466,7 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retr
 }
 
 func TestController_MissingSecretRegistryFallback(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		rendered     bool
@@ -465,6 +477,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			f := &fallbackFetcher{}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
@@ -503,6 +516,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 }
 
 func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
+	t.Parallel()
 	f := &fallbackFetcher{}
 	producers := &manifest.ProducerIndex{}
 	producers.Record(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
@@ -524,6 +538,7 @@ func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 }
 
 func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T) {
+	t.Parallel()
 	f := &fallbackFetcher{fallbackErr: fmt.Errorf("%w: registry authentication failed", manifest.ErrInput)}
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{AllowMissingSecrets: true})
@@ -552,6 +567,7 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 // Pending at a transient pool drain and drop the release. The source must
 // stay Ready across a no-op re-run.
 func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
+	t.Parallel()
 	c, st := newController(t, map[string]src.Fetcher{
 		manifest.KindHelmRepository: src.ExistenceFetcher{},
 	})

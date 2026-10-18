@@ -32,10 +32,12 @@ import (
 )
 
 func TestRun_PinnedArtifactDiscovery(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		revealed, broad bool
 	}{{}, {revealed: true}, {broad: true}, {revealed: true, broad: true}} {
 		t.Run(fmt.Sprintf("followed_source_%t_broad_%t", tc.revealed, tc.broad), func(t *testing.T) {
+			t.Parallel()
 			root := discoveryRefFixture(t)
 			repo, err := git.PlainOpen(root)
 			if err != nil {
@@ -332,6 +334,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 }
 
 func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, kind, url string
 		local, late     bool
@@ -344,6 +347,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 		{name: "late-external-oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster", late: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := discoveryRefFixture(t)
 			st := store.New()
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "flux-system", Name: "cluster"}
@@ -426,8 +430,10 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 }
 
 func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
+	t.Parallel()
 	for _, pinned := range []bool{false, true} {
 		t.Run(fmt.Sprintf("shared_view_pinned_%t", pinned), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
 			bootstrap := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
@@ -479,6 +485,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	}
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
 		t.Run("frozen_generation/"+kind, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
 			bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{
@@ -538,6 +545,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		t.Fatalf("canonical bootstrap or authored object changed: %+v", artifact)
 	}
 	t.Run("mutable alias refresh", func(t *testing.T) {
+		t.Parallel()
 		testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
 		testutil.WriteFile(t, root, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: main\n")
 		testutil.WriteFile(t, root, "excluded/file", "hidden")
@@ -600,6 +608,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	})
 
 	t.Run("OCI subtrees", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		st := store.New()
 		input := fstest.MapFS{

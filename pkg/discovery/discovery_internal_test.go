@@ -17,6 +17,7 @@ import (
 )
 
 func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		resolved bool
@@ -25,6 +26,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 		{name: "referenced"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
 			repository := &manifest.GitRepository{
@@ -94,7 +96,9 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 }
 
 func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
+	t.Parallel()
 	t.Run("mounted symlink", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "host/kustomization.yaml", "resources: []\n")
 		if err := os.Symlink(filepath.Join(root, "host"), filepath.Join(root, "apps")); err != nil {
@@ -124,6 +128,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 	for _, backing := range []string{"disk", "memory"} {
 		for _, scenario := range []string{"missing-directory", "file", "missing-ignore"} {
 			t.Run(backing+"/"+scenario, func(t *testing.T) {
+				t.Parallel()
 				root := t.TempDir()
 				st := store.New()
 				d := discoverer{cfg: Config{Store: st}, loader: loader.New(st)}

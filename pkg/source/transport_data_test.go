@@ -8,6 +8,7 @@ import (
 )
 
 func TestResolveTransport_UnavailableMaterial(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		data    map[string]any
@@ -26,6 +27,7 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 		{"wiped proxy password", map[string]any{"address": "http://proxy", "password": "..PLACEHOLDER_password.."}, false, true, "flux error: missing secret: OCIRepository ns/repo: secret ns/creds proxy material unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var lookup [2]string
 			calls := 0
 			getter := func(ns, name string) *manifest.Secret {

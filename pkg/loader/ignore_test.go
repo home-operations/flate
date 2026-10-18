@@ -16,6 +16,7 @@ import (
 )
 
 func TestLoadIgnore_Patterns(t *testing.T) {
+	t.Parallel()
 	type match struct {
 		rel         string
 		isDir, want bool
@@ -52,6 +53,7 @@ func TestLoadIgnore_Patterns(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			if tc.text != "" {
 				testutil.WriteFile(t, root, ".krmignore", tc.text)
@@ -62,6 +64,7 @@ func TestLoadIgnore_Patterns(t *testing.T) {
 			}
 			for _, check := range tc.checks {
 				t.Run(check.rel+"/"+fmt.Sprint(check.isDir), func(t *testing.T) {
+					t.Parallel()
 					abs := filepath.Join(root, filepath.FromSlash(check.rel))
 					if got := ig.matches(abs, root, check.isDir); got != check.want {
 						t.Errorf("matches(%q, isDir=%t) = %t, want %t", check.rel, check.isDir, got, check.want)
@@ -73,6 +76,7 @@ func TestLoadIgnore_Patterns(t *testing.T) {
 }
 
 func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		patterns string
@@ -82,6 +86,7 @@ func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
 		{name: "nil matcher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			if tc.patterns != "" {
 				testutil.WriteFile(t, root, ".krmignore", tc.patterns)
@@ -123,6 +128,7 @@ func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
 }
 
 func TestLoader_KrmignoreEnvironmentAllowlist(t *testing.T) {
+	t.Parallel()
 	appID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	commonID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "common-settings"}
 
@@ -168,6 +174,7 @@ data: {env: `+env+`}
 	}
 
 	t.Run("no filtering: staging shadows production", func(t *testing.T) {
+		t.Parallel()
 		s := writeTree(t, "")
 		if got := envOf(t, s); got != "staging" {
 			t.Errorf("unfiltered walk: app-config env = %q, want %q (alphabetically-last env wins)", got, "staging")
@@ -175,6 +182,7 @@ data: {env: `+env+`}
 	})
 
 	t.Run("issue #816 allowlist patterns select production", func(t *testing.T) {
+		t.Parallel()
 		s := writeTree(t, `/*
 !/common/**/*.yaml
 !/environments/production/**/*.yaml
@@ -188,6 +196,7 @@ data: {env: `+env+`}
 	})
 
 	t.Run("directory exclusion selects production", func(t *testing.T) {
+		t.Parallel()
 		s := writeTree(t, "/environments/staging/\n")
 		if got := envOf(t, s); got != "production" {
 			t.Errorf("exclusion walk: app-config env = %q, want %q", got, "production")
@@ -265,6 +274,7 @@ data: {env: `+env+`}
 }
 
 func TestLoader_KrmignoreNormalization(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, rules string
 		wantErr     error
@@ -274,6 +284,7 @@ func TestLoader_KrmignoreNormalization(t *testing.T) {
 		{name: "oversized line", rules: strings.Repeat("x", 65_536) + "\n", wantErr: bufio.ErrTooLong},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, ".krmignore", tc.rules)
 			for _, name := range []string{"secret", "keep"} {
@@ -301,6 +312,7 @@ func TestLoader_KrmignoreNormalization(t *testing.T) {
 		})
 	}
 	t.Run("reader error", func(t *testing.T) {
+		t.Parallel()
 		if _, err := parseIgnore(iotest.ErrReader(fs.ErrPermission), t.TempDir()); !errors.Is(err, fs.ErrPermission) {
 			t.Fatalf("parseIgnore error = %v, want permission error", err)
 		}

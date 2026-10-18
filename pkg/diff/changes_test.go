@@ -28,6 +28,7 @@ func cmDoc(parent Parent, id manifest.NamedResource, dataVal, chart string) Doc 
 // TestChanges_Classification locks added / changed / removed and the
 // drop of byte-identical resources.
 func TestChanges_Classification(t *testing.T) {
+	t.Parallel()
 	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
 	left := []Doc{
 		cmDoc(p, manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
@@ -54,6 +55,7 @@ func TestChanges_Classification(t *testing.T) {
 // stripped attribute (a chart-label bump with identical content) is not
 // reported — the diff stays churn-free.
 func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
+	t.Parallel()
 	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
 	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
@@ -65,6 +67,7 @@ func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 // TestChanges_CapturesChartBeforeStrip locks that OldChart/NewChart read
 // helm.sh/chart from the pre-strip manifest while Old/New are stripped.
 func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
+	t.Parallel()
 	p := Parent{Group: manifest.HelmReleaseDomain, Kind: "HelmRelease", Namespace: "ns", Name: "app"}
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "app-1.0.0")}
 	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "app-2.0.0")}
@@ -89,6 +92,7 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 // render-random Secret value reads as a change by default, but a redaction
 // hook constant-izes it so it no longer does.
 func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
+	t.Parallel()
 	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
 	secret := func(val string) Doc {
 		return Doc{
@@ -123,6 +127,7 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 
 // TestChanges_Sorted locks deterministic ordering by parent then identity.
 func TestChanges_Sorted(t *testing.T) {
+	t.Parallel()
 	pa := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "a"}
 	pb := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "b"}
 	left := []Doc{cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""), cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", "")}
@@ -138,6 +143,7 @@ func TestChanges_Sorted(t *testing.T) {
 }
 
 func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
+	t.Parallel()
 	p := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "ns", Name: "apps"}
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "shadowed", ""), cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "retained", "")}
 	for _, tt := range []struct {
@@ -149,6 +155,7 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 		{name: "retained change", last: "changed", want: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			right := []Doc{cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "changed-shadowed", ""), cmDoc(p, manifest.NamedResource{Name: "shared", Namespace: "ns"}, tt.last, "")}
 			got := Changes(left, right, Options{})
 			if len(got) != tt.want {

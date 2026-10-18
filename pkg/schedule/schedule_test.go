@@ -28,6 +28,7 @@ func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.Dr
 }
 
 func TestEdgeIdx_AddAndDelete(t *testing.T) {
+	t.Parallel()
 	dep, otherDep, first, second := id("dep"), id("other-dep"), id("first"), id("second")
 	for _, tc := range []struct {
 		name string
@@ -60,6 +61,7 @@ func TestEdgeIdx_AddAndDelete(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			e := edgeIdx{}
 			for _, edge := range tc.add {
 				e.add(edge[0], edge[1])
@@ -73,6 +75,7 @@ func TestEdgeIdx_AddAndDelete(t *testing.T) {
 }
 
 func TestScheduler_WakeOrder(t *testing.T) {
+	t.Parallel()
 	ordered := []NodeID{
 		{Kind: manifest.KindHelmRelease, Namespace: "z", Name: "a"},
 		{Group: "example.test", Kind: manifest.KindHelmRelease, Namespace: "z", Name: "a"},
@@ -94,6 +97,7 @@ func TestScheduler_WakeOrder(t *testing.T) {
 			{name: "multiple permuted", order: []NodeID{ordered[2], ordered[0], ordered[5], ordered[3], ordered[1], ordered[4]}, want: ordered},
 		} {
 			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
 				for range 64 {
 					s := New(task.NewBounded(2), nil)
 					dep, otherDep, prefix := id("dependency"), id("other-dependency"), id("queued")
@@ -175,8 +179,10 @@ func TestScheduler_WakeAllocations(t *testing.T) {
 }
 
 func TestScheduler_WakeRunningWaiter(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"parked", "failed"} {
 		t.Run(path, func(t *testing.T) {
+			t.Parallel()
 			s := New(task.NewBounded(2), nil)
 			dep, nid := id("dependency"), id("running")
 			n := &node{id: nid, state: stateRunning}
@@ -207,6 +213,7 @@ func TestScheduler_WakeRunningWaiter(t *testing.T) {
 }
 
 func TestScheduler_FailedWakeStopsAtCap(t *testing.T) {
+	t.Parallel()
 	s := New(task.NewBounded(2), nil)
 	dep, first, second := id("dependency"), id("a"), id("b")
 	for _, nid := range []NodeID{second, first} {
@@ -224,6 +231,7 @@ func TestScheduler_FailedWakeStopsAtCap(t *testing.T) {
 }
 
 func TestScheduler_RunCancellationBoundary(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		seed           bool
@@ -235,6 +243,7 @@ func TestScheduler_RunCancellationBoundary(t *testing.T) {
 		{name: "clean completion", seed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
@@ -384,9 +393,11 @@ func TestScheduler_FailedBlockerSets(t *testing.T) {
 }
 
 func TestScheduler_FailedReplacementPreservesOtherConsumers(t *testing.T) {
+	t.Parallel()
 	for _, fanIn := range []int{2, 32} {
 		for _, position := range []int{0, fanIn - 1} {
 			t.Run(fmt.Sprintf("fanin_%d/position_%d", fanIn, position), func(t *testing.T) {
+				t.Parallel()
 				s := New(task.NewBounded(2), nil)
 				n := &node{id: id("consumer"), state: stateRunning}
 				s.nodes[n.id], s.inFlight = n, 1
@@ -416,6 +427,7 @@ func TestScheduler_FailedReplacementPreservesOtherConsumers(t *testing.T) {
 }
 
 func TestScheduler_FailedBlockerWidthChanges(t *testing.T) {
+	t.Parallel()
 	s := New(task.NewBounded(2), nil)
 	n := &node{id: id("consumer")}
 	s.nodes[n.id] = n
@@ -692,6 +704,7 @@ func assertFailed(t *testing.T, f *fakeDisp, name string) {
 }
 
 func TestLinearChainReadyPropagation(t *testing.T) {
+	t.Parallel()
 	// a -> b -> c (c is a ready leaf).
 	f := newFake(map[NodeID][]NodeID{
 		id("a"): {id("b")},
@@ -708,6 +721,7 @@ func TestLinearChainReadyPropagation(t *testing.T) {
 }
 
 func TestDiamondReadyPropagation(t *testing.T) {
+	t.Parallel()
 	// d -> {b, c}; b -> a; c -> a; a ready leaf.
 	f := newFake(map[NodeID][]NodeID{
 		id("d"): {id("b"), id("c")},
@@ -722,6 +736,7 @@ func TestDiamondReadyPropagation(t *testing.T) {
 }
 
 func TestDanglingChainCascadeFails(t *testing.T) {
+	t.Parallel()
 	// a -> b -> (absent X). Both must fail; the leaf's "dependency not found"
 	// cascades up. manifest.DrainCascade suffices (no manifest.DrainForce needed for a chain).
 	f := newFake(map[NodeID][]NodeID{
@@ -737,6 +752,7 @@ func TestDanglingChainCascadeFails(t *testing.T) {
 }
 
 func TestParkThenArrivalWake(t *testing.T) {
+	t.Parallel()
 	// a -> x, but x is NOT seeded; it must arrive via OnArrival (render
 	// discovery) and wake the parked a. A gated "keepalive" node holds the pool
 	// non-idle so the scheduler cannot reach the fixpoint and drain a before x
@@ -798,6 +814,7 @@ func waitUntil(t *testing.T, cond func() bool) {
 }
 
 func TestLostWakeupRecheck(t *testing.T) {
+	t.Parallel()
 	// Force the race: a's Dispatch returns OutcomeBlocked on b only AFTER b has
 	// already terminalized. complete(a)'s scheduler-state re-check must see b
 	// terminal and re-queue a (not park it on an already-fired wake). a must
@@ -827,6 +844,7 @@ func TestLostWakeupRecheck(t *testing.T) {
 }
 
 func TestTransitiveBlockCompareOrderCascades(t *testing.T) {
+	t.Parallel()
 	// Names chosen so the CONSUMER sorts before its blocker in requeue order
 	// ("a-top" < "z-leaf"), forcing the draining sweep to re-run the consumer
 	// first; the complete() wake must still cascade the leaf's failure upward.
@@ -840,6 +858,7 @@ func TestTransitiveBlockCompareOrderCascades(t *testing.T) {
 }
 
 func TestCrossKindCycleForceDrains(t *testing.T) {
+	t.Parallel()
 	// a <-> b mutual dependency (no same-kind preflight here): manifest.DrainCascade
 	// cannot break it (each sees the other present-Pending and re-parks), so
 	// the scheduler must escalate to manifest.DrainForce and fail both.
@@ -856,6 +875,7 @@ func TestCrossKindCycleForceDrains(t *testing.T) {
 }
 
 func TestDrainRerunReexpandsOnArrival(t *testing.T) {
+	t.Parallel()
 	// A rerun node (a selector ResourceSet) terminalizes immediately, then a
 	// later arrival dirties the store. At the structural fixpoint the node must
 	// re-run once — re-expanding against the now-complete store — even though it
@@ -890,6 +910,7 @@ func TestDrainRerunReexpandsOnArrival(t *testing.T) {
 }
 
 func TestDrainRerunTerminatesWithoutArrival(t *testing.T) {
+	t.Parallel()
 	// With no arrival after its run, a rerun node converges: the store is never
 	// re-dirtied, so the fixpoint does NOT re-run it. This is the termination
 	// bound — a sweep requires a fresh arrival.
@@ -903,6 +924,7 @@ func TestDrainRerunTerminatesWithoutArrival(t *testing.T) {
 }
 
 func TestDanglingChainRunCountBounded(t *testing.T) {
+	t.Parallel()
 	// A depth-5 dangling chain must terminalize with a bounded number of
 	// re-runs per node (no exponential blowup / no infinite re-park loop).
 	g := map[NodeID][]NodeID{}

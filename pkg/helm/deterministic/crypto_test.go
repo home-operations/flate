@@ -10,6 +10,7 @@ import (
 )
 
 func TestCryptoFuncs_ShapeAndInputs(t *testing.T) {
+	t.Parallel()
 	seed := SeedFor("rel", "ns")
 	fm := Funcs(seed)
 	hash := fm["bcrypt"].(func(string) string)("password")

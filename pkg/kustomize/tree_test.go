@@ -26,6 +26,7 @@ import (
 // TestTreeCache_SetGitBaseFetcher confirms the one remaining injected seam wires
 // through (pkg/kustomize cannot import pkg/source/git — import cycle).
 func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
+	t.Parallel()
 	c := newTestTreeCache(t, "")
 	called := false
 	c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, cache.RetryConfig) (*store.SourceArtifact, error) {
@@ -63,9 +64,11 @@ func newTestTreeCache(tb testing.TB, root string) *TreeCache {
 }
 
 func TestTreeCache_Close(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, stage := range []string{"unused", "idle", "published", "admitted-before-launch", "retired"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, stage), func(t *testing.T) {
+				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					c := newTestTreeCache(t, "")
 					c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
@@ -266,8 +269,10 @@ func TestTreeCache_CloseDoesNotLeak(t *testing.T) {
 }
 
 func TestTreeCache_CloseAdmissionRace(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			t.Parallel()
 			owner := newTestCache(t, "")
 			for range 40 {
 				c := NewTreeCache(owner, nil)

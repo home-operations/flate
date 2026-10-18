@@ -27,6 +27,7 @@ import (
 )
 
 func TestIsGitRemoteBase(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		url     string
@@ -79,6 +80,7 @@ func TestIsGitRemoteBase(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			spec, ok := isGitRemoteBase(tc.url)
 			if ok != tc.ok {
 				t.Fatalf("isGitRemoteBase(%q) ok = %v, want %v (spec %+v)", tc.url, ok, tc.ok, spec)
@@ -137,6 +139,7 @@ func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.
 }
 
 func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
+	t.Parallel()
 	worktree := fakeWorktree(t, map[string]string{
 		"kustomization.yaml":               "resources:\n  - ./cm.yaml\n",
 		"cm.yaml":                          "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
@@ -180,6 +183,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 // a git-base URL must take the clone path, never an HTTP GET that returns
 // the host's HTML page and gets written as malformed YAML.
 func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -214,6 +218,7 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 // proves the whole repo is materialized: a subPath kustomization's in-repo
 // ../ reference still resolves (copy-only-subPath would break this).
 func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
+	t.Parallel()
 	worktree := fakeWorktree(t, map[string]string{
 		"apps/foo/kustomization.yaml":        "resources:\n  - ../../shared\n",
 		"shared/kustomization.yaml":          "resources:\n  - ./cm.yaml\n",
@@ -247,6 +252,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 // a SOURCE kustomization never mutates the on-disk source tree (the in-memory
 // render writes everything to a private fs).
 func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
+	t.Parallel()
 	worktree := fakeWorktree(t, map[string]string{
 		"kustomization.yaml": "resources:\n  - ./cm.yaml\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
@@ -282,6 +288,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 // TestPreflightGitBase_NilFetcherErrors: with no GitBaseFetcher wired, a git
 // base surfaces a clear error rather than silently HTTP-GETting the URL.
 func TestPreflightGitBase_NilFetcherErrors(t *testing.T) {
+	t.Parallel()
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://github.com/o/r?ref=v1\n"})
 	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
 	if err == nil {
@@ -344,6 +351,7 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 // must not have that host content copied into the render fs. Legit base files
 // are still materialized; only the escaping symlink is dropped.
 func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
+	t.Parallel()
 	// A host file OUTSIDE the base root, shaped as a valid manifest so an
 	// unfixed copy would surface it straight into the rendered diff.
 	outside := t.TempDir()
@@ -396,6 +404,7 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 }
 
 func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
+	t.Parallel()
 	const parentURL = "https://example.invalid/o/parent.git"
 	const childURL = "https://example.invalid/o/child.git"
 	for _, fixture := range []struct {
@@ -422,6 +431,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
 			parent := fakeWorktree(t, map[string]string{
 				"kustomization.yaml":         fixture.kustomization,
 				"package/kustomization.yaml": "resources:\n  - " + childURL + "\n",

@@ -34,9 +34,11 @@ import (
 )
 
 func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
+	t.Parallel()
 	for _, archive := range []bool{false, true} {
 		for _, pinned := range []bool{false, true} {
 			t.Run(fmt.Sprintf("archive_%t/pinned_%t", archive, pinned), func(t *testing.T) {
+				t.Parallel()
 				const callers = 16
 				root := t.TempDir()
 				testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 1.0.0\n")
@@ -155,6 +157,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 }
 
 func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
+	t.Parallel()
 	input := fstest.MapFS{
 		"Chart.yaml":                     {Data: []byte("apiVersion: v2\nname: parent\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 1.0.0\n  condition: child.enabled\n")},
 		"values.yaml":                    {Data: []byte("child:\n  enabled: true\n  value: canonical\n")},
@@ -212,6 +215,7 @@ func (b *chartBacking) Open(name string) (billy.File, error) {
 }
 
 func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	for _, dir := range []string{".", "one", "two"} {
 		testutil.WriteFile(t, root, dir+"/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
@@ -300,6 +304,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		{"Bucket archive", manifest.KindBucket, "archive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			cacheRoot := t.TempDir()
 			owner := newTestCache(t, cacheRoot)
 			cli, err := NewClient(owner)

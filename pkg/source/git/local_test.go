@@ -26,6 +26,7 @@ import (
 )
 
 func TestResolveLocal_References(t *testing.T) {
+	t.Parallel()
 	root, repo, a, b := localFixture(t)
 	for name, hash := range map[string]plumbing.Hash{
 		"refs/heads/pinned": a, "refs/remotes/origin/pinned": b,
@@ -73,6 +74,7 @@ func TestResolveLocal_References(t *testing.T) {
 		{"missing-commit-branch", manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, plumbing.ZeroHash, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			repository := localSource(tc.ref)
 
 			artifacts, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
@@ -119,6 +121,7 @@ func TestResolveLocal_References(t *testing.T) {
 	}
 	for _, metadata := range []string{"directory", "gitfile"} {
 		t.Run("metadata "+metadata, func(t *testing.T) {
+			t.Parallel()
 			root, _, _, head := localFixture(t)
 			metadataRoot := filepath.Join(root, ".git")
 			if metadata == "gitfile" {
@@ -163,6 +166,7 @@ func TestResolveLocal_References(t *testing.T) {
 }
 
 func TestValidateCommitBranch_UnavailableCommit(t *testing.T) {
+	t.Parallel()
 	_, repo, _, _ := localFixture(t)
 	missing := plumbing.NewHash(strings.Repeat("f", 40))
 	if err := validateCommitBranch(repo, missing, "master"); !errors.Is(err, errRefUnavailable) {
@@ -171,6 +175,7 @@ func TestValidateCommitBranch_UnavailableCommit(t *testing.T) {
 }
 
 func TestResolveLocal_IncompleteHistory(t *testing.T) {
+	t.Parallel()
 	root, repo, a, b := localFixture(t)
 	commit, err := repo.CommitObject(b)
 	if err != nil {
@@ -199,10 +204,12 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 }
 
 func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
+	t.Parallel()
 	for _, ref := range []manifest.GitRepositoryRef{
 		{Commit: "abc"}, {Name: "bad name"}, {Tag: "bad tag"}, {Branch: "bad branch"}, {SemVer: "invalid"},
 	} {
 		t.Run(manifest.GitRefString(ref), func(t *testing.T) {
+			t.Parallel()
 			if _, err := ResolveLocal(t.Context(), localLocation(t, t.TempDir()), []*manifest.GitRepository{localSource(ref)}, ""); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected invalid spec, got %v", err)
 			}
@@ -227,12 +234,14 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 }
 
 func TestResolveLocal_RejectsNilSource(t *testing.T) {
+	t.Parallel()
 	if _, err := ResolveLocal(t.Context(), localLocation(t, t.TempDir()), []*manifest.GitRepository{nil}, ""); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("nil source = %v", err)
 	}
 }
 
 func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
+	t.Parallel()
 	root, repo, a, b := localFixture(t)
 
 	first := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
@@ -271,6 +280,7 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 }
 
 func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
+	t.Parallel()
 	root, repo, revision, _ := localFixture(t)
 	if _, err := repo.CreateTag("v1.5.0", revision, &git.CreateTagOptions{
 		Tagger: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}, Message: "pin",
@@ -288,8 +298,10 @@ func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 }
 
 func TestResolveSemver_EqualVersionCreationOrder(t *testing.T) {
+	t.Parallel()
 	for _, names := range [][]string{{"v1.0.0", "1.0.0"}, {"1.0.0", "v1.0.0"}} {
 		t.Run(strings.Join(names, "_"), func(t *testing.T) {
+			t.Parallel()
 			_, repo, a, b := localFixture(t)
 			hashes := map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b}
 			var refs []*plumbing.Reference
@@ -323,6 +335,7 @@ func (s *orderedTagStore) IterReferences() (storer.ReferenceIter, error) {
 }
 
 func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
+	t.Parallel()
 	root, _, _, _ := localFixture(t)
 
 	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
@@ -357,8 +370,10 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 }
 
 func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"tag-target", "head", "store", "config", "lookup", "tree", "tree-tag", "recursive-tree-tag"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			root, repo, a, _ := localFixture(t)
 			ref := manifest.GitRepositoryRef{Tag: "v1.0.0"}
 			switch kind {
@@ -431,6 +446,7 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 }
 
 func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
+	t.Parallel()
 	root, repo, a, _ := localFixture(t)
 	inputTree := &object.Tree{Entries: []object.TreeEntry{{Name: "missing", Mode: filemode.Regular, Hash: plumbing.NewHash(strings.Repeat("f", 40))}}}
 	encoded := repo.Storer.NewEncodedObject()
@@ -465,6 +481,7 @@ func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
 }
 
 func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
+	t.Parallel()
 	root, repo, a, b := localFixture(t)
 	for name, hash := range map[string]plumbing.Hash{"refs/heads/pinned": a, "refs/remotes/origin/pinned": b} {
 		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(name), hash)); err != nil {
@@ -488,6 +505,7 @@ func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
 }
 
 func TestResolveSemver_IgnoresUnusableLowerTag(t *testing.T) {
+	t.Parallel()
 	_, repo, a, b := localFixture(t)
 	commit, err := repo.CommitObject(a)
 	if err != nil {
@@ -503,6 +521,7 @@ func TestResolveSemver_IgnoresUnusableLowerTag(t *testing.T) {
 }
 
 func TestResolveSemver_DeterministicTiesAndReadErrors(t *testing.T) {
+	t.Parallel()
 	_, repo, a, b := localFixture(t)
 	for name, hash := range map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b} {
 		if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(name), hash)); err != nil {

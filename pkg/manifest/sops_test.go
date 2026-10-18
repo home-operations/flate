@@ -6,6 +6,7 @@ import (
 )
 
 func TestIsEncryptedSecret(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		doc  map[string]any
@@ -59,6 +60,7 @@ func TestIsEncryptedSecret(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsEncryptedSecret(tc.doc); got != tc.want {
 				t.Errorf("IsEncryptedSecret = %v, want %v", got, tc.want)
 			}
@@ -67,6 +69,7 @@ func TestIsEncryptedSecret(t *testing.T) {
 }
 
 func TestWipeValue_Ciphertext(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -83,6 +86,7 @@ func TestWipeValue_Ciphertext(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := WipeValue("key", tc.in, nil, false) != tc.in; got != tc.want {
 				t.Errorf("WipeValue(%q) = %v, want %v", tc.in, got, tc.want)
 			}
@@ -91,6 +95,7 @@ func TestWipeValue_Ciphertext(t *testing.T) {
 }
 
 func TestHasSubstituteDisabled(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		doc  map[string]any
@@ -144,6 +149,7 @@ func TestHasSubstituteDisabled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := HasSubstituteDisabled(tc.doc); got != tc.want {
 				t.Errorf("HasSubstituteDisabled = %v, want %v", got, tc.want)
 			}

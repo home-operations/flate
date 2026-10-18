@@ -17,6 +17,7 @@ import (
 )
 
 func TestFinalizeIndex_ParentSegments(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, path, base      string
 		link, mounted, pinned bool
@@ -31,6 +32,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 		{name: "committed parent segments", path: "./apps/../base", base: "base", mounted: true, pinned: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for _, dir := range []string{"apps/base", "deep/inner"} {
 				if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
@@ -109,6 +111,7 @@ func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest
 }
 
 func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		group, kind string
 		parent      bool
@@ -128,6 +131,7 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 	} {
 		group, kind, eligible := tc.group, tc.kind, tc.parent
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			s := store.New()
 			outer := &manifest.Kustomization{Name: "outer", Namespace: "flux-system", Path: "./apps"}
 			inner := &manifest.Kustomization{Name: "inner", Namespace: "flux-system", Path: "./apps/team"}
@@ -150,6 +154,7 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 			parents := parentsForTest(t, loaderFixture(s, files), "", kind)
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
 					id := manifest.NamedResource{Group: group, Kind: kind, Namespace: tc.namespace, Name: tc.name}
 					want := tc.want
 					if !eligible {
@@ -182,6 +187,7 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 // skip cascades. A bootstrap-sourced KS and an aliased (working-tree) source
 // keep their claims.
 func TestClaims_DropsExternalSourced(t *testing.T) {
+	t.Parallel()
 	repoRoot := "/repo" // no on-disk component reads will resolve; that's fine
 	s := store.New()
 
@@ -233,6 +239,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 }
 
 func TestSourceView_LocalRoot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		kind, group string
 		external    bool
@@ -245,6 +252,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 		{manifest.KindGitRepository, "wrong.group", false},
 	} {
 		t.Run("absent/"+tc.group+"/"+tc.kind, func(t *testing.T) {
+			t.Parallel()
 			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "entry"}}
 			root, pinned, external := SourceView(store.New(), ks, "/repo")
 			if root != "/repo" || pinned || external != tc.external {
@@ -263,6 +271,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 		{name: "unavailable-source", repoRoot: "/repo", localRoot: "/repo", external: true, unavailable: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			repo := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 			ks := &manifest.Kustomization{
@@ -287,6 +296,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 }
 
 func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
+	t.Parallel()
 	// cluster-apps is the root with spec.path=./kubernetes/apps/main.
 	// karma lives at apps/main/observability/karma.yaml — under
 	// cluster-apps's spec.path — so cluster-apps is its parent. karma's
@@ -321,6 +331,7 @@ func TestBuildParentIndex_CrossTreeBasePattern(t *testing.T) {
 }
 
 func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
+	t.Parallel()
 	// Outer spec.path is a strict prefix of inner spec.path; both
 	// contain the grandchild's source file. The inner KS should win as
 	// the structural parent.
@@ -360,6 +371,7 @@ func TestBuildParentIndex_DeepestPrefixWins(t *testing.T) {
 }
 
 func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
+	t.Parallel()
 	// A KS whose own source file lives under its spec.path must NOT
 	// match itself as parent. Edge case for in-place trees.
 	s := store.New()
@@ -379,6 +391,7 @@ func TestBuildParentIndex_NoSelfMatch(t *testing.T) {
 }
 
 func TestBuildParentIndex_PeersSharingSamePathHaveNoParent(t *testing.T) {
+	t.Parallel()
 	// Two Kustomizations defined in the same file and pointing at the
 	// SAME spec.path (a dual git-source redundancy pattern) are peers,
 	// not parent/child — neither renders the other. A mutual parent edge
@@ -411,6 +424,7 @@ func TestBuildParentIndex_PeersSharingSamePathHaveNoParent(t *testing.T) {
 }
 
 func TestBuildParentIndex_RendererOfDefinitionFileStillParents(t *testing.T) {
+	t.Parallel()
 	// A KS whose definition file lives under another KS's spec.path — but
 	// whose OWN spec.path is a different directory — must still be
 	// attributed to that renderer. The peer-exclusion keys on the child's
@@ -441,6 +455,7 @@ func TestBuildParentIndex_RendererOfDefinitionFileStillParents(t *testing.T) {
 }
 
 func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
+	t.Parallel()
 	// A KS without a recorded source file (e.g. lifted purely from a
 	// parent's render output, no annotation propagated to the orchestrator)
 	// has no detectable file — skip rather than blow up.
@@ -473,6 +488,7 @@ func TestBuildParentIndex_NoSourceFileSkipped(t *testing.T) {
 // (most-specific) structural parent. Both BuildParentIndex and the
 // orchestrator's detectOrphans rely on this for correctness.
 func TestClaims_SortsLongestFirst(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	root := &manifest.Kustomization{
 		Name: "root", Namespace: "flux-system",
@@ -501,6 +517,7 @@ func TestClaims_SortsLongestFirst(t *testing.T) {
 }
 
 func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	with := &manifest.Kustomization{
 		Name: "with", Namespace: "flux-system",
@@ -523,6 +540,7 @@ func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 }
 
 func TestClaims_EmptyExternalPath(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
 	external := &manifest.Kustomization{
@@ -547,6 +565,7 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 // definition file lives at the same prefix it renders) must not be
 // returned as its own parent.
 func TestStrictParent_SkipsSelf(t *testing.T) {
+	t.Parallel()
 	prefixes := []manifest.KSClaim{
 		{ID: manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "self"}, Prefix: "apps/team-a/"},
 	}
@@ -564,6 +583,7 @@ func TestStrictParent_SkipsSelf(t *testing.T) {
 // change-mode index's already-correct attribution diverges — exactly
 // the false-positive the audit's 9.1 finding called out.
 func TestClaims_IncludesSpecComponents(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	parent := &manifest.Kustomization{
 		Name: "parent", Namespace: "flux-system",
@@ -611,6 +631,7 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 // the descending-length sort in Claims enables. Pins the
 // integration of the two helpers.
 func TestStrictParent_DeepestMatchWins(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	root := &manifest.Kustomization{
 		Name: "root", Namespace: "flux-system",
@@ -638,6 +659,7 @@ func TestStrictParent_DeepestMatchWins(t *testing.T) {
 // under that directory. Before the fix its claim prefix kept the slash, so no
 // repo-relative source file ever matched and every child was orphaned.
 func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	ks := &manifest.Kustomization{
 		Name: "flux-instance", Namespace: "flux-system",

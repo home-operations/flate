@@ -80,6 +80,7 @@ func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifes
 }
 
 func TestFinalizeIndex_DataOwners(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace, kind string
 		owners                bool
@@ -93,6 +94,7 @@ func TestFinalizeIndex_DataOwners(t *testing.T) {
 		{"non-data identity", "apps", manifest.KindHelmRelease, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "raw/kustomization.yaml", "namespace: raw\nresources: [input.yaml]\n")
 			testutil.WriteFile(t, root, "overlay/kustomization.yaml", "namespace: apps\nresources: [../raw]\n")

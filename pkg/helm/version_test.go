@@ -8,6 +8,7 @@ import (
 )
 
 func TestBundledKubeVersion_MatchesDependency(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("../../go.mod")
 	if err != nil {
 		t.Fatal(err)

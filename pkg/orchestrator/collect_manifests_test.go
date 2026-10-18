@@ -14,6 +14,7 @@ import (
 // HelmRelease keeps its children, and a FAILED Kustomization's artifact is
 // untouched — the gate is HelmRelease-scoped.
 func TestCollectManifests_FailedHelmReleaseEmitsNothing(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 
 	ready := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "app", Name: "ready"}

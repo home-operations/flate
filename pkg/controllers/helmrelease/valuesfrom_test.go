@@ -12,6 +12,7 @@ import (
 )
 
 func TestController_OmittedValuesAfterWait(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name         string
 		waitValues   bool
@@ -29,6 +30,7 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback", wantWarnings: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 			testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
@@ -104,6 +106,7 @@ data:
 }
 
 func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
+	t.Parallel()
 	c, s := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)

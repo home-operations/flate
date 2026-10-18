@@ -14,6 +14,7 @@ import (
 )
 
 func TestOrchestratorExistence_PromotionDoesNotAdmitControllerSiblings(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -69,6 +70,7 @@ spec: {}
 }
 
 func TestOrchestratorExistence_PromotionPreservesSelectedContent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -138,6 +140,7 @@ spec: {url: https://example.test/excluded.git}
 }
 
 func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, recorded, requested string
 		raw, want                 bool
@@ -150,6 +153,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 		{"bare generated object", "", "apps", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			idx := loader.New(store.New())
 			id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: tc.recorded, Name: "target"}
 			if tc.raw {

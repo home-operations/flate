@@ -49,6 +49,7 @@ func fixture(tb testing.TB) *tree.Tree {
 }
 
 func TestTree_FSContract(t *testing.T) {
+	t.Parallel()
 	tr := fixture(t)
 	must(t, fstest.TestFS(tr, "empty", "dir/a +@日本.yaml", "dir/z.yaml", "alias"))
 	info, err := tr.Stat("dir/z.yaml")
@@ -75,6 +76,7 @@ func TestTree_PlainPathsDoNotAllocateMetadata(t *testing.T) {
 }
 
 func TestTree_OpenIndependentHandles(t *testing.T) {
+	t.Parallel()
 	tr := fixture(t)
 	a, err := tr.Open("alias")
 	must(t, err)
@@ -103,6 +105,7 @@ func TestTree_OpenIndependentHandles(t *testing.T) {
 }
 
 func TestTree_DirectoryHandle(t *testing.T) {
+	t.Parallel()
 	tr := fixture(t)
 	f, err := tr.Open("dir")
 	must(t, err)
@@ -129,6 +132,7 @@ func TestTree_DirectoryHandle(t *testing.T) {
 }
 
 func TestTree_MethodErrors(t *testing.T) {
+	t.Parallel()
 	tr := fixture(t)
 	methods := []struct {
 		name string
@@ -149,8 +153,10 @@ func TestTree_MethodErrors(t *testing.T) {
 	}
 	for _, method := range methods {
 		t.Run(method.name, func(t *testing.T) {
+			t.Parallel()
 			for _, p := range []string{"", "/dir", "../dir", "dir/../empty", "dir//z.yaml", "dir/", "dir/\x00"} {
 				t.Run(fmt.Sprintf("%q", p), func(t *testing.T) {
+					t.Parallel()
 					err := method.call(p)
 					assert.Equal(t, errors.Is(err, fs.ErrInvalid), true)
 					pe, ok := errors.AsType[*fs.PathError](err)
@@ -172,6 +178,7 @@ func TestTree_MethodErrors(t *testing.T) {
 }
 
 func TestTree_SymlinkContract(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "file", "root")
 	absoluteTarget := filepath.ToSlash(filepath.Join(root, "file"))
@@ -222,6 +229,7 @@ func TestTree_SymlinkContract(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			data, err := tr.ReadFile(tc.name)
 			if tc.err == nil {
 				must(t, err)
@@ -267,6 +275,7 @@ func TestTree_SymlinkContract(t *testing.T) {
 }
 
 func TestTree_WalkRawLinkRoot(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("dir/file", []byte("data"), 0o600))
 	must(t, b.AddSymlink("alias", "dir"))
@@ -285,8 +294,10 @@ func TestTree_WalkRawLinkRoot(t *testing.T) {
 }
 
 func TestTree_ConcurrentReaders(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+			t.Parallel()
 			tr := fixture(t)
 			start := make(chan struct{})
 			var wg sync.WaitGroup
@@ -313,8 +324,10 @@ func TestTree_ConcurrentReaders(t *testing.T) {
 }
 
 func TestTree_ReturnedSlicesAreCallerOwned(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+			t.Parallel()
 			tr := fixture(t)
 			start := make(chan struct{})
 			var wg sync.WaitGroup
@@ -356,11 +369,13 @@ func TestTree_ReturnedSlicesAreCallerOwned(t *testing.T) {
 }
 
 func TestTree_ResolveRejectsAbsoluteEmptyAndNUL(t *testing.T) {
+	t.Parallel()
 	tr := fixture(t)
 	for name, want := range map[string]error{
 		"/dir": tree.ErrEscape, "/": tree.ErrEscape, "": fs.ErrInvalid, "dir/\x00": fs.ErrInvalid,
 	} {
 		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			t.Parallel()
 			_, err := tr.Resolve(name)
 			assert.Equal(t, errors.Is(err, want), true)
 		})
@@ -368,6 +383,7 @@ func TestTree_ResolveRejectsAbsoluteEmptyAndNUL(t *testing.T) {
 }
 
 func TestTree_SymlinkToParent(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("file", []byte("root"), 0o600))
 	must(t, b.AddFile("d/sub/leaf", []byte("leaf"), 0o600))
@@ -397,6 +413,7 @@ func TestTree_SymlinkToParent(t *testing.T) {
 }
 
 func TestTree_WalkRawMatchesWalkDirSkips(t *testing.T) {
+	t.Parallel()
 	ref := fstest.MapFS{
 		"a/f1": &fstest.MapFile{Data: []byte("1")}, "a/f2": &fstest.MapFile{Data: []byte("2")},
 		"a/f3": &fstest.MapFile{Data: []byte("3")}, "b/g1": &fstest.MapFile{Data: []byte("4")},
@@ -419,6 +436,7 @@ func TestTree_WalkRawMatchesWalkDirSkips(t *testing.T) {
 		"error":           {at: "b/g1", ret: stop},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			walk := func(w func(fs.WalkDirFunc) error) ([]string, error) {
 				var visited []string
 				err := w(func(p string, _ fs.DirEntry, err error) error {
@@ -439,6 +457,7 @@ func TestTree_WalkRawMatchesWalkDirSkips(t *testing.T) {
 }
 
 func TestTree_StatNamesFollowedLinks(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("dir/real.yaml", []byte("x"), 0o644))
 	links := map[string]string{
@@ -456,6 +475,7 @@ func TestTree_StatNamesFollowedLinks(t *testing.T) {
 	tr := build(t, b)
 	for name := range links {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			want, err := fs.Stat(ref, name)
 			must(t, err)
 			assert.Equal(t, want.Name(), path.Base(name))
@@ -486,6 +506,7 @@ func TestTree_StatNamesFollowedLinks(t *testing.T) {
 	}
 	for _, name := range []string{".", "dir", "dir/real.yaml"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			info, err := tr.Stat(name)
 			must(t, err)
 			assert.Equal(t, info.Name(), path.Base(name))

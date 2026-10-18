@@ -10,6 +10,7 @@ import (
 )
 
 func TestKeyMap_SerializesSameKey(t *testing.T) {
+	t.Parallel()
 	m := New[string]()
 	var concurrent atomic.Int32
 	var peak atomic.Int32
@@ -46,7 +47,8 @@ func TestKeyMap_SerializesSameKey(t *testing.T) {
 	}
 }
 
-func TestKeyMap_DistinctKeysRunParallel(_ *testing.T) {
+func TestKeyMap_DistinctKeysRunParallel(t *testing.T) {
+	t.Parallel()
 	m := New[string]()
 	a, _ := m.Acquire(context.Background(), "a")
 	defer a()
@@ -55,6 +57,7 @@ func TestKeyMap_DistinctKeysRunParallel(_ *testing.T) {
 }
 
 func TestKeyMap_CancelledCtxReturnsErr(t *testing.T) {
+	t.Parallel()
 	m := New[string]()
 	release1, _ := m.Acquire(context.Background(), "k")
 	defer release1()
@@ -69,6 +72,7 @@ func TestKeyMap_CancelledCtxReturnsErr(t *testing.T) {
 }
 
 func TestKeyMap_PreCancelledUncontendedReturnsErr(t *testing.T) {
+	t.Parallel()
 	m := New[string]()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -82,6 +86,7 @@ func TestKeyMap_PreCancelledUncontendedReturnsErr(t *testing.T) {
 }
 
 func TestKeyMap_CancelUnblocksWaiter(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		m := New[string]()
 		first, _ := m.Acquire(t.Context(), "k")

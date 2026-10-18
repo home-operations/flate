@@ -52,6 +52,7 @@ func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
 
 func TestRetryable(t *testing.T) {
+	t.Parallel()
 	type retryCase struct {
 		name string
 		err  error
@@ -114,6 +115,7 @@ func TestRetryable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := retryable(tc.err); got != tc.want {
 				t.Errorf("retryable(%v) = %v, want %v", tc.err, got, tc.want)
 			}
@@ -122,6 +124,7 @@ func TestRetryable(t *testing.T) {
 }
 
 func TestBackoff_ExponentialClamped(t *testing.T) {
+	t.Parallel()
 	r := RetryConfig{MinWait: 100 * time.Millisecond, MaxWait: time.Second, Jitter: 0}
 	want := []time.Duration{
 		100 * time.Millisecond, // 2^0
@@ -139,6 +142,7 @@ func TestBackoff_ExponentialClamped(t *testing.T) {
 }
 
 func TestBackoff_JitterWithinBounds(t *testing.T) {
+	t.Parallel()
 	const jitter = 0.2
 	r := RetryConfig{MinWait: 100 * time.Millisecond, MaxWait: time.Hour, Jitter: jitter}
 	for attempt := range 5 {
@@ -275,10 +279,13 @@ func TestAcquire_RetrySequence(t *testing.T) {
 }
 
 func TestAcquire_NestedTerminal(t *testing.T) {
+	t.Parallel()
 	t.Run("due-ceiling", func(t *testing.T) {
+		t.Parallel()
 		for _, callers := range []int{2, 4} {
 			for _, child := range []string{"missing", "due", "fresh"} {
 				t.Run(fmt.Sprintf("%d/%s", callers, child), func(t *testing.T) {
+					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
 						c := newCache(t, t.TempDir())
 						fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, connReset() }
@@ -365,6 +372,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 
 	for _, attempted := range []bool{false, true} {
 		t.Run(fmt.Sprint(attempted), func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, "")
 			cause := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 			terminal := &TerminalError{Err: cause, Attempted: attempted}
@@ -382,6 +390,7 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 	}
 	for _, attempts := range []int{1, 3} {
 		t.Run(fmt.Sprintf("child-%d", attempts), func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, "")
 			outer, inner := 0, 0
 			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
@@ -400,8 +409,10 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 }
 
 func TestAcquire_RetryFreshArchive(t *testing.T) {
+	t.Parallel()
 	for _, disk := range []bool{false, true} {
 		t.Run(fmt.Sprint(disk), func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if disk {
 				root = t.TempDir()
@@ -429,9 +440,11 @@ func TestAcquire_RetryFreshArchive(t *testing.T) {
 }
 
 func TestAcquire_PolicyIsolation(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d/reverse-%t", concurrency, reverse), func(t *testing.T) {
+				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					c := newCache(t, "")
 					started := make(chan struct{})
@@ -503,6 +516,7 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 }
 
 func TestAcquire_BackoffReleasesKey(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		c := newCache(t, "")
 		done := make(chan error, 1)
@@ -532,8 +546,10 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 }
 
 func TestAcquire_RetryCancellation(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				c := newCache(t, "")
 				ctx, cancel := context.WithCancel(t.Context())
@@ -573,6 +589,7 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 }
 
 func TestBackoff_NormalizationAndSaturation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		cfg     RetryConfig
@@ -591,6 +608,7 @@ func TestBackoff_NormalizationAndSaturation(t *testing.T) {
 		{"negative jitter", RetryConfig{Jitter: -1}, 0, 750 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tc.cfg.backoff(tc.attempt); got != tc.want {
 				t.Fatalf("delay=%v, want %v", got, tc.want)
 			}
@@ -605,8 +623,10 @@ func TestBackoff_NormalizationAndSaturation(t *testing.T) {
 }
 
 func TestGit_RetryDiscardsGeneration(t *testing.T) {
+	t.Parallel()
 	for _, disk := range []bool{false, true} {
 		t.Run(fmt.Sprint(disk), func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if disk {
 				root = t.TempDir()
@@ -651,9 +671,11 @@ func TestGit_RetryDiscardsGeneration(t *testing.T) {
 }
 
 func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, backing := range []string{"memory", "disk"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
+				t.Parallel()
 				root := ""
 				if backing == "disk" {
 					root = t.TempDir()
@@ -706,6 +728,7 @@ func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
 }
 
 func TestAcquire_BackoffResets(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		c := newCache(t, "")
 		for range 2 {
@@ -732,9 +755,11 @@ func TestAcquire_BackoffResets(t *testing.T) {
 }
 
 func TestAcquire_CleanupFailureStopsRetry(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, kind := range []string{"blob", "archive", "git"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, kind), func(t *testing.T) {
+				t.Parallel()
 				started, release := make(chan struct{}), make(chan struct{})
 				done := make(chan error, concurrency)
 				calls := make([]int, concurrency)

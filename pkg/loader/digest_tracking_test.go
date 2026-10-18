@@ -56,6 +56,7 @@ func TestDisablesChartDigestTracking_Values(t *testing.T) {
 }
 
 func TestDisablesChartDigestTracking_InputOrder(t *testing.T) {
+	t.Parallel()
 	gate := &manifest.HelmRelease{Values: digestTrackingValues([]any{map[string]any{"patch": "DisableChartDigestTracking=true"}})}
 	releases := []*manifest.HelmRelease{nil, {}, gate, {Values: digestTrackingValues([]any{map[string]any{"patch": "DisableChartDigestTracking=false"}})}}
 	for range 2 {

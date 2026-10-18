@@ -16,6 +16,7 @@ import (
 // non-empty leaves (strings, numbers, bools, partial concatenations) are
 // untouched; the source map is not mutated.
 func TestFillEmptyValueLeaves(t *testing.T) {
+	t.Parallel()
 	in := map[string]any{
 		"timeZone": "",
 		"server":   nil,
@@ -63,6 +64,7 @@ func TestFillEmptyValueLeaves(t *testing.T) {
 // can't bleed into the original or vice versa. Used by Kustomization.
 // Clone and HelmRelease.Clone to isolate reconcile-time mutations.
 func TestDeepCopyMap_Isolation(t *testing.T) {
+	t.Parallel()
 	src := map[string]any{
 		"top": "scalar",
 		"nested": map[string]any{
@@ -96,12 +98,14 @@ func TestDeepCopyMap_Isolation(t *testing.T) {
 }
 
 func TestDeepCopyMap_Nil(t *testing.T) {
+	t.Parallel()
 	if DeepCopyMap(nil) != nil {
 		t.Errorf("nil source should produce nil")
 	}
 }
 
 func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		in   any
@@ -116,6 +120,7 @@ func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
 		{"nested value", map[string]any{"data": []any{3, map[string]any{"value": "..PLACEHOLDER_key.."}}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := ContainsValuePlaceholder(tc.in); got != tc.want {
 				t.Errorf("ContainsValuePlaceholder = %v, want %v", got, tc.want)
 			}
@@ -126,6 +131,7 @@ func TestContainsValuePlaceholder_ValuesOnly(t *testing.T) {
 // HelmRelease.Clone must produce a HR whose mutable fields don't alias
 // the source — critical for the store-immutability contract.
 func TestHelmRelease_Clone_Isolation(t *testing.T) {
+	t.Parallel()
 	src := &HelmRelease{
 		Name: "plex", Namespace: "media",
 		Values:           map[string]any{"replicas": 1, "nested": map[string]any{"k": "v"}},
@@ -150,6 +156,7 @@ func TestHelmRelease_Clone_Isolation(t *testing.T) {
 // Kustomization.Clone must deep-copy Contents — the nested map that
 // UpdatePostBuildSubstitutions walks and writes into.
 func TestKustomization_Clone_Isolation(t *testing.T) {
+	t.Parallel()
 	src := &Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		PostBuildSubstitute: map[string]any{"K": "v"},
@@ -181,6 +188,7 @@ func TestKustomization_Clone_Isolation(t *testing.T) {
 // would corrupt the store. Iterate every pointer-shaped field the
 // spec exposes — any one regressing breaks the immutability contract.
 func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
+	t.Parallel()
 	src := &HelmRelease{
 		Name: "plex", Namespace: "media",
 		Install:   &helmv2.Install{DisableHooks: false},
@@ -239,6 +247,7 @@ func TestHelmRelease_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 // Pre-fix the spec's PostBuild.Substitute map, Patches slice, Images
 // slice etc. aliased the canonical store-owned Kustomization.
 func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
+	t.Parallel()
 	src := &Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		PostBuild: &kustomizev1.PostBuild{
@@ -273,12 +282,14 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 }
 
 func TestWithNamespace_Copy(t *testing.T) {
+	t.Parallel()
 	ks := &Kustomization{Name: "app", Namespace: "authored", Contents: map[string]any{"metadata": map[string]any{"namespace": "authored"}}}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}
 	for _, tc := range []struct{ name, namespace string }{
 		{"projected", "effective"}, {"cleared", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			projected := ks.WithNamespace(tc.namespace).(*Kustomization)
 			assert.Equal(t, projected.Named(), NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.namespace, Name: "app"})
 			assert.Equal(t, ks.Named(), NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "authored", Name: "app"})

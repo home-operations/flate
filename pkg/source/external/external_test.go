@@ -16,8 +16,10 @@ import (
 )
 
 func TestFetcher_FileURL(t *testing.T) {
+	t.Parallel()
 	for _, metadata := range []string{"directory", "gitfile"} {
 		t.Run(metadata, func(t *testing.T) {
+			t.Parallel()
 			f := &external.Fetcher{}
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "content.yaml", "from FS")
@@ -80,6 +82,7 @@ func TestFetcher_FileURL(t *testing.T) {
 }
 
 func TestFetcher_NoArtifact(t *testing.T) {
+	t.Parallel()
 	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{Name: "ea", Namespace: "apps"}
 	_, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
@@ -92,6 +95,7 @@ func TestFetcher_NoArtifact(t *testing.T) {
 }
 
 func TestFetcher_NonFileURL(t *testing.T) {
+	t.Parallel()
 	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{
 		Name: "ea", Namespace: "apps",

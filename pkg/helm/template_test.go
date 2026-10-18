@@ -17,6 +17,7 @@ import (
 )
 
 func TestTemplate_CRDsPolicy(t *testing.T) {
+	t.Parallel()
 	const crd = `apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -78,6 +79,7 @@ data:
 		{"unset include", "", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			hr := &manifest.HelmRelease{
 				Name: "demo", Namespace: "default", CRDsPolicy: tc.policy,
 				Chart: manifest.HelmChart{
@@ -118,6 +120,7 @@ data:
 }
 
 func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
+	t.Parallel()
 	const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-cm\n"
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
@@ -155,6 +158,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 		{"Skip include", "Skip", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
 			docsRaw, err := cli.Template(t.Context(), hr, nil, Options{SkipCRDs: tc.skip})
@@ -178,6 +182,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 }
 
 func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
+	t.Parallel()
 	const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-cm\n"
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
@@ -210,6 +215,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 }
 
 func TestTemplate_MalformedDisabledSubchartCRDs(t *testing.T) {
+	t.Parallel()
 	const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-cm\n"
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
@@ -244,6 +250,7 @@ dependencies:
 		{"enabled Create", "Create", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
 			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
@@ -274,6 +281,7 @@ dependencies:
 }
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
+	t.Parallel()
 	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -324,6 +332,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 // alias, and two different charts (different name OR version) must
 // not alias even with identical valuesFiles.
 func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
+	t.Parallel()
 	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -355,12 +364,14 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 }
 
 func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
+	t.Parallel()
 	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"A", "B"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := &chart.Chart{
 				Metadata: &chart.Metadata{Name: name, Version: "1.0.0"},
 				Values:   map[string]any{"n": math.NaN()},
@@ -380,6 +391,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 }
 
 func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
+	t.Parallel()
 	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
 		t.Fatal(err)
@@ -401,6 +413,7 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 		{"require missing", []string{"first.yaml", "missing.yaml"}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			merged, err := cli.mergeChartValuesFiles(loaded, tc.files, tc.ignore)
 			if tc.want == "" {
 				if err == nil {
@@ -419,6 +432,7 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 }
 
 func TestChartValuesCacheKey_DistinctInputs(t *testing.T) {
+	t.Parallel()
 	loaded := chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{Values: map[string]any{"k": "f"}}))}
 	changed := chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{Values: map[string]any{"k": "g"}}))}
 	for _, tc := range []struct {
@@ -452,12 +466,14 @@ func TestChartValuesCacheKey_DistinctInputs(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.first != tc.second, true)
 		})
 	}
 }
 
 func TestOCIChartContent_DistinctInputs(t *testing.T) {
+	t.Parallel()
 	initial := ociChartContent{Digest: "xy", Revision: "z"}
 	for _, tc := range []struct {
 		name string
@@ -469,6 +485,7 @@ func TestOCIChartContent_DistinctInputs(t *testing.T) {
 		{"tracking", ociChartContent{Digest: "xy", Revision: "z", DisableTracking: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ch := minimalChart()
 			first := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch)), oci: &initial}
 			second := first
@@ -480,6 +497,7 @@ func TestOCIChartContent_DistinctInputs(t *testing.T) {
 }
 
 func TestTemplate_KubeVersion(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", `apiVersion: v1
@@ -503,6 +521,7 @@ data:
 		{name: "invalid", version: "invalid", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			raw, err := cli.Template(t.Context(), newHR(), nil, Options{KubeVersion: tc.version})
 			if tc.fail {
 				if err == nil {
@@ -523,6 +542,7 @@ data:
 }
 
 func TestTemplate_ActionSchemaPolicy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
@@ -541,6 +561,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 		{name: "placeholder upgrade", isUpgrade: true, placeholder: true, wantSkip: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			cli, err := NewClient(newTestCache(t, ""))
 			if err != nil {
 				t.Fatal(err)

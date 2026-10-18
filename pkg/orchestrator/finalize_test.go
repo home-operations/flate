@@ -10,6 +10,7 @@ import (
 )
 
 func TestCascadeParentFailures_RecordsParentAsBlocker(t *testing.T) {
+	t.Parallel()
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	o := &Orchestrator{store: store.New()}
@@ -31,6 +32,7 @@ func TestCascadeParentFailures_RecordsParentAsBlocker(t *testing.T) {
 }
 
 func TestCascadeParentFailures_AncestorGuards(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name   string
 		status store.Status
@@ -40,6 +42,7 @@ func TestCascadeParentFailures_AncestorGuards(t *testing.T) {
 		{name: "pending descendant", status: store.StatusPending},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 			middle := &manifest.Kustomization{Name: "middle", Namespace: "apps"}
 			child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
@@ -72,6 +75,7 @@ func TestCascadeParentFailures_AncestorGuards(t *testing.T) {
 }
 
 func TestCascadeParentFailures_EmissionCycle(t *testing.T) {
+	t.Parallel()
 	a := &manifest.Kustomization{Name: "a", Namespace: "apps"}
 	b := &manifest.Kustomization{Name: "b", Namespace: "apps"}
 	o := &Orchestrator{store: store.New()}
@@ -91,6 +95,7 @@ func TestCascadeParentFailures_EmissionCycle(t *testing.T) {
 }
 
 func TestJoinTreeErrors_Sides(t *testing.T) {
+	t.Parallel()
 	base, head := errors.New("base failure"), errors.New("head failure")
 	for _, tt := range []struct {
 		name       string
@@ -104,6 +109,7 @@ func TestJoinTreeErrors_Sides(t *testing.T) {
 			message: "both trees had reconcile failures\nbase tree: base failure\nhead tree: head failure"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := joinTreeErrors(tt.base, tt.head)
 			if tt.message == "" {
 				assert.Equal(t, got, nil)

@@ -25,6 +25,7 @@ import (
 // by source.TestNewHTTPTransport_ResponseHeaderTimeout; here we pin that the
 // default actually carries the backstop.
 func TestDefaultClientIsBounded(t *testing.T) {
+	t.Parallel()
 	if boundedHTTPSTransport == nil {
 		t.Fatal("bounded default transport not initialized")
 	}

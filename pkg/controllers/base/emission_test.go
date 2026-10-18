@@ -15,9 +15,11 @@ import (
 )
 
 func TestEmit_DefaultsNamespace(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []manifest.KindInfo{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}} {
 		for _, fallback := range []string{"", "apps"} {
 			t.Run(kind.Kind+"/default="+fallback, func(t *testing.T) {
+				t.Parallel()
 				s := store.New()
 				c := New(s, nil, "test")
 				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "parent", Name: "infra"}
@@ -59,9 +61,11 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 }
 
 func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []manifest.KindInfo{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet}} {
 		for _, publish := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/publish=%t", kind.Kind, publish), func(t *testing.T) {
+				t.Parallel()
 				s := store.New()
 				c := New(s, nil, "test")
 				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "apps", Name: "parent"}
@@ -125,6 +129,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 
 // The file-loaded copy of the emitted consumer is already in the store, as after discovery.
 func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	c := New(s, nil, "test")
 	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
@@ -181,6 +186,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 		{&manifest.Secret{Name: "child"}, false},
 	} {
 		t.Run(tc.obj.Named().Kind, func(t *testing.T) {
+			t.Parallel()
 			s := store.New()
 			c := New(s, nil, "test")
 			obj := tc.obj.WithNamespace("apps")
@@ -202,6 +208,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 
 // A ResourceSet re-emitting itself must neither overwrite its stored spec nor own itself.
 func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	c := New(s, nil, "test")
 	parent := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "parent"}
@@ -219,6 +226,7 @@ func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 }
 
 func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
+	t.Parallel()
 	c := New(store.New(), nil, "test")
 	docs := []map[string]any{
 		{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "valid"}, "stringData": map[string]any{"VALUE": "embedded ENC[AES256_GCM,data:fixture]"}},

@@ -3,6 +3,7 @@ package manifest
 import "testing"
 
 func TestHasEnvsubstReference(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -20,6 +21,7 @@ func TestHasEnvsubstReference(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := HasEnvsubstReference(tc.in); got != tc.want {
 				t.Errorf("HasEnvsubstReference(%q) = %v, want %v", tc.in, got, tc.want)
 			}
@@ -28,6 +30,7 @@ func TestHasEnvsubstReference(t *testing.T) {
 }
 
 func TestResolveEnvsubstDefaults(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -91,6 +94,7 @@ func TestResolveEnvsubstDefaults(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := resolveEnvsubstDefaults(tc.in); got != tc.want {
 				t.Errorf("resolveEnvsubstDefaults(%q) = %q, want %q", tc.in, got, tc.want)
 			}

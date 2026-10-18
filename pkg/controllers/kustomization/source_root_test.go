@@ -13,8 +13,10 @@ import (
 )
 
 func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
+	t.Parallel()
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absent", true: "failed"}[failed], func(t *testing.T) {
+			t.Parallel()
 			c, st, _ := newControllerWithFixture(t)
 			ks := &manifest.Kustomization{
 				Name: "consumer", Namespace: "flux-system",
@@ -55,6 +57,7 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 // now returns the working-tree root so the first reconcile resolves
 // correctly even before any parent render lands.
 func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	bootstrap := &manifest.GitRepository{
 		Name: "flux-system", Namespace: "flux-system",
@@ -87,6 +90,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 // TestResolveSourceRoot_ExplicitSourceRefUnchanged guards against the
 // fallback accidentally overriding an explicit sourceRef.
 func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	gitrepo := &manifest.GitRepository{
 		Name: "external", Namespace: "flux-system",
@@ -125,6 +129,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 // net for setups that genuinely have neither — error rather than mis-
 // resolve.
 func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
+	t.Parallel()
 	c := New(store.New(), nil, nil, false)
 	ks := &manifest.Kustomization{
 		Name: "foo", Namespace: "flux-system",

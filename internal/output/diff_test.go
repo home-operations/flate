@@ -11,9 +11,11 @@ import (
 )
 
 func TestEncoderLines_ReturnsErrors(t *testing.T) {
+	t.Parallel()
 	prepareErr := errors.New("preparation failed")
 	for _, format := range []Format{FormatDiff, FormatHTML} {
 		t.Run(string(format), func(t *testing.T) {
+			t.Parallel()
 			starts, consumed := 0, 0
 			changes := func(yield func(LineChange, error) bool) {
 				starts++
@@ -32,6 +34,7 @@ func TestEncoderLines_ReturnsErrors(t *testing.T) {
 		})
 	}
 	t.Run("writer stops changes", func(t *testing.T) {
+		t.Parallel()
 		writeErr := errors.New("write failed")
 		consumed := 0
 		changes := func(yield func(LineChange, error) bool) {
@@ -63,8 +66,10 @@ func TestEncoderLines_ReturnsErrors(t *testing.T) {
 }
 
 func TestEncoderNative_ReturnsWriterError(t *testing.T) {
+	t.Parallel()
 	writeErr := errors.New("write failed")
 	t.Run("notes stop", func(t *testing.T) {
+		t.Parallel()
 		consumed := 0
 		notes := func(yield func(string) bool) {
 			for _, note := range []string{"first", "second"} {
@@ -80,6 +85,7 @@ func TestEncoderNative_ReturnsWriterError(t *testing.T) {
 		}
 	})
 	t.Run("body", func(t *testing.T) {
+		t.Parallel()
 		report := dyff.Report{Diffs: []dyff.Diff{{}}}
 		err := (Encoder{Writer: errorWriter{writeErr}, Format: FormatBrief}).Native(report, slices.Values([]string(nil)))
 		if !errors.Is(err, writeErr) || !strings.HasPrefix(err.Error(), "dyff render: ") {

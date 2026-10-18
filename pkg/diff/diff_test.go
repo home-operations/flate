@@ -33,6 +33,7 @@ func unified(t *testing.T, left, right []Doc) string {
 // unified diff with `--- `/`+++ ` labels naming the resource and the
 // changed value on `-`/`+` lines.
 func TestUnified_ValueChange(t *testing.T) {
+	t.Parallel()
 	s := unified(t, []Doc{cm("a", "ns", "owner", "v1")}, []Doc{cm("a", "ns", "owner", "v2")})
 	for _, want := range []string{"--- ConfigMap ns/a", "+++ ConfigMap ns/a", "@@ -", "-  k: v1", "+  k: v2"} {
 		if !strings.Contains(s, want) {
@@ -42,6 +43,7 @@ func TestUnified_ValueChange(t *testing.T) {
 }
 
 func TestUnified_NoChange(t *testing.T) {
+	t.Parallel()
 	d := cm("a", "ns", "owner", "v1")
 	if s := unified(t, []Doc{d}, []Doc{d}); s != "" {
 		t.Errorf("identical inputs should render empty, got:\n%s", s)
@@ -52,6 +54,7 @@ func TestUnified_NoChange(t *testing.T) {
 // side renders as a wholesale add/remove block, each attributed to its
 // own resource label.
 func TestUnified_AddedAndRemoved(t *testing.T) {
+	t.Parallel()
 	s := unified(t, []Doc{cm("a", "", "owner", "v")}, []Doc{cm("b", "", "owner", "v")})
 	if !strings.Contains(s, "ConfigMap a") || !strings.Contains(s, "ConfigMap b") {
 		t.Errorf("both resource labels should appear:\n%s", s)
@@ -68,6 +71,7 @@ func TestUnified_AddedAndRemoved(t *testing.T) {
 // are separated by a blank line so the next `--- ` header is easy to
 // spot when scanning multi-resource output.
 func TestUnified_BlankLineBetweenDocs(t *testing.T) {
+	t.Parallel()
 	left := []Doc{cm("a", "ns", "owner", "v1"), cm("b", "ns", "owner", "v1")}
 	right := []Doc{cm("a", "ns", "owner", "v2"), cm("b", "ns", "owner", "v2")}
 	s := unified(t, left, right)
@@ -85,6 +89,7 @@ func TestUnified_BlankLineBetweenDocs(t *testing.T) {
 // TestUnified_Deletion verifies a wholly-removed resource shows its full
 // content (so reviewers don't have to chase the original separately).
 func TestUnified_Deletion(t *testing.T) {
+	t.Parallel()
 	s := unified(t, []Doc{cm("a", "ns", "owner", "v1")}, nil)
 	for _, want := range []string{"--- ConfigMap ns/a", "-kind: ConfigMap", "-  k: v1"} {
 		if !strings.Contains(s, want) {

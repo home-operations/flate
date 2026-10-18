@@ -8,6 +8,7 @@ import (
 )
 
 func TestSelectedDocs_PreservesProducerAndEmissionOrder(t *testing.T) {
+	t.Parallel()
 	a := &manifest.Kustomization{Name: "a", Namespace: "ns"}
 	a.Path = "./apps/a"
 	b := &manifest.Kustomization{Name: "b", Namespace: "ns"}

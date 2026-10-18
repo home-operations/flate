@@ -45,6 +45,7 @@ import (
 //  2. Root-level resource (no covering parent): NOT downgraded.
 //  3. Child re-emitted by parent (WasRendered set): NOT downgraded.
 func TestDetectOrphans(t *testing.T) {
+	t.Parallel()
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		Path: "./kubernetes/apps",
@@ -111,6 +112,7 @@ func TestDetectOrphans(t *testing.T) {
 // map is permissive) are never reported as orphans; orphan
 // detection only applies to Kustomization + HelmRelease.
 func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
+	t.Parallel()
 	parent := &manifest.Kustomization{
 		Name: "p", Namespace: "ns",
 		Path: "./apps",
@@ -147,6 +149,7 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 // the failure set and let the report/test runner score a broken tree as passing.
 // Only a child under a parent that SUCCEEDED is a genuine orphan.
 func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
+	t.Parallel()
 	parent := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		Path: "./kubernetes/apps",
@@ -594,6 +597,7 @@ spec:
 // sink now owns the deterministic commit-time dedup that the deleted
 // post-run errgroup pass used to perform serially in store order.
 func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
+	t.Parallel()
 	parent := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	ownerA := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-a"}
 	ownerB := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "rs-b"}

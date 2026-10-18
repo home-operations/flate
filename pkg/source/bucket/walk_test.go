@@ -65,6 +65,7 @@ func delayedBucket(tb testing.TB) (*minio.Client, *atomic.Int32) {
 }
 
 func TestWalkBucket_BoundedParallelOrder(t *testing.T) {
+	t.Parallel()
 	client, peak := delayedBucket(t)
 	var data bytes.Buffer
 	if _, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, &data); err != nil {
@@ -269,6 +270,7 @@ func TestWalkBucket_Faults(t *testing.T) {
 }
 
 func TestWalkBucket_ArchiveNames(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, prefix, key, want string
 		invalid                 bool
@@ -285,6 +287,7 @@ func TestWalkBucket_ArchiveNames(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var gets atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("list-type") != "" {
@@ -339,8 +342,10 @@ func TestWalkBucket_ArchiveNames(t *testing.T) {
 // A listing is untrusted: an object larger than the archive cap, or a negative size, must fail before
 // any allocation or download.
 func TestWalkBucket_RejectsImplausibleListedSize(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int64{-1, 1<<30 + 1, 1 << 40} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			t.Parallel()
 			var gets atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("list-type") == "" {

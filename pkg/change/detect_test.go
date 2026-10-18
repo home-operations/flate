@@ -30,6 +30,7 @@ func writeFile(t *testing.T, dir, rel, body string) {
 }
 
 func TestDetect_BothPathsRequired(t *testing.T) {
+	t.Parallel()
 	if _, err := Detect(t.Context(), testInput(""), testInput("/tmp/x")); err == nil {
 		t.Errorf("expected error for empty before")
 	}
@@ -39,6 +40,7 @@ func TestDetect_BothPathsRequired(t *testing.T) {
 }
 
 func TestDetect_IdenticalTreesEmpty(t *testing.T) {
+	t.Parallel()
 	before := t.TempDir()
 	after := t.TempDir()
 	writeFile(t, before, "a.yaml", "x")
@@ -53,6 +55,7 @@ func TestDetect_IdenticalTreesEmpty(t *testing.T) {
 }
 
 func TestDetect_AddedRemovedModified(t *testing.T) {
+	t.Parallel()
 	before := t.TempDir()
 	after := t.TempDir()
 	// unchanged: ident.yaml on both sides with same content
@@ -81,6 +84,7 @@ func TestDetect_AddedRemovedModified(t *testing.T) {
 }
 
 func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
+	t.Parallel()
 	// Different sizes: detector should flag without hashing.
 	before := t.TempDir()
 	after := t.TempDir()
@@ -96,6 +100,7 @@ func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
 }
 
 func TestDetect_HiddenScanRoot(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	before := filepath.Join(parent, ".before")
 	after := filepath.Join(parent, ".after")
@@ -122,6 +127,7 @@ func TestDetect_HiddenScanRoot(t *testing.T) {
 // reported. We simulate the worst case by explicitly stamping
 // identical mtimes on both files post-write.
 func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
+	t.Parallel()
 	before := t.TempDir()
 	after := t.TempDir()
 	writeFile(t, before, "mod.yaml", "OLD")
@@ -145,6 +151,7 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 }
 
 func TestHashFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "a", "hello")
 	writeFile(t, dir, "b", "hello")
@@ -177,6 +184,7 @@ func testInput(root string) *store.SourceArtifact {
 }
 
 func TestDetect_MissingInputsWrapInput(t *testing.T) {
+	t.Parallel()
 	for _, input := range []*store.SourceArtifact{nil, {}} {
 		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}})
 		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
@@ -186,8 +194,10 @@ func TestDetect_MissingInputsWrapInput(t *testing.T) {
 }
 
 func TestDetect_LastBodyCancellation(t *testing.T) {
+	t.Parallel()
 	for _, side := range []string{"before", "after"} {
 		t.Run(side, func(t *testing.T) {
+			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			input := fstest.MapFS{"file.yaml": {Data: []byte("same")}}
@@ -234,8 +244,10 @@ func (c *cancellingFile) Read(p []byte) (int, error) {
 }
 
 func TestDetect_HashLimit(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"changed", "canceled", "read error"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()

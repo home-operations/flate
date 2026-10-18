@@ -118,6 +118,7 @@ func testRenderFrame(tb testing.TB, snap readSetSnapshot, output []byte) []byte 
 // bytes, krusty skipped — proven by tampering the cached output), and editing a
 // recorded input invalidates it so the re-render reflects the change.
 func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
+	t.Parallel()
 	t.Logf("render persistence eligible=%v", renderPersistenceEligible(t))
 	root := writeTree(t, map[string]string{
 		"selected/kustomization.yaml": "resources: [../child]\n",
@@ -213,6 +214,7 @@ func TestRenderFlux_CacheHitMissInvalidate(t *testing.T) {
 // TestRenderFlux_SourceignoreContentInvalidates verifies policy content and path
 // changes invalidate persisted renders after re-admission.
 func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
+	t.Parallel()
 	root := writeTree(t, map[string]string{
 		"a.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n",
 		"b.yaml":        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n",
@@ -281,6 +283,7 @@ func TestRenderFlux_SourceignoreContentInvalidates(t *testing.T) {
 
 // TestRenderFlux_MemoryOwnerUnchanged pins output parity across backing choices.
 func TestRenderFlux_MemoryOwnerUnchanged(t *testing.T) {
+	t.Parallel()
 	files := map[string]string{
 		"kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
@@ -309,6 +312,7 @@ func TestRenderFlux_MemoryOwnerUnchanged(t *testing.T) {
 // read-set snapshot + rendered output survive framing intact. The frame is the
 // plain bytes handed to the shared Blob owner.
 func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
+	t.Parallel()
 	snap := readSetSnapshot{
 		Files: []fileEntry{{Path: "kustomization.yaml", Hash: "h1"}, {Path: "a.yaml", Hash: "h2"}},
 		Dirs:  []fileEntry{{Path: ".", Hash: "dirhash"}},
@@ -316,6 +320,7 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 	}
 	for _, output := range []string{"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n", ""} {
 		t.Run(fmt.Sprintf("output-bytes-%d", len(output)), func(t *testing.T) {
+			t.Parallel()
 			frame, err := encodeFrame(snap, []byte(output))
 			if err != nil {
 				t.Fatalf("encodeFrame: %v", err)
@@ -338,6 +343,7 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 // the 4-byte header, or one whose header claims more snapshot bytes than exist,
 // is a decode error (→ a cache miss, never a panic or torn read).
 func TestDecodeFrame_RejectsMalformed(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		frame []byte
@@ -347,6 +353,7 @@ func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 		{"invalid snapshot JSON", []byte{0, 0, 0, 1, 'x'}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if _, _, err := decodeFrame(tc.frame); err == nil {
 				t.Fatal("malformed frame decoded successfully")
 			}
@@ -496,6 +503,7 @@ func closeTestTreeCache(t *testing.T, c *TreeCache) {
 }
 
 func TestRenderKey_ContentInputs(t *testing.T) {
+	t.Parallel()
 	req := RenderRequest{Source: &store.SourceArtifact{Key: "family"}, SubPath: ".", Spec: demoRawSpec}
 	key := renderKey(req, "/source", nil)
 	for _, tc := range []struct {
@@ -514,6 +522,7 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		{name: "digest", change: func(r *RenderRequest) { r.Source.Digest = "digest" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			changed := req
 			source := *req.Source
 			changed.Source = &source
@@ -535,6 +544,7 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 }
 
 func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
+	t.Parallel()
 	root := writeTree(t, map[string]string{
 		"kustomization.yaml": existingKustomization("cm.yaml"),
 		"cm.yaml":            cmYAML("fresh"),
@@ -554,6 +564,7 @@ func TestRenderFlux_CacheIdentityIsolated(t *testing.T) {
 }
 
 func TestRenderFlux_CacheFrames(t *testing.T) {
+	t.Parallel()
 	eligible := renderPersistenceEligible(t)
 	for _, tc := range []struct {
 		name      string
@@ -568,6 +579,7 @@ func TestRenderFlux_CacheFrames(t *testing.T) {
 		{name: "immutable", immutable: true, snapshot: readSetSnapshot{Files: []fileEntry{{Path: "unavailable", Hash: "mismatch"}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := writeTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("cm.yaml"),
 				"cm.yaml":            cmYAML("fresh"),
@@ -725,11 +737,13 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 }
 
 func TestRenderFlux_CacheStorageFailures(t *testing.T) {
+	t.Parallel()
 	if !renderPersistenceEligible(t) {
 		t.Skip("storage faults require an eligible build")
 	}
 	for _, fault := range []string{"lookup", "publication"} {
 		t.Run(fault, func(t *testing.T) {
+			t.Parallel()
 			root := writeTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
 			cacheDir := t.TempDir()
 			cache := newTestTreeCache(t, cacheDir)

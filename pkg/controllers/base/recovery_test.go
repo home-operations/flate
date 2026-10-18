@@ -14,8 +14,10 @@ import (
 )
 
 func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"recovered", "vanished", "suspended", "filtered", "preflight", "primary error", "primary status", "blocked", "new dependency failure", "prior primary failure"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
 			id := obj.Named()

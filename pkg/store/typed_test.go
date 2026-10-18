@@ -10,6 +10,7 @@ import (
 // TestGet_ReturnsTypedObject locks the happy path: an object stored
 // under id returns successfully as its concrete pointer type.
 func TestGet_ReturnsTypedObject(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	s.AddObject(ks)
@@ -26,6 +27,7 @@ func TestGet_ReturnsTypedObject(t *testing.T) {
 // TestGet_MissReturnsZeroFalse covers the absent case: nothing stored
 // at id yields (zero, false) without panic.
 func TestGet_MissReturnsZeroFalse(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "ghost"}
 
@@ -43,6 +45,7 @@ func TestGet_MissReturnsZeroFalse(t *testing.T) {
 // (zero, false) rather than panicking, matching the comma-ok shape
 // of a raw type assertion.
 func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default"}
 	s.AddObject(hr)
@@ -58,6 +61,7 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 // a struct holding a *Store that was never initialized. Returns
 // (zero, false) without panic.
 func TestGet_NilStoreSafe(t *testing.T) {
+	t.Parallel()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "x"}
 	if got, ok := (*store.Store)(nil).Get[*manifest.Kustomization](id); ok || got != nil {
 		t.Errorf("nil store: want (nil, false); got (%v, %v)", got, ok)
@@ -68,6 +72,7 @@ func TestGet_NilStoreSafe(t *testing.T) {
 // object stored under the requested kind comes back as the typed
 // pointer slice in deterministic store order.
 func TestListAs_TypedSlice(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	for _, name := range []string{"a", "b", "c"} {
 		s.AddObject(&manifest.Kustomization{Name: name, Namespace: "flux-system"})
@@ -111,6 +116,7 @@ func TestListAs_TypedSlice(t *testing.T) {
 
 // TestListAs_NilStoreReturnsNil mirrors Get's nil-store guard.
 func TestListAs_NilStoreReturnsNil(t *testing.T) {
+	t.Parallel()
 	if got := (*store.Store)(nil).ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization); got != nil {
 		t.Errorf("nil store: want nil slice; got %v", got)
 	}
@@ -120,6 +126,7 @@ func TestListAs_NilStoreReturnsNil(t *testing.T) {
 // Should return a non-nil but length-0 slice, suitable for direct
 // iteration without nil-check.
 func TestListAs_EmptyKindReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	got := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
 	if got == nil {

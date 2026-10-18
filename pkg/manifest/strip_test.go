@@ -6,6 +6,7 @@ import (
 )
 
 func TestStripResourceFields(t *testing.T) {
+	t.Parallel()
 	newDoc := func() map[string]any {
 		return map[string]any{
 			"apiVersion": "volsync.backube/v1alpha1",
@@ -24,6 +25,7 @@ func TestStripResourceFields(t *testing.T) {
 	}
 
 	t.Run("deletes nested leaf, leaves siblings + parents", func(t *testing.T) {
+		t.Parallel()
 		d := newDoc()
 		StripResourceFields(d, []string{"spec.restic.unlock"})
 
@@ -44,6 +46,7 @@ func TestStripResourceFields(t *testing.T) {
 	})
 
 	t.Run("no-op when a segment is absent", func(t *testing.T) {
+		t.Parallel()
 		d := newDoc()
 		before := DeepCopyMap(d)
 		StripResourceFields(d, []string{"spec.absent.field", "metadata.annotations.x"})
@@ -53,6 +56,7 @@ func TestStripResourceFields(t *testing.T) {
 	})
 
 	t.Run("no-op when a segment is not a map", func(t *testing.T) {
+		t.Parallel()
 		d := newDoc()
 		before := DeepCopyMap(d)
 		// spec.sourcePVC is a string; descending through it must not panic
@@ -64,6 +68,7 @@ func TestStripResourceFields(t *testing.T) {
 	})
 
 	t.Run("multiple paths + empty path ignored", func(t *testing.T) {
+		t.Parallel()
 		d := newDoc()
 		StripResourceFields(d, []string{"", "spec.restic.unlock", "spec.trigger.schedule"})
 		restic := d["spec"].(map[string]any)["restic"].(map[string]any)
@@ -77,6 +82,7 @@ func TestStripResourceFields(t *testing.T) {
 	})
 
 	t.Run("top-level leaf", func(t *testing.T) {
+		t.Parallel()
 		d := newDoc()
 		StripResourceFields(d, []string{"kind"})
 		if _, ok := d["kind"]; ok {

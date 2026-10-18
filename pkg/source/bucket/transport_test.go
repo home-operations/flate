@@ -25,6 +25,7 @@ import (
 )
 
 func TestFetcher_ResolveTransport_NoCertSecretStaysBounded(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	b := &manifest.Bucket{Name: "b", Namespace: "ns"}
 	tr, err := f.resolveTransport(b)
@@ -42,6 +43,7 @@ func TestFetcher_ResolveTransport_NoCertSecretStaysBounded(t *testing.T) {
 }
 
 func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
+	t.Parallel()
 	certPEM, keyPEM := testutil.SelfSignedServerCert(t)
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
@@ -77,6 +79,7 @@ func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
 }
 
 func TestFetcher_SecretReferences(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, ref, secret, wantError string
 		data                         map[string]any
@@ -96,6 +99,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "cert unwired", ref: "cert", secret: "tls", unwired: true, wantError: "source.SecretGetter"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := &Fetcher{}
 			if !tc.unwired {
 				f.Secrets = func(_, _ string) *manifest.Secret {
@@ -149,6 +153,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 }
 
 func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var network source.Network
 		tr, _ := source.NewHTTPTransport(nil, nil)

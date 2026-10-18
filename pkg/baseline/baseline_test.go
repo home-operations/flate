@@ -25,6 +25,7 @@ import (
 
 // An explicit base bypasses the auto-detection ladder.
 func TestAutoResolve_ExplicitBase(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	commitA := initRepoWithFile(t, dir, "a.yaml", "original")
 	writeAndCommit(t, dir, "a.yaml", "updated")
@@ -56,6 +57,7 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 // unresolved and the whole tree renders empty (every resource a wholesale
 // addition).
 func TestAutoResolve_SelfURLsCarryRemotes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	commit := initRepoWithFile(t, dir, "a.yaml", "x")
 	repo, err := git.PlainOpen(dir)
@@ -82,8 +84,10 @@ func TestAutoResolve_SelfURLsCarryRemotes(t *testing.T) {
 }
 
 func TestResolvePaths_AncestorLookupError(t *testing.T) {
+	t.Parallel()
 	for _, side := range []string{"original", "current"} {
 		t.Run(side, func(t *testing.T) {
+			t.Parallel()
 			parent := t.TempDir()
 			assert.Equal(t, os.Symlink(".git", filepath.Join(parent, ".git")), nil)
 			child := filepath.Join(parent, "exported")
@@ -106,6 +110,7 @@ func TestResolvePaths_AncestorLookupError(t *testing.T) {
 // a branch whose config points at a remote-tracking ref, and the
 // merge-base resolves correctly.
 func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mainCommit := initRepoWithFile(t, dir, "a.yaml", "main")
 	// Set up a remote-tracking ref that points at mainCommit (simulates
@@ -145,6 +150,7 @@ func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
 // TestAutoResolve_OriginHEAD: no @{u}, but origin/HEAD symref present.
 // Verifies the second rung fires.
 func TestAutoResolve_OriginHEAD(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mainCommit := initRepoWithFile(t, dir, "a.yaml", "base")
 	repo := openHelper(t, dir)
@@ -173,6 +179,7 @@ func TestAutoResolve_OriginHEAD(t *testing.T) {
 // fetch-depth=1 lands the PR branch and origin/* but no sibling
 // local refs; we shouldn't force users to type `--base origin/main`.
 func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mainCommit := initRepoWithFile(t, dir, "a.yaml", "base")
 	repo := openHelper(t, dir)
@@ -197,6 +204,7 @@ func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
 // resolves neither locally nor as origin/<base>, the error names
 // both lookup attempts so the user knows what to fix.
 func TestAutoResolve_ExplicitBaseNeitherLocalNorRemote(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "base")
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
@@ -213,6 +221,7 @@ func TestAutoResolve_ExplicitBaseNeitherLocalNorRemote(t *testing.T) {
 // TestAutoResolve_OriginMainFallback exercises the third rung: no
 // @{u}, no origin/HEAD, but origin/main exists.
 func TestAutoResolve_OriginMainFallback(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mainCommit := initRepoWithFile(t, dir, "a.yaml", "base")
 	repo := openHelper(t, dir)
@@ -232,6 +241,7 @@ func TestAutoResolve_OriginMainFallback(t *testing.T) {
 }
 
 func TestAutoResolve_Ladder(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, main, master, remoteHEAD, upstream, want string
 	}{
@@ -241,6 +251,7 @@ func TestAutoResolve_Ladder(t *testing.T) {
 		{name: "@{u} disjoint, origin/HEAD valid", upstream: "disjoint", remoteHEAD: "tip", want: "HEAD"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			base := initRepoWithFile(t, dir, "a.yaml", "base")
 			tip := writeAndCommit(t, dir, "a.yaml", "tip")
@@ -292,6 +303,7 @@ func TestAutoResolve_Ladder(t *testing.T) {
 // @{u} rung is unreachable (no branch → no config); the algorithm
 // must fall through to origin/HEAD. This is the GH Actions PR case.
 func TestAutoResolve_DetachedHEAD(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mainCommit := initRepoWithFile(t, dir, "a.yaml", "base")
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
@@ -319,6 +331,7 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 }
 
 func TestAutoResolve_NoGit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFileAt(t, filepath.Join(dir, "f.yaml"), "x")
 	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
@@ -332,6 +345,7 @@ func TestAutoResolve_NoGit(t *testing.T) {
 }
 
 func TestAutoResolve_Shallow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte("deadbeef\n"), 0o600); err != nil {
@@ -354,6 +368,7 @@ func TestAutoResolve_Shallow(t *testing.T) {
 // TestAutoResolve_NoUpstream: real (non-shallow) repo with no upstream
 // and no origin refs at all. Errors cleanly suggesting --base.
 func TestAutoResolve_NoUpstream(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	_, err := AutoResolve(t.Context(), dir, "", testOwner(t, ""))
@@ -371,6 +386,7 @@ func TestAutoResolve_NoUpstream(t *testing.T) {
 // TestAutoResolve_PathOutsideRepo: --path resolves outside the .git
 // ancestor → refuse early with a clear suggestion.
 func TestAutoResolve_PathOutsideRepo(t *testing.T) {
+	t.Parallel()
 	outerDir := t.TempDir()
 	repoDir := filepath.Join(outerDir, "repo")
 	if err := os.Mkdir(repoDir, 0o750); err != nil {
@@ -389,6 +405,7 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 }
 
 func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	commit := initRepoWithFile(t, dir, "kubernetes/flux/cluster/cluster.yaml", "x")
 	cluster := filepath.Join(dir, "kubernetes", "flux", "cluster")
@@ -414,6 +431,7 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 // Result (TempDir / SelfURLs) and threaded explicitly, so the marker the
 // old repo-root "widen" heuristic needed is gone.
 func TestAutoResolve_NoGitMarker(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
@@ -433,6 +451,7 @@ func TestAutoResolve_NoGitMarker(t *testing.T) {
 }
 
 func TestAutoResolve_PreservesExecutableBit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	r, err := git.PlainInit(dir, false)
 	if err != nil {
@@ -471,6 +490,7 @@ func TestAutoResolve_PreservesExecutableBit(t *testing.T) {
 
 // Linked metadata must open through the common directory.
 func TestAutoResolve_LinkedWorktree(t *testing.T) {
+	t.Parallel()
 	mainDir := t.TempDir()
 	baseCommit := initRepoWithFile(t, mainDir, "a.yaml", "base")
 	repo := openHelper(t, mainDir)
@@ -505,6 +525,7 @@ func TestAutoResolve_LinkedWorktree(t *testing.T) {
 // common dir, so a worktree that exhausts the ladder must still get the
 // fetch-depth guidance rather than the "no upstream" advice.
 func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
+	t.Parallel()
 	mainDir := t.TempDir()
 	commit := initRepoWithFile(t, mainDir, "a.yaml", "x")
 	repo := openHelper(t, mainDir)
@@ -645,8 +666,10 @@ func testOwner(t *testing.T, root string) *sourcecache.Cache {
 }
 
 func TestResolve_RetainedConfiguration(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"upstream", "origin"} {
 		t.Run(route, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			base := initRepoWithFile(t, root, "a.yaml", "base")
 			repo := openHelper(t, root)
@@ -681,6 +704,7 @@ func TestResolve_RetainedConfiguration(t *testing.T) {
 }
 
 func TestAdmitDirectory_ExplicitRootRetainsRepository(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	initRepoWithFile(t, root, "cluster/a.yaml", "body")
 	const url = "https://example.invalid/cluster.git"
@@ -707,11 +731,13 @@ func TestAdmitDirectory_ExplicitRootRetainsRepository(t *testing.T) {
 }
 
 func TestResolvePaths_ReusesRoot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	initRepoWithFile(t, root, "current/a.yaml", "current")
 	testutil.WriteFile(t, root, "original/a.yaml", "original")
 	for _, sameScan := range []bool{false, true} {
 		t.Run(fmt.Sprintf("same_scan_%t", sameScan), func(t *testing.T) {
+			t.Parallel()
 			current, original := filepath.Join(root, "current"), filepath.Join(root, "original")
 			if sameScan {
 				original = current

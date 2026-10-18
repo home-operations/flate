@@ -21,6 +21,7 @@ func cmID(ns string) manifest.NamedResource {
 }
 
 func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, path, source string
 		produces           bool
@@ -30,6 +31,7 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 		{name: "explicit_root", path: "./", produces: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cluster-settings}\n")
@@ -64,12 +66,14 @@ func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 // emits it, resolving the bare-dir → subdir-base → component → namespace
 // chain that no path-prefix index can see.
 func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, target, local, namespace string }{
 		{"bare", "", "", ""},
 		{"target", "target", "", "target"},
 		{"local", "", "namespace: local\n", "local"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
 				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\ncomponents:\n  - ../../components/substitutions\n")
@@ -182,6 +186,7 @@ spec:
 // spec.path holds only its own kustomization with no component, so it produces
 // nothing.
 func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources: []\n")
@@ -203,6 +208,7 @@ func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 // Nil index is safe — collectDeps falls back to always-add (the pre-index
 // behavior) when no repoRoot produced an index.
 func TestDiscoveryIndex_NilSafe(t *testing.T) {
+	t.Parallel()
 	var idx *manifest.DiscoveryIndex
 	if got := declarationOwnersForTest(idx, manifest.NamedResource{}); got != nil {
 		t.Errorf("nil index OwnersOfProducer = %v, want nil", got)
@@ -224,8 +230,10 @@ func TestDiscoveryIndex_NilSafe(t *testing.T) {
 // file the walk reads — both kustomization.yamls and the leaf resource —
 // back to the owning top-level Kustomization.
 func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
+	t.Parallel()
 	for _, count := range []int{1, 2} {
 		t.Run(fmt.Sprintf("owners_%d", count), func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
@@ -269,6 +277,7 @@ func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 // be attributed to the owning KS — the direct-file twin of the dir escape in
 // #833. Otherwise changed-only mode omits the KS when that file is the only edit.
 func TestFinalizeIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres/cluster.yaml\n")
@@ -292,6 +301,7 @@ func TestFinalizeIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 // changed-only mode finds no owner for the deleted path and silently skips
 // the broken reference instead of rendering it and failing loud.
 func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
@@ -315,6 +325,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 // detection reports the deleted files individually — OwnersOfFile must
 // resolve them through the recorded parent directory.
 func TestFinalizeIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
@@ -353,6 +364,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 // apps/test/app-a -> ../../base/app-a, applied by cluster-apps) — the #777 gate
 // signal. A base shared by two distinct parents is ambiguous and omitted.
 func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	// app-a: pulled by exactly one parent (cluster-apps). ${VAR} path so the
@@ -402,6 +414,7 @@ func secretID(ns, name string) manifest.NamedResource {
 // target-Secret → producer, with the SAME effective-namespace resolution the
 // ConfigMap path uses — an enclosing `namespace:` wins over the file's own.
 func TestFinalizeIndex_RecordsProducers(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n  - ./sealed.yaml\n  - ./explicit.yaml\n  - ./obc.yaml\n")
@@ -455,6 +468,7 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 // under the un-prefixed name. Producer-inference then misses the real
 // (prefixed) Secret and the consumer falls back to fail-loud / the flag.
 func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nnamePrefix: prod-\nresources:\n  - ./es.yaml\n")
@@ -488,6 +502,7 @@ func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
 // occupying the target id; a dataFrom-only producer declares nothing, so none is
 // synthesized and it stays genuinely unreadable.
 func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./declared.yaml\n  - ./datafrom.yaml\n  - ./preexisting.yaml\n")
@@ -535,6 +550,7 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 // at Prepare instead of seeing it absent and flagging it unreadable. A cleartext
 // Secret carries no placeholders and is left alone.
 func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./secret.sops.yaml\n  - ./plain.yaml\n")
@@ -569,6 +585,7 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 // can't read), so --no-wipe-secrets suppresses synthesis entirely — the secret
 // is left genuinely absent, exactly as it was before this feature.
 func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./es.yaml\n")
@@ -591,8 +608,10 @@ func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
 }
 
 func TestFinalizeIndex_ProducerOwners(t *testing.T) {
+	t.Parallel()
 	for _, namespace := range []string{"", "authored"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			s := store.New()
 			var want []manifest.NamedResource
@@ -636,8 +655,10 @@ func TestFinalizeIndex_ProducerOwners(t *testing.T) {
 }
 
 func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
+	t.Parallel()
 	for _, namespace := range []string{"", "apps"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			s := store.New()
 			ks := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./values"}
@@ -663,8 +684,10 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 }
 
 func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
+	t.Parallel()
 	for _, order := range []string{"placeholder first", "SOPS first", "two SOPS"} {
 		t.Run(order, func(t *testing.T) {
+			t.Parallel()
 			id := secretID("apps", "input")
 			b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, secrets: map[manifest.NamedResource]*manifest.Secret{}}
 			first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"first": "..PLACEHOLDER_first.."}}
@@ -689,8 +712,10 @@ func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
 }
 
 func TestFinalizeIndex_MixedKustomizationDataFile(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"mixed", "mixed_producer", "duplicate_record", "duplicate_store_object"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -753,6 +778,7 @@ data: {value: fixture}
 }
 
 func TestLoader_DotDotPaths(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		path     string
 		accepted bool
@@ -766,6 +792,7 @@ func TestLoader_DotDotPaths(t *testing.T) {
 		{path: "../x"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
+			t.Parallel()
 			root := filepath.Join(t.TempDir(), "repo")
 			dir := filepath.Join(root, tc.path)
 			testutil.WriteFile(t, dir, "kustomization.yaml", "configMapGenerator:\n- name: settings\n  literals: [key=value]\n")

@@ -103,7 +103,9 @@ func (f *policyReadFS) ReadFile(name string) ([]byte, error) {
 }
 
 func TestNew_EntryPolicy(t *testing.T) {
+	t.Parallel()
 	t.Run("ownership labels", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		content := struct{ Tree string }{"captured"}
 		key := manifest.Fingerprint(content)
@@ -117,6 +119,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			{"alias", LabelOptions{Root: root, Mode: Source, Content: content, Source: manifest.NamedResource{Namespace: "flux-system", Name: "cluster"}}, filepath.Join(filepath.Dir(root), ".flate-sources", key, "flux-system", "cluster"), key},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
 				label, key := Label(tc.opts)
 				assert.Equal(t, label, tc.want)
 				assert.Equal(t, key, tc.key)
@@ -125,6 +128,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	})
 
 	t.Run("local reads", func(t *testing.T) {
+		t.Parallel()
 		parent := t.TempDir()
 		root := filepath.Join(parent, "root")
 		testutil.WriteFile(t, root, "regular.txt", "content")
@@ -152,12 +156,14 @@ func TestNew_EntryPolicy(t *testing.T) {
 			fs   fs.FS
 		}{{name: "descriptor", fs: input}, {name: "view", fs: view}} {
 			t.Run(reader.name, func(t *testing.T) {
+				t.Parallel()
 				entries, err := fs.ReadDir(reader.fs, ".")
 				if err != nil || len(entries) != 1 || entries[0].Name() != "regular.txt" {
 					t.Fatalf("admitted entries = %v, %v", entries, err)
 				}
 				for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "socket"} {
 					t.Run(name, func(t *testing.T) {
+						t.Parallel()
 						var want error
 						content := "content"
 						if name != "regular.txt" {
@@ -176,7 +182,9 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("local operation observations", func(t *testing.T) {
+		t.Parallel()
 		t.Run("ignore_snapshot", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, ".sourceignore", "root\n")
 			testutil.WriteFile(t, root, "nested/.sourceignore", "first\n")
@@ -226,6 +234,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			}
 		})
 		t.Run("point_lookup_without_listing", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			dir := filepath.Join(root, "siblings")
 			for _, name := range []string{"a", "b"} {
@@ -356,8 +365,10 @@ func TestNew_EntryPolicy(t *testing.T) {
 
 	})
 	t.Run("caller_owned_listing", func(t *testing.T) {
+		t.Parallel()
 		for _, name := range []string{"replacement", "reversed"} {
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				root := t.TempDir()
 				for name, data := range map[string]string{"a": "a", "child": "content", "z": "longer content"} {
 					testutil.WriteFile(t, root, "dir/"+name, data)
@@ -395,6 +406,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("concurrent first listing", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "dir/a", "a")
 		testutil.WriteFile(t, root, "dir/child", "content")
@@ -448,6 +460,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		wg.Wait()
 	})
 	t.Run("retained directory listing", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "dir/kept", "kept")
 		artifact, err := admitLocal(t, root)
@@ -467,8 +480,10 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, string(data), "arrived")
 	})
 	t.Run("local metadata", func(t *testing.T) {
+		t.Parallel()
 		for _, directory := range []bool{false, true} {
 			t.Run(fmt.Sprint(directory), func(t *testing.T) {
+				t.Parallel()
 				root := t.TempDir()
 				testutil.WriteFile(t, root, "file", "content")
 				for _, prefix := range []string{"", "nested/"} {
@@ -517,6 +532,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("policy read once and extras", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, ".sourceignore", "discard\n")
 		testutil.WriteFile(t, root, "nested/.sourceignore", "hidden\n")
@@ -561,6 +577,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, counted.reads.Load(), reads)
 	})
 	t.Run("policy evidence preserves bytes", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		var keys []string
 		for _, data := range []string{"#\xff\n", "#\xfe\n"} {
@@ -579,6 +596,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, keys[0] != keys[1], true)
 	})
 	t.Run("concurrent first policy and cancellation", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, ".sourceignore", "discard\n")
 		testutil.WriteFile(t, root, "discard", "discard")
@@ -619,6 +637,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("identity", func(t *testing.T) {
+		t.Parallel()
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
@@ -689,6 +708,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		{"a/b", filemode.Regular, true}, {"module", filemode.Submodule, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			repo := mustInit(t, t.TempDir())
 			commit := craftedCommit(t, repo, object.TreeEntry{Name: tc.name, Mode: tc.mode})
 			input, identity, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{})
@@ -712,6 +732,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 	}
 
 	t.Run("mutable membership and live worktree", func(t *testing.T) {
+		t.Parallel()
 		for _, live := range []bool{false, true} {
 			root := t.TempDir()
 			repo := mustInit(t, root)
@@ -752,6 +773,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("committed tree overrides current", func(t *testing.T) {
+		t.Parallel()
 		repo := mustInit(t, t.TempDir())
 		backing := repo.Storer.(*filesystem.Storage).Filesystem()
 		currentCommit := craftedCommit(t, repo, object.TreeEntry{Name: "current", Mode: filemode.Regular})
@@ -767,6 +789,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 	})
 	t.Run("retained identity", func(t *testing.T) {
+		t.Parallel()
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		identity := "source-git-acquired@" + commit.String()
@@ -783,6 +806,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, pin == "", false)
 	})
 	t.Run("source reuse", func(t *testing.T) {
+		t.Parallel()
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		input, pin, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Mode: Source})
@@ -798,6 +822,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			{name: "sparse", sparse: []string{"other"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
 				got, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: tc.ignore, Sparse: tc.sparse})
 				assert.NoError(t, err)
 				assert.Equal(t, got == input, tc.reuse)
@@ -809,6 +834,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("direct arbitrary and wrapper reuse", func(t *testing.T) {
+		t.Parallel()
 		current := fstest.MapFS{"file": {Data: []byte("current")}, ".git": {Data: []byte("gitfile")}, "nested/.git/config": {Data: []byte("config")}}
 		input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: current, Ignore: "file", Sparse: []string{"other"}})
 		assert.NoError(t, err)
@@ -825,6 +851,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("direct pinned worktree", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "file", "local")
 		input, key, err := New(t.Context(), nil, plumbing.NewHash(strings.Repeat("a", 40)), ViewOptions{Mode: Direct, Worktree: osfs.New(root, osfs.WithBoundOS())})
@@ -842,6 +869,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, fresh != input, true)
 	})
 	t.Run("refresh before pinned construction", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		repo := mustInit(t, root)
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "new", Mode: filemode.Regular})
@@ -859,6 +887,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, string(data), "current")
 	})
 	t.Run("refresh snapshots", func(t *testing.T) {
+		t.Parallel()
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		opts := ViewOptions{Mode: Source, Current: fstest.MapFS{"file": {Data: []byte("dirty")}}, Sparse: []string{"file"}, Changes: []string{"file"}}
@@ -873,6 +902,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, string(data), "malicious")
 	})
 	t.Run("shaping", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		repo := mustInit(t, root)
 		for _, name := range []string{"target", ".rootfile", ".hidden/file", "node_modules/file", "dir/file", "templates/file", "crds/file"} {
@@ -899,6 +929,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			{"remote", ViewOptions{Mode: RemoteBase}, []string{".rootfile", "alias", "crds/file", "dir/file", "target", "templates/file"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
 				input, _, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, tc.opts)
 				assert.NoError(t, err)
 				var files []string
@@ -933,6 +964,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("unknown mode visibility", func(t *testing.T) {
+		t.Parallel()
 		current := fstest.MapFS{
 			".rootfile": {Data: []byte("root")}, "target": {Data: []byte("target")},
 			".hidden/file": {Data: []byte("hidden")}, "node_modules/file": {Data: []byte("modules")},
@@ -948,6 +980,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Diff(t, names, []string{".rootfile", "target"})
 	})
 	t.Run("link errors", func(t *testing.T) {
+		t.Parallel()
 		for _, tc := range []struct {
 			name    string
 			missing bool
@@ -956,6 +989,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			{"loop", false, tree.ErrLoop}, {"read", true, plumbing.ErrObjectNotFound},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
 				repo := mustInit(t, t.TempDir())
 				commit := craftedCommit(t, repo, object.TreeEntry{Name: "malicious", Mode: filemode.Symlink})
 				backing := repo.Storer.(*filesystem.Storage).Filesystem()
@@ -980,6 +1014,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("missing ordinary body", func(t *testing.T) {
+		t.Parallel()
 		repo := mustInit(t, t.TempDir())
 		commit := craftedCommit(t, repo, object.TreeEntry{Name: "file", Mode: filemode.Regular})
 		c, err := repo.CommitObject(commit)
@@ -1001,6 +1036,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 	t.Run("error classification", func(t *testing.T) {
+		t.Parallel()
 		for _, want := range []error{fs.ErrPermission, fs.ErrInvalid} {
 			_, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admissionErrorFS{err: want}})
 			assert.Equal(t, errors.Is(err, want), true)
@@ -1012,6 +1048,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, err, context.Canceled)
 	})
 	t.Run("local permission diagnostic", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, ".sourceignore", "ignored/\n")
 		testutil.WriteFile(t, root, "denied/file", "file")

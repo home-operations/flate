@@ -11,6 +11,7 @@ import (
 )
 
 func TestOutputUsage(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		outputs []output.Format
@@ -34,6 +35,7 @@ func TestOutputUsage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := outputUsage(tc.outputs); got != tc.want {
 				t.Errorf("outputUsage = %q, want %q", got, tc.want)
 			}
@@ -47,6 +49,7 @@ func TestOutputUsage(t *testing.T) {
 // diff/get summaries that reject it. Regression guard for the shared help
 // that used to claim `name` everywhere ("--output=name is not a thing").
 func TestOutputFlagAdvertisesNameOnlyWhereSupported(t *testing.T) {
+	t.Parallel()
 	wantName := map[string]bool{
 		"build ks":    false,
 		"build hr":    false,

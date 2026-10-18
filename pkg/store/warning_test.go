@@ -16,6 +16,7 @@ func hrID(name string) manifest.NamedResource {
 // TestWarnings_Empty: a fresh store reports nil (not empty slice) — matching
 // the nil-when-empty convention Result.Warnings consumers rely on.
 func TestWarnings_Empty(t *testing.T) {
+	t.Parallel()
 	if got := New().Warnings(); got != nil {
 		t.Fatalf("Warnings() on empty store = %v, want nil", got)
 	}
@@ -24,6 +25,7 @@ func TestWarnings_Empty(t *testing.T) {
 // TestAddWarning_DedupAndCount: identical advisories collapse and accumulate a
 // Count; a differing resource or detail is a distinct entry.
 func TestAddWarning_DedupAndCount(t *testing.T) {
+	t.Parallel()
 	s := New()
 	w := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues,
 		Message: "values not defined by the chart schema", Detail: []string{"a", "b"}}
@@ -57,6 +59,7 @@ func TestAddWarning_DedupAndCount(t *testing.T) {
 // TestAddWarning_DetailCollision: two warnings whose Detail elements would
 // collide under a naive comma-join ([a,b] vs [a","b]) stay distinct entries.
 func TestAddWarning_DetailCollision(t *testing.T) {
+	t.Parallel()
 	s := New()
 	base := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues, Message: "m"}
 	w1 := base
@@ -73,6 +76,7 @@ func TestAddWarning_DetailCollision(t *testing.T) {
 // TestWarnings_Sorted: output is ordered by (category, resource, message),
 // independent of insertion order — deterministic for the footer + Result.
 func TestWarnings_Sorted(t *testing.T) {
+	t.Parallel()
 	s := New()
 	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("z"), Message: "m"})
 	s.AddWarning(manifest.Warning{Category: manifest.WarnEmptyScan, Message: "scan"})
@@ -94,6 +98,7 @@ func TestWarnings_Sorted(t *testing.T) {
 // TestAddWarning_DefensiveCopy: mutating the caller's Detail slice after Add
 // does not change stored state, and the returned slice is a copy.
 func TestAddWarning_DefensiveCopy(t *testing.T) {
+	t.Parallel()
 	s := New()
 	detail := []string{"x"}
 	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
@@ -112,6 +117,7 @@ func TestAddWarning_DefensiveCopy(t *testing.T) {
 // TestAddWarning_Concurrent: concurrent producers don't race (run with -race)
 // and every emission is accounted for via Count.
 func TestAddWarning_Concurrent(t *testing.T) {
+	t.Parallel()
 	s := New()
 	const goroutines, each = 8, 50
 	var wg sync.WaitGroup

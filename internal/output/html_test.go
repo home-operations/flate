@@ -10,6 +10,7 @@ import (
 )
 
 func TestEncoderLines_PreservesStatus(t *testing.T) {
+	t.Parallel()
 	changes := func(yield func(LineChange, error) bool) {
 		yield(LineChange{Resource: manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "ns", Name: "same"}, Parent: manifest.NamedResource{Group: "parents.test", Kind: "Producer", Namespace: "ns", Name: "same"}, From: "key: old\n", To: "key: new\n"}, nil)
 	}

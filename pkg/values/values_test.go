@@ -48,6 +48,7 @@ func (p *SliceProvider) Data(id manifest.NamedResource) manifest.Data {
 // level. Used in ExpandValueReferences's hot path to avoid O(N²)
 // clones across N valuesFrom refs.
 func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
+	t.Parallel()
 	dst := map[string]any{
 		"a": 1,
 		"b": map[string]any{"x": 1, "y": 2},
@@ -78,6 +79,7 @@ func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 }
 
 func TestExpandValueReferences_ConfigMap(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "extra", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 5\nimage:\n  tag: v2\n"},
@@ -104,11 +106,13 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 }
 
 func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
+	t.Parallel()
 	for _, obj := range []manifest.BaseManifest{
 		&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": "replicaCount: 3\n", "broken": map[string]any{"nested": true}}},
 		&manifest.Secret{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": "cmVwbGljYUNvdW50OiAzCg==", "broken": "!"}},
 	} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			st.AddObject(obj)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}}}
@@ -121,12 +125,14 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 }
 
 func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
+	t.Parallel()
 	for _, obj := range []manifest.BaseManifest{
 		&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": []any{"not", "a", "scalar"}}},
 		&manifest.Secret{Name: "extra", Namespace: "default", Data: map[string]any{"values.yaml": "!"}},
 	} {
 		for _, optional := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/optional=%t", obj.Named().Kind, optional), func(t *testing.T) {
+				t.Parallel()
 				st := store.New()
 				st.AddObject(obj)
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
@@ -140,6 +146,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 }
 
 func TestExpandValueReferences_TargetPath(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "k", Namespace: "default",
 		Data: map[string]any{"v": "secret-value"},
@@ -161,6 +168,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 }
 
 func TestExpandValueReferences_LiteralTargetPath(t *testing.T) {
+	t.Parallel()
 	config := `concurrent = 4
 environment = ["FOO=bar", "BAZ=qux"]
 `
@@ -195,6 +203,7 @@ environment = ["FOO=bar", "BAZ=qux"]
 // not): the escaped segment stays one key, and the value — commas and all —
 // lands verbatim.
 func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "scrape", Namespace: "default",
 		Data: map[string]any{"value": "true,false"},
@@ -221,6 +230,7 @@ func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
 }
 
 func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
+	t.Parallel()
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Values: map[string]any{"existing": "kept"},
@@ -241,6 +251,7 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 }
 
 func TestExpandValueReferences_MissingReferences(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, kind string
 		object     manifest.BaseManifest
@@ -260,6 +271,7 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 	} {
 		for _, optional := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/optional=%t", tc.name, optional), func(t *testing.T) {
+				t.Parallel()
 				st := store.New()
 				if tc.object != nil {
 					st.AddObject(tc.object)
@@ -284,6 +296,7 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 }
 
 func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "extra", Namespace: "default",
 		Data: map[string]any{"other.yaml": "ignored: true\n"},
@@ -306,6 +319,7 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 
 // Identical YAML shares one immutable parse across resource identities.
 func TestExpandValueReferences_CacheHits(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "platform", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 5\nimage:\n  tag: v2\n"},
@@ -359,6 +373,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 
 // Changed YAML must resolve to a fresh parse without explicit invalidation.
 func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "platform", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 5\n"},
@@ -395,6 +410,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 // ExpandValueReferences with a nil *Cache works identically to the
 // non-cached path — tests and one-shot embedders pass nil.
 func TestExpandValueReferences_NilCache(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "extra", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 7\n"},
@@ -413,6 +429,7 @@ func TestExpandValueReferences_NilCache(t *testing.T) {
 }
 
 func TestExpandPostBuildSubstituteReference(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name: "vars", Namespace: "flux-system",
 		Data: map[string]any{"DOMAIN": "example.com"},
@@ -443,8 +460,10 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 }
 
 func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUntouched(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			provider := &SliceProvider{
 				ConfigMaps: []*manifest.ConfigMap{{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": []any{"nested"}}}},
 				Secrets:    []*manifest.Secret{{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": "invalid-base64"}}},
@@ -465,6 +484,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 }
 
 func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testing.T) {
+	t.Parallel()
 	sec := &manifest.Secret{Name: "vars", Namespace: "ns", Data: map[string]any{"C": "!", "A": "!", "B": "!"}}
 	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
 	ks := &manifest.Kustomization{Name: "app", Namespace: "ns", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "vars"}}}}
@@ -478,8 +498,10 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 }
 
 func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"ConfigMap", "inline"} {
 		t.Run(source, func(t *testing.T) {
+			t.Parallel()
 			ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 			vars := map[string]any{"z-var": "v", "my-var": "v", "ok_name": "v"}
 			provider := &SliceProvider{}
@@ -505,6 +527,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 // data flate can't read offline. A SOPS-wiped Secret (placeholder data) and a
 // real Secret are readable; a ConfigMap ref and an optional ref are skipped.
 func TestUnreadableSubstituteSecrets(t *testing.T) {
+	t.Parallel()
 	provider := &SliceProvider{
 		ConfigMaps: []*manifest.ConfigMap{{Name: "cm", Namespace: "flux-system", Data: map[string]any{"X": "1"}}},
 		Secrets: []*manifest.Secret{
@@ -539,6 +562,7 @@ func TestUnreadableSubstituteSecrets(t *testing.T) {
 // plain scalar by ParseInto, which returns either ok or a sensible
 // error — never a panic.
 func TestReplaceValueAtPath_SingleCharQuoteNoPanic(t *testing.T) {
+	t.Parallel()
 	for _, val := range []string{"'", `"`, "''"} {
 		// Wrap in func() so a panic surfaces as test failure rather
 		// than aborting the whole test binary.
@@ -560,6 +584,7 @@ func TestReplaceValueAtPath_SingleCharQuoteNoPanic(t *testing.T) {
 // `replicaCount` came back as the string "3" and chart schemas with
 // `replicaCount: integer` rejected the HR.
 func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		path string
@@ -575,6 +600,7 @@ func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := replaceValueAtPath(map[string]any{}, tc.path, tc.val)
 			if err != nil {
 				t.Fatalf("replaceValueAtPath: %v", err)
@@ -632,6 +658,7 @@ func equalish(a, b any) bool {
 
 // TestDeepMergeInto_MatchesHelmMerge pins flate's in-place merge against Helm.
 func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name           string
 		base, override map[string]any
@@ -646,6 +673,7 @@ func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			functional := loader.MergeMaps(tc.base, tc.override)
 			eager := manifest.DeepCopyMap(tc.base)
 			DeepMergeInto(eager, manifest.DeepCopyMap(tc.override))
@@ -678,6 +706,7 @@ func wholeDocHR() *manifest.HelmRelease {
 // race-free and correct. Run under -race, this fails if any goroutine writes
 // through a shared cache sub-tree.
 func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
+	t.Parallel()
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{nestedValuesCM()}}
 	cache := NewCache()
 	const n = 64
@@ -716,6 +745,7 @@ var errInvalidResult = errors.New("unexpected merged values")
 // so its in-place strvals write into a key that ALSO exists in the cached
 // canonical must NOT leak into the cache (which whole-doc-only HRs share).
 func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T) {
+	t.Parallel()
 	secret := &manifest.ConfigMap{
 		Name: "inject", Namespace: "default",
 		Data: map[string]any{"v": "Always"},
@@ -767,6 +797,7 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 // values (e.g. from postBuild substitution on a configMapGenerator) is correctly
 // parsed and merged into hr.Values instead of being discarded.
 func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
+	t.Parallel()
 	cm := &manifest.ConfigMap{
 		Name:      "generator-cm",
 		Namespace: "default",
@@ -798,6 +829,7 @@ func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
 // a SOPS-encrypted values file) is safely treated as empty rather than failing
 // YAML unmarshaling.
 func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
+	t.Parallel()
 	sec := &manifest.Secret{
 		Name:      "sops-secret",
 		Namespace: "default",

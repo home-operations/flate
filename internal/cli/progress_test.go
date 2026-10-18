@@ -42,6 +42,7 @@ func TestCaptureStderr(t *testing.T) {
 // slog adapter is a plain passthrough to the underlying stderr (the non-TTY /
 // pre-bar / post-bar path) — no stray control bytes.
 func TestBarWriter_NoProgramWritesThrough(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	w := &barWriter{out: &buf}
 	if _, err := w.Write([]byte("hello\n")); err != nil {
@@ -58,6 +59,7 @@ func TestBarWriter_NoProgramWritesThrough(t *testing.T) {
 // while passing every other byte through and reporting the full input length
 // as written.
 func TestQueryFilterFile(t *testing.T) {
+	t.Parallel()
 	f, err := os.CreateTemp(t.TempDir(), "bar")
 	if err != nil {
 		t.Fatal(err)
@@ -94,12 +96,14 @@ func TestQueryFilterFile(t *testing.T) {
 // TestWriterIsTTY_NonFile: buffers (the e2e harness, pipes-as-buffers) are
 // never TTYs, so the bar stays off without a flag.
 func TestWriterIsTTY_NonFile(t *testing.T) {
+	t.Parallel()
 	if writerIsTTY(&bytes.Buffer{}) {
 		t.Error("bytes.Buffer reported as a TTY")
 	}
 }
 
 func TestProgressBarEnabled(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name                  string
 		noProgress, stderrTTY bool
@@ -112,6 +116,7 @@ func TestProgressBarEnabled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := progressBarEnabled(tc.noProgress, tc.stderrTTY); got != tc.want {
 				t.Errorf("progressBarEnabled(%v, %v) = %v, want %v", tc.noProgress, tc.stderrTTY, got, tc.want)
 			}

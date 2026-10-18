@@ -11,6 +11,7 @@ import (
 )
 
 func TestEncoder_Documents_Bytes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		format Format
@@ -24,6 +25,7 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b, Format: tc.format}).Documents(tc.docs); err != nil {
 				t.Fatal(err)
@@ -34,6 +36,7 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 }
 
 func TestEncoder_Images_Bytes(t *testing.T) {
+	t.Parallel()
 	images := []string{"雪:v2", "alpha:v1"}
 	for _, tc := range []struct {
 		format Format
@@ -44,6 +47,7 @@ func TestEncoder_Images_Bytes(t *testing.T) {
 		{format: FormatJSON, want: "[\n  \"雪:v2\",\n  \"alpha:v1\"\n]\n"},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
+			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b, Format: tc.format}).Images(images); err != nil {
 				t.Fatal(err)
@@ -54,6 +58,7 @@ func TestEncoder_Images_Bytes(t *testing.T) {
 }
 
 func TestEncoder_Cluster_Bytes(t *testing.T) {
+	t.Parallel()
 	summary := map[string]any{"kustomizations": 2, "helmReleases": 1}
 	for _, tc := range []struct {
 		format Format
@@ -63,6 +68,7 @@ func TestEncoder_Cluster_Bytes(t *testing.T) {
 		{format: FormatJSON, want: "{\n  \"helmReleases\": 1,\n  \"kustomizations\": 2\n}\n"},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
+			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b, Format: tc.format}).Cluster(summary); err != nil {
 				t.Fatal(err)
@@ -73,6 +79,7 @@ func TestEncoder_Cluster_Bytes(t *testing.T) {
 }
 
 func TestEncoder_Resources_Bytes(t *testing.T) {
+	t.Parallel()
 	cols := []Column{{Header: "NAME", Key: "name"}, {Header: "PATH", Key: "path"}}
 	rows := []map[string]string{
 		{"name": "éclair", "path": "./é"},
@@ -90,6 +97,7 @@ func TestEncoder_Resources_Bytes(t *testing.T) {
 		{format: FormatJSON, want: "[\n  {\n    \"kind\": \"A\"\n  }\n]\n"},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
+			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b, Format: tc.format}).Resources(cols, rows, docs); err != nil {
 				t.Fatal(err)
@@ -100,6 +108,7 @@ func TestEncoder_Resources_Bytes(t *testing.T) {
 }
 
 func TestEncoder_JSON_Bytes(t *testing.T) {
+	t.Parallel()
 	var b bytes.Buffer
 	if err := (Encoder{Writer: &b}).JSON(map[string]string{"k": "v", "text": "<>&\"\n雪"}); err != nil {
 		t.Fatal(err)
@@ -108,6 +117,7 @@ func TestEncoder_JSON_Bytes(t *testing.T) {
 }
 
 func TestEncoder_Documents_DeterministicKeyOrder(t *testing.T) {
+	t.Parallel()
 	spec := map[string]any{
 		"nested": map[string]any{"z": 1, "a": 2, "m": 3},
 		"list":   []any{"c", "b", "a"},
@@ -141,6 +151,7 @@ func TestEncoder_Documents_DeterministicKeyOrder(t *testing.T) {
 }
 
 func TestEncoder_Documents_PreservesEmbeddedJSONStringVerbatim(t *testing.T) {
+	t.Parallel()
 	// Embedded JSON is opaque, including unsorted keys and a trailing comma.
 	embedded := "{\n  \"z\": 1,\n  \"a\": 2,\n  \"panels\": [\n    {\"color\": \"red\"},\n  ]\n}"
 	doc := map[string]any{

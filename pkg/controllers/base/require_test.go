@@ -13,8 +13,10 @@ import (
 )
 
 func TestRequire_Classifications(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"ready", "blocked", "failed", "mixed", "force"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "consumer"}
 			ready := manifest.DependencyRef{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "ready"}
@@ -71,8 +73,10 @@ func TestRequire_Classifications(t *testing.T) {
 }
 
 func TestRequireRefresh_CanonicalManifest(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"active", "missing", "suspended"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			found := mode != "missing"
 			st := store.New()
 			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Values: map[string]any{"value": "old"}}

@@ -622,6 +622,7 @@ spec:
 }
 
 func TestE2E_SourceRef_HeldErrorRetainedByEmptyPath(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	repo := harness.GitInit(t, root)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{

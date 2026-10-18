@@ -30,6 +30,7 @@ func makeKS(name, ns string, deps ...manifest.NamedResource) *manifest.Kustomiza
 // behavior the user cares about: cycle members fail before render, while
 // their Flux dependsOn graph remains intact.
 func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
+	t.Parallel()
 	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 	// `extra` is an acyclic dep — it must not be marked failed.
@@ -62,6 +63,7 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 }
 
 func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
+	t.Parallel()
 	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
@@ -83,6 +85,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 }
 
 func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
+	t.Parallel()
 	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
@@ -117,6 +120,7 @@ func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 // e2e suite — but pinning the load-bearing behavior here keeps the
 // listener honest if it ever gets refactored.
 func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
+	t.Parallel()
 	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 
@@ -153,6 +157,7 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 // Bootstrap listener: every store add hits updateDependencyGraphFor
 // with exactly one id, no batched DFS.
 func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
+	t.Parallel()
 	const N = 10000
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
@@ -197,6 +202,7 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 // stand up a cycle via the incremental API, then rewrite one id's
 // dependsOn to break it; every previously-failed member must clear.
 func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
+	t.Parallel()
 	idA := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
 	idB := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "b"}
 	idC := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "ns", Name: "c"}
@@ -230,6 +236,7 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 // incremental update works for HelmRelease objects — the listener
 // dispatches both kinds through one path.
 func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
+	t.Parallel()
 	idX := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "x"}
 	idY := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "y"}
 

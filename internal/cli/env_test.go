@@ -181,6 +181,7 @@ func TestEnv_HelpAdvertisesEnvVars(t *testing.T) {
 // TestEnvKey pins the kebab→snake transform so future refactors don't
 // silently change which env vars users export.
 func TestEnvKey(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"path":         "FLATE_PATH",
 		"path-orig":    "FLATE_PATH_ORIG",

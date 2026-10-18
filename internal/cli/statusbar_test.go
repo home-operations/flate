@@ -35,6 +35,7 @@ func inflightModel(color bool, names ...string) barModel {
 // TestView_FitsWidth: the frame never exceeds the terminal width at any size, so
 // Bubble Tea's inline renderer never wraps (a wrap would break the sticky line).
 func TestView_FitsWidth(t *testing.T) {
+	t.Parallel()
 	for _, width := range []int{1, 3, 8, 20, 40, 80, 200} {
 		for _, color := range []bool{false, true} {
 			m := inflightModel(color, "alpha", "bravo", "charlie", "delta", "echo")
@@ -50,6 +51,7 @@ func TestView_FitsWidth(t *testing.T) {
 // TestView_PlainNoColor: with color off the frame carries no escape codes and
 // shows the counts + in-flight names.
 func TestView_PlainNoColor(t *testing.T) {
+	t.Parallel()
 	m := inflightModel(false, "plex")
 	m.done, m.total, m.width = 3, 10, 80
 	got := m.View().Content
@@ -66,6 +68,7 @@ func TestView_PlainNoColor(t *testing.T) {
 // TestView_ColorInvisibleToWidth: the same content fits the same width whether
 // colorized or not — codes don't consume columns.
 func TestView_ColorInvisibleToWidth(t *testing.T) {
+	t.Parallel()
 	plain := inflightModel(false, "plex")
 	plain.done, plain.total, plain.width = 3, 10, 40
 	color := inflightModel(true, "plex")
@@ -83,6 +86,7 @@ func TestView_ColorInvisibleToWidth(t *testing.T) {
 // TestModel_FinishVanishes: finishMsg sets the bar to render an empty frame
 // (clearing the line so it vanishes) and returns the quit command.
 func TestModel_FinishVanishes(t *testing.T) {
+	t.Parallel()
 	m := inflightModel(false, "a")
 	m.done, m.total = 1, 1
 	updated, cmd := m.Update(finishMsg{})
@@ -99,6 +103,7 @@ func TestModel_FinishVanishes(t *testing.T) {
 
 // TestModel_InitTicks: Init kicks off the spinner animation.
 func TestModel_InitTicks(t *testing.T) {
+	t.Parallel()
 	if newBarModel(false).Init() == nil {
 		t.Error("Init should return the spinner tick command")
 	}
@@ -106,6 +111,7 @@ func TestModel_InitTicks(t *testing.T) {
 
 // TestModel_WindowSize: a resize updates the width used for truncation.
 func TestModel_WindowSize(t *testing.T) {
+	t.Parallel()
 	m := newBarModel(false)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120})
 	if w := updated.(barModel).width; w != 120 {
@@ -114,6 +120,7 @@ func TestModel_WindowSize(t *testing.T) {
 }
 
 func TestSummarizeInflight(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		names []string
 		max   int
@@ -135,6 +142,7 @@ func TestSummarizeInflight(t *testing.T) {
 // TestModel_Counts drives track through realistic events: counters track unique
 // terminal ids; Ready, Failed, and skipped all count as "done loading".
 func TestModel_Counts(t *testing.T) {
+	t.Parallel()
 	m := newBarModel(false)
 	a, b, s := barID("a"), barID("b"), barID("suspended")
 	m.track(a, store.StatusInfo{Status: store.StatusPending})
@@ -155,6 +163,7 @@ func TestModel_Counts(t *testing.T) {
 // double-count, and a resource drops out of the in-flight set the moment it
 // reaches a terminal status.
 func TestModel_DedupAndInflight(t *testing.T) {
+	t.Parallel()
 	m := newBarModel(false)
 	a := barID("a")
 	m.track(a, store.StatusInfo{Status: store.StatusPending})
@@ -172,6 +181,7 @@ func TestModel_DedupAndInflight(t *testing.T) {
 }
 
 func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		names []string
@@ -180,6 +190,7 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 		{"later last", []string{"bravo", "charlie", "alpha"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			m := inflightModel(false, tc.names...)
 			first := time.Unix(1, 0)
 			m.first[barID("bravo")] = first
@@ -191,6 +202,7 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 }
 
 func TestModel_ExcludesSyntheticIDs(t *testing.T) {
+	t.Parallel()
 	m := newBarModel(false)
 	boot := manifest.BootstrapSourceID
 	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "ns", Name: "repo-app-abc1234"}

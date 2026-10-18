@@ -13,6 +13,7 @@ import (
 // generators in the same order yields equal output. This is the property that
 // makes a cache hit match a cache miss.
 func TestRandFuncs_SameSeedSameSequence(t *testing.T) {
+	t.Parallel()
 	a := Funcs(SeedFor("rel", "ns"))
 	b := Funcs(SeedFor("rel", "ns"))
 
@@ -45,6 +46,7 @@ func TestRandFuncs_SameSeedSameSequence(t *testing.T) {
 // TestRandFuncs_DifferentSeedDiffers confirms the seed actually varies output
 // — two releases that render the same chart get independent random material.
 func TestRandFuncs_DifferentSeedDiffers(t *testing.T) {
+	t.Parallel()
 	a := Funcs(SeedFor("rel-a", "ns"))["randAlphaNum"].(func(int) string)
 	b := Funcs(SeedFor("rel-b", "ns"))["randAlphaNum"].(func(int) string)
 	if a(24) == b(24) {
@@ -56,6 +58,7 @@ func TestRandFuncs_DifferentSeedDiffers(t *testing.T) {
 // keep sprig's contracts: right length, right character class, and a valid v4
 // UUID / correctly sized randBytes.
 func TestRandFuncs_CharacterClassesAndShape(t *testing.T) {
+	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 
 	alpha := fm["randAlpha"].(func(int) string)(64)
@@ -111,6 +114,7 @@ func TestRandFuncs_CharacterClassesAndShape(t *testing.T) {
 // (the shared stream advances), so a chart generating two secrets doesn't get
 // the same value twice.
 func TestRandFuncs_StreamAdvances(t *testing.T) {
+	t.Parallel()
 	gen := Funcs(SeedFor("rel", "ns"))["randAlphaNum"].(func(int) string)
 	if first, second := gen(24), gen(24); first == second {
 		t.Errorf("successive randAlphaNum draws identical (stream not advancing): %q", first)

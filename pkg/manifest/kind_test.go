@@ -8,6 +8,7 @@ import (
 )
 
 func TestKindInfo_Rosters(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		obj     BaseManifest
 		want    KindInfo
@@ -30,6 +31,7 @@ func TestKindInfo_Rosters(t *testing.T) {
 	assert.Equal(t, len(registry), len(cases))
 	for i, tc := range cases {
 		t.Run(tc.want.Kind, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, registry[i], tc.want)
 			assert.Equal(t, KindOf(tc.obj), tc.want)
 			assert.Equal(t, tc.obj.Named().KindInfo(), tc.want)
@@ -52,6 +54,7 @@ func TestKindInfo_Rosters(t *testing.T) {
 }
 
 func TestNamedResource_ReportHidden(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		id   NamedResource
@@ -68,6 +71,7 @@ func TestNamedResource_ReportHidden(t *testing.T) {
 		{"empty", NamedResource{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.id.ReportHidden(), tc.want)
 		})
 	}

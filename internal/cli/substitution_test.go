@@ -114,6 +114,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 }
 
 func TestLoadSubstitutions_InputValidation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, body string
 		ordinal    int
@@ -131,6 +132,7 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 		{"missing name", strings.Replace(externalCM, "name: external, ", "", 1), 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			path := substitutionInput(t, tc.body)
 			c := commonFlags{substituteFrom: []string{path}}
 			err := c.loadSubstitutions(t.Context())
@@ -148,12 +150,14 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 		})
 	}
 	t.Run("unreadable", func(t *testing.T) {
+		t.Parallel()
 		c := commonFlags{substituteFrom: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
 		if err := c.loadSubstitutions(t.Context()); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("expected input error: %v", err)
 		}
 	})
 	t.Run("canceled before unreadable file", func(t *testing.T) {
+		t.Parallel()
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		c := commonFlags{substituteFrom: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
@@ -162,6 +166,7 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 		}
 	})
 	t.Run("empty and null", func(t *testing.T) {
+		t.Parallel()
 		c := commonFlags{substituteFrom: []string{substitutionInput(t, "---\nnull\n---\n\n")}}
 		if err := c.loadSubstitutions(t.Context()); err != nil || len(c.substitutionSources) != 0 {
 			t.Fatalf("empty documents: %v", err)

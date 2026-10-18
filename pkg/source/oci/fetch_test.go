@@ -149,6 +149,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 }
 
 func TestFetcher_Freshness(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                     string
 		interval                 time.Duration
@@ -163,6 +164,7 @@ func TestFetcher_Freshness(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 			v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
 			srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
@@ -493,9 +495,11 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 }
 
 func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		for _, corruption := range []string{"digest", "gzip header", "gzip trailer"} {
 			t.Run(backing+"/"+corruption, func(t *testing.T) {
+				t.Parallel()
 				honest := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 				broken := honest
 				payload := mustTarGz(t, map[string]string{"app.yaml": "version: v2\n"})
@@ -789,8 +793,10 @@ func (rt registryRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"unmatched", "empty", "defaults", "digest selectors"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			art := newFakeOCIArtifact(t, map[string]string{"file.yaml": "x", ".git/config": "git", "image.png": "image"})
 			if name == "empty" {
 				var m ocispec.Manifest
@@ -857,8 +863,10 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 }
 
 func TestFetcher_NetworkRoutes(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"registry", "token", "redirect", "tags", "manifest", "layer", "copy", "fallback"} {
 		t.Run(route, func(t *testing.T) {
+			t.Parallel()
 			var network source.Network
 			var bypass, requests atomic.Int32
 			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

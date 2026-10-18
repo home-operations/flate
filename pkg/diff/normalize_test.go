@@ -15,8 +15,10 @@ func renderDiff(t *testing.T, left, right []Doc, opts Options) string {
 }
 
 func TestRenderDocs_NormalizeBeforePair(t *testing.T) {
+	t.Parallel()
 	for _, format := range []Format{FormatDiff, FormatHTML} {
 		t.Run(string(format), func(t *testing.T) {
+			t.Parallel()
 			left, right := cm("old", "ns", "owner", "same"), cm("new", "ns", "owner", "same")
 			opts := Options{Format: format, Normalize: func(m map[string]any) {
 				m["metadata"].(map[string]any)["name"] = "normalized"
@@ -38,6 +40,7 @@ func TestRenderDocs_NormalizeBeforePair(t *testing.T) {
 // anything else yields no diff. This is the chart-bump noise filter —
 // `helm.sh/chart` rotates on every chart upgrade.
 func TestNormalize_StripAttrsRemovesNoise(t *testing.T) {
+	t.Parallel()
 	mk := func(chartLabel string) []Doc {
 		return []Doc{{
 			Manifest: map[string]any{
@@ -67,6 +70,7 @@ func TestNormalize_StripAttrsRemovesNoise(t *testing.T) {
 // hash yields no diff. The plural key previously slipped past the
 // exact-match list.
 func TestNormalize_StripsChecksumPrefixOnPodTemplate(t *testing.T) {
+	t.Parallel()
 	mk := func(sum string) []Doc {
 		return []Doc{{
 			Manifest: map[string]any{
@@ -98,6 +102,7 @@ func TestNormalize_StripsChecksumPrefixOnPodTemplate(t *testing.T) {
 // rotated timestamp yields no diff, while a genuinely-changed sibling
 // spec field still surfaces.
 func TestNormalize_StripsSpecFieldPath(t *testing.T) {
+	t.Parallel()
 	mk := func(unlock, repo string) []Doc {
 		return []Doc{{
 			Manifest: map[string]any{
@@ -138,6 +143,7 @@ func TestNormalize_StripsSpecFieldPath(t *testing.T) {
 // the diff, so a rotated binary hook payload surfaces as a one-line
 // "this changed" rather than two walls of base64.
 func TestNormalize_RedactsConfigMapBinaryData(t *testing.T) {
+	t.Parallel()
 	mk := func(blob, data string) []Doc {
 		return []Doc{{
 			Manifest: map[string]any{

@@ -14,6 +14,7 @@ import (
 // resource and fail on "missing metadata.name") yields an actionable error
 // naming the file and the rename, instead of the cryptic decode error.
 func TestRenderFlux_MisnamedKustomization(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomzation.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- cm.yaml\n")

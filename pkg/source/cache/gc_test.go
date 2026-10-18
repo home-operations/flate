@@ -82,8 +82,10 @@ func sweepSnapshot(t *testing.T, root string) map[string]string {
 }
 
 func TestSweep_GitGenerations(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"unheld", "held", "dry-run", "bad-index", "missing-payload", "bad-anchor", "bad-graph", "escaping-index", "escaping-index-dry-run", "escaping-payload", "escaping-payload-dry-run"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			c := newCache(t, root)
 			first, _, _ := sweepGit(t, c, "source-git-sweep")
@@ -183,6 +185,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 	}
 	for _, component := range []string{"parent", "final"} {
 		t.Run("selected-"+component+"-replacement", func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			orphan, _, _ := sweepGit(t, c, "source-git-replacement")
 			retained, _, _ := sweepGit(t, c, "source-git-replacement")
@@ -246,6 +249,7 @@ func TestSweep_GitGenerations(t *testing.T) {
 }
 
 func TestSweep_CoalescedAccessRetention(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		root := t.TempDir()
 		c := newCache(t, root)
@@ -285,8 +289,10 @@ func TestSweep_CoalescedAccessRetention(t *testing.T) {
 }
 
 func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
+	t.Parallel()
 	for _, maxAge := range []time.Duration{0, time.Hour} {
 		t.Run(maxAge.String(), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			c := newCache(t, root)
 			stale := time.Now().Add(-24 * time.Hour)
@@ -335,6 +341,7 @@ func TestSweep_AgeUsesPayloadLastUse(t *testing.T) {
 }
 
 func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	c := newCache(t, root)
 	var anchors []ocispec.Descriptor
@@ -415,6 +422,7 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 }
 
 func TestSweep_SharedIntermediateRetainsGitAnchor(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	c := newCache(t, root)
 	generation, anchor, key := sweepGit(t, c, "source-git-shared")
@@ -466,6 +474,7 @@ func TestSweep_SharedIntermediateRetainsGitAnchor(t *testing.T) {
 }
 
 func TestSweep_AbsentRootAndUnrelatedDirectories(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "absent")
 	if res, err := Sweep(t.Context(), root, SweepOpts{DryRun: true}); err != nil || len(res.Removed) > 0 {
 		t.Fatalf("absent dry-run: %+v, %v", res, err)

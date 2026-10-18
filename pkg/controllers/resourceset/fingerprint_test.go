@@ -15,6 +15,7 @@ import (
 )
 
 func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "matrix", Namespace: "apps",
 		InputsFrom: []fluxopv1.InputProviderReference{{
@@ -74,6 +75,7 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 		{"overlap", []fluxopv1.InputProviderReference{{Name: "a"}, rs.InputsFrom[0], rs.InputsFrom[0]}, []any{aContent, bContent}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			referenced := *rs
 			referenced.InputsFrom = tc.refs
 			resolve := resourceset.StoreResolver(s)
@@ -101,6 +103,7 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 		{"removed match", staticRSIP("a", "apps", map[string]string{"role": "web"}, map[string]string{"id": "one", "value": "first"}), true, map[string]string{"b": "second"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			st.AddObject(a)
 			st.AddObject(b)

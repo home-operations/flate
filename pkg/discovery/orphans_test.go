@@ -12,6 +12,7 @@ import (
 )
 
 func TestPromoteOrphans_ChecksEachSiblingsProducer(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/bundle.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -53,6 +54,7 @@ spec:
 }
 
 func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	body := `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -100,8 +102,10 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 }
 
 func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"standalone", "siblings", "failed", "preexisting", "graph-owned", "unknown-file"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			st := store.New()
 			admitDiscoveryForTest(st, dir)

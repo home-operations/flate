@@ -19,6 +19,7 @@ import (
 )
 
 func TestTemplate_LocalChart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
 name: mychart
@@ -73,6 +74,7 @@ data:
 // tree and asserts it is byte-identical afterward, catching a future helm
 // bump that mutates the caller's map/sub-maps/slices.
 func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
@@ -153,6 +155,7 @@ func newHR() *manifest.HelmRelease {
 }
 
 func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
+	t.Parallel()
 	cli := helmChartFixture(t)
 	hr := newHR()
 
@@ -171,6 +174,7 @@ func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 }
 
 func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
+	t.Parallel()
 	cli := helmChartFixture(t)
 	hr := newHR()
 	hr.Test = &helmv2.Test{Enable: true}
@@ -185,6 +189,7 @@ func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 }
 
 func TestTemplate_HRInstallDisableHooks(t *testing.T) {
+	t.Parallel()
 	cli := helmChartFixture(t)
 	hr := newHR()
 	hr.Install = &helmv2.Install{DisableHooks: true}
@@ -205,6 +210,7 @@ func TestTemplate_HRInstallDisableHooks(t *testing.T) {
 }
 
 func TestReleaseManifest_HookSeparators(t *testing.T) {
+	t.Parallel()
 	rel := &release.Release{
 		Manifest: "kind: ConfigMap",
 		Hooks: []*release.Hook{
@@ -223,6 +229,7 @@ func TestReleaseManifest_HookSeparators(t *testing.T) {
 }
 
 func TestApplyHRMetadata(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		docs          string
@@ -361,6 +368,7 @@ metadata:
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			hr := newHR()
 			hr.CommonMetadata = tc.common
 			raw := tc.docs
@@ -383,6 +391,7 @@ metadata:
 }
 
 func TestMergeChartValuesFiles(t *testing.T) {
+	t.Parallel()
 	chartWith := func(files map[string]string) *chart.Chart {
 		c := &chart.Chart{}
 		for name, body := range files {
@@ -392,6 +401,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	}
 
 	t.Run("LayersInOrderOverridesEarlier", func(t *testing.T) {
+		t.Parallel()
 		c := chartWith(map[string]string{
 			"first.yaml":  "a: first-only\nb: from-first\n",
 			"second.yaml": "b: from-second\nc: second-only\n",
@@ -406,6 +416,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	})
 
 	t.Run("MissingFileIgnored", func(t *testing.T) {
+		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
 		got, err := mergeChartValuesFilesUncached(c, []string{"a.yaml", "missing.yaml"}, true)
 		if err != nil {
@@ -417,6 +428,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	})
 
 	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
+		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
 		_, err := mergeChartValuesFilesUncached(c, []string{"missing.yaml"}, false)
 		if err == nil {
@@ -428,6 +440,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	})
 
 	t.Run("InvalidYAMLErrors", func(t *testing.T) {
+		t.Parallel()
 		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
 		_, err := mergeChartValuesFilesUncached(c, []string{"bad.yaml"}, false)
 		if err == nil {
@@ -439,6 +452,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	})
 
 	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
+		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
 		got, err := mergeChartValuesFilesUncached(c, nil, false)
 		if err != nil {
@@ -456,6 +470,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 // for CLI consumers; pin the matrix here so future refactors don't
 // silently break the flag.
 func TestFilterShowOnly(t *testing.T) {
+	t.Parallel()
 	rendered := `# Source: mychart/templates/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -476,6 +491,7 @@ metadata:
 `
 
 	t.Run("KeepsListedPaths", func(t *testing.T) {
+		t.Parallel()
 		got := filterShowOnly(rendered, []string{
 			"mychart/templates/configmap.yaml",
 			"mychart/templates/service.yaml",
@@ -492,6 +508,7 @@ metadata:
 	})
 
 	t.Run("EmptyPathListProducesEmptyOutput", func(t *testing.T) {
+		t.Parallel()
 		got := filterShowOnly(rendered, nil)
 		if got != "" {
 			t.Errorf("nil show-only list should drop everything; got: %s", got)
@@ -499,6 +516,7 @@ metadata:
 	})
 
 	t.Run("MissingHeaderSkipped", func(t *testing.T) {
+		t.Parallel()
 		noHeader := `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -511,6 +529,7 @@ metadata:
 	})
 
 	t.Run("UnmatchedPathProducesEmptyOutput", func(t *testing.T) {
+		t.Parallel()
 		got := filterShowOnly(rendered, []string{"mychart/templates/nonexistent.yaml"})
 		if got != "" {
 			t.Errorf("unmatched show-only path should drop everything; got: %s", got)
@@ -519,6 +538,7 @@ metadata:
 }
 
 func TestOptions_SkipResourceKinds(t *testing.T) {
+	t.Parallel()
 	o := Options{SkipCRDs: true, SkipKinds: []string{manifest.KindConfigMap, manifest.KindSecret}}
 	got := o.SkipResourceKinds()
 	want := map[string]bool{"ConfigMap": true, "CustomResourceDefinition": true, "Secret": true}

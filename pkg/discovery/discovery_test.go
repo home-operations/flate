@@ -837,6 +837,7 @@ configMapGenerator:
 // followed afterwards still honor their own .krmignore rather than the
 // override (whose patterns are anchored at the scan root).
 func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ks := func(name, path string) string {
 		return `apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -879,12 +880,14 @@ spec:
 }
 
 func TestRun_GraphOwnedOrphans(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, resource, namespace string }{
 		{"sibling", "../shared/demo", ""},
 		{"direct", "../shared/demo/bundle.yaml", ""},
 		{"explicit", "../shared/demo", "demo"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -936,8 +939,10 @@ data: {value: fixture}
 }
 
 func TestRun_StandaloneSecretWinsProducerPlaceholder(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"standalone", "preexisting", "graph-owned"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "flux/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -994,8 +999,10 @@ stringData: {HOST: fixture-value}
 }
 
 func TestRun_GraphOwnershipSourceClassification(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"bootstrap", "self", "self_unavailable", "external", "missing_oci", "missing_bucket", "declared_oci", "declared_bucket"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			sourceName := "flux-system"
 			kind := manifest.KindGitRepository
@@ -1109,10 +1116,12 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 }
 
 func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ namespace, apiVersion string }{
 		{"apps", "v1"}, {"other", "v1"}, {"apps", "foreign.example/v1"},
 	} {
 		t.Run(tc.namespace+"/"+tc.apiVersion, func(t *testing.T) {
+			t.Parallel()
 			ns := tc.namespace
 			root := t.TempDir()
 			for _, file := range []struct{ path, body string }{
@@ -1140,8 +1149,10 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 }
 
 func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
+	t.Parallel()
 	for _, optional := range []bool{false, true} {
 		t.Run(fmt.Sprint(optional), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for _, file := range []struct{ path, body string }{
 				{"flux/producer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: ./producer}\n"},

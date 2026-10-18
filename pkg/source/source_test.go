@@ -40,6 +40,7 @@ func (s *stubTypedFetcher) Fetch(_ context.Context, obj *manifest.GitRepository,
 // TypedFetcher into a Fetcher whose Fetch routes a matching payload
 // through the typed inner function.
 func TestWrap_DispatchesTypedPayload(t *testing.T) {
+	t.Parallel()
 	inner := &stubTypedFetcher{}
 	f := Wrap(manifest.KindGitRepository, inner)
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
@@ -68,6 +69,7 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 // the same boilerplate, each a potential panic site if anyone
 // forgot the `, ok` check.
 func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
+	t.Parallel()
 	inner := &stubTypedFetcher{}
 	f := Wrap(manifest.KindGitRepository, inner)
 	// An OCIRepository payload going through a Git-typed wrapper.
@@ -86,6 +88,7 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 }
 
 func TestOperationView_AcquisitionBoundary(t *testing.T) {
+	t.Parallel()
 	owner, err := sourcecache.New(t.Context(), "")
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
@@ -136,6 +139,7 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 		{"policy evidence", shaped, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for range 2 {
 				view, pin, err := OperationView(t.Context(), tc.input)
 				assert.NoError(t, err)

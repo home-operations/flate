@@ -14,6 +14,7 @@ import (
 )
 
 func TestConfigure_MissingCRDs(t *testing.T) {
+	t.Parallel()
 	c := base.New(store.New(), task.NewBounded(2), "test")
 	id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "app"}
 	deps := []manifest.DependencyRef{{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}

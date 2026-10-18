@@ -119,6 +119,7 @@ func deepCopyDoc(t *testing.T, doc map[string]any) map[string]any {
 }
 
 func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
+	t.Parallel()
 	patch := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  replicas: 3\n"
 
 	cases := []struct {
@@ -302,6 +303,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := writeTree(t, tc.files)
 			doc := ksDoc(tc.spec)
 
@@ -324,6 +326,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 }
 
 func TestRenderFlux_NamespaceIdentity(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace string
 	}{
@@ -331,6 +334,7 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 		{name: "target", namespace: "apps"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := writeTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("deployment.yaml", "role.yaml", "gateway.yaml"),
 				"deployment.yaml":    "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: deployment}\n",
@@ -363,6 +367,7 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 // GitRepository fetch would produce. Without the filter the SOPS config is
 // scanned as a manifest and the build fails.
 func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
+	t.Parallel()
 	root := writeTree(t, map[string]string{
 		".sops.yaml": "creation_rules:\n  - path_regex: .*\n    age: age1example\n",
 		"cm.yaml":    cmYAML("config"),
@@ -403,6 +408,7 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 // SkipDir must prune a subpackage from both layers after preflight writes into
 // it. The parent lists the subpackage once, never its kustomization.yaml.
 func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
+	t.Parallel()
 	root := writeTree(t, map[string]string{
 		// Parent dir intentionally has NO kustomization.yaml -> auto-generate.
 		"cnpg/kustomization.yaml":  existingKustomization("./app/cm.yaml"),

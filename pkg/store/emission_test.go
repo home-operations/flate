@@ -11,6 +11,7 @@ import (
 )
 
 func TestStore_EmittedParent_RecordsAndQueriesParent(t *testing.T) {
+	t.Parallel()
 	r := New()
 	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster"}
 	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "default", Name: "demo"}
@@ -33,6 +34,7 @@ func TestStore_EmittedParent_RecordsAndQueriesParent(t *testing.T) {
 }
 
 func TestStore_EmittedParent_FirstWriterWins(t *testing.T) {
+	t.Parallel()
 	r := New()
 	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "n", Name: "demo"}
 	parentA := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "a"}
@@ -48,9 +50,11 @@ func TestStore_EmittedParent_FirstWriterWins(t *testing.T) {
 }
 
 func TestStore_RecordEmitted_AttributesEveryChild(t *testing.T) {
+	t.Parallel()
 	for _, insertForeignFirst := range []bool{false, true} {
 		for _, withdrawForeignFirst := range []bool{false, true} {
 			t.Run(fmt.Sprintf("insertForeignFirst=%t/withdrawForeignFirst=%t", insertForeignFirst, withdrawForeignFirst), func(t *testing.T) {
+				t.Parallel()
 				r := New()
 				parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster"}
 				other := parent
@@ -150,6 +154,7 @@ func TestStore_RecordEmitted_AttributesEveryChild(t *testing.T) {
 }
 
 func TestStore_RecordEmitted_HonorsSelfEdgeAndFirstWriterWins(t *testing.T) {
+	t.Parallel()
 	r := New()
 	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster"}
 	other := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "other"}
@@ -172,6 +177,7 @@ func TestStore_RecordEmitted_HonorsSelfEdgeAndFirstWriterWins(t *testing.T) {
 }
 
 func TestStore_EmittedChildrenByParent_Concurrent(t *testing.T) {
+	t.Parallel()
 	r := New()
 	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 	var wg sync.WaitGroup

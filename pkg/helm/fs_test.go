@@ -29,12 +29,14 @@ import (
 )
 
 func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
+	t.Parallel()
 	for _, irregular := range []bool{false, true} {
 		name := "files"
 		if irregular {
 			name = "irregular"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for name, data := range map[string]string{
 				"Chart.yaml":            "\xef\xbb\xbfapiVersion: v2\nname: parent\nversion: 1.0.0\n",
@@ -86,6 +88,7 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 }
 
 func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 	cli, err := NewClient(newTestCache(t, ""))
 	if err != nil {
@@ -241,11 +244,13 @@ func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
 }
 
 func TestChartPathInFS_InvalidArtifacts(t *testing.T) {
+	t.Parallel()
 	for name, input := range map[string]fstest.MapFS{
 		"missing-layer":   {},
 		"multiple-charts": {"a/Chart.yaml": {}, "b/Chart.yaml": {}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := chartPathInFS(input); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("invalid artifact lacks input classification: %v", err)
 			}
@@ -254,6 +259,7 @@ func TestChartPathInFS_InvalidArtifacts(t *testing.T) {
 }
 
 func TestLoadFSChart_InvalidInputs(t *testing.T) {
+	t.Parallel()
 	for name, input := range map[string]fstest.MapFS{
 		"missing":       {},
 		"empty":         {"chart": {Mode: fs.ModeDir}},
@@ -263,6 +269,7 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 		"ignore":        {"chart/.helmignore": {Data: []byte("**\n")}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			captured, missing, err := captureChart(input, "chart")
 			if err == nil {
 				_, err = captured.load()
@@ -290,6 +297,7 @@ func TestLoadFSChart_InvalidInputs(t *testing.T) {
 }
 
 func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 	owner := newTestCache(t, "")
 	cli, err := NewClient(owner)
@@ -313,6 +321,7 @@ func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 }
 
 func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
+	t.Parallel()
 	roots := []string{t.TempDir(), t.TempDir()}
 	st := store.New()
 	cli, err := NewClient(newTestCache(t, ""))
@@ -419,6 +428,7 @@ type chartOpenFS struct {
 func (f chartOpenFS) Open(name string) (fs.File, error) { return f.open(name) }
 
 func TestLoadFSChart_CaptureIdentity(t *testing.T) {
+	t.Parallel()
 	base := func() fstest.MapFS {
 		return fstest.MapFS{
 			"Chart.yaml":                     {Data: []byte("apiVersion: v2\nname: parent\nversion: 1.0.0\n")},
@@ -427,6 +437,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		}
 	}
 	t.Run("one policy read and exact handoff", func(t *testing.T) {
+		t.Parallel()
 		input := base()
 		input[".helmignore"] = &fstest.MapFile{Data: []byte("# first\n")}
 		reads := map[string]int{}
@@ -471,6 +482,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		assert.Equal(t, reads["charts/child/templates/cm.yaml"], 1)
 	})
 	t.Run("archive exact handoff", func(t *testing.T) {
+		t.Parallel()
 		data := chartArchive(t, base())
 		input := fstest.MapFS{"chart.tgz": {Data: data}}
 		var bytesRead int64
@@ -527,6 +539,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		{"actual data", func(input fstest.MapFS) { input["a"].Data = []byte("bd") }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			input := base()
 			input[".helmignore"] = &fstest.MapFile{Data: []byte(".helmignore\n")}
 			input["a"] = &fstest.MapFile{Data: []byte("bc")}

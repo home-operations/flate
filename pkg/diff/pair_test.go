@@ -10,6 +10,7 @@ import (
 )
 
 func TestPair_DistinguishesByParent(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name, parentGroup, parentName, apiVersion string
 		pairs                                     int
@@ -20,6 +21,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 		{"resource version", manifest.HelmReleaseDomain, "a", "apps/v2", 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			parent := Parent{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "a"}
 			left := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
 			left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
@@ -63,6 +65,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 }
 
 func TestPair_PathIsPresentation(t *testing.T) {
+	t.Parallel()
 	leftParent := Parent{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps", Path: "old/apps"}
 	for _, tt := range []struct {
 		name, path, resource, parent string
@@ -71,6 +74,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 		{"cleared", "", "ConfigMap apps/shared", "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rightParent := leftParent
 			rightParent.Path = tt.path
 			left := []Doc{cmDoc(leftParent, manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}

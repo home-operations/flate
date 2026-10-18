@@ -17,6 +17,7 @@ import (
 )
 
 func TestOCIChartVersion_RevisionSemantics(t *testing.T) {
+	t.Parallel()
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	for _, tc := range []struct {
 		name, version, revision, want string
@@ -41,6 +42,7 @@ func TestOCIChartVersion_RevisionSemantics(t *testing.T) {
 		{"invalid metadata", "6.15.0", "sha256:ff3d3e14728_", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := ociChartVersion(tc.version, tc.revision)
 			if tc.want == "" {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
@@ -56,11 +58,13 @@ func TestOCIChartVersion_RevisionSemantics(t *testing.T) {
 }
 
 func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []struct {
 		name    string
 		disable bool
 	}{{"tracking", false}, {"tracking off", true}} {
 		t.Run(mode.name, func(t *testing.T) {
+			t.Parallel()
 
 			st, hr, dir := ociRenderFixture(t)
 			cli, err := NewClient(newTestCache(t, ""))
@@ -140,11 +144,13 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 }
 
 func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []struct {
 		name    string
 		disable bool
 	}{{"tracking", false}, {"tracking off", true}} {
 		t.Run(mode.name, func(t *testing.T) {
+			t.Parallel()
 
 			st, hr, dir := ociRenderFixture(t)
 			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"

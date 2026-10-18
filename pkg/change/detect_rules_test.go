@@ -143,8 +143,10 @@ func TestDetect_NestedOppositeRoot(t *testing.T) {
 }
 
 func TestDetect_Concurrent(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			t.Parallel()
 			before, after := t.TempDir(), t.TempDir()
 			var want []string
 			for i := range 100 {
@@ -174,6 +176,7 @@ func TestDetect_Concurrent(t *testing.T) {
 }
 
 func TestDetect_CapturedSidePolicies(t *testing.T) {
+	t.Parallel()
 	var inputs [2]*store.SourceArtifact
 	var counts [2]*countedPolicyFS
 	for i, rules := range []string{"*.tmp\n", "discard.tmp\n"} {

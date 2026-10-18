@@ -119,6 +119,7 @@ func TestIgnoreFS_HidesExcludedPaths(t *testing.T) {
 // A fetched artifact (applyIgnore=false) is left alone: its fetcher already
 // filtered it.
 func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
+	t.Parallel()
 	root := writeTree(t, map[string]string{
 		".sourceignore":                       allowlistIgnore,
 		"bundles/common/kustomization.yaml":   existingKustomization("cm.yaml"),
@@ -132,6 +133,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	}
 
 	t.Run("spec.path excluded", func(t *testing.T) {
+		t.Parallel()
 		_, err := RenderFlux(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "bundles/common", Spec: spec("./bundles/common")}, sourcecache.RetryConfig{})
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not a directory") {
 			t.Fatalf("expected the excluded spec.path to be reported missing, got %v", err)
@@ -139,6 +141,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	})
 
 	t.Run("kustomization base excluded", func(t *testing.T) {
+		t.Parallel()
 		_, err := RenderFlux(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/app", Spec: spec("./clusters/dev/app")}, sourcecache.RetryConfig{})
 		if err == nil || !strings.Contains(err.Error(), "bundles/common") {
 			t.Fatalf("expected the build to fail resolving the excluded base, got %v", err)
@@ -146,6 +149,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	})
 
 	t.Run("allowlisted path renders", func(t *testing.T) {
+		t.Parallel()
 		out, err := RenderFlux(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/ok", Spec: spec("./clusters/dev/ok")}, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("render: %v", err)
@@ -156,6 +160,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 	})
 
 	t.Run("fetched artifact not refiltered", func(t *testing.T) {
+		t.Parallel()
 		out, err := RenderFlux(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "bundles/common", Spec: spec("./bundles/common")}, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("render: %v", err)
@@ -171,12 +176,14 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 // recorded through: a probe of a hidden path is recorded as absent and must
 // still read as absent on replay, or every such render would miss forever.
 func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
+	t.Parallel()
 	for _, explicit := range []bool{false, true} {
 		name := "file patterns"
 		if explicit {
 			name = "pre-shaped explicit patterns"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			root := writeTree(t, map[string]string{
 				".sourceignore": "b.yaml\n",
 				"a.yaml":        cmYAML("a"),
@@ -237,6 +244,7 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 }
 
 func TestRenderFlux_SourceignoreConfigMapGenerator(t *testing.T) {
+	t.Parallel()
 	const image = "\x89PNG\r\n\x1a\n"
 	cases := []struct {
 		name    string
@@ -253,6 +261,7 @@ func TestRenderFlux_SourceignoreConfigMapGenerator(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			files := map[string]string{
 				"app/icons/logo.png": image,
 				"app/kustomization.yaml": `apiVersion: kustomize.config.k8s.io/v1beta1

@@ -14,6 +14,7 @@ func secret(ns, name string, keys ...string) ProducerTarget {
 }
 
 func TestProducerTargets(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		raw  *RawObject
@@ -81,6 +82,7 @@ func TestProducerTargets(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := ProducerTargets(c.raw); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("targets = %#v, want %#v", got, c.want)
 			}
@@ -89,6 +91,7 @@ func TestProducerTargets(t *testing.T) {
 }
 
 func TestProducerIndex(t *testing.T) {
+	t.Parallel()
 	target := NamedResource{Kind: KindSecret, Namespace: "default", Name: "app-values"}
 	producer := NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "default", Name: "app-creds"}
 
@@ -114,6 +117,7 @@ func TestProducerIndex(t *testing.T) {
 }
 
 func TestProducerTargets_ForeignAPIGroup(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ kind, group string }{
 		{"ExternalSecret", "external-secrets.io"},
 		{"SealedSecret", "bitnami.com"},
@@ -121,6 +125,7 @@ func TestProducerTargets_ForeignAPIGroup(t *testing.T) {
 	} {
 		for _, group := range []string{"example.com/v1", tc.group + ".example.com/v1", "", "v1"} {
 			t.Run(tc.kind+"/"+group, func(t *testing.T) {
+				t.Parallel()
 				raw := &RawObject{Kind: tc.kind, APIVersion: group, Name: "producer", Namespace: "apps"}
 				if got := ProducerTargets(raw); len(got) != 0 {
 					t.Errorf("foreign producer targets = %v, want none", got)

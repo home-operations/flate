@@ -38,6 +38,7 @@ func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {
 }
 
 func TestFetchRemoteBase_References(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "a@b")
 	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "v1"})
 	first := mustTagHEAD(t, src, "v0.2.2")
@@ -53,6 +54,7 @@ func TestFetchRemoteBase_References(t *testing.T) {
 		{"HEAD local path", src, "", head, "v2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := newRemoteBaseFetcher(t)
 			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: tc.url, Ref: tc.ref, MaxAge: time.Hour}, sourcecache.RetryConfig{})
 			if err != nil {
@@ -67,6 +69,7 @@ func TestFetchRemoteBase_References(t *testing.T) {
 }
 
 func TestFetchRemoteBase_Freshness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		hash bool
@@ -76,6 +79,7 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 		{name: "hash never expires", hash: true, age: time.Nanosecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			src := t.TempDir()
 			mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "x"})
 			hash := mustTagHEAD(t, src, "v1.0.0")
@@ -105,6 +109,7 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 }
 
 func TestFetchRemoteBase_RequiresCache(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrInput) {
@@ -113,8 +118,10 @@ func TestFetchRemoteBase_RequiresCache(t *testing.T) {
 }
 
 func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
+	t.Parallel()
 	for _, url := range []string{"", "./a@b", "file:///a@b", "http://h/x@y"} {
 		t.Run(url, func(t *testing.T) {
+			t.Parallel()
 			// The uninitialized cache panics if acquisition precedes validation.
 			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
 			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
@@ -126,6 +133,7 @@ func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
 }
 
 func TestFetchRemoteBase_TransientRecovery(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	mustInitRepoWithFiles(t, root, map[string]string{"kustomization.yaml": "content"})
 	handler := gitHTTPHandler(t, root)

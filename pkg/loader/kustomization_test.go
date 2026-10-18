@@ -26,6 +26,7 @@ import (
 //     accepts them and downstream "under --path?" checks still apply;
 //   - empty rel is rejected, matching kustomize.
 func TestResolveDataPath(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		base    string
@@ -42,6 +43,7 @@ func TestResolveDataPath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			abs, ok := resolveDataPath(tc.base, tc.rel)
 			if ok != tc.wantOK {
 				t.Fatalf("resolveDataPath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
@@ -58,6 +60,7 @@ func TestResolveDataPath(t *testing.T) {
 // RESOLVES — overlays reference ../base and the dir is only descended
 // into, never opened. Absolute paths and URLs are still rejected.
 func TestResolveResourcePath(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		base    string
@@ -74,6 +77,7 @@ func TestResolveResourcePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			abs, ok := resolvePath(tc.base, tc.rel)
 			if ok != tc.wantOK {
 				t.Fatalf("resolvePath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
@@ -90,6 +94,7 @@ func TestResolveResourcePath(t *testing.T) {
 // not list it. A listed file, or a directory with no kustomization at all (a
 // loose top-level entry), is not.
 func TestFinalizeIndex_Excluded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// excluded/ — kustomization references only cm.yaml; ks.yaml is a stray file.
 	testutil.WriteFile(t, dir, "excluded/kustomization.yaml", "resources:\n  - cm.yaml\n")
@@ -108,6 +113,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			l := loaderFixture(store.New(), nil)
 			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Name: "stray"}
 			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
@@ -119,6 +125,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 	}
 	for _, version := range []string{"", "/", "example.test/", "example.test/v1/extra"} {
 		t.Run("unlisted ResourceSet/"+version, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [selected.yaml]\n")
 			testutil.WriteFile(t, root, "selected.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected}\nspec: {url: https://example.test/repo.git}\n")
@@ -137,6 +144,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 }
 
 func TestLoader_KustomizationFilenames(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		loaded int
@@ -147,6 +155,7 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 		{"kustomization.json", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, tc.name, "resources: [included.yaml]\nunknownDirective: ignored\n")
 			for _, file := range []string{"included.yaml", "unlisted.yaml"} {
@@ -160,6 +169,7 @@ func TestLoader_KustomizationFilenames(t *testing.T) {
 }
 
 func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
+	t.Parallel()
 	r := documentReader{cache: map[string]document{}}
 	working := filepath.Join(t.TempDir(), "apps")
 	committed := filepath.Join(t.TempDir(), "apps")
@@ -193,6 +203,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		t.Fatal("negative result was re-read")
 	}
 	t.Run("load missing mounted child", func(t *testing.T) {
+		t.Parallel()
 		child := filepath.Join(committed, "child")
 		testutil.WriteFile(t, child, "ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: decoy}\nspec: {path: ./apps}\n")
 		st := store.New()
@@ -216,6 +227,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	})
 
 	t.Run("unavailable source", func(t *testing.T) {
+		t.Parallel()
 		st := store.New()
 		repo := &manifest.GitRepository{Name: "released", Namespace: "n"}
 		st.AddObject(repo)
@@ -227,6 +239,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	})
 
 	t.Run("artifact membership and invalidation", func(t *testing.T) {
+		t.Parallel()
 		st := store.New()
 		reader := documentReader{cache: map[string]document{}}
 		root := t.TempDir()
@@ -308,6 +321,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		}
 	})
 	t.Run("native_reader_ownership", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "kustomization.yaml", "namespace: native\n")
 		location, err := gitrepo.Locate(t.Context(), root, root)
@@ -332,12 +346,14 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		}
 	})
 	t.Run("replaced source", func(t *testing.T) {
+		t.Parallel()
 		for _, native := range []bool{false, true} {
 			name := "map"
 			if native {
 				name = "native"
 			}
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				st := store.New()
 				l := New(st)
 				l.SourceRoot = committed
@@ -421,6 +437,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		}
 	})
 	t.Run("late_nested_source", func(t *testing.T) {
+		t.Parallel()
 		root, unrelated := t.TempDir(), t.TempDir()
 		for _, dir := range []string{root, unrelated} {
 			testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks.yaml]\n")
@@ -490,6 +507,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 }
 
 func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "components: [old]\n")
 	st := store.New()
@@ -507,6 +525,7 @@ func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
 		{"late reporting", "apps/new/", Claims(st, root)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for _, claim := range tc.claims {
 				if claim.Prefix == tc.component {
 					return

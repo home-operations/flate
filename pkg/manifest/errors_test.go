@@ -8,8 +8,10 @@ import (
 )
 
 func TestTrimSentinelPrefix_AllSentinels(t *testing.T) {
+	t.Parallel()
 	for _, sentinel := range sentinels {
 		t.Run(sentinel.Error(), func(t *testing.T) {
+			t.Parallel()
 			msg := fmt.Errorf("%w: cause: detail", sentinel).Error()
 			if got := TrimSentinelPrefix(msg); got != "cause: detail" {
 				t.Errorf("TrimSentinelPrefix(%q) = %q", msg, got)
@@ -24,6 +26,7 @@ func TestTrimSentinelPrefix_AllSentinels(t *testing.T) {
 // used for errors.Is branching keep working; only the rendered
 // string is reshaped.
 func TestTrimSentinelPrefix(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in, want string
 	}{
@@ -52,6 +55,7 @@ func TestTrimSentinelPrefix(t *testing.T) {
 }
 
 func TestDependencyFailedError_Format(t *testing.T) {
+	t.Parallel()
 	parent := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "default", Name: "child"}
 	depA := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "security", Name: "pocket-id-instance"}
 	depB := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "database", Name: "cnpg-cluster"}
@@ -77,6 +81,7 @@ func TestDependencyFailedError_Format(t *testing.T) {
 }
 
 func TestDependencyFailedError_Unwraps(t *testing.T) {
+	t.Parallel()
 	err := &DependencyFailedError{
 		Parent: NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "x"},
 	}
@@ -93,6 +98,7 @@ func TestDependencyFailedError_Unwraps(t *testing.T) {
 }
 
 func TestDependencyFailedError_EmptyFailedList(t *testing.T) {
+	t.Parallel()
 	err := &DependencyFailedError{
 		Parent: NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "ns", Name: "k"},
 	}

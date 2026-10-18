@@ -11,6 +11,7 @@ import (
 )
 
 func TestLocate_RepositorySelection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                              string
 		ancestor, linked, remotes, broken bool
@@ -22,6 +23,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 		{name: "selected open retains root", linked: true, broken: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			parent := t.TempDir()
 			if tc.ancestor || tc.linked {
 				_, err := git.PlainInit(parent, false)
@@ -61,6 +63,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 		})
 	}
 	t.Run("metadata error boundary", func(t *testing.T) {
+		t.Parallel()
 		outer := t.TempDir()
 		_, err := git.PlainInit(outer, false)
 		assert.Equal(t, err, nil)
@@ -85,6 +88,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 		assert.Equal(t, repo == nil, true)
 	})
 	t.Run("retained coordinates and configuration", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		_, err := git.PlainInit(root, false)
 		assert.Equal(t, err, nil)
@@ -106,6 +110,7 @@ func TestLocate_RepositorySelection(t *testing.T) {
 	})
 
 	t.Run("explicit root owns nested repositories", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		_, err := git.PlainInit(root, false)
 		assert.Equal(t, err, nil)

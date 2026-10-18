@@ -53,6 +53,7 @@ func genCAFn(t *testing.T, fm map[string]any) func(string, int) (certificate, er
 }
 
 func TestCertFuncs_DeterministicAndValid(t *testing.T) {
+	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	ca, err := genCAFn(t, fm)("my-ca", 365)
 	if err != nil {
@@ -110,6 +111,7 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			seed := SeedFor(tt.name, "ns")
 			expectedStream := newStream(seed)
 			pub, priv, err := ed25519.GenerateKey(expectedStream)
@@ -182,6 +184,7 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 }
 
 func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
+	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	ca, err := genCAFn(t, fm)("my-ca", 365)
 	if err != nil {
@@ -209,6 +212,7 @@ func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
 		{name: "invalid certificate before invalid IP", ca: certificate{Cert: "not PEM"}, ips: []any{"invalid ip"}, want: "unable to decode CA certificate PEM"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := genSigned("leaf", tt.ips, nil, 365, tt.ca)
 			if err == nil {
 				t.Fatal("genSignedCert accepted an invalid CA")
@@ -222,6 +226,7 @@ func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
 // parseable deterministic ed25519 key. stdlib cannot make rsa/ecdsa keygen
 // deterministic, so those collapse to ed25519; "dsa" also uses the offline ed25519 stand-in.
 func TestGenPrivateKey_ParsesPerType(t *testing.T) {
+	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	gpk, ok := fm["genPrivateKey"].(func(string) string)
 	if !ok {

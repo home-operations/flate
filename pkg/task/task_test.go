@@ -11,6 +11,7 @@ import (
 )
 
 func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		const workers = 3
 		s := NewBounded(workers)
@@ -46,6 +47,7 @@ func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
 }
 
 func TestNewBounded_Unbounded(t *testing.T) {
+	t.Parallel()
 	// Workers <= 0 disables bounding (no semaphore allocated).
 	s := NewBounded(0)
 	if s.sem != nil {
@@ -58,6 +60,7 @@ func TestNewBounded_Unbounded(t *testing.T) {
 }
 
 func TestService_BlockTillDone(t *testing.T) {
+	t.Parallel()
 	s := NewBounded(0)
 	var n atomic.Int64
 	for range 50 {
@@ -71,6 +74,7 @@ func TestService_BlockTillDone(t *testing.T) {
 }
 
 func TestService_PanicCountedAndRecovered(t *testing.T) {
+	t.Parallel()
 	s := NewBounded(0)
 	s.Go(context.Background(), "boom", func(_ context.Context) {
 		panic("oops")
@@ -134,6 +138,7 @@ func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {
 // TestYieldSlot_UnboundedIsNoOp asserts the no-pool path runs fn
 // transparently.
 func TestYieldSlot_UnboundedIsNoOp(t *testing.T) {
+	t.Parallel()
 	s := NewBounded(0)
 	called := false
 	s.YieldSlot(func() { called = true })

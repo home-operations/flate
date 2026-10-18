@@ -50,6 +50,7 @@ func outcomeFailure(err error) error {
 }
 
 func TestOutcome_TypedRoundTrip(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		cause    error
@@ -113,6 +114,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			live := outcomeFailure(tc.cause)
 			o := newOutcome(live, time.Now().UTC(), 1, ocispec.Descriptor{})
@@ -161,6 +163,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 }
 
 func TestOutcome_Exclusions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		err  error
@@ -203,6 +206,7 @@ func TestOutcome_Exclusions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			for _, err := range []error{tc.err, errors.Join(connReset(), fmt.Errorf("nested: %w", tc.err)), fmt.Errorf("outer: %w", errors.Join(tc.err, connReset()))} {
 				if got := newOutcome(outcomeFailure(err), time.Now().UTC(), 1, ocispec.Descriptor{}); got != nil {
 					t.Fatalf("excluded tree accepted: %T", tc.err)
@@ -258,6 +262,7 @@ func TestOutcome_Exclusions(t *testing.T) {
 }
 
 func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
+	t.Parallel()
 	c := newCache(t, t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
 	_, _, _, err := c.Blob(ctx, BlobKey{Content: "cancel-record"}, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
@@ -273,6 +278,7 @@ func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
 }
 
 func TestOutcome_Time(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	for _, tc := range []struct {
 		count uint32
@@ -298,6 +304,7 @@ func TestOutcome_Time(t *testing.T) {
 		{"non-UTC", at.In(time.FixedZone("offset", 3600)), 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if _, valid := outcomeDeadline(tc.at, tc.count); valid {
 				t.Fatal("invalid time accepted")
 			}
@@ -314,6 +321,7 @@ func TestOutcome_Time(t *testing.T) {
 		{"rollback after completion", []time.Duration{500 * time.Millisecond, 499 * time.Millisecond, 600 * time.Millisecond}, []bool{true, false, false}, []bool{true, false, false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			o := newOutcome(outcomeFailure(connReset()), at, 1, ocispec.Descriptor{})
 			before := o.record
 			for i, delta := range tc.observations {
@@ -344,8 +352,10 @@ func pushOutcomeFixture(t *testing.T, c *Cache, config, data []byte) ocispec.Des
 }
 
 func TestOutcome_ReadBoundsAndIntegrity(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"exact bounds", "config one over", "manifest one over", "negative size", "missing config", "missing manifest", "config digest", "manifest digest", "config short", "config trailing", "missing layer"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 			config, data, _ := o.encode()
@@ -424,6 +434,7 @@ func TestOutcome_ReadBoundsAndIntegrity(t *testing.T) {
 }
 
 func TestOutcome_InvalidRecords(t *testing.T) {
+	t.Parallel()
 	code := outcomeCause{Kind: "code", Code: errcode.ErrorCodeBlobUnknown}
 	codes := outcomeCause{Kind: "codes", Children: []outcomeCause{code}}
 	invalidCauses := map[string]outcomeCause{
@@ -462,6 +473,7 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 	scenarios := []string{"version", "count", "completion", "unknown field", "unknown cause field", "trailing JSON", "unknown cause", "cause field", "too deep", "bare EOF", "no terminal", "no remote", "format", "schema", "media", "two layers", "subject", "config media", "layer is outcome"}
 	for _, scenario := range append(scenarios, slices.Sorted(maps.Keys(invalidCauses))...) {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 			_, data, _ := o.encode()
@@ -551,8 +563,10 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 }
 
 func TestOutcome_PublicationFailure(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"tag", "push", "existing config corrupt"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			live := outcomeFailure(connReset())
 			o := newOutcome(live, time.Now().UTC(), 1, ocispec.Descriptor{})
@@ -593,12 +607,14 @@ func TestOutcome_PublicationFailure(t *testing.T) {
 }
 
 func TestOutcome_WriteBounds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, media string
 		limit       int
 	}{{"config", outcomeConfig, outcomeConfigLimit}, {"manifest", ocispec.MediaTypeImageManifest, outcomeManifestLimit}} {
 		for _, extra := range []int{0, 1} {
 			t.Run(fmt.Sprintf("%s/%d", tc.name, extra), func(t *testing.T) {
+				t.Parallel()
 				c := newCache(t, t.TempDir())
 				o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
 				config, data, _ := o.encode()
@@ -627,6 +643,7 @@ func TestOutcome_WriteBounds(t *testing.T) {
 	}
 	for _, size := range []int{outcomeConfigLimit, outcomeConfigLimit + 1} {
 		t.Run(fmt.Sprintf("record/%d", size), func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			o := &outcome{record: outcomeRecord{Version: 1, Completed: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Count: 1, Cause: outcomeCause{Kind: "terminal", Children: []outcomeCause{{Kind: "join"}}}}}
 			for range 6 {
@@ -684,6 +701,7 @@ func TestOutcome_WriteBounds(t *testing.T) {
 }
 
 func TestOutcome_LastGoodRedaction(t *testing.T) {
+	t.Parallel()
 	c := newCache(t, t.TempDir())
 	r, _, id, err := c.Blob(t.Context(), BlobKey{Content: "last-good"}, Policy{}, producer([]byte("held"), ocispec.Descriptor{Annotations: map[string]string{"fixture-secret": "fixture-secret", prefix + "chart-url": "https://fixture-secret"}}))
 	if err != nil {
@@ -737,8 +755,10 @@ func TestOutcome_LastGoodRedaction(t *testing.T) {
 }
 
 func TestOutcome_AcquisitionValidity(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"future", "rollback", "missing", "corrupt", "saturation"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				root := t.TempDir()
 				c := newCache(t, root)

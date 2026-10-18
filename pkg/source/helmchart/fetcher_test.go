@@ -43,6 +43,7 @@ func (s *stubOCI) Fetch(_ context.Context, r *manifest.OCIRepository, retry cach
 }
 
 func TestIsOCIHelmRepo(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		repo *manifest.HelmRepository
@@ -54,6 +55,7 @@ func TestIsOCIHelmRepo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := isOCIHelmRepo(tc.repo); got != tc.want {
 				t.Errorf("isOCIHelmRepo = %v, want %v", got, tc.want)
 			}
@@ -62,6 +64,7 @@ func TestIsOCIHelmRepo(t *testing.T) {
 }
 
 func TestSynthesizeOCIRepository(t *testing.T) {
+	t.Parallel()
 	r := &manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
 		URL: "oci://oci.trueforge.org/truecharts/", Type: sourcev1.HelmRepositoryTypeOCI,
@@ -95,6 +98,7 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 }
 
 func TestVersionToOCIRef(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       string
 		version    string
@@ -123,6 +127,7 @@ func TestVersionToOCIRef(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ref := versionToOCIRef(tc.version)
 			if ref == nil {
 				t.Fatalf("versionToOCIRef(%q) = nil", tc.version)
@@ -136,6 +141,7 @@ func TestVersionToOCIRef(t *testing.T) {
 }
 
 func TestFetch_OCIBranch(t *testing.T) {
+	t.Parallel()
 	repo := ociRepo("oci://oci.trueforge.org/truecharts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot"}}
 	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub}
@@ -163,6 +169,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 }
 
 func TestFetch_RepoNotFound(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
 	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"), cache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
@@ -171,6 +178,7 @@ func TestFetch_RepoNotFound(t *testing.T) {
 }
 
 func TestFetch_OCIExactVersionForever(t *testing.T) {
+	t.Parallel()
 	repo := ociRepo("oci://example.test/charts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
 	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub, disableChartDigestTracking: true}
@@ -183,11 +191,13 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 }
 
 func TestSyntheticChartName_PersistedIdentity(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, repo, chart, url, version, want string }{
 		{"normal", "repo", "chart", "https://charts.example/chart.tgz", "1.2.3", "repo-chart-c09ce75"},
 		{"digest", "repo", "chart", "https://charts.example/chart.tgz", "sha256:abc", "repo-chart-293cc48"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := syntheticChartName(tc.repo, tc.chart, tc.url, tc.version); got != tc.want {
 				t.Fatalf("name = %q, want %q", got, tc.want)
 			}

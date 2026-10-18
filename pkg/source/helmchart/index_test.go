@@ -11,6 +11,7 @@ import (
 )
 
 func TestIndexFromBytes_MatchesHelmLoader(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, data string
 		err        error
@@ -38,6 +39,7 @@ entries:
 		{"no api version", "entries: {}\n", repo.ErrNoAPIVersion},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "index.yaml", tc.data)
 			want, wantErr := repo.LoadIndexFile(filepath.Join(root, "index.yaml"))

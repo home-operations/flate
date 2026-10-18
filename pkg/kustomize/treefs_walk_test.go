@@ -10,6 +10,7 @@ import (
 // SkipDir must suppress both layers' children while other merged directories
 // still expose disk-only entries to scanManifests.
 func TestTreeFS_WalkPropagatesSkipDir(t *testing.T) {
+	t.Parallel()
 	root := writeTree(t, map[string]string{
 		"app/kustomization.yaml": existingKustomization("./inner.yaml"),
 		"app/inner.yaml":         cmYAML("inner"),

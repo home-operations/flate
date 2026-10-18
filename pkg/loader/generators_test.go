@@ -13,6 +13,7 @@ import (
 )
 
 func TestFinalizeIndex_GeneratorData(t *testing.T) {
+	t.Parallel()
 	const encrypted = "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"
 	for _, tc := range []struct {
 		name, kind, namespace, input, value, want string
@@ -32,6 +33,7 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 		{name: "cleartext_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: "fixture", wipe: true, want: "fixture"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			parent := t.TempDir()
 			root := filepath.Join(parent, "repo")
 			testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE")

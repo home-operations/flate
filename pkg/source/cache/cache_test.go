@@ -76,8 +76,10 @@ func producer(data []byte, descriptor ocispec.Descriptor) func(context.Context, 
 }
 
 func TestAcquire_GenerationsAndFreshness(t *testing.T) {
+	t.Parallel()
 	for _, disk := range []bool{false, true} {
 		t.Run(map[bool]string{false: "memory", true: "disk"}[disk], func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if disk {
 				root = t.TempDir()
@@ -207,6 +209,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			}
 			if disk {
 				t.Run("corrupt-reopen", func(t *testing.T) {
+					t.Parallel()
 					e, _ := c.entries.Load(id)
 					path := filepath.Join(root, blobPath(e.(*entry).stored.Digest))
 					if err := c.Close(); err != nil {
@@ -230,9 +233,11 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 }
 
 func TestAcquire_ArchivePolicy(t *testing.T) {
+	t.Parallel()
 	for _, disk := range []bool{false, true} {
 		for _, defaults := range []bool{false, true} {
 			t.Run(map[bool]string{false: "memory", true: "disk"}[disk]+map[bool]string{false: "/bucket", true: "/defaults"}[defaults], func(t *testing.T) {
+				t.Parallel()
 				root := ""
 				if disk {
 					root = t.TempDir()
@@ -279,8 +284,10 @@ func TestAcquire_ArchivePolicy(t *testing.T) {
 }
 
 func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
+	t.Parallel()
 	for _, disk := range []bool{false, true} {
 		t.Run(map[bool]string{false: "memory", true: "disk"}[disk], func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if disk {
 				root = t.TempDir()
@@ -693,7 +700,9 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 }
 
 func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
+	t.Parallel()
 	t.Run("outcome", func(t *testing.T) {
+		t.Parallel()
 		c := newCache(t, t.TempDir())
 		index := filepath.Join(c.root.Name(), indexPath())
 		if err := os.Remove(index); err != nil {
@@ -745,6 +754,7 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 }
 
 func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
+	t.Parallel()
 	root, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
 	if err != nil {
 		t.Fatal(err)
@@ -781,6 +791,7 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 }
 
 func TestDecode_RequiredMetadata(t *testing.T) {
+	t.Parallel()
 	for _, family := range []struct {
 		name     string
 		required []string
@@ -791,6 +802,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 		{"chart", []string{"chart-version", "chart-url"}, map[string]string{"flate.chart-version": "1.0.0", "flate.chart-url": "https://example.test/chart.tgz"}},
 	} {
 		t.Run(family.name, func(t *testing.T) {
+			t.Parallel()
 			base := map[string]string{
 				"flate.resolved-at":         time.Now().UTC().Format(time.RFC3339Nano),
 				"flate.upstream-size":       "12",
@@ -813,6 +825,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 			}
 			for _, check := range checks {
 				t.Run(check.name, func(t *testing.T) {
+					t.Parallel()
 					a := maps.Clone(base)
 					if check.key != "" {
 						a[check.key] = check.value
@@ -829,6 +842,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 			}
 			for _, field := range family.required {
 				t.Run("disk missing "+field, func(t *testing.T) {
+					t.Parallel()
 					root := t.TempDir()
 					c := newCache(t, root)
 					key := BlobKey{Content: struct{ URL string }{"https://example.test/" + family.name}, Required: family.required}
@@ -874,8 +888,10 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 }
 
 func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if backing == "disk" {
 				root = t.TempDir()
@@ -902,8 +918,10 @@ func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
 }
 
 func TestAcquire_TrailingDataIsBounded(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if backing == "disk" {
 				root = t.TempDir()
@@ -929,8 +947,10 @@ func TestAcquire_TrailingDataIsBounded(t *testing.T) {
 }
 
 func TestAcquire_CancellationKeepsContextError(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if backing == "disk" {
 				root = t.TempDir()
@@ -955,6 +975,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 		})
 	}
 	t.Run("completed blob", func(t *testing.T) {
+		t.Parallel()
 		c := newCache(t, "")
 		key := BlobKey{Content: "source-completed-before-cancel"}
 		ctx, cancel := context.WithCancel(t.Context())
@@ -982,6 +1003,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 }
 
 func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
+	t.Parallel()
 	c := newCache(t, t.TempDir())
 	key := ArchiveKey{Content: "source-unchanged"}
 	var first time.Time
@@ -1020,9 +1042,11 @@ func (c *archiveCancelContext) Err() error {
 }
 
 func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, backing := range []string{"memory", "disk"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
+				t.Parallel()
 				root := ""
 				if backing == "disk" {
 					root = t.TempDir()
@@ -1089,6 +1113,7 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 }
 
 func TestNew_UnreadableIndexRebuilds(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	c := newCache(t, root)
 	key := ArchiveKey{Content: "source-index-recovery"}
@@ -1118,6 +1143,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 }
 
 func TestNew_InvalidLayoutPreservesIndex(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	c := newCache(t, root)
 	if err := c.Close(); err != nil {
@@ -1142,9 +1168,11 @@ func TestNew_InvalidLayoutPreservesIndex(t *testing.T) {
 // The trailing allowance is exactly maxTrailingBytes; the producer returns right after its last write,
 // so only the consumer's own check can reject the extra byte.
 func TestAcquire_TrailingBoundary(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		for _, extra := range []int{0, 1} {
 			t.Run(fmt.Sprintf("%s/%d", backing, extra), func(t *testing.T) {
+				t.Parallel()
 				root := ""
 				if backing == "disk" {
 					root = t.TempDir()
@@ -1166,8 +1194,10 @@ func TestAcquire_TrailingBoundary(t *testing.T) {
 }
 
 func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if backing == "disk" {
 				root = t.TempDir()
@@ -1198,8 +1228,10 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 }
 
 func TestGit_RestartAndInvalidation(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"hit", "ref-mismatch", "missing-objects", "touch-failure", "outcome"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			src, root := t.TempDir(), t.TempDir()
 			repo, err := git.PlainInit(src, false)
 			if err != nil {
@@ -1369,6 +1401,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 
 	for _, disk := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recursive-held-%t", disk), func(t *testing.T) {
+			t.Parallel()
 			src := t.TempDir()
 			repo, err := git.PlainInit(src, false)
 			if err != nil {
@@ -1465,8 +1498,10 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 }
 
 func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"producer", "cancelled", "publication"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -1542,8 +1577,10 @@ func TestGit_FailedAttemptRemovesDirectories(t *testing.T) {
 }
 
 func TestCache_RootedWritesRejectEscape(t *testing.T) {
+	t.Parallel()
 	for _, sink := range []string{"staging", "last-use", "last-use-parent", "git-generation", "staging-cleanup-parent", "staging-cleanup-final"} {
 		t.Run(sink, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			outside := t.TempDir()
 			testutil.WriteFile(t, outside, "marker", "untouched")
@@ -1683,8 +1720,10 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 }
 
 func TestNew_IndexRecoveryRejectsEscapingParent(t *testing.T) {
+	t.Parallel()
 	for _, component := range []string{"parent", "final"} {
 		t.Run(component, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			outside := newCache(t, t.TempDir())
 			if err := errors.Join(c.Close(), outside.Close()); err != nil {
@@ -1742,8 +1781,10 @@ func TestNew_IndexRecoveryRejectsEscapingParent(t *testing.T) {
 }
 
 func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"producer", "publication"} {
 		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
 			c := newCache(t, t.TempDir())
 			outside := t.TempDir()
 			key := GitKey{Content: "source-git-escaping-cleanup", RecurseSubmodules: true}

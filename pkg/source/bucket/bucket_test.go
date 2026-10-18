@@ -33,6 +33,7 @@ import (
 )
 
 func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
+	t.Parallel()
 	f := &bucket.Fetcher{}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
@@ -49,6 +50,7 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 }
 
 func TestFetcher_ForceGenericProvider(t *testing.T) {
+	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
 	f := &bucket.Fetcher{
 		ForceGeneric: true,
@@ -73,9 +75,11 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 }
 
 func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk"} {
 		for _, attempts := range []int{1, 3} {
 			t.Run(fmt.Sprintf("%s/attempts-%d", backing, attempts), func(t *testing.T) {
+				t.Parallel()
 				var listings atomic.Int32
 				sequences := map[string]*atomic.Int32{"first": {}, "second": {}, "canceled": {}}
 				streaming, canceled := make(chan struct{}), make(chan struct{})
@@ -234,6 +238,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 }
 
 func TestFetcher_TransientStatusRecovery(t *testing.T) {
+	t.Parallel()
 	for _, wired := range []bool{false, true} {
 		for _, tc := range []struct {
 			status        int
@@ -244,6 +249,7 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 			{http.StatusForbidden, "AccessDenied", "access denied"},
 		} {
 			t.Run(fmt.Sprintf("network-%t/status-%d", wired, tc.status), func(t *testing.T) {
+				t.Parallel()
 				var calls atomic.Int32
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/xml")
@@ -379,8 +385,10 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 }
 
 func TestFetcher_NetworkRoutes(t *testing.T) {
+	t.Parallel()
 	for _, route := range []string{"list", "object"} {
 		t.Run(route, func(t *testing.T) {
+			t.Parallel()
 			var network source.Network
 			var lists, objects, dials atomic.Int32
 			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}

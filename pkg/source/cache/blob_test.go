@@ -21,9 +21,12 @@ import (
 )
 
 func TestBlob_LookupAndReplacement(t *testing.T) {
+	t.Parallel()
 	t.Run("outcomes", func(t *testing.T) {
+		t.Parallel()
 		for _, maxAge := range []time.Duration{0, time.Hour, Forever, -2} {
 			t.Run(maxAge.String(), func(t *testing.T) {
+				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					root := t.TempDir()
 					c := newCache(t, root)
@@ -141,6 +144,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 	}
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if backing == "disk" {
 				root = t.TempDir()
@@ -410,6 +414,7 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 }
 
 func TestBlob_ConcurrentPayloads(t *testing.T) {
+	t.Parallel()
 	c := newCache(t, t.TempDir())
 	const workers = 4
 	start := make(chan struct{})

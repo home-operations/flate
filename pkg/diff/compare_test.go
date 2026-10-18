@@ -35,6 +35,7 @@ func selectedSnapshot(parent Parent, docs []Doc, unavailable store.StatusInfo) S
 }
 
 func TestCompare_SelectedErrorsRetained(t *testing.T) {
+	t.Parallel()
 	selectedErr := errors.New("shared teardown failure")
 	valid := selectedSnapshot(hrParent, hrDocs(1), store.StatusInfo{})
 	for _, tc := range []struct {
@@ -46,6 +47,7 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 		{name: "selected snapshots", orig: valid, current: valid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, docErr := Compare(tc.orig, tc.current, selectedErr, Options{Format: FormatJSON})
 			_, _, imageErr := CompareImages(tc.orig, tc.current, selectedErr, false)
 			for _, err := range []error{docErr, imageErr} {
@@ -62,6 +64,7 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 }
 
 func TestCompare_UnavailableProducerPolicy(t *testing.T) {
+	t.Parallel()
 	failedOrig := store.StatusInfo{Status: store.StatusFailed, Message: "orig build failed"}
 	failedCurrent := store.StatusInfo{Status: store.StatusFailed, Message: "current build failed"}
 	skipped := store.StatusInfo{Status: store.StatusReady, Message: store.SkippedPrefix + " missing source"}
@@ -99,6 +102,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			left, right := hrDocs(tc.leftN), hrDocs(tc.rightN)
 			for _, doc := range left {
 				doc.Manifest["data"] = map[string]any{"k": "ghcr.io/demo/orig:v1"}
@@ -142,6 +146,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 }
 
 func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
+	t.Parallel()
 	left := selectedSnapshot(ksParent, []Doc{cmDoc(ksParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "")}, store.StatusInfo{})
 	moved := ksParent
 	moved.Path = "other/apps"
@@ -174,6 +179,7 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 }
 
 func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
+	t.Parallel()
 	left := selectedSnapshot(hrParent, hrDocs(2), store.StatusInfo{})
 	right := selectedSnapshot(hrParent, hrDocs(1), store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
 	left.Manifests[hrID][0]["data"] = map[string]any{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/shared:v1"}}
@@ -201,6 +207,7 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 }
 
 func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
+	t.Parallel()
 	for _, unavailable := range []store.StatusInfo{
 		{Status: store.StatusFailed, Message: "failed"},
 		{Status: store.StatusReady, Message: store.SkippedPrefix + " missing source"},
@@ -215,6 +222,7 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 }
 
 func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
+	t.Parallel()
 	left := []Doc{cmDoc(hrParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "chart-1")}
 	right := []Doc{cmDoc(hrParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "chart-2")}
 	selected := []Snapshot{selectedSnapshot(hrParent, left, store.StatusInfo{}), selectedSnapshot(hrParent, right, store.StatusInfo{})}

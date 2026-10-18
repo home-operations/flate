@@ -12,6 +12,7 @@ import (
 )
 
 func TestFetcher_ContentIsolation(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	mustInitRepoWithFiles(t, root, map[string]string{"hello.txt": "hello", "docs.tmp": "docs"})
 	commit := mustSetRefToHEAD(t, root, "refs/heads/other")
@@ -50,6 +51,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r := *base
 			fetcher := &Fetcher{Cache: c}
 			tc.change(&r, fetcher)

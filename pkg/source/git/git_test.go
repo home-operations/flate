@@ -32,6 +32,7 @@ import (
 )
 
 func TestFetcher_PackedContent(t *testing.T) {
+	t.Parallel()
 	var blocks [8]string
 	for i := range blocks {
 		var block strings.Builder
@@ -49,6 +50,7 @@ func TestFetcher_PackedContent(t *testing.T) {
 	for _, mode := range []string{"memory", "disk"} {
 		for _, attempts := range []int{1, 3} {
 			t.Run(fmt.Sprintf("%s/attempts-%d", mode, attempts), func(t *testing.T) {
+				t.Parallel()
 				var acquisitions atomic.Int32
 				handler := gitHTTPHandler(t, src)
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +96,7 @@ func TestFetcher_PackedContent(t *testing.T) {
 }
 
 func TestFetcher_SourceLinksOmitted(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{"hello.txt": "hi", "apps/cm.yaml": "kind: ConfigMap"})
 	for name, target := range map[string]string{"alias": "hello.txt", "dirlink": "apps", ".sourceignore": "hello.txt"} {
@@ -144,6 +147,7 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 }
 
 func TestFetcher_LocalFileURL(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepo(t, src)
 
@@ -182,6 +186,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 }
 
 func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
+	t.Parallel()
 	cases := map[string]bool{
 		"https://github.com/o/r":    true,
 		"ssh://git@github.com/o/r":  true,
@@ -199,6 +204,7 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 	}
 	for url, want := range cases {
 		t.Run(url, func(t *testing.T) {
+			t.Parallel()
 			f := &Fetcher{RestrictSchemes: true}
 			err := f.validateRepo(&manifest.GitRepository{URL: url})
 			if want && err != nil || !want && !errors.Is(err, manifest.ErrInput) {
@@ -219,6 +225,7 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 }
 
 func TestFetcher_Freshness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		interval      time.Duration
@@ -232,6 +239,7 @@ func TestFetcher_Freshness(t *testing.T) {
 		{name: "advanced shallow tip", depth: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			src := t.TempDir()
 			mustInitRepo(t, src)
 			initial := mustHead(t, src)
@@ -302,6 +310,7 @@ func TestFetcher_Freshness(t *testing.T) {
 }
 
 func TestFetcher_References(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
 		"hello.txt": "hi", "apps/a/manifest.yaml": "kind: ConfigMap", "apps/b/manifest.yaml": "kind: Secret",
@@ -339,6 +348,7 @@ func TestFetcher_References(t *testing.T) {
 		{name: "shallow sparse", depth: 1, sparse: []string{"apps/a"}, want: tip, files: []string{"apps/a/manifest.yaml"}, absent: []string{"apps/b/manifest.yaml"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := &Fetcher{Cache: newGitCache(t, t.TempDir()), Depth: tc.depth}
 			repo := &manifest.GitRepository{Name: "test", Namespace: "flux-system", URL: "file://" + src, Reference: tc.ref, SparseCheckout: tc.sparse}
 			if tc.warmCommit != "" {
@@ -371,6 +381,7 @@ func TestFetcher_References(t *testing.T) {
 }
 
 func TestFetcher_SparseCheckout(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
 		"apps/a/manifest.yaml":     "kind: ConfigMap",
@@ -381,6 +392,7 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 	f := &Fetcher{Cache: newGitCache(t, t.TempDir())}
 	for _, prefix := range []string{"apps/a", "apps"} {
 		t.Run(prefix, func(t *testing.T) {
+			t.Parallel()
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
 				Name: "test", Namespace: "flux-system", URL: "file://" + src,
 				SparseCheckout: []string{prefix},
@@ -406,6 +418,7 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 // staged tree containing a tracked file matching the user-supplied
 // gitignore pattern must have that file deleted post-checkout.
 func TestFetcher_AppliesSpecIgnore(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
 		"apps/deployment.yaml": "kind: Deployment",
@@ -441,6 +454,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 // Fetch validate the cache without `.git/` — which the ignore step
 // itself wipes via the VCS-excludes preset.
 func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepo(t, src)
 

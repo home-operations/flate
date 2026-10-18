@@ -47,6 +47,7 @@ func recordAgainst(root string, lower fs.FS, read reads) readSetSnapshot {
 }
 
 func TestReadSet_HitAndInvalidation(t *testing.T) {
+	t.Parallel()
 	const root = "/src/app"
 	base := func() fstest.MapFS {
 		return fstest.MapFS{
@@ -64,12 +65,14 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	})
 
 	t.Run("unchanged tree is a hit", func(t *testing.T) {
+		t.Parallel()
 		if !validReadSet(t, snap, base()) {
 			t.Error("identical tree must validate (cache hit)")
 		}
 	})
 
 	t.Run("editing a recorded file misses", func(t *testing.T) {
+		t.Parallel()
 		d := base()
 		d["a.yaml"] = &fstest.MapFile{Data: []byte("kind: ConfigMap\ndata: {x: y}\n")}
 		if validReadSet(t, snap, d) {
@@ -78,6 +81,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	})
 
 	t.Run("editing an UNREAD file stays a hit (granularity)", func(t *testing.T) {
+		t.Parallel()
 		d := base()
 		d["b.yaml"] = &fstest.MapFile{Data: []byte("kind: Secret\nstringData: {k: v}\n")}
 		if !validReadSet(t, snap, d) {
@@ -86,6 +90,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	})
 
 	t.Run("adding a file to the listed dir misses", func(t *testing.T) {
+		t.Parallel()
 		d := base()
 		d["c.yaml"] = &fstest.MapFile{Data: []byte("kind: Service\n")}
 		if validReadSet(t, snap, d) {
@@ -94,6 +99,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	})
 
 	t.Run("deleting a recorded file misses", func(t *testing.T) {
+		t.Parallel()
 		d := base()
 		delete(d, "a.yaml")
 		if validReadSet(t, snap, d) {
@@ -102,6 +108,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 	})
 
 	t.Run("a probed-absent component appearing misses", func(t *testing.T) {
+		t.Parallel()
 		d := base()
 		d["comp/kustomization.yaml"] = &fstest.MapFile{}
 		if validReadSet(t, snap, d) {
@@ -118,6 +125,7 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 		{name: "directory to absent", before: fstest.MapFS{"comp/child": {}}, after: fstest.MapFS{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			snap := recordAgainst(root, tc.before, reads{probed: []string{"comp"}})
 			if !validReadSet(t, snap, tc.before) || validReadSet(t, snap, tc.after) {
 				t.Fatal("probed node transition did not invalidate")

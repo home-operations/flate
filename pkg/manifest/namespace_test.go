@@ -7,6 +7,7 @@ import (
 )
 
 func TestEnsureMetadata_PreservesMap(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		metadata any
@@ -17,6 +18,7 @@ func TestEnsureMetadata_PreservesMap(t *testing.T) {
 		{"existing", map[string]any{"name": "app"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			doc := map[string]any{"metadata": tc.metadata}
 			md := EnsureMetadata(doc)
 			md["namespace"] = "apps"
@@ -30,6 +32,7 @@ func TestEnsureMetadata_PreservesMap(t *testing.T) {
 }
 
 func TestMergeStringMap_PreservesEntries(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		in   map[string]string
@@ -39,6 +42,7 @@ func TestMergeStringMap_PreservesEntries(t *testing.T) {
 		{"merge", map[string]string{"overwrite": "new", "add": "value"}, map[string]any{"keep": "value", "overwrite": "new", "add": "value"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			labels := map[string]any{"keep": "value", "overwrite": "old"}
 			md := map[string]any{"labels": labels, "name": "app"}
 			MergeStringMap(md, "labels", tc.in)

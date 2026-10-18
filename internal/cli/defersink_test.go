@@ -24,6 +24,7 @@ func (h captureHandler) WithGroup(string) slog.Handler      { return h }
 // held back (and identical lines collapse with a count) while Error passes
 // through inline; after drain, buffering is off so later logs flow normally.
 func TestDeferSink_BuffersWarnPassesError(t *testing.T) {
+	t.Parallel()
 	var inline []string
 	sink := newDeferSink(captureHandler{&inline}, true)
 	log := slog.New(sink)
@@ -50,6 +51,7 @@ func TestDeferSink_BuffersWarnPassesError(t *testing.T) {
 }
 
 func TestDeferSink_DrainOrderIsDeterministic(t *testing.T) {
+	t.Parallel()
 	want := make([]output.Note, 0, 8)
 	for _, text := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
 		want = append(want, output.Note{Text: text, Count: 1})

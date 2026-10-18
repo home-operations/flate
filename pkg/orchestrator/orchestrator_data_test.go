@@ -17,6 +17,7 @@ import (
 )
 
 func TestOrchestrator_ParentOf(t *testing.T) {
+	t.Parallel()
 	id := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Name: "child", Namespace: "apps"}
 	structural, rendered := ksID("structural"), ksID("rendered")
 	for _, tc := range []struct {
@@ -28,6 +29,7 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 		{name: "precedence", structural: true, rendered: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
 			if tc.structural {
 				o.index.Records[id] = manifest.DiscoveryRecord{Parent: structural}
@@ -287,6 +289,7 @@ func TestOrchestrator_RequiredDataDependencies_ChangedOnlyProducers(t *testing.T
 }
 
 func TestOrchestrator_RequiredDataDependencies_MissingDirectoryReaders(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [../missing]\n")
 	st := store.New()

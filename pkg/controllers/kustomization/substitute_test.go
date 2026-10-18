@@ -16,6 +16,7 @@ import (
 )
 
 func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		doc    map[string]any
@@ -62,6 +63,7 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 			map[string]string{"VALUE": "2001-01-01"}, false, map[string]any{"spec": map[string]any{"value": "2001-01-01"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, gotErr := substituteDoc(tc.doc, tc.vars, tc.strict)
 			if tc.want != nil {
 				if gotErr != nil {

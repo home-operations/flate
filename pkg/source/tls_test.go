@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildTLSConfig(t *testing.T) {
+	t.Parallel()
 	crt, key := testutil.SelfSignedClientCert(t)
 	ca := testutil.SelfSignedCA(t)
 	for _, tc := range []struct {
@@ -23,6 +24,7 @@ func TestBuildTLSConfig(t *testing.T) {
 		{name: "full material", crt: crt, key: key, ca: ca, certificates: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			cfg, err := BuildTLSConfig(tc.crt, tc.key, tc.ca)
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {

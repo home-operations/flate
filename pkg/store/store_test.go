@@ -21,6 +21,7 @@ func newCM(name, ns string) *manifest.ConfigMap {
 }
 
 func TestStore_AddObject_ContentDedup(t *testing.T) {
+	t.Parallel()
 	for _, insert := range []struct {
 		name string
 		add  func(*Store, manifest.BaseManifest)
@@ -29,8 +30,10 @@ func TestStore_AddObject_ContentDedup(t *testing.T) {
 		{"batch", func(s *Store, obj manifest.BaseManifest) { s.AddObjects([]manifest.BaseManifest{obj}) }},
 	} {
 		t.Run(insert.name, func(t *testing.T) {
+			t.Parallel()
 			for _, distinct := range []bool{false, true} {
 				t.Run(fmt.Sprintf("distinct=%t", distinct), func(t *testing.T) {
+					t.Parallel()
 					s := New()
 					obj := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
 					seen := 0
@@ -59,6 +62,7 @@ func TestStore_AddObject_ContentDedup(t *testing.T) {
 }
 
 func TestStore_AddObject_ConcurrentDedup(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		newObject func() manifest.BaseManifest
@@ -71,6 +75,7 @@ func TestStore_AddObject_ConcurrentDedup(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			s := New()
 			var seen atomic.Int64
 			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen.Add(1) }, false)
@@ -85,6 +90,7 @@ func TestStore_AddObject_ConcurrentDedup(t *testing.T) {
 }
 
 func TestStore_AddObject_NestedContent(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		spec  map[string]any
@@ -102,6 +108,7 @@ func TestStore_AddObject_NestedContent(t *testing.T) {
 	base := &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "app", Spec: cases[0].spec}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			s := New()
 			seen := 0
 			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen++ }, false)
@@ -119,6 +126,7 @@ func TestStore_AddObject_NestedContent(t *testing.T) {
 }
 
 func TestObjectEqual_RawObjectFields(t *testing.T) {
+	t.Parallel()
 	rawType := reflect.TypeFor[manifest.RawObject]()
 	fields := make([]string, rawType.NumField())
 	for i := range fields {
@@ -146,6 +154,7 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			candidate := base.Clone()
 			assert.Equal(t, candidate == base, false)
 			if tc.change != nil {
@@ -161,6 +170,7 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 }
 
 func TestStore_AddObjectIdempotent(t *testing.T) {
+	t.Parallel()
 	s := New()
 	cm := newCM("a", "ns")
 	id := cm.Named()
@@ -183,6 +193,7 @@ func TestStore_AddObjectIdempotent(t *testing.T) {
 // it, mutate the clone, and re-AddObject. The store's reflect.DeepEqual
 // dedup recognizes the clone as different and fires EventObjectAdded.
 func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
+	t.Parallel()
 	s := New()
 	cm := newCM("a", "ns")
 	id := cm.Named()
@@ -211,6 +222,7 @@ func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 }
 
 func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
+	t.Parallel()
 	s := New()
 	a := newCM("a", "ns")
 	b := &manifest.RawObject{Kind: manifest.KindConfigMap, APIVersion: "example.test/v1", Name: "a", Namespace: "ns"}
@@ -240,6 +252,7 @@ func TestStore_AddObjects_DispatchesAfterAllWrites(t *testing.T) {
 }
 
 func TestStore_AddListener_Flush(t *testing.T) {
+	t.Parallel()
 	s := New()
 	s.AddObject(newCM("a", "ns"))
 	s.AddObject(newCM("b", "ns"))
@@ -257,6 +270,7 @@ func TestStore_AddListener_Flush(t *testing.T) {
 // Pending. A consumer's depwait observing status between the two events
 // must never see the stale Ready left by an initial PreGate skip.
 func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "src"}
 	s.AddObject(&manifest.OCIRepository{Name: "src", Namespace: "flux-system"})
@@ -284,6 +298,7 @@ func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
 // when id isn't in the store — used by callers that may speculatively
 // refire ids that race a DeleteObject.
 func TestStore_Refire_NoopMissingID(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "nope"}
 
@@ -297,6 +312,7 @@ func TestStore_Refire_NoopMissingID(t *testing.T) {
 }
 
 func TestStore_UpdateStatus_Idempotent(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Namespace: "flux-system", Name: "apps"}
 
@@ -315,6 +331,7 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 }
 
 func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
+	t.Parallel()
 	// Non-Ready conditions DO fire EventStatusUpdated so CEL-based
 	// ReadyExpr waiters can react to Healthy / per-target health
 	// transitions. The Ready-derived StatusInfo payload doesn't change,
@@ -335,6 +352,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 }
 
 func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
 	statusEvents := 0
@@ -353,6 +371,7 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 }
 
 func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: "Kustomization", Name: "k", Namespace: "ns"}
 	statusEvents := 0
@@ -365,6 +384,7 @@ func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
 }
 
 func TestStore_FailedResources(t *testing.T) {
+	t.Parallel()
 	s := New()
 	assert.Equal(t, len(s.FailedResources()), 0) // empty store
 
@@ -382,10 +402,12 @@ func TestStore_FailedResources(t *testing.T) {
 }
 
 func TestStore_ListObjects_ByKindIndex(t *testing.T) {
+	t.Parallel()
 	for _, core := range []bool{false, true} {
 		for _, insertForeignFirst := range []bool{false, true} {
 			for _, withdrawForeignFirst := range []bool{false, true} {
 				t.Run(fmt.Sprintf("core=%t/insertForeignFirst=%t/withdrawForeignFirst=%t", core, insertForeignFirst, withdrawForeignFirst), func(t *testing.T) {
+					t.Parallel()
 					s := New()
 					var typed manifest.BaseManifest = &manifest.Kustomization{Name: "a", Namespace: "ns1"}
 					if core {
@@ -445,6 +467,7 @@ func TestStore_ListObjects_ByKindIndex(t *testing.T) {
 // change/ownership.go can attribute the same file to different KS
 // owners on different runs.
 func TestStore_ListObjects_DeterministicOrder(t *testing.T) {
+	t.Parallel()
 	s := New()
 	// Add objects in non-alphabetical order so insertion order can't
 	// accidentally hide a missing sort.
@@ -482,6 +505,7 @@ func TestStore_ListObjects_DeterministicOrder(t *testing.T) {
 }
 
 func TestStore_AddListener_Unsubscribe(t *testing.T) {
+	t.Parallel()
 	s := New()
 	count := 0
 	unsub := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
@@ -494,6 +518,7 @@ func TestStore_AddListener_Unsubscribe(t *testing.T) {
 }
 
 func TestStore_SetArtifact(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: "GitRepository", Name: "r"}
 	art := &SourceArtifact{Kind: "GitRepository", URL: "https://example", LocalPath: "/tmp/x"}
@@ -517,6 +542,7 @@ func TestStore_SetArtifact(t *testing.T) {
 // rendered docs decode into fresh maps every reconcile — drives
 // this in production.
 func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 	makeArt := func() *KustomizationArtifact {
@@ -550,6 +576,7 @@ func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 // short-circuit cuts that hot path from ~58 ns (reflect.DeepEqual on
 // aliased pointers) to ~17 ns (the map lookup alone).
 func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "r"}
 	art := &SourceArtifact{Kind: "GitRepository", URL: "https://example", LocalPath: "/tmp/x"}
@@ -567,6 +594,7 @@ func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
 // TestStore_SetArtifact_DifferentContent pins the inverse: a
 // re-set with DIFFERENT content fires an event.
 func TestStore_SetArtifact_DifferentContent(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "apps"}
 
@@ -584,6 +612,7 @@ func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 }
 
 func TestStore_ListenerPanicIsolated(t *testing.T) {
+	t.Parallel()
 	s := New()
 	other := 0
 	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
@@ -603,6 +632,7 @@ func TestStore_ListenerPanicIsolated(t *testing.T) {
 // orchestrator's Run loop ever ticked. Parity with the live `fire`
 // path in TestStore_ListenerPanicIsolated.
 func TestStore_ListenerPanicRecoveredDuringReplay(t *testing.T) {
+	t.Parallel()
 	s := New()
 	s.AddObject(newCM("a", "ns"))
 	s.AddObject(newCM("b", "ns"))
@@ -620,7 +650,8 @@ func TestStore_ListenerPanicRecoveredDuringReplay(t *testing.T) {
 	assert.Equal(t, other, 2) // store healthy after recovered replay panic
 }
 
-func TestStore_Concurrency(_ *testing.T) {
+func TestStore_Concurrency(t *testing.T) {
+	t.Parallel()
 	s := New()
 	const N = 200
 
@@ -648,6 +679,7 @@ func TestStore_Concurrency(_ *testing.T) {
 // production by deduping per-id reconciles, but a test counter
 // surfaces it.
 func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
+	t.Parallel()
 	const iterations = 200
 	for range iterations {
 		s := New()
@@ -705,6 +737,7 @@ func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
 // observes every AddObject made after its own goroutine acquired
 // the lock.
 func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
+	t.Parallel()
 	s := New()
 	const writers = 64
 	var (
@@ -744,7 +777,9 @@ func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 }
 
 func TestStore_ListenerSnapshots(t *testing.T) {
+	t.Parallel()
 	t.Run("concurrent delivery", func(t *testing.T) {
+		t.Parallel()
 		s := New()
 		const (
 			numListeners = 50
@@ -782,6 +817,7 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 		}
 	})
 	t.Run("mutation during captured dispatch", func(t *testing.T) {
+		t.Parallel()
 		s := New()
 		paused := make(chan struct{})
 		resume := make(chan struct{})
@@ -837,6 +873,7 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 // Counting GetConditions length is sufficient — the contract is "one
 // entry per unique Type, in-place updates do not grow the slice".
 func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := newCM("a", "ns").Named()
 
@@ -860,6 +897,7 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 // slice, with both entries preserved across subsequent same-type
 // updates. The in-place mutation rule applies per-Type, not globally.
 func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := newCM("a", "ns").Named()
 
@@ -897,8 +935,10 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 }
 
 func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
 			s := New()
 			arrived, release := make(chan struct{}, workers), make(chan struct{})
 			var events [numEventKinds + 1]sync.Map

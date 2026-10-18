@@ -23,6 +23,7 @@ import (
 // Cartesian product is 1×1=1 — the cardinality match is the same as
 // Flatten, but the SCOPING differs, which is the observable change.
 func TestRender_PermuteScopesByProviderName(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "myrset", Namespace: "default",
 		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
@@ -69,6 +70,7 @@ metadata:
 // RSIP = 2 permutations, each combining the inline value with the
 // shared RSIP value.
 func TestRender_PermuteMultiInlineCartesian(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
 		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
@@ -113,6 +115,7 @@ metadata:
 // false) silently drops it from the product. Only the non-empty
 // provider's inputs survive — and their scoping is preserved.
 func TestRender_PermuteSkipsEmptyProviderByDefault(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
 		InputStrategy: &fluxopv1.InputStrategySpec{Name: fluxopv1.InputStrategyPermute},
@@ -149,6 +152,7 @@ metadata:
 // upstream's "permutes to empty when includeEmptyProviders is true"
 // test in combine_test.go.
 func TestRender_PermuteIncludeEmptyProvidersCollapses(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "rset", Namespace: "default",
 		InputStrategy: &fluxopv1.InputStrategySpec{
@@ -183,6 +187,7 @@ metadata: {name: x, namespace: default}`,
 // burn host RAM on a pathological combination set. With 10001 inline
 // inputs, even the single-RSET-provider case crosses the threshold.
 func TestRender_PermuteMaxPermutationsRejected(t *testing.T) {
+	t.Parallel()
 	inputs := make([]fluxopv1.ResourceSetInput, 10001)
 	for i := range inputs {
 		inputs[i] = fluxopv1.ResourceSetInput{"i": jsonTmpl(t, `"x"`)}
@@ -213,6 +218,7 @@ func jsonTmpl(t *testing.T, raw string) *apix.JSON {
 // one template + N inputs → N rendered objects, each substituting
 // inputs.X with the per-input value.
 func TestRender_InputsExpandTemplates(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{
@@ -246,6 +252,7 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 // OCIRepository referenced by all tenants) emit exactly once even when
 // templated inside a per-input matrix.
 func TestRender_Deduplication(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{
@@ -278,6 +285,7 @@ func TestRender_Deduplication(t *testing.T) {
 // spec.inputs absent, just a fixed set of resources. The renderer must
 // still emit them (with a nil input set).
 func TestRender_NoInputsRendersOnce(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "policies", Namespace: "flux-system",
 		Resources: []*apix.JSON{
@@ -297,6 +305,7 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 }
 
 func TestRender_PreservesNamespaces(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "tenant-x",
 		Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
@@ -326,6 +335,7 @@ func TestRender_PreservesNamespaces(t *testing.T) {
 // TestRender_CommonMetadata stamps labels + annotations on every
 // emitted object.
 func TestRender_CommonMetadata(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
 		CommonMetadata: &fluxopv1.CommonMetadata{
@@ -355,6 +365,7 @@ func TestRender_CommonMetadata(t *testing.T) {
 }
 
 func TestRender_OwnerLabels(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "tenant-a",
 		Resources: []*apix.JSON{
@@ -381,6 +392,7 @@ func TestRender_OwnerLabels(t *testing.T) {
 // TestRender_SprigFunctions exercises a few stdlib + slugify funcs to
 // confirm the template engine plumbs them through.
 func TestRender_SprigFunctions(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{
@@ -412,6 +424,7 @@ func TestRender_SprigFunctions(t *testing.T) {
 // exclusion pattern documented for ResourceSet: a resource with
 // `fluxcd.controlplane.io/reconcile: disabled` is dropped.
 func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{
@@ -449,6 +462,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 // distinguish ResourceSet inline inputs from ResourceSetInputProvider
 // inputs once that's supported.
 func TestRender_InputsProviderBuiltinField(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
@@ -485,6 +499,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 // useful error rather than silently rendering "<no value>". Templates
 // that work in flate must also work in real flux-operator and vice versa.
 func TestRender_MissingKeyErrors(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"a"`)}},
@@ -502,6 +517,7 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 }
 
 func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "apps", Namespace: "flux-system",
 		InputsFrom: []fluxopv1.InputProviderReference{{
@@ -544,6 +560,7 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 }
 
 func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testing.T) {
+	t.Parallel()
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "static", Namespace: "flux-system",
 		Type:          fluxopv1.InputProviderStatic,
@@ -567,6 +584,7 @@ func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testi
 // TestRender_MalformedTemplateErrors surfaces a parse error rather than
 // silently swallowing the broken template.
 func TestRender_MalformedTemplateErrors(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"a"`)}},
@@ -589,6 +607,7 @@ func TestRender_MalformedTemplateErrors(t *testing.T) {
 // (no error wrapping needed) and that the resulting indentation lines
 // up with the surrounding YAML.
 func TestRender_ToYamlNindent(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "test", Namespace: "flux-system",
 		Inputs: []fluxopv1.ResourceSetInput{
@@ -615,6 +634,7 @@ spec:
 }
 
 func TestRender_InputsFrom_StaticProvider(t *testing.T) {
+	t.Parallel()
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "apps", Namespace: "kube-system", Labels: map[string]string{"set": "apps"},
 		Type: fluxopv1.InputProviderStatic,
@@ -674,6 +694,7 @@ data:
 			{"other kind", "", manifest.KindResourceSet, 0},
 		} {
 			t.Run(fmt.Sprintf("%s/selector=%t", tc.name, selector), func(t *testing.T) {
+				t.Parallel()
 				candidate := *rs
 				ref := fluxopv1.InputProviderReference{APIVersion: tc.apiVersion, Kind: tc.kind, Name: rsip.Name}
 				if selector {
@@ -700,6 +721,7 @@ data:
 		{"overlapping references", []fluxopv1.InputProviderReference{{Name: rsip.Name}, {Selector: &metav1.LabelSelector{}}, {Selector: &metav1.LabelSelector{MatchLabels: rsip.Labels}}}, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			candidate := *rs
 			candidate.InputsFrom = tc.refs
 			got, err := resourceset.Render(&candidate, resourceset.StoreResolver(st))
@@ -716,6 +738,7 @@ data:
 }
 
 func TestStoreResolver_SelectorInputs(t *testing.T) {
+	t.Parallel()
 	db := &manifest.ResourceSetInputProvider{Name: "db", Namespace: "apps", Labels: map[string]string{"role": "db"}, DefaultValues: fluxopv1.ResourceSetInput{"value": jsonTmpl(t, `"first"`)}}
 	web := *db
 	web.Name, web.Labels = "web", map[string]string{"role": "web"}
@@ -746,6 +769,7 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 		{"omitted kind", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Namespace: scope.Namespace}, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			for _, p := range tc.providers {
 				st.AddObject(p)
@@ -772,6 +796,7 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 		{"additional cached error in empty scope", selected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			st.AddObject(db)
 			resolve := resourceset.StoreResolver(st)
@@ -794,6 +819,7 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 		})
 	}
 	t.Run("distinct selectors and live providers", func(t *testing.T) {
+		t.Parallel()
 		st := store.New()
 		st.AddObject(db)
 		st.AddObject(&web)
@@ -832,6 +858,7 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 // zero input sets rather than erroring — the ResourceSet still renders
 // with whatever inline inputs it has.
 func TestRender_InputsFrom_DynamicProviderEmptySkip(t *testing.T) {
+	t.Parallel()
 	rsip := &manifest.ResourceSetInputProvider{
 		Name: "branches", Namespace: "flux-system",
 		Type: fluxopv1.InputProviderGitHubBranch,
@@ -871,6 +898,7 @@ metadata:
 // TestRender_ResourcesTemplate covers spec.resourcesTemplate (multi-doc
 // YAML string variant).
 func TestRender_ResourcesTemplate(t *testing.T) {
+	t.Parallel()
 	tmpl := `---
 apiVersion: v1
 kind: ConfigMap
@@ -901,6 +929,7 @@ metadata:
 }
 
 func TestRender_NullInput(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "null", Namespace: "apps",
 		Inputs: []fluxopv1.ResourceSetInput{{"value": nil}},
@@ -921,11 +950,13 @@ data:
 }
 
 func TestRender_SlugifyLength(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, input, want string }{
 		{"truncate", strings.Repeat("a", 64), strings.Repeat("a", 63)},
 		{"smart truncate", strings.Repeat("a", 32) + " " + strings.Repeat("b", 32), strings.Repeat("a", 32)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			rs := &manifest.ResourceSet{
 				Name: "slug", Namespace: "apps",
 				Inputs: []fluxopv1.ResourceSetInput{{"name": jsonTmpl(t, `"`+tc.input+`"`)}},
@@ -946,6 +977,7 @@ metadata: {name: << inputs.name | slugify >>}`,
 }
 
 func TestRender_Steps(t *testing.T) {
+	t.Parallel()
 	resource := jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"first"}}`)
 	template := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: second}"
 	for _, tt := range []struct {
@@ -974,6 +1006,7 @@ func TestRender_Steps(t *testing.T) {
 		{name: "step template error", spec: fluxopv1.ResourceSetSpec{Steps: []fluxopv1.ResourceSetStep{{Name: "bad", ResourcesTemplate: "<< inputs.missing >>"}}}, wantErr: `step "bad"`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rs := &manifest.ResourceSet{Name: "steps", Namespace: "default", ResourceSetSpec: tt.spec}
 			docs, err := resourceset.Render(rs, nil)
 			if tt.wantErr != "" {
@@ -1003,6 +1036,7 @@ func TestRender_Steps(t *testing.T) {
 }
 
 func TestRender_EmptyInputRule(t *testing.T) {
+	t.Parallel()
 	for _, strategy := range []string{fluxopv1.InputStrategyFlatten, fluxopv1.InputStrategyPermute} {
 		for _, referenced := range []bool{false, true} {
 			name := strategy + "/inline-only"
@@ -1010,6 +1044,7 @@ func TestRender_EmptyInputRule(t *testing.T) {
 				name = strategy + "/empty-provider"
 			}
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				rs := &manifest.ResourceSet{Name: "empty", Namespace: "default", InputStrategy: &fluxopv1.InputStrategySpec{Name: strategy}, ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: static}"}
 				want := 1
 				if referenced {
@@ -1032,6 +1067,7 @@ func TestRender_EmptyInputRule(t *testing.T) {
 }
 
 func TestRender_GroupDedup(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{Name: "group", Namespace: "default", Inputs: []fluxopv1.ResourceSetInput{{}}, Resources: []*apix.JSON{
 		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"shared"}}`),
 	}, ResourcesTemplate: `apiVersion: apps/v1beta2
@@ -1059,6 +1095,7 @@ metadata: {name: incomplete}`}
 }
 
 func TestRender_NoInputJSONBypassesExclusionAndDedup(t *testing.T) {
+	t.Parallel()
 	raw := jsonTmpl(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"static","annotations":{"fluxcd.controlplane.io/reconcile":"disabled"}}}`)
 	rs := &manifest.ResourceSet{Name: "static", Namespace: "default", Resources: []*apix.JSON{raw, raw}, ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
@@ -1084,6 +1121,7 @@ metadata:
 }
 
 func TestRender_ListItems(t *testing.T) {
+	t.Parallel()
 	rs := &manifest.ResourceSet{Name: "list", Namespace: "default", ResourcesTemplate: `apiVersion: v1
 kind: List
 items:

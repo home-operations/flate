@@ -18,10 +18,12 @@ func ksNode(name string) manifest.NamedResource {
 }
 
 func TestDependencyGraph_CycleMessages(t *testing.T) {
+	t.Parallel()
 	a, b, c := ksNode("a"), ksNode("b"), ksNode("c")
 	ab := "dependency cycle detected: " + a.String() + " → " + b.String() + " → " + a.String()
 	ac := "dependency cycle detected: " + a.String() + " → " + c.String() + " → " + a.String()
 	t.Run("intersecting cycles", func(t *testing.T) {
+		t.Parallel()
 		for _, order := range [][]manifest.NamedResource{{a, b, c}, {c, b, a}, {b, a, c}} {
 			g := newDependencyGraph()
 			for _, id := range order {
@@ -35,6 +37,7 @@ func TestDependencyGraph_CycleMessages(t *testing.T) {
 		}
 	})
 	t.Run("partial break", func(t *testing.T) {
+		t.Parallel()
 		g := newDependencyGraph()
 		g.ReplaceEdges(a, []manifest.NamedResource{b, c})
 		g.ReplaceEdges(c, []manifest.NamedResource{a})
@@ -43,6 +46,7 @@ func TestDependencyGraph_CycleMessages(t *testing.T) {
 		assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{a: ac, c: ac})
 	})
 	t.Run("self loop", func(t *testing.T) {
+		t.Parallel()
 		g := newDependencyGraph()
 		g.ReplaceEdges(a, []manifest.NamedResource{a})
 		assert.Diff(t, g.Failures(), map[manifest.NamedResource]string{
@@ -54,6 +58,7 @@ func TestDependencyGraph_CycleMessages(t *testing.T) {
 }
 
 func TestDependencyGraph_NonMembersStayHealthy(t *testing.T) {
+	t.Parallel()
 	a, b, c, d, e := ksNode("a"), ksNode("b"), ksNode("c"), ksNode("d"), ksNode("e")
 	g := newDependencyGraph()
 	g.ReplaceEdges(c, []manifest.NamedResource{d})
@@ -66,6 +71,7 @@ func TestDependencyGraph_NonMembersStayHealthy(t *testing.T) {
 }
 
 func TestDependencyGraph_CycleMembershipRegistrationOrder(t *testing.T) {
+	t.Parallel()
 	x, y, w, z := ksNode("x"), ksNode("y"), ksNode("w"), ksNode("z")
 	xw := "dependency cycle detected: " + w.String() + " → " + z.String() + " → " + x.String() + " → " + w.String()
 	xy := "dependency cycle detected: " + x.String() + " → " + y.String() + " → " + z.String() + " → " + x.String()
@@ -97,6 +103,7 @@ func TestDependencyGraph_CycleMembershipRegistrationOrder(t *testing.T) {
 // Result.DependsOn: dependencies are sorted, nodes with no declared deps are
 // omitted, an empty graph yields nil, and the result is an independent copy.
 func TestDependencyGraph_Edges(t *testing.T) {
+	t.Parallel()
 	a, b, c, lonely := ksNode("a"), ksNode("b"), ksNode("c"), ksNode("lonely")
 
 	g := newDependencyGraph()
@@ -133,6 +140,7 @@ func TestDependencyGraph_Edges(t *testing.T) {
 // corrupting that analysis. (Cycles are still flagged via Failures(); that is a
 // separate concern from the declared edges this snapshot exposes.)
 func TestDependencyGraph_Edges_CyclesAndSelfEdges(t *testing.T) {
+	t.Parallel()
 	a, b, self := ksNode("a"), ksNode("b"), ksNode("self")
 
 	g := newDependencyGraph()
@@ -158,6 +166,7 @@ func TestDependencyGraph_Edges_CyclesAndSelfEdges(t *testing.T) {
 // Edges() exposes only DIRECTLY declared edges (no transitive closure), and the
 // leaf c is omitted as a key while still appearing as b's dependency.
 func TestDependencyGraph_Edges_TransitiveChain(t *testing.T) {
+	t.Parallel()
 	a, b, c := ksNode("a"), ksNode("b"), ksNode("c")
 
 	g := newDependencyGraph()

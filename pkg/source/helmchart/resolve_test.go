@@ -44,6 +44,7 @@ func fetcherWithCache(t *testing.T, r *manifest.HelmRepository, cache *sourcecac
 }
 
 func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, indexHits, chartHits := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
 	r := httpRepo(srv.URL)
@@ -77,6 +78,7 @@ func TestResolveChart_DiskCacheSkipsIndexWarm(t *testing.T) {
 }
 
 func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, indexHits, _ := startHelmRepoCounted(t, chartBytes, chartDigest(chartBytes))
 	r := httpRepo(srv.URL)
@@ -100,6 +102,7 @@ func TestResolveChart_StaleIntervalRefetches(t *testing.T) {
 }
 
 func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
+	t.Parallel()
 	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, indexHits, chartHits := startHelmRepoCounted(t, chartBytes, "") // digest-less index
 	r := httpRepo(srv.URL)
@@ -128,6 +131,7 @@ func TestResolveChart_DigestlessWarmSkipsIndex(t *testing.T) {
 }
 
 func TestResolveChart_ExactVersionForever(t *testing.T) {
+	t.Parallel()
 	data := buildChartTarGz(t, "app-template", "1.0.0")
 	srv, indexes, charts := startHelmRepoCounted(t, data, chartDigest(data))
 	repo := httpRepo(srv.URL)

@@ -87,6 +87,7 @@ func hasRenderedDoc(art *store.ResourceSetArtifact, kind, name string) bool {
 // a NAMED inputsFrom parks on the RSIP (blocked) until the RSIP is in the
 // store, then renders the full input set once it arrives.
 func TestReconcile_NamedInputsFrom_ParksOnRSIP(t *testing.T) {
+	t.Parallel()
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "acl", Namespace: "flux-system",
@@ -129,6 +130,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 }
 
 func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
 	c := New(s, tasks, true)
@@ -176,6 +178,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 }
 
 func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
+	t.Parallel()
 	c, s := newController(t)
 	rs := selectorFixture("invalid", "blue")
 	rs.InputsFrom = []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "color", Operator: "invalid"}}}}}
@@ -204,6 +207,7 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 // Kustomization) emitted by the RS render lands in the store as a
 // reconcilable object (AddObject), not merely as rendered data.
 func TestReconcile_EmitsFluxChildToStore(t *testing.T) {
+	t.Parallel()
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "fleet", Namespace: "flux-system",
@@ -261,8 +265,10 @@ metadata: {name: bare}
 }
 
 func TestReconcile_RenderError_MarksFailed(t *testing.T) {
+	t.Parallel()
 	for _, fault := range []string{"template", "provider export", "provider resolution"} {
 		t.Run(fault, func(t *testing.T) {
+			t.Parallel()
 			c, s := newController(t)
 			rs := &manifest.ResourceSet{
 				Name: "broken", Namespace: "flux-system",
@@ -309,6 +315,7 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 // NAMED (no selector) does NOT ask for a drain rerun — it parks on the
 // named RSIP instead.
 func TestWantsDrainRerun_NamedOnly(t *testing.T) {
+	t.Parallel()
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "named", Namespace: "flux-system",
@@ -327,6 +334,7 @@ func TestWantsDrainRerun_NamedOnly(t *testing.T) {
 }
 
 func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
+	t.Parallel()
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{Name: "ready", Namespace: "apps", ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
@@ -352,8 +360,10 @@ metadata: {name: output}`}
 }
 
 func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
+	t.Parallel()
 	for _, value := range []string{fluxopv1.DisabledValue, "DISABLED"} {
 		t.Run(value, func(t *testing.T) {
+			t.Parallel()
 			c, s := newController(t)
 			doc := map[string]any{
 				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
@@ -381,8 +391,10 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 }
 
 func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
+	t.Parallel()
 	for _, suspended := range []bool{false, true} {
 		t.Run(fmt.Sprintf("suspended=%t", suspended), func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			tasks := task.NewBounded(2)
 			c := New(st, tasks, true)
@@ -490,6 +502,7 @@ spec: {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}
 }
 
 func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
+	t.Parallel()
 	c, s := newController(t)
 	provider := staticRSIP("inputs", "apps", nil, map[string]string{"user": "alice"})
 	s.AddObject(provider)

@@ -13,6 +13,7 @@ import (
 )
 
 func TestSubstitute_StrictOperators(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, input, want string
 		vars              map[string]string
@@ -29,6 +30,7 @@ func TestSubstitute_StrictOperators(t *testing.T) {
 		{name: "defined transform", input: "${VALUE^^}", vars: map[string]string{"VALUE": "provided"}, want: "PROVIDED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := Substitute([]byte(tc.input), tc.vars, true)
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v", err)
@@ -49,6 +51,7 @@ func TestSubstitute_StrictOperators(t *testing.T) {
 }
 
 func TestPrepare_LayersAndImmutability(t *testing.T) {
+	t.Parallel()
 	docs, err := manifest.SplitDocs([]byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  postBuild:\n    substitute: {VALUE: inline}\n    substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +107,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 		{name: "absent"}, {name: "empty", postBuild: &kustomizev1.PostBuild{}, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
 			ks.PostBuild = tc.postBuild
 			got, err := Prepare(ks, provider, overlay)

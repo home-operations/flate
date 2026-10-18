@@ -120,6 +120,7 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 // TestPreflightRemoteResources_IgnoresLocalEntries guards the no-op path: a
 // kustomization with only local resources must be untouched.
 func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
+	t.Parallel()
 	body := "resources:\n  - ./local.yaml\n  - ../shared/cm.yaml\n"
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
 	if err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, "."); err != nil {
@@ -266,6 +267,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 // more than remoteFetchMaxBytes must fail fast rather than reading the whole
 // body into memory.
 func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
+	t.Parallel()
 	c := newTestTreeCache(t, "")
 	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
 		body := remoteBody{Reader: remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), close: func() error { return nil }}
@@ -332,6 +334,7 @@ namespace: my-app
 // cap must succeed. Guards against off-by-one in the LimitReader+overflow
 // pattern.
 func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
+	t.Parallel()
 	c := newTestTreeCache(t, "")
 	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
 		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), remoteFetchMaxBytes)
@@ -551,9 +554,11 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 }
 
 func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
+	t.Parallel()
 	readErr, closeErr := errors.New("body read"), errors.New("body close")
 	for _, outcome := range []string{"success", "created", "last-success", "status", "read", "limit"} {
 		t.Run(outcome, func(t *testing.T) {
+			t.Parallel()
 			c := newTestTreeCache(t, "")
 			closes := 0
 			c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {

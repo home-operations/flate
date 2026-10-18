@@ -38,6 +38,7 @@ import (
 // of another branch) fetches the rev from origin instead of failing,
 // whatever form the rev takes.
 func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
+	t.Parallel()
 	remote := t.TempDir()
 	mainCommit := initRepoWithFile(t, remote, "a.yaml", "base")
 	remoteRepo := openHelper(t, remote)
@@ -59,6 +60,7 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := historylessCheckout(t, url, "a.yaml", "pr-tip")
 			res, err := AutoResolve(t.Context(), dir, tc.base, testOwner(t, ""))
 			if err != nil {
@@ -90,6 +92,7 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 // that simply lacks the rev takes the same fallback, so `--base main`
 // works in a shallow clone of a feature branch.
 func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
+	t.Parallel()
 	remote := t.TempDir()
 	mainCommit := initRepoWithFile(t, remote, "a.yaml", "base")
 	setRef(t, openHelper(t, remote), plumbing.NewBranchReferenceName("main"), mainCommit)
@@ -111,6 +114,7 @@ func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
 // TestAutoResolve_ExplicitBaseNotOnOrigin: the fallback ran and origin
 // has no such ref either; the error says where it looked.
 func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
+	t.Parallel()
 	remote := t.TempDir()
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
@@ -129,6 +133,7 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 // TestAutoResolve_ExplicitBaseNoOriginRemote: nothing local and no
 // origin to fetch from; the error names the missing remote.
 func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
+	t.Parallel()
 	dir := historylessCheckout(t, "", "a.yaml", "pr-tip")
 
 	_, err := AutoResolve(t.Context(), dir, "main", testOwner(t, ""))
@@ -144,6 +149,7 @@ func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
 // commit to merge-base from, so a history-less checkout must be told
 // to pass --base rather than failing on a bare ref lookup.
 func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
+	t.Parallel()
 	remote := t.TempDir()
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
@@ -183,6 +189,7 @@ func addOrigin(t *testing.T, dir, url string) {
 }
 
 func TestBaseRemote_FetchPolicy(t *testing.T) {
+	t.Parallel()
 	pin := plumbing.NewHash(strings.Repeat("a", 40))
 	refusal := &pktline.ErrorLine{Text: "partial fetch refused"}
 	responseClose, sessionClose := errors.New("response close"), errors.New("session close")
@@ -218,6 +225,7 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 		{name: "response and session close errors", filter: true, wantErr: responseClose, attempts: 1, closeErrors: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			caps := capability.NewList()
 			sideband := capability.Sideband64k
 			if tc.smallSideband {
@@ -368,6 +376,7 @@ func (p *fetchPolicyPack) Close() error {
 }
 
 func TestAdopt_FetchedStorage(t *testing.T) {
+	t.Parallel()
 	pin := plumbing.NewHash(strings.Repeat("a", 40))
 	for _, tc := range []struct {
 		name                                               string
@@ -383,6 +392,7 @@ func TestAdopt_FetchedStorage(t *testing.T) {
 		{name: "marker read error", readError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			backing := osfs.New(t.TempDir())
 			upper := filesystem.NewStorageWithOptions(backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 			upperHash := fetchBlob(t, upper, "fetched only")

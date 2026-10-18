@@ -19,6 +19,7 @@ import (
 )
 
 func TestHelmRepoTransport_NoCertRef(t *testing.T) {
+	t.Parallel()
 	r := httpRepo("https://charts.example")
 	f := newHTTPFetcherWithSecrets(t, r, nil)
 
@@ -40,6 +41,7 @@ func TestHelmRepoTransport_NoCertRef(t *testing.T) {
 // (DialContext set) and TLS-configured (RootCAs from the CA), passed to helm via
 // WithTransport. Uses a real CA PEM so source.BuildTLSConfig accepts it.
 func TestHelmRepoTransport_CertSecretYieldsGuardedTransport(t *testing.T) {
+	t.Parallel()
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
@@ -63,6 +65,7 @@ func TestHelmRepoTransport_CertSecretYieldsGuardedTransport(t *testing.T) {
 }
 
 func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
+	t.Parallel()
 	r := httpRepo("https://charts.example")
 	r.Name, r.Namespace = "charts", "ns"
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
@@ -91,6 +94,7 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 }
 
 func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
+	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	for _, tc := range []struct {
 		name string
@@ -102,6 +106,7 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 		{"malformed", map[string]any{"ca.crt": "broken"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			r := httpRepo("https://charts.example")
 			r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 			secret := &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}

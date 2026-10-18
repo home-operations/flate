@@ -20,6 +20,7 @@ import (
 
 // Discovery drivers stay in the Store; deferred content stays in the file index.
 func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cases := []struct {
 		kind, api, spec string
@@ -43,6 +44,7 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
 			group, _, found := strings.Cut(tc.api, "/")
 			if !found {
 				group = ""
@@ -62,6 +64,7 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 // Existence index knows about, Promote re-parses the file and
 // AddObjects it into the Store so the wait can clear.
 func TestDiscovery_PromoteMaterializesFromIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
@@ -98,6 +101,7 @@ data:
 // out cleanly and the depwait surfaces "dependency not found" as
 // intended.
 func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
+	t.Parallel()
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
 	if got := Promote(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
@@ -112,6 +116,7 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 // depwait surfaces "dependency not found" instead of crashing the
 // orchestrator.
 func TestPromote_FileRemovedBetweenRecordAndPromote(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "cm.yaml", `
 apiVersion: v1
@@ -147,6 +152,7 @@ data:
 // is requested. This is what allows depwait to avoid re-opening the
 // same file once per dep in the common multi-doc fixture pattern.
 func TestPromote_MultiDocLoadsSiblings(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "bundle.yaml", `
 apiVersion: v1
@@ -186,6 +192,7 @@ data:
 }
 
 func TestPromote_AdmissionAndPreferExisting(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		secret   bool
@@ -196,6 +203,7 @@ func TestPromote_AdmissionAndPreferExisting(t *testing.T) {
 		{name: "rendered object retained", existing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -239,6 +247,7 @@ stringData: {value: fixture}
 // Sources must remain admitted so bootstrap aliasing can resolve their URLs
 // without redirecting unrelated source references to the working tree.
 func TestDiscovery_SourcesStayFileLoaded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "src.yaml", `
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -284,6 +293,7 @@ spec:
 }
 
 func TestPromote_AuthoredDocumentProjection(t *testing.T) {
+	t.Parallel()
 	const doc = `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: podinfo, namespace: %q}
@@ -300,6 +310,7 @@ spec:
 		{"no evidence exact identity", "authored", "other", "2.0.0", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "bundle.yaml", strings.Replace(fmt.Sprintf(doc, tc.authored, "9.0.0"), manifest.HelmReleaseDomain, "foreign.example", 1)+"---\n"+fmt.Sprintf(doc, "other", "2.0.0")+"---\n"+fmt.Sprintf(doc, tc.authored, "1.0.0")+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: note}\n")
 			st := store.New()
@@ -334,9 +345,11 @@ spec:
 }
 
 func TestPromote_SourceView(t *testing.T) {
+	t.Parallel()
 	const doc = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: authored}\ndata: {source: %s}\n"
 	for _, present := range []bool{true, false} {
 		t.Run(fmt.Sprintf("present=%v", present), func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "values.yaml", fmt.Sprintf(doc, "working"))
 			input := fstest.MapFS{}

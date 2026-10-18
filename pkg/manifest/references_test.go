@@ -27,6 +27,7 @@ func refsForUse(t *testing.T, obj BaseManifest, use string) []Reference {
 }
 
 func TestReferences_EffectiveNamespace(t *testing.T) {
+	t.Parallel()
 	k := &Kustomization{Namespace: "authored"}
 	assert.Equal(t, len(slices.Collect(References(k))), 0)
 	k.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: KindGitRepository, Name: "source"}
@@ -105,6 +106,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Diff(t, slices.Collect(References(tc.obj.WithNamespace(tc.namespace))), tc.want)
 			assert.Equal(t, tc.obj.Named().Namespace, "authored")
 			var spec any
@@ -147,6 +149,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 }
 
 func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace, want, apiVersion, group string
 		resolve                                  bool
@@ -158,6 +161,7 @@ func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
 		{"foreign group", "", "effective", "foreign.example/v1", "foreign.example", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ref := map[string]any{"kind": KindHelmChart, "name": "chart", "namespace": tc.namespace}
 			if tc.apiVersion != "" {
 				ref["apiVersion"] = tc.apiVersion
@@ -196,6 +200,7 @@ func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
 }
 
 func TestReferences_ActiveCredentials(t *testing.T) {
+	t.Parallel()
 	o := &OCIRepository{Namespace: "effective"}
 	o.SecretRef, o.CertSecretRef, o.ProxySecretRef = &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}
 	o.Verify = &sourcev1.OCIRepositoryVerification{Provider: "cosign", SecretRef: &LocalObjectReference{Name: "ignored"}}

@@ -22,6 +22,7 @@ import (
 )
 
 func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
 	c := resourceset.New(s, tasks, true)
@@ -50,9 +51,11 @@ data: {key: value}
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended", "refresh suspended"} {
 		for _, selector := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/selector_%v", name, selector), func(t *testing.T) {
+				t.Parallel()
 				s := store.New()
 				tasks := task.NewBounded(2)
 				c := resourceset.New(s, tasks, true)

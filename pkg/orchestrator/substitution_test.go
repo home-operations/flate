@@ -110,6 +110,7 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 }
 
 func TestNew_SubstitutionValidation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		object manifest.BaseManifest
@@ -119,6 +120,7 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 		{"missing namespace", &manifest.Secret{Name: "external"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := New(t.Context(), Config{Path: t.TempDir(), SubstituteFrom: []SubstitutionSource{{Object: tc.object}}})
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected input error, got %v", err)
@@ -127,6 +129,7 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 	}
 	for _, injected := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cache/injected=%t", injected), func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			cfg := Config{Path: t.TempDir(), CacheDir: root, Substitute: map[string]string{"bad-name": "private-fixture-value"}}
 			if injected {

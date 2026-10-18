@@ -16,6 +16,7 @@ import (
 // and SecureBuild don't take ctx themselves, so flate checks at
 // coarse boundaries — this guards that those checks fire.
 func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
+	t.Parallel()
 	cache := newTestTreeCache(t, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -33,6 +34,7 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 }
 
 func TestRenderFlux_Metadata(t *testing.T) {
+	t.Parallel()
 	const plain = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: c, namespace: ns}\ndata: {k: v}\n"
 	const ownerName = "kustomize.toolkit.fluxcd.io/name"
 	const ownerNamespace = "kustomize.toolkit.fluxcd.io/namespace"
@@ -71,6 +73,7 @@ func TestRenderFlux_Metadata(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := writeTree(t, map[string]string{
 				"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": tc.fixture,
 			})

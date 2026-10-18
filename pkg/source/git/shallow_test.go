@@ -51,6 +51,7 @@ func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, arti
 }
 
 func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	mustInitRepo(t, src)
 	parentHash := plumbing.NewHash(mustHead(t, src))
@@ -122,6 +123,7 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 }
 
 func TestEffectiveDepth(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		depth int
@@ -141,6 +143,7 @@ func TestEffectiveDepth(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := effectiveDepth(tc.depth, tc.ref); got != tc.want {
 				t.Errorf("effectiveDepth(%d, %+v) = %d, want %d", tc.depth, tc.ref, got, tc.want)
 			}

@@ -19,6 +19,7 @@ import (
 // the dependency list so the reconcile waits for the parent's Ready
 // before rendering. See #102.
 func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
+	t.Parallel()
 	parent := manifest.NamedResource{
 		Group: manifest.FluxKustomizeDomain,
 		Kind:  manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps",
@@ -41,6 +42,7 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 // TestCollectDeps_NoParentNoExtraDep guards against ParentOf-less
 // controllers (e.g. unit-test setups) panicking on a nil resolver.
 func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
+	t.Parallel()
 	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
 	c := New(store.New(), nil, nil, false) // ParentOf nil
 	deps := c.collectDeps(child)
@@ -50,6 +52,7 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 }
 
 func TestCollectDeps_SubstitutionProducers(t *testing.T) {
+	t.Parallel()
 	consumer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "consumer"}
 	producer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
 	cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
@@ -70,6 +73,7 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 		{name: "unknown kind", ref: manifest.SubstituteReference{Kind: "Junk", Name: "settings"}, producers: []manifest.NamedResource{producer}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			id := manifest.NamedResource{Kind: tc.ref.Kind, Namespace: consumer.Namespace, Name: tc.ref.Name}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Renderers: tc.producers, Owners: tc.owners}}}
 			c := New(store.New(), nil, nil, false)
@@ -92,6 +96,7 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 // is appended as its own dep so the consumer waits for the producer's
 // reconcile (which materializes the CM) before rendering. See #418.
 func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
+	t.Parallel()
 	consumerObj := &manifest.Kustomization{
 		Name: "cluster-apps", Namespace: "flux-system",
 		Path: "kubernetes/apps",
@@ -142,6 +147,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 // NOT be appended as a dep on itself (would self-loop in depwait).
 // See #418.
 func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
+	t.Parallel()
 	selfObj := &manifest.Kustomization{
 		Name: "app", Namespace: "foo",
 		Path: "kubernetes/foo/app",

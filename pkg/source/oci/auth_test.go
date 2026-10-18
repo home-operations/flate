@@ -106,6 +106,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 }
 
 func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	repo := ociRepo("o", nil)
 	cfg, err := f.resolveTLS(repo)
@@ -118,6 +119,7 @@ func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
 }
 
 func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
 	cfg, err := f.resolveTLS(repo)
@@ -132,6 +134,7 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 // TestFetcher_ResolveTLS_FromSecret uses a real ephemeral cert/key
 // pair — tls.X509KeyPair actually parses it so we can't hardcode.
 func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
+	t.Parallel()
 	certPEM, keyPEM := testutil.SelfSignedServerCert(t)
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
@@ -163,6 +166,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 }
 
 func TestFetcher_NonGenericProvider(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.URL = "oci://ghcr.io/x/y"
@@ -315,6 +319,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 }
 
 func TestFetcher_ForceGenericProvider(t *testing.T) {
+	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
 	f := &Fetcher{
 		ForceGeneric: true,
@@ -404,6 +409,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 }
 
 func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
+	t.Parallel()
 	const user, pass = "alice", "hunter2"
 	const chart = "name: app\nversion: 1.0.0\n"
 	art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": chart})
@@ -664,8 +670,10 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 }
 
 func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, callers := range []int{2, 4} {
 		t.Run(fmt.Sprint(callers), func(t *testing.T) {
+			t.Parallel()
 			ca := testutil.SelfSignedCA(t)
 			config := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, config, `{"auths":{"ghcr.io":{"username":"alice","password":"test"}}}`)

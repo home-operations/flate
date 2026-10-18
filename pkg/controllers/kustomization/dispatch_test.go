@@ -10,6 +10,7 @@ import (
 )
 
 func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
 	idA := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "a"}
@@ -51,6 +52,7 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 // reach the Store (it arrives nameless and surfaces as "FAILED (no status
 // reported)"). A real Flux Kustomization in the same batch is still emitted.
 func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
 	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
@@ -84,6 +86,7 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 // fire so the parent index stays correct on every pass (#102). The
 // fresh-render path (publish=true) still publishes.
 func TestEmitRenderedChildren_DedupSkip_NoStoreWrites(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
 

@@ -39,6 +39,7 @@ func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { ret
 func (indexedOrderingDeps) Promote(manifest.NamedResource) bool            { return false }
 
 func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                      string
 		active, selected, indexed bool
@@ -54,6 +55,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 		{name: "selected failed", active: true, selected: true, present: true, status: store.StatusFailed, retain: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			target := &manifest.HelmRelease{Name: "target", Namespace: "apps"}
 			var changes *change.Set
 			if tc.active {
@@ -225,6 +227,7 @@ func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID,
 }
 
 func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		status store.Status
@@ -233,6 +236,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 		{"failed", store.StatusFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				c, st := newTestController(t, nil)
 				st.AddObject(&manifest.HelmRepository{
@@ -324,6 +328,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 // materialize, so this present-then-repoint path is the one it always takes —
 // no loop needed.
 func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
@@ -356,6 +361,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 // synthetic HelmChart (previously it was left to an inline helm.Client pull).
 // The oci-vs-http decision is the fetcher's; the controller repoints uniformly.
 func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "bitnami", Namespace: "flux-system",
@@ -382,6 +388,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 // materializes into a (versionless) HelmChart rather than being mistaken for
 // an unresolved chartRef:HelmChart placeholder.
 func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "bitnami", Namespace: "flux-system",
@@ -401,6 +408,7 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 }
 
 func TestController_ShortCircuitsToReady(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		suspend bool
@@ -409,6 +417,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		{name: "unchanged"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var filter *change.Filter
 			if !tc.suspend {
 				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
@@ -425,6 +434,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 }
 
 func TestController_AllowMissingSecretsOmitsUnavailableValuesFrom(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
 name: mychart
@@ -518,6 +528,7 @@ data:
 }
 
 func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
+	t.Parallel()
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	st.AddObject(chart)
@@ -549,6 +560,7 @@ func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
 // the producer is positive evidence the Secret materializes live. This is the
 // flag-decoupled path: producer-backed refs are dropped regardless of the flag.
 func TestController_ProducerBackedValuesFromOmittedWithoutFlag(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
@@ -613,6 +625,7 @@ data:
 // declared producer is kept, waited on, and ultimately fails — producer
 // inference must not silently swallow a genuine typo / misconfiguration.
 func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
@@ -649,6 +662,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 // AddObject lands a HelmChartSource the resolver MUST surface it
 // immediately — that's what helm.Prepare relies on at reconcile time.
 func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	src := &manifest.HelmChartSource{
 		Name: "podinfo", Namespace: "flux-system",
@@ -678,6 +692,7 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 // loaded original — otherwise the dedup short-circuit can't fire
 // and helm.Template runs twice for one logical release.
 func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
+	t.Parallel()
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
@@ -702,6 +717,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 // kustomize), the fingerprint MUST differ so the controller
 // renders the canonical post-patch values.
 func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
+	t.Parallel()
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
@@ -716,6 +732,7 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 }
 
 func TestHelmReleaseFingerprint_SourceIdentity(t *testing.T) {
+	t.Parallel()
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps"}
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	art := &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest, LocalPath: "/chart"}
@@ -730,6 +747,7 @@ func TestHelmReleaseFingerprint_SourceIdentity(t *testing.T) {
 		{"local path", func(a *store.SourceArtifact) { a.LocalPath = "/other" }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			changed := *art
 			tc.edit(&changed)
 			if same := replayKey(hr.Content(struct{ Digest, Revision string }{changed.Digest, changed.Revision}, nil)) == fp; same != tc.wantSame {
@@ -756,6 +774,7 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 }
 
 func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 	ts := task.NewBounded(2)
 	owner, err := sourcecache.New(t.Context(), "")
@@ -860,6 +879,7 @@ func TestEmit_SourceOwnershipBeforeArrivals(t *testing.T) {
 // makes that explicit. The idempotent side-effects the replay exists for —
 // KeepEmitted (keep-set) + Store.RecordEmitted (provenance) — MUST still fire.
 func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 	ts := task.NewBounded(0)
 	owner, err := sourcecache.New(t.Context(), "")
@@ -919,6 +939,7 @@ func TestEmit_DedupReplay_NoStoreWrites(t *testing.T) {
 }
 
 func TestRawProducerIndex_StoreListener(t *testing.T) {
+	t.Parallel()
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}
 	if _, ok := c.producers.Producer(target); ok {
@@ -956,6 +977,7 @@ func TestController_CollectHRDepsClone(t *testing.T) {
 // drain and drop. The genuine-render downgrade after the dedup check is
 // unaffected.
 func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
@@ -1019,6 +1041,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 }
 
 func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
+	t.Parallel()
 	parent := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent"}
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{ParentOf: func(manifest.NamedResource) (manifest.NamedResource, bool) { return parent, true }})
 	ks := &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}
@@ -1034,7 +1057,9 @@ func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T)
 }
 
 func TestController_ChartAndValuesPrerequisites(t *testing.T) {
+	t.Parallel()
 	t.Run("repository", func(t *testing.T) {
+		t.Parallel()
 		c, st := newTestController(t, nil)
 		repo := &manifest.HelmRepository{Name: "charts", Namespace: "apps"}
 		st.AddObject(repo)

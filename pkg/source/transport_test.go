@@ -63,6 +63,7 @@ func TestNewHTTPTransport_ResponseHeaderTimeout(t *testing.T) {
 // TestNewHTTPTransport_AppliesTLSAndStaysBounded confirms TLS customization
 // still composes onto the bounded clone (the custom-CA / OCI / bucket paths).
 func TestNewHTTPTransport_AppliesTLSAndStaysBounded(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

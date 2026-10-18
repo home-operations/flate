@@ -43,6 +43,7 @@ func firstDepName(t *testing.T, s *store.Store, ns, name string) string {
 // real KS name once a discovered KS supplies the value — the rook-ceph
 // `0-${CLUSTER_NAME}-config` case.
 func TestResolveDependsOnSubstitutions_ResolvesBareVar(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	s.AddObject(ksWithDeps("0-biohazard-config", "flux-system", map[string]any{"CLUSTER_NAME": "biohazard"}))
 	s.AddObject(ksWithDeps("rook-ceph-app", "flux-system", nil, "0-${CLUSTER_NAME}-config"))
@@ -58,6 +59,7 @@ func TestResolveDependsOnSubstitutions_ResolvesBareVar(t *testing.T) {
 // A var no KS supplies leaves envsubst.Eval in its error path, so the
 // reference is kept verbatim rather than collapsed to empty.
 func TestResolveDependsOnSubstitutions_UnsetVarStaysLiteral(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	s.AddObject(ksWithDeps("app", "flux-system", nil, "0-${UNKNOWN}-config"))
 
@@ -70,6 +72,7 @@ func TestResolveDependsOnSubstitutions_UnsetVarStaysLiteral(t *testing.T) {
 // multi-cluster repo's per-cluster CLUSTER_NAME) is dropped from the
 // union and left literal — never resolved to one cluster's value.
 func TestResolveDependsOnSubstitutions_ConflictingVarDropped(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	s.AddObject(ksWithDeps("cfg-a", "prod", map[string]any{"CLUSTER_NAME": "prod"}))
 	s.AddObject(ksWithDeps("cfg-b", "staging", map[string]any{"CLUSTER_NAME": "staging"}))
@@ -105,6 +108,7 @@ func TestResolveDependsOnSubstitutions_NoTemplateUntouchedAndAgreeingVarOK(t *te
 }
 
 func TestResolveDependsOnSubstitutions_PreservesAuthoredNamespaceAndStoredSpec(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 	st.AddObject(ksWithDeps("settings", "apps", map[string]any{"APP": "backend", "NS": "shared"}))
 	original := ksWithDeps("consumer", "apps", nil, "${APP}")

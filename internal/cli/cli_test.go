@@ -631,6 +631,7 @@ func copyTree(t *testing.T, src, dst string) {
 // TestBindCommon_DefaultValues sanity-checks the persistent flag set:
 // every common flag binds with a known-good default.
 func TestBindCommon_DefaultValues(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, buildOrchCfg(commonFlags{}, helmFlags{}).SourceRetry, sourcecache.RetryConfig{
 		Attempts: 3, MinWait: 200 * time.Millisecond, MaxWait: 3 * time.Second, Jitter: 0.1,
 	})
@@ -657,6 +658,7 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 // contract: even KS-shaped output commands run the full reconcile graph, so
 // helm-template flags must be available consistently.
 func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
+	t.Parallel()
 	cmd := New("test")
 	for _, tc := range []struct {
 		path, use, short string
@@ -722,6 +724,7 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 }
 
 func TestCompareDocs_OrdersByIdentity(t *testing.T) {
+	t.Parallel()
 	mkDoc := func(apiVersion, kind, ns, name string) map[string]any {
 		return map[string]any{
 			"apiVersion": apiVersion,
@@ -744,6 +747,7 @@ func TestCompareDocs_OrdersByIdentity(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := compareDocs(tc.a, tc.b)
 			if (got < 0) != (tc.want < 0) || (got == 0) != (tc.want == 0) {
 				t.Errorf("compareDocs(%v, %v) = %d, want sign of %d", tc.a, tc.b, got, tc.want)
@@ -754,6 +758,7 @@ func TestCompareDocs_OrdersByIdentity(t *testing.T) {
 
 // TestEmissionDocs_OnlyKinds drops every non-CRD doc.
 func TestEmissionDocs_OnlyKinds(t *testing.T) {
+	t.Parallel()
 	docs := []map[string]any{
 		{"kind": "ConfigMap"},
 		{"kind": "CustomResourceDefinition"},
@@ -775,6 +780,7 @@ func TestEmissionDocs_OnlyKinds(t *testing.T) {
 }
 
 func TestEmissionDocs_EmptyOnNoCRDs(t *testing.T) {
+	t.Parallel()
 	docs := []map[string]any{{"kind": "ConfigMap"}, {"kind": "Secret"}}
 	if out := emissionDocs(docs, &buildFlags{onlyKinds: []string{manifest.KindCustomResourceDefinition}}); len(out) != 0 {
 		t.Errorf("expected no docs for no-CRD input, got %+v", out)

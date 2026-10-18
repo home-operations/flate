@@ -23,6 +23,7 @@ import (
 )
 
 func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.T) {
+	t.Parallel()
 	root, artifactDir := t.TempDir(), t.TempDir()
 	s := store.New()
 	sourceID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
@@ -52,6 +53,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 }
 
 func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                    string
 		alias, listed, external bool
@@ -62,6 +64,7 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 		{name: "alias listed", alias: true, listed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/test/kustomization.yaml", "resources: [network]\n")
 			resources := "resources: [ns.yaml, echo.yaml]\n# - ks.yaml\n"
@@ -151,6 +154,7 @@ spec:
 // covering KS is pre-seeded, so this pins the order-independence (the guard
 // reads only the parsed object, unlike the dir-coverage guard).
 func TestLoader_DiscoveryBootstrapScanSkipsPatchFragment(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -197,6 +201,7 @@ spec:
 }
 
 func TestLoader_Load(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -239,6 +244,7 @@ data:
 // the store even though nothing points spec.path at it and a tree walk
 // would never reach it (it's only a kustomize resources: include).
 func TestLoader_FollowsEscapingDirResource(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -275,6 +281,7 @@ spec:
 // but a parent-escaping FILE resource gets opened, so resolveDataPath's
 // TOCTOU/path-traversal rejection must still apply.
 func TestLoader_EscapingFileResourceStillRejected(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -300,6 +307,7 @@ spec:
 }
 
 func TestLoader_SkipsTemplatesDir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "chart", "templates"), 0o750); err != nil {
 		t.Fatal(err)
@@ -320,8 +328,10 @@ metadata: {name: a, namespace: ns}
 }
 
 func TestLoader_SkipsDotDirs(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{".git", ".cache", ".hidden"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, filepath.Join(name, "hidden.yaml"), `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -353,6 +363,7 @@ spec: {path: ./visible, sourceRef: {kind: GitRepository, name: flux-system}}
 // loader must skip such subtrees, otherwise unresolved template names
 // (e.g. `${APP}-db`) land in the store as bogus standalone resources.
 func TestLoader_SkipsKustomizeComponentSubtree(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/db/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
@@ -383,6 +394,7 @@ metadata: {name: real, namespace: ns}
 }
 
 func TestLoader_SkipsKustomizeComponent_JSONForm(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/foo/Kustomization",
 		`{"apiVersion":"kustomize.config.k8s.io/v1alpha1","kind":"Component"}`)
@@ -412,6 +424,7 @@ spec:
 // the load. Use a kustomization.yaml as the carrier so descend's
 // readKustomization picks it up.
 func TestLoader_ForeignComponentKindIsNotSkipped(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Foreign Component CR shaped exactly like the kustomize one
 	// except for apiVersion. With the kind-only check, descend would
@@ -440,6 +453,7 @@ spec:
 }
 
 func TestLoader_GeneratorDataFiles(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		files map[string]string
@@ -546,6 +560,7 @@ metadata: {name: real, namespace: ns}
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			for path, content := range tc.files {
 				testutil.WriteFile(t, dir, path, content)
@@ -577,6 +592,7 @@ metadata: {name: real, namespace: ns}
 // reachable via the orphan wrapper's spec.path. PR #346 fixed only
 // the same-dir orphan case; this test reproduces the deeper shape.
 func TestLoader_OrphanNestedSubtreeSkipped(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "default/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -652,6 +668,7 @@ spec:
 // producing spurious "dependency not found" failures for any chart
 // source the parent's namespace transform was supposed to inject.
 func TestLoader_OrphanYAMLSkipped(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/games/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -707,6 +724,7 @@ spec:
 // Component data must retain producer evidence for substituteFrom dependencies
 // without admitting templated Flux resources outside their parent's render.
 func TestLoader_DiscoveryRecordsComponentDataResources(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/settings/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
@@ -759,6 +777,7 @@ spec:
 
 // Discovery keeps HelmRelease references even when it defers admission.
 func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hr.yaml")
 	testutil.WriteFile(t, dir, "hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: envoy-gateway, namespace: envoy-gateway}\nspec: {chartRef: {kind: OCIRepository, name: envoy-gateway, namespace: flux-system}}\n")
@@ -804,6 +823,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 // producer index. The reference PR (tjwallace/flate#1) walked only
 // `resources:` and missed this graph shape — this test is the fence.
 func TestLoader_DiscoveryRecordsNestedComponentData(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Outer Component points at inner via `components:`. The path is
 	// relative to the outer Component's directory; resolveComponentPath
@@ -850,6 +870,7 @@ data:
 // infinite-loop. The same primitive descend uses; verify here so a
 // future change can't drop it.
 func TestLoader_DiscoveryComponentCycleTerminates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "components/a/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
@@ -880,6 +901,7 @@ components:
 // extending the scan to every CR would silently relax the
 // "kustomize package = resources only" contract for unrelated kinds.
 func TestLoader_DiscoveryPicksUpBootstrapSiblingKS(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// kustomization.yaml exists but does NOT list bootstrap.yaml.
 	testutil.WriteFile(t, dir, "repositories/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -954,6 +976,7 @@ spec:
 // sitting beside the kustomization.yaml must load exactly once. The
 // dedup key is the resolved absolute path on each side.
 func TestLoader_BootstrapSiblingScanDedupesWithResources(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -989,6 +1012,7 @@ spec:
 // override the user's explicit "don't look here" directive — the rest
 // of the loader honors .krmignore for ad-hoc and resource paths.
 func TestLoader_BootstrapSiblingHonorsKrmignore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, ".krmignore", "flux-entry.yaml\n")
 	testutil.WriteFile(t, dir, "kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -1022,6 +1046,7 @@ spec:
 // context cancellation. Useful when a stuck NFS mount or symlink
 // loop would otherwise block Bootstrap indefinitely.
 func TestLoader_RespectsCanceledContext(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "a.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -1037,6 +1062,7 @@ metadata: {name: a, namespace: ns}
 }
 
 func TestLoader_MalformedManifestFails(t *testing.T) {
+	t.Parallel()
 	const broken = `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -1070,6 +1096,7 @@ brokenPointer: [ unclosed
 	for _, tc := range cases {
 		for _, graph := range []bool{false, true} {
 			t.Run(tc.name+"/graph="+fmt.Sprint(graph), func(t *testing.T) {
+				t.Parallel()
 				dir := filepath.Join(t.TempDir(), "app")
 				body := tc.body
 				if strings.HasPrefix(body, "dependsOn:") || strings.HasPrefix(body, "inputsFrom:") {
@@ -1107,7 +1134,9 @@ brokenPointer: [ unclosed
 }
 
 func TestLoader_IndependentRoots(t *testing.T) {
+	t.Parallel()
 	t.Run("retained native views", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		for _, name := range []string{"first", "second"} {
 			testutil.WriteFile(t, root, name+"/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: "+name+"}\nspec: {path: ./apps}\n")
@@ -1175,6 +1204,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		}
 	})
 	t.Run("admitted membership", func(t *testing.T) {
+		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "first.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: first}\nspec: {path: ./apps}\n")
 		location, err := gitrepo.Locate(t.Context(), root, root)
@@ -1204,6 +1234,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		{name: "nested", nested: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			roots := []string{t.TempDir(), t.TempDir()}
 			if tc.nested {
 				roots[0] = filepath.Join(roots[1], "child")

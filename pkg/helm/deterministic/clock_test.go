@@ -11,6 +11,7 @@ import (
 // as UTC so formatting never depends on $TZ. An explicit time and an
 // explicit named zone are honored unchanged.
 func TestDateInZone_DefaultsToFixedClockAndForcesUTC(t *testing.T) {
+	t.Parallel()
 	// Unrecognized arg → fixedTime, not time.Now().
 	if got := dateInZone("20060102150405", "not-a-time", "UTC"); got != "20200101000000" {
 		t.Errorf(`dateInZone default branch = %q, want "20200101000000"`, got)
@@ -32,6 +33,7 @@ func TestDateInZone_DefaultsToFixedClockAndForcesUTC(t *testing.T) {
 // formats in UTC with a fixedTime fallback — so `{{ now | date … }}` is
 // reproducible across machines, not just across runs on one machine.
 func TestClockFuncs_DateForcesUTC(t *testing.T) {
+	t.Parallel()
 	fm := clockFuncs()
 	date, ok := fm["date"].(func(string, any) string)
 	if !ok {

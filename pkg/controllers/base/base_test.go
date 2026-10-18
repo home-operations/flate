@@ -16,6 +16,7 @@ import (
 )
 
 func TestRunWithStatusOutcome_Success(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
@@ -36,6 +37,7 @@ func TestRunWithStatusOutcome_Success(t *testing.T) {
 }
 
 func TestRunWithStatusOutcome_Failure(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
@@ -56,6 +58,7 @@ func TestRunWithStatusOutcome_Failure(t *testing.T) {
 }
 
 func TestRunWithStatusOutcome_Panic(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
@@ -87,6 +90,7 @@ func TestRunWithStatusOutcome_Panic(t *testing.T) {
 }
 
 func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "ghost"}
 	called := false
@@ -106,8 +110,10 @@ func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 
 // Informative Ready messages MUST survive a no-op reconcile.
 func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
+	t.Parallel()
 	for _, message := range []string{store.MsgUnchanged, store.MsgSuspended, store.SkippedPrefix + " missing secret"} {
 		t.Run(message, func(t *testing.T) {
+			t.Parallel()
 			s := store.New()
 			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
@@ -129,6 +135,7 @@ func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 }
 
 func TestRunWithStatusOutcome_PreservesExternalFailure(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
@@ -280,6 +287,7 @@ func TestController_DoubleCloseIsSafe(t *testing.T) {
 // a non-suspended, preflight-clean object. (The scheduler's Dispatcher routes by
 // Kind, so DispatchNode does no match check.)
 func TestDispatchNode(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	ts := task.NewBounded(0)
 	c := base.New(s, ts, "test")
@@ -348,6 +356,7 @@ func TestDispatchNode(t *testing.T) {
 		{"external artifact", &manifest.ExternalArtifact{Name: "source"}, false, false, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			st.AddObject(tc.obj)
 			id := tc.obj.Named()
@@ -441,6 +450,7 @@ func TestFingerprintDedup(t *testing.T) {
 // TestFingerprintDedup_PreflightError: a match that coincides with a
 // mid-flight preflight failure returns (handled=true, err) and does not emit.
 func TestFingerprintDedup_PreflightError(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	c := base.New(s, nil, "test")
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}

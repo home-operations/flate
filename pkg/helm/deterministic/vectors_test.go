@@ -7,6 +7,7 @@ import (
 )
 
 func TestRandFuncs_MixedSequenceVector(t *testing.T) {
+	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	assert.Equal(t, fm["randAlphaNum"].(func(int) string)(12), "BK5DvWnIyqNn")
 	assert.Equal(t, fm["randInt"].(func(int, int) int)(10, 1010), 893)

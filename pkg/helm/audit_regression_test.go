@@ -16,6 +16,7 @@ import (
 )
 
 func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		values map[string]any
@@ -33,12 +34,14 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(tc.chart)), chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
 		})
 	}
 }
 
 func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
+	t.Parallel()
 	ch := minimalChart()
 	ch.Files = []*common.File{{Name: "empty.yaml", Data: []byte{}}}
 	archive, err := chartutil.Save(ch, t.TempDir())
@@ -59,6 +62,7 @@ func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 }
 
 func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\n")

@@ -29,6 +29,7 @@ func vals(keys ...string) map[string]any {
 }
 
 func TestUnreferencedValuePaths(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		src    string
@@ -118,6 +119,7 @@ func TestUnreferencedValuePaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			al := tc.allow
 			if al == nil {
 				al = allow()
@@ -131,6 +133,7 @@ func TestUnreferencedValuePaths(t *testing.T) {
 }
 
 func TestOpaqueValuesAccess(t *testing.T) {
+	t.Parallel()
 	cases := map[string]bool{
 		"{{ .Values.foo }}":              false, // field selector
 		`{{ index .Values "foo" }}`:      false, // literal index
@@ -152,6 +155,7 @@ func TestOpaqueValuesAccess(t *testing.T) {
 }
 
 func TestValuesKeyReferenced(t *testing.T) {
+	t.Parallel()
 	src := `{{ .Values.greeting }} {{ index .Values "weird-key" }} {{ .Values.image.tag }}`
 	cases := map[string]bool{
 		"greeting":  true,  // dotted
@@ -168,6 +172,7 @@ func TestValuesKeyReferenced(t *testing.T) {
 }
 
 func TestKnownTopLevelKeys(t *testing.T) {
+	t.Parallel()
 	sub := &chart.Chart{
 		Metadata: &chart.Metadata{
 			Name: "operator",
@@ -228,6 +233,7 @@ func TestKnownTopLevelKeys(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := knownTopLevelKeys(tc.ch)
 			keys := make([]string, 0, len(got))
 			for k := range got {
@@ -242,6 +248,7 @@ func TestKnownTopLevelKeys(t *testing.T) {
 }
 
 func TestStaleValuePaths_MutableCapture(t *testing.T) {
+	t.Parallel()
 	input := fstest.MapFS{
 		"Chart.yaml":        {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")},
 		"templates/cm.yaml": {Data: []byte("{{ .Values.first }}")},

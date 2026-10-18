@@ -21,6 +21,7 @@ import (
 // original — otherwise the dedup short-circuit can't fire and
 // kustomize.RenderFlux runs twice for one logical Kustomization.
 func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
+	t.Parallel()
 	base := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Path:            "./apps",
@@ -44,6 +45,7 @@ func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 // fingerprint MUST differ so the controller renders the canonical
 // post-patch values.
 func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
+	t.Parallel()
 	base := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Path: "./apps", TargetNamespace: "apps",
@@ -62,6 +64,7 @@ func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
 // sibling at the same spec.path — the source content differs, so
 // the render output differs too.
 func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
+	t.Parallel()
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Path: "./apps",
@@ -72,6 +75,7 @@ func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
 }
 
 func TestKustomizationFingerprint_PreparedOverlay(t *testing.T) {
+	t.Parallel()
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	ks.PostBuild = &kustomizev1.PostBuild{}
 	first, err := kustomize.Prepare(ks, nil, map[string]string{"VALUE": "first"})
@@ -91,8 +95,10 @@ func TestKustomizationFingerprint_PreparedOverlay(t *testing.T) {
 }
 
 func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			ks.PostBuild = &kustomizev1.PostBuild{}
 			ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "external"}}}
@@ -128,6 +134,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 }
 
 func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
+	t.Parallel()
 	st := store.New()
 	st.AddObject(&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "repository"}})
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
@@ -146,6 +153,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 		{name: "empty", opts: Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{}, Substitute: map[string]string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c := New(st, task.NewBounded(2), nil, false)
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
 			prepared, err := kustomize.Prepare(ks, c.substitutionProvider, c.substitute)
@@ -160,6 +168,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 }
 
 func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
+	t.Parallel()
 	ks := &manifest.Kustomization{Path: "app"}
 	first := &store.SourceArtifact{LocalPath: "/label", Key: "one"}
 	second := &store.SourceArtifact{LocalPath: "/label", Key: "two"}

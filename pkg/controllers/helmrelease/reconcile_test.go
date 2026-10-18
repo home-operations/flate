@@ -21,6 +21,7 @@ import (
 )
 
 func TestReconcile_OCIChartDigestTracking(t *testing.T) {
+	t.Parallel()
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	for _, tc := range []struct {
 		name, pin       string
@@ -32,6 +33,7 @@ func TestReconcile_OCIChartDigestTracking(t *testing.T) {
 		{"HR namespace fallback", "tag", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c, st := newTestController(t, nil)
 			c.Options.DisableChartDigestTracking = tc.disable
 			dir := t.TempDir()
@@ -234,6 +236,7 @@ metadata: {name: issuer}
 
 // A chart source that stays Pending fails with typed dependency provenance at force drain.
 func TestReconcile_ChartSourceNotReady(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	// The source exists without an artifact or Ready condition.
 	src := &manifest.OCIRepository{
@@ -266,6 +269,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 // TestReconcile_DependsOnFailed cascades a dep failure to a non-rendering
 // HR — DependencyFailedError surfaces via RunWithStatusOutcome → Failed status.
 func TestReconcile_DependsOnFailed(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	dep := &manifest.HelmRelease{Name: "dep", Namespace: "flux-system"}
 	st.AddObject(dep)
@@ -287,6 +291,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 
 // A structural parent that stays Pending fails with typed dependency provenance.
 func TestReconcile_ParentGateWaits(t *testing.T) {
+	t.Parallel()
 	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	hr := &manifest.HelmRelease{
 		Name: "child", Namespace: "flux-system",
@@ -316,6 +321,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 // Locks the contract that any resolver implementation is honored,
 // not just the static-map shape.
 func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
+	t.Parallel()
 	parent := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 	hr := &manifest.HelmRelease{
 		Name: "child", Namespace: "flux-system",
@@ -343,6 +349,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 
 // A missing chart must fail before entering dependency waits.
 func TestReconcile_MissingChartFails(t *testing.T) {
+	t.Parallel()
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "broken", Namespace: "flux-system",
@@ -359,6 +366,7 @@ func TestReconcile_MissingChartFails(t *testing.T) {
 }
 
 func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
+	t.Parallel()
 	for _, site := range []struct {
 		name, message    string
 		parent, retained bool
@@ -370,8 +378,10 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 		{"pre_render_retained", "awaiting pre-render references", true, true},
 	} {
 		t.Run(site.name, func(t *testing.T) {
+			t.Parallel()
 			for _, suspended := range []bool{false, true} {
 				t.Run(fmt.Sprintf("suspended=%t", suspended), func(t *testing.T) {
+					t.Parallel()
 					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 					parents := map[manifest.NamedResource]manifest.NamedResource{}
 					id := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "release", Namespace: "apps"}

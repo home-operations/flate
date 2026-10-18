@@ -29,10 +29,12 @@ func (e *crdPromotion) Promote(id manifest.NamedResource) bool {
 }
 
 func TestClassify_MissingCRDs(t *testing.T) {
+	t.Parallel()
 	for _, enabled := range []bool{false, true} {
 		for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
 			for _, state := range []string{"absent", "explicit namespace", "object", "ready status", "pending status", "failed status", "promoted", "promotion miss", "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList", "valid expression", "invalid expression", "present invalid expression"} {
 				t.Run(fmt.Sprintf("enabled_%t/drain_%d/%s", enabled, drain, state), func(t *testing.T) {
+					t.Parallel()
 					s := store.New()
 					ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 					want := ClassBlocked

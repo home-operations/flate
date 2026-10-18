@@ -19,6 +19,7 @@ import (
 )
 
 func TestNewPostRenderer_NilWhenNoKustomize(t *testing.T) {
+	t.Parallel()
 	if pr := newPostRenderer(nil); pr != nil {
 		t.Errorf("expected nil for empty list, got %T", pr)
 	}
@@ -28,6 +29,7 @@ func TestNewPostRenderer_NilWhenNoKustomize(t *testing.T) {
 }
 
 func TestKustomizePostRenderer_PatchAppliesToHelmOutput(t *testing.T) {
+	t.Parallel()
 	in := bytes.NewBufferString(`apiVersion: v1
 kind: ConfigMap
 metadata:

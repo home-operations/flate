@@ -58,6 +58,7 @@ func renderPersistenceEligible(tb testing.TB) bool {
 }
 
 func TestTemplateCache_OCIIdentity(t *testing.T) {
+	t.Parallel()
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	const next = "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	shared := digest[:len(digest)-1] + "9"
@@ -77,6 +78,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 			{name: "new values", next: store.SourceArtifact{Digest: shared, Revision: "6.15.0@" + shared}, marker: "updated", wantFingerprintChanged: true},
 		} {
 			t.Run(fmt.Sprintf("disabled_%t/%s", disable, tc.name), func(t *testing.T) {
+				t.Parallel()
 				st, hr, dir := ociRenderFixture(t)
 				original := hr.Clone()
 				cli, err := NewClient(newTestCache(t, t.TempDir()))
@@ -157,6 +159,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 	}
 
 	t.Run("one admitted artifact", func(t *testing.T) {
+		t.Parallel()
 		st, hr, dir := ociRenderFixture(t)
 		reads := map[string]int{}
 		input := os.DirFS(dir)
@@ -178,8 +181,10 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 }
 
 func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact, manifest.KindHelmChart} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			st, hr, dir := ociRenderFixture(t)
 			hr = hr.Clone()
 			hr.ChartRef = nil
@@ -223,6 +228,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 }
 
 func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
+	t.Parallel()
 	ch := minimalChart()
 	hr := minimalHR()
 	values1 := map[string]any{"a": 1, "b": 2}
@@ -237,6 +243,7 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 }
 
 func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
+	t.Parallel()
 	ch, hr := minimalChart(), minimalHR()
 	values := map[string]any{"k": "v"}
 	base := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, Options{}, hr)
@@ -251,6 +258,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		t.Run("Options/"+field.Name, func(t *testing.T) {
+			t.Parallel()
 			var opts Options
 			v := reflect.ValueOf(&opts).Elem().Field(i)
 			switch v.Kind() {
@@ -278,6 +286,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		"Chart.Version", "ChartValuesFiles", "IgnoreMissingValuesFiles", "PostRenderers",
 	} {
 		t.Run("HelmRelease/"+field, func(t *testing.T) {
+			t.Parallel()
 			alt := hr.Clone()
 			v := reflect.ValueOf(alt).Elem()
 			for name := range strings.SplitSeq(field, ".") {
@@ -307,6 +316,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		})
 	}
 	t.Run("ChartContent", func(t *testing.T) {
+		t.Parallel()
 		changed := minimalChart()
 		changed.Metadata.Version = "9.0.0"
 		assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(changed)), chart: changed}, values, Options{}, hr) == base, false)
@@ -341,6 +351,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		}},
 	} {
 		t.Run("Chart/"+tc.name, func(t *testing.T) {
+			t.Parallel()
 			a, b := minimalChart(), minimalChart()
 			tc.edit(a, b)
 			first, second := chartLoadResult{chart: a, fingerprint: manifest.Fingerprint(projectChart(a))}, chartLoadResult{chart: b, fingerprint: manifest.Fingerprint(projectChart(b))}
@@ -352,12 +363,14 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		})
 	}
 	t.Run("Chart/nil", func(t *testing.T) {
+		t.Parallel()
 		first, second := chartLoadResult{}, chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{}))}
 		assert.Equal(t, computeTemplateKey(first, nil, Options{}, hr) == computeTemplateKey(second, nil, Options{}, hr), false)
 		assert.Equal(t, chartValuesCacheKey(first, nil, false) == chartValuesCacheKey(second, nil, false), false)
 	})
 
 	t.Run("Values", func(t *testing.T) {
+		t.Parallel()
 		assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, map[string]any{"k": "different"}, Options{}, hr) == base, false)
 	})
 }
@@ -371,6 +384,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 // change the rendered bytes) still diverges the key, so this test cannot
 // pass by accident if a genuinely render-affecting input were dropped.
 func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
+	t.Parallel()
 	ch := minimalChart()
 	values := map[string]any{"k": "v"}
 	opts := Options{KubeVersion: "1.33"}
@@ -378,6 +392,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	baseKey := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, opts, base)
 
 	t.Run("CommonMetadata does not change the key", func(t *testing.T) {
+		t.Parallel()
 		alt := *base
 		alt.CommonMetadata = &helmv2.CommonMetadata{
 			Labels:      map[string]string{"team": "platform"},
@@ -389,6 +404,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	})
 
 	t.Run("control: PostRenderers still diverges", func(t *testing.T) {
+		t.Parallel()
 		alt := *base
 		alt.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
 		if got := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, opts, &alt); got == baseKey {
@@ -398,8 +414,10 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 }
 
 func TestTemplateCache_TemplateIntegration(t *testing.T) {
+	t.Parallel()
 	for _, backing := range []string{"memory", "disk", "acquired"} {
 		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
 			root := ""
 			if backing != "memory" {
 				root = t.TempDir()
@@ -540,6 +558,7 @@ func minimalHR() *manifest.HelmRelease {
 }
 
 func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
+	t.Parallel()
 	st, hr, dir := ociRenderFixture(t)
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st.SetArtifact(manifest.NamedResource{
@@ -576,11 +595,13 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 }
 
 func TestTemplateCache_StorageFailures(t *testing.T) {
+	t.Parallel()
 	if !renderPersistenceEligible(t) {
 		t.Skip("storage faults require an eligible build")
 	}
 	for _, fault := range []string{"lookup", "publication"} {
 		t.Run(fault, func(t *testing.T) {
+			t.Parallel()
 			chartDir := t.TempDir()
 			testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 			testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: fresh}\n")

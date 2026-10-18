@@ -24,6 +24,7 @@ func celDep(name string) manifest.NamedResource {
 // TestReadyExpr_ProjectsObservedGeneration: the common Flux readiness idiom
 // `status.observedGeneration == metadata.generation` projects and compares.
 func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ group, kind, version string }{
 		{manifest.FluxKustomizeDomain, manifest.KindKustomization, "kustomize.toolkit.fluxcd.io/v1"},
 		{manifest.HelmReleaseDomain, manifest.KindHelmRelease, "helm.toolkit.fluxcd.io/v2"},
@@ -38,6 +39,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 		{"", "Unknown", ""},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
 			s := store.New()
 			dep := manifest.NamedResource{Group: tc.group, Kind: tc.kind, Namespace: "ns", Name: "infra"}
 			s.UpdateStatus(dep, store.StatusReady, "")
@@ -54,6 +56,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 // satisfied ReadyExpr makes the dep Ready even when the built-in status is
 // Failed — Classify must return ClassReady (readyNow short-circuits on the CEL).
 func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	dep := celDep("infra")
 	s.UpdateStatus(dep, store.StatusFailed, "still rolling out") // built-in says Failed
@@ -72,6 +75,7 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 // Classify fails it immediately (any drain level) with a "readyExpr:"-prefixed
 // message, and evaluateReadyExpr wraps it as *celCompileErr.
 func TestReadyExpr_CompileError(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	dep := celDep("x")
 	s.UpdateStatus(dep, store.StatusReady, "ok")
@@ -90,6 +94,7 @@ func TestReadyExpr_CompileError(t *testing.T) {
 // TestReadyExpr_NonBoolResult: an expr that returns a non-bool (a string) is a
 // terminal type-shape problem, surfaced as a compile-class error.
 func TestReadyExpr_NonBoolResult(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	dep := celDep("x")
 	s.UpdateStatus(dep, store.StatusReady, "ok")
@@ -108,6 +113,7 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 // it as not-ready with no failMsg (distinct from a compile error), and Classify
 // blocks the dep — it may still become ready — rather than failing it.
 func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	dep := celDep("infra")
 	s.UpdateStatus(dep, store.StatusReady, "")
@@ -126,6 +132,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 // TestReadyExpr_ReadsLabelsAndAnnotations locks the upstream Flux contract that
 // readyExpr can read dep.metadata.{labels,annotations} via the CEL projection.
 func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	dep := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
 	s.AddObject(&manifest.Kustomization{
@@ -149,6 +156,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 // TestReadyExpr_BindsSelfAndDep locks the upstream Flux contract: readyExpr sees
 // both `self` (the consumer / Waiter.Parent) and `dep` (the dependency).
 func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	self := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "parent"}
 	dep := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "child"}
@@ -161,6 +169,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	}
 	for _, group := range []string{"", "example.test"} {
 		t.Run("group="+group, func(t *testing.T) {
+			t.Parallel()
 			foreignSelf, foreignDep := self, dep
 			foreignSelf.Group, foreignDep.Group = group, group
 			expr := `self.apiVersion == '' && dep.apiVersion == '' && !dep.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')`
@@ -180,6 +189,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 // return the same error instance — sync.Map.LoadOrStore guarantees pointer
 // identity for the cached entry.
 func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
+	t.Parallel()
 	const bad = `this is not valid CEL ((` // unclosed paren = compile error
 	_, err1 := compileReadyExpr(bad)
 	_, err2 := compileReadyExpr(bad)

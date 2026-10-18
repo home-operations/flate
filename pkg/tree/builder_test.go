@@ -13,8 +13,10 @@ import (
 )
 
 func TestBuilder_Normalization(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"a/../b", "a//b", "a +@日本.yaml", `a\b`} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			b := tree.NewBuilder(nil)
 			must(t, b.AddFile(name, []byte("data"), 0o600))
 			tr := build(t, b)
@@ -32,6 +34,7 @@ func TestBuilder_Normalization(t *testing.T) {
 	}
 	for _, name := range []string{"", ".", "../b", "/b", "a/../../b", "a\x00b"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			b := tree.NewBuilder(nil)
 			assert.Equal(t, errors.Is(b.AddFile(name, nil, 0o600), fs.ErrInvalid), true)
 		})
@@ -39,6 +42,7 @@ func TestBuilder_Normalization(t *testing.T) {
 }
 
 func TestBuilder_DuplicateLastWins(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	data := []byte("first")
 	must(t, b.AddFile("file", data, 0o600))
@@ -62,6 +66,7 @@ func TestBuilder_DuplicateLastWins(t *testing.T) {
 }
 
 func TestBuilder_FileDirConflictErrors(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		first  func(*tree.Builder) error
@@ -82,6 +87,7 @@ func TestBuilder_FileDirConflictErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			b := tree.NewBuilder(nil)
 			must(t, tc.first(b))
 			assert.Equal(t, errors.Is(tc.second(b), tree.ErrConflict), true)
@@ -93,6 +99,7 @@ func TestBuilder_FileDirConflictErrors(t *testing.T) {
 }
 
 func TestBuilder_Sealed(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("file", []byte("data"), 0o600))
 	tr := build(t, b)
@@ -108,6 +115,7 @@ func TestBuilder_Sealed(t *testing.T) {
 }
 
 func TestOverlay_MergedWalkSkipDir(t *testing.T) {
+	t.Parallel()
 	lower := fixture(t)
 	b := tree.NewBuilder(lower)
 	must(t, b.AddFile("dir/generated +@日本.yaml", []byte("generated"), 0o600))
@@ -117,6 +125,7 @@ func TestOverlay_MergedWalkSkipDir(t *testing.T) {
 	must(t, fstest.TestFS(tr, "dir/generated +@日本.yaml", "dir/a +@日本.yaml", "upper/file"))
 	for _, raw := range []bool{false, true} {
 		t.Run(map[bool]string{false: "WalkDir", true: "WalkRaw"}[raw], func(t *testing.T) {
+			t.Parallel()
 			var visited []string
 			fn := func(p string, _ fs.DirEntry, err error) error {
 				visited = append(visited, p)
@@ -141,6 +150,7 @@ func TestOverlay_MergedWalkSkipDir(t *testing.T) {
 }
 
 func TestOverlay_RemoveRecreate(t *testing.T) {
+	t.Parallel()
 	lower := fixture(t)
 	b := tree.NewBuilder(lower)
 	must(t, b.AddFile("dir/upper", []byte("upper"), 0o600))
@@ -182,8 +192,10 @@ func TestOverlay_RemoveRecreate(t *testing.T) {
 }
 
 func TestOverlay_ConcurrentBuilders(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprint(workers), func(t *testing.T) {
+			t.Parallel()
 			lower := fixture(t)
 			start := make(chan struct{})
 			var wg sync.WaitGroup
@@ -223,9 +235,11 @@ func TestOverlay_ConcurrentBuilders(t *testing.T) {
 }
 
 func TestOverlay_RemoveAllIsExact(t *testing.T) {
+	t.Parallel()
 	for _, overlay := range []bool{false, true} {
 		name := map[bool]string{false: "source", true: "overlay"}[overlay]
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var b *tree.Builder
 			if overlay {
 				b = tree.NewBuilder(fixture(t))
@@ -267,9 +281,11 @@ func TestOverlay_RemoveAllIsExact(t *testing.T) {
 }
 
 func TestOverlay_RemoveAllRootKeepsRoot(t *testing.T) {
+	t.Parallel()
 	for _, overlay := range []bool{false, true} {
 		name := map[bool]string{false: "source", true: "overlay"}[overlay]
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var b *tree.Builder
 			if overlay {
 				b = tree.NewBuilder(fixture(t))
@@ -295,6 +311,7 @@ func TestOverlay_RemoveAllRootKeepsRoot(t *testing.T) {
 }
 
 func TestBuilder_RejectsMalformedKinds(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	for name, err := range map[string]error{
 		"file-dir-bit":       b.AddFile("f", nil, fs.ModeDir|0o755),
@@ -305,13 +322,14 @@ func TestBuilder_RejectsMalformedKinds(t *testing.T) {
 		"symlink-nul":        b.AddSymlink("l", "a\x00b"),
 		"symlink-empty-name": b.AddSymlink("", "x"),
 	} {
-		t.Run(name, func(t *testing.T) { assert.Equal(t, errors.Is(err, fs.ErrInvalid), true) })
+		t.Run(name, func(t *testing.T) { t.Parallel(); assert.Equal(t, errors.Is(err, fs.ErrInvalid), true) })
 	}
 	_, err := b.Stat("f")
 	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 }
 
 func TestBuilder_Metadata(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	must(t, b.AddDir("empty", 0o750))
 	must(t, b.AddFile("implicit/file", []byte("x"), 0o600))

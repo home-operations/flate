@@ -23,6 +23,7 @@ func selectedRun(res *Result) Rendered {
 }
 
 func TestMatchesLabels_Matches(t *testing.T) {
+	t.Parallel()
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Labels: map[string]string{"env": "prod"},
@@ -41,6 +42,7 @@ func TestMatchesLabels_Matches(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := matchesLabels(tc.obj, tc.labels); got != tc.want {
 				t.Errorf("got %v want %v", got, tc.want)
 			}
@@ -49,6 +51,7 @@ func TestMatchesLabels_Matches(t *testing.T) {
 }
 
 func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
+	t.Parallel()
 	hr := &manifest.HelmRelease{Name: "same", Namespace: "apps"}
 	ks := &manifest.Kustomization{Name: "same", Namespace: "apps"}
 	ks.Labels = map[string]string{"env": ""}
@@ -81,6 +84,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 }
 
 func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
+	t.Parallel()
 	a, sibling, other := ksID("a"), ksID("sibling"), ksID("other")
 	other.Namespace = "other"
 	run := selectedRun(&Result{})
@@ -97,6 +101,7 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 }
 
 func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
+	t.Parallel()
 	visible := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "media", Name: "plex"}
 	hidden := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "default", Name: "other"}
 	for _, tc := range []struct {
@@ -111,6 +116,7 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 		{name: "visible and unattributed", visible: true, extra: errors.New("unattributed panic")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			failed := map[manifest.NamedResource]store.StatusInfo{hidden: {Status: store.StatusFailed, Message: "default failed"}}
 			if tc.visible {
 				failed[visible] = store.StatusInfo{Status: store.StatusFailed, Message: "media failed"}
@@ -132,12 +138,14 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 }
 
 func TestSelect_MissingAndCycles(t *testing.T) {
+	t.Parallel()
 	id := func(name string) manifest.NamedResource {
 		return manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: "apps", Name: name}
 	}
 	selected, missing, a, b, consumer := id("selected"), id("missing"), id("a"), id("b"), id("consumer")
 	for _, named := range []bool{false, true} {
 		t.Run(fmt.Sprintf("named_%t", named), func(t *testing.T) {
+			t.Parallel()
 			blocked := map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, a: {b}, b: {a}, consumer: {a}}
 			run := selectedRun(&Result{Blocked: blocked, Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 			for _, resource := range []manifest.NamedResource{selected, a, b, consumer} {
@@ -181,6 +189,7 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 }
 
 func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
+	t.Parallel()
 	selected, root, other, a, b := ksID("selected"), ksID("root"), ksID("other"), ksID("a"), ksID("b")
 	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}}})
 	for _, id := range []manifest.NamedResource{selected, root, other, a, b} {
@@ -215,6 +224,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 }
 
 func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
+	t.Parallel()
 	closeErr := errors.New("shared cache close")
 	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{ksID("failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
@@ -232,6 +242,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 		{name: "composed", orig: failed.Err, shared: closeErr, want: "orig snapshot:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
 			for i, err := range []error{tc.orig, tc.current} {
 				if err != nil {
@@ -256,6 +267,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	}
 	for _, reversed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("nested tree reversed=%t", reversed), func(t *testing.T) {
+			t.Parallel()
 			teardownA, teardownB := errors.New("teardown A"), errors.New("teardown B")
 			baseFailure := &FailuresError{Message: "raw base failure"}
 			runs := []Rendered{failed, selectedRun(&Result{})}
@@ -300,6 +312,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	}
 	for _, order := range [][2]int{{0, 1}, {1, 0}} {
 		t.Run(fmt.Sprint(order), func(t *testing.T) {
+			t.Parallel()
 			causes := [2]error{errors.New("base operation"), errors.New("head operation")}
 			runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
 			gates := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
@@ -340,6 +353,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 }
 
 func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
+	t.Parallel()
 	parent := ksID("parent")
 	child := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "child"}
 	for _, tc := range []struct {
@@ -358,6 +372,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 		disposition := tc.disposition
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.Message, reverse), func(t *testing.T) {
+				t.Parallel()
 				orig := selectedRun(&Result{Manifests: map[manifest.NamedResource][]map[string]any{child: {{"kind": "Deployment"}}}})
 				current := selectedRun(&Result{})
 				orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
@@ -401,6 +416,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 }
 
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
+	t.Parallel()
 	victim := ksID("victim")
 	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: victim.Name}
 	extra := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "victim"}
@@ -464,6 +480,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{tc.root}, nil)
 			res := results[0]
 			assert.Diff(t, res.Objects, tc.objects)
@@ -486,6 +503,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		})
 	}
 	t.Run("extra failure query filters", func(t *testing.T) {
+		t.Parallel()
 		run := selectedRun(&Result{})
 		obj := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 		run.store.AddObject(obj)
@@ -509,6 +527,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 }
 
 func TestSelect_CascadesAndSharedVictims(t *testing.T) {
+	t.Parallel()
 	root, mid, leaf, missing, dual := ksID("root"), ksID("mid"), ksID("leaf"), ksID("missing"), ksID("dual")
 	for _, tc := range []struct {
 		name    string
@@ -519,6 +538,7 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 		{name: "shared", blocked: map[manifest.NamedResource][]manifest.NamedResource{dual: {root, missing, root}}, want: map[manifest.NamedResource][]manifest.NamedResource{root: {dual}, missing: {dual}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: tc.blocked})
 			run.Result.Failed[root] = store.StatusInfo{Status: store.StatusFailed, Message: "root boom"}
 			for id := range tc.blocked {
@@ -538,6 +558,7 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 }
 
 func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
+	t.Parallel()
 	run := selectedRun(&Result{})
 	valid := []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}
 	for _, roots := range [][]manifest.NamedResource{
@@ -561,6 +582,7 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 }
 
 func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
+	t.Parallel()
 	child, parent, unrelated := ksID("child"), ksID("parent"), ksID("unrelated")
 	orig := selectedRun(&Result{})
 	current := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{unrelated: {Status: store.StatusFailed, Message: "unrelated failed"}}})
@@ -583,6 +605,7 @@ func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 }
 
 func TestSelect_NamespaceSnapshots(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		namespace string
@@ -597,6 +620,7 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 	} {
 		for _, count := range []int{1, 2} {
 			t.Run(fmt.Sprintf("%s_%d_side", tc.name, count), func(t *testing.T) {
+				t.Parallel()
 				run := selectedRun(&Result{Warnings: []manifest.Warning{{Message: "global"}}})
 				files := make(map[manifest.NamedResource]string)
 				for _, namespace := range []string{"", "default", "media", "networking"} {
@@ -635,6 +659,7 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 }
 
 func TestSelect_AuthoredPrerequisites(t *testing.T) {
+	t.Parallel()
 	dep := manifest.NamedResource{Group: "helm.toolkit.fluxcd.io", Kind: manifest.KindHelmRelease, Namespace: "other", Name: "dep"}
 	provider := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "provider"}
 	rs := &manifest.ResourceSet{Name: "selected", Namespace: "apps"}
@@ -651,6 +676,7 @@ func TestSelect_AuthoredPrerequisites(t *testing.T) {
 		{"Source", &manifest.Kustomization{Name: "selected", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 			run.store.AddObject(tc.object)
 			for _, id := range tc.deps {
@@ -668,6 +694,7 @@ func TestSelect_AuthoredPrerequisites(t *testing.T) {
 }
 
 func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
+	t.Parallel()
 	present, absent := ksID("a-present"), ksID("z-absent")
 	middle, oldRoot, newRoot := ksID("middle"), ksID("old-root"), ksID("new-root")
 	orig, current := selectedRun(&Result{}), selectedRun(&Result{})
@@ -689,6 +716,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 }
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
+	t.Parallel()
 	obj := &manifest.Kustomization{Name: "external", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
 	run := selectedRun(&Result{})
 	run.store.AddObject(obj)
@@ -700,8 +728,10 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 }
 
 func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindBucket, manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			run := selectedRun(&Result{})
 			obj := &manifest.RawObject{Kind: kind, APIVersion: "seaweed.seaweedfs.com/v1", Name: "foreign", Namespace: "apps"}
 			run.store.AddObject(obj)
@@ -715,6 +745,7 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 }
 
 func TestSelect_ExplicitChartVersion(t *testing.T) {
+	t.Parallel()
 	for _, ns := range []struct{ namespace, source string }{{"", "apps"}, {"foreign", "foreign"}} {
 		for _, tc := range []struct {
 			name, kind, want string
@@ -732,6 +763,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 			{name: "nonapplicable source", kind: manifest.KindHelmRepository},
 		} {
 			t.Run(tc.name+"/source_"+ns.namespace, func(t *testing.T) {
+				t.Parallel()
 				run := selectedRun(&Result{})
 				kind := tc.kind
 				if kind == "" {

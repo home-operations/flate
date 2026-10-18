@@ -11,6 +11,7 @@ import (
 )
 
 func TestElapsed_CompactDuration(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		d    time.Duration
@@ -24,18 +25,21 @@ func TestElapsed_CompactDuration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, Elapsed(tc.d), tc.want)
 		})
 	}
 }
 
 func TestColorEnabled_NonTTY(t *testing.T) {
+	t.Parallel()
 	if ColorEnabled(&bytes.Buffer{}) {
 		t.Error("bytes.Buffer reported as color-capable")
 	}
 }
 
 func TestRenderers_ColorGating(t *testing.T) {
+	t.Parallel()
 	const s = "hello"
 	cases := []struct {
 		name   string
@@ -50,6 +54,7 @@ func TestRenderers_ColorGating(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.render(s, false), s)
 			colored := tc.render(s, true)
 			if !strings.Contains(colored, "\x1b") {
@@ -61,6 +66,7 @@ func TestRenderers_ColorGating(t *testing.T) {
 }
 
 func TestTruncate_VisibleWidth(t *testing.T) {
+	t.Parallel()
 	if got := Truncate("hello world", 100); got != "hello world" {
 		t.Errorf("under-width truncate = %q, want unchanged text", got)
 	}

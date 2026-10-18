@@ -22,6 +22,7 @@ func ncm(name, key, val string) Doc {
 // label — and never the flate parent header. (A second, unchanged
 // resource is present so dyff emits the document-root label.)
 func TestRenderDocs_NativeLabels(t *testing.T) {
+	t.Parallel()
 	left := []Doc{ncm("hello", "greeting", "hola"), ncm("other", "k", "v")}
 	right := []Doc{ncm("hello", "greeting", "hi"), ncm("other", "k", "v")}
 
@@ -39,6 +40,7 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 	for _, tc := range cases {
 		name := cmp.Or(string(tc.format), "default")
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			out, err := RenderDocs(left, right, Options{Format: tc.format})
 			if err != nil {
 				t.Fatalf("RenderDocs: %v", err)
@@ -57,6 +59,7 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 }
 
 func TestRenderDocs_NoChange(t *testing.T) {
+	t.Parallel()
 	d := ncm("hello", "k", "v")
 	out, err := RenderDocs([]Doc{d}, []Doc{d}, Options{Format: FormatGitHub})
 	if err != nil {
@@ -68,6 +71,7 @@ func TestRenderDocs_NoChange(t *testing.T) {
 }
 
 func TestRenderDocs_UnsupportedFormat(t *testing.T) {
+	t.Parallel()
 	d := ncm("hello", "k", "v")
 	out, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"})
 	if err == nil || err.Error() != `unsupported diff format "bogus"` || out != nil {
@@ -83,6 +87,7 @@ func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 		{FormatHTML, "marshal: "},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
+			t.Parallel()
 			out, err := RenderDocs([]Doc{d}, nil, Options{Format: tc.format,
 				Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "chart not ready"}}})
 			if err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil {
@@ -115,6 +120,7 @@ func ndeploy(order ...string) []Doc {
 // containers by name yields an `⇆ order changed` marker, NOT a wall of
 // per-line value churn like a text diff would.
 func TestRenderDocs_ContainerReorder(t *testing.T) {
+	t.Parallel()
 	out, err := RenderDocs(ndeploy("nginx", "sidecar", "init"), ndeploy("init", "nginx", "sidecar"),
 		Options{Format: FormatGitHub})
 	if err != nil {
@@ -135,6 +141,7 @@ func TestRenderDocs_ContainerReorder(t *testing.T) {
 // a named container's image change is reported at the by-name path, not
 // by array index.
 func TestRenderDocs_ContainerByNameImageChange(t *testing.T) {
+	t.Parallel()
 	mk := func(image string) []Doc {
 		return []Doc{{Manifest: map[string]any{
 			"apiVersion": "apps/v1",
@@ -167,6 +174,7 @@ func TestRenderDocs_ContainerByNameImageChange(t *testing.T) {
 // an artifact of the add/remove (already reported) and is filtered out. The
 // rename itself must still surface; the unchanged neighbors must not.
 func TestRenderDocs_RenameNoFileLevelOrderChange(t *testing.T) {
+	t.Parallel()
 	// Equal count on both sides (3 == 3) is what arms dyff's order check; the
 	// middle doc is renamed, the neighbors are byte-identical.
 	left := []Doc{ncm("aaa", "k", "v"), ncm("plex", "k", "v"), ncm("zzz", "k", "v")}

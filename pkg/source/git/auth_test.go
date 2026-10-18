@@ -22,6 +22,7 @@ import (
 )
 
 func TestFetcher_SecretReferences(t *testing.T) {
+	t.Parallel()
 	_, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +54,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var sec *manifest.Secret
 			if tc.data != nil {
 				sec = &manifest.Secret{StringData: tc.data}
@@ -113,6 +115,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 }
 
 func TestFetcher_NonGenericProvider(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
@@ -129,6 +132,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 }
 
 func TestFetcher_HTTPSBasicAuth(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
@@ -145,6 +149,7 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 		"./a@b",
 	} {
 		t.Run(url, func(t *testing.T) {
+			t.Parallel()
 			auth, err := f.resolveAuth(gitRepoWithSecret("g", url, "creds"), f.Secrets("ns", "creds"))
 			if err != nil {
 				t.Fatalf("resolveAuth: %v", err)
@@ -161,6 +166,7 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 }
 
 func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
@@ -191,6 +197,7 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 }
 
 func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
+	t.Parallel()
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
@@ -206,6 +213,7 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 }
 
 func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
+	t.Parallel()
 	_, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -223,6 +231,7 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 		{"ssh://@example.com/r.git", "git"},
 	} {
 		t.Run(tc.url, func(t *testing.T) {
+			t.Parallel()
 			auth, err := f.resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), f.Secrets("ns", "creds"))
 			if err != nil {
 				t.Fatal(err)
@@ -239,6 +248,7 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 }
 
 func TestFetcher_ForceGenericProvider(t *testing.T) {
+	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
 	f := &Fetcher{
 		ForceGeneric: true,

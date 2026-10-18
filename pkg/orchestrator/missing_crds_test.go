@@ -226,6 +226,7 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 }
 
 func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
 	crdA := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "a.example.com"}
@@ -261,6 +262,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	assert.Diff(t, s.Warnings(), want)
 	for _, state := range []string{"object", "ready", "pending", "failed", "disabled", "foreign object", "foreign status"} {
 		t.Run(state, func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name, Namespace: "explicit"}}}
 			for _, dep := range rs.DependsOn {
@@ -302,8 +304,10 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 }
 
 func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"unchanged", "remove", "add", "failed gate", "filter remove", "filter add", "dedup"} {
 		t.Run(state, func(t *testing.T) {
+			t.Parallel()
 			s := store.New()
 			tasks := task.NewBounded(2)
 			o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}

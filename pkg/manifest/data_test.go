@@ -9,6 +9,7 @@ import (
 )
 
 func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
+	t.Parallel()
 	s := &Secret{StringData: map[string]any{"VALUE": ""}, Data: map[string]any{"VALUE": "malformed!", "UNUSED": "malformed!"}}
 	value, found, err := s.Value("VALUE")
 	if value != "" || !found || err != nil {
@@ -23,6 +24,7 @@ func TestSecret_Value_ShadowedAndUnrequestedKeys(t *testing.T) {
 }
 
 func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
+	t.Parallel()
 	const cipher = "enabled: ENC[AES256_GCM,data:fixture,type:str]\n"
 	for _, tc := range []struct {
 		kind, field, raw   string
@@ -37,6 +39,7 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 			name += "/marked"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			raw := tc.raw
 			want := "..PLACEHOLDER_VALUE.."
 			if tc.encoded {
@@ -64,6 +67,7 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 }
 
 func TestVarsMap_Scalars(t *testing.T) {
+	t.Parallel()
 	assert.Diff(t, VarsMap(map[string]any{"TEXT": "one\ntwo", "NUMBER": 3, "BYTES": []byte("bytes"), "NESTED": map[string]any{"x": "y"}}),
 		map[string]string{"TEXT": "onetwo", "NUMBER": "3", "BYTES": "bytes"})
 }

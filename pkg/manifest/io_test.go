@@ -10,6 +10,7 @@ import (
 )
 
 func TestDecodeDocs_ScalarValues(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		in      string
@@ -41,6 +42,7 @@ func TestDecodeDocs_ScalarValues(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			docs, err := DecodeDocs(strings.NewReader(tc.in))
 			if tc.wantErr {
 				if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
@@ -61,6 +63,7 @@ func TestDecodeDocs_ScalarValues(t *testing.T) {
 // task file) is not a Kubernetes manifest, so it is skipped — no error, no
 // failed-to-parse WARN. Only a genuine syntax error aborts.
 func TestDecodeDocs_SkipsNonMappingDocs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		in      string
@@ -78,6 +81,7 @@ func TestDecodeDocs_SkipsNonMappingDocs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			docs, err := SplitDocs([]byte(tc.in))
 			if tc.wantErr {
 				if err == nil {
@@ -100,6 +104,7 @@ func TestDecodeDocs_SkipsNonMappingDocs(t *testing.T) {
 // previously a single top-level sequence failed the entire file, dropping the
 // real manifests with it.
 func TestDecodeDocs_AdvancesPastSkippedSeq(t *testing.T) {
+	t.Parallel()
 	in := "kind: First\n---\n- not\n- a\n- manifest\n---\nkind: Second\n"
 	docs, err := SplitDocs([]byte(in))
 	if err != nil {

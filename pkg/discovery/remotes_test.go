@@ -15,8 +15,10 @@ import (
 )
 
 func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
+	t.Parallel()
 	for _, identity := range []string{"ancestor", "explicit", "inferred", "retained"} {
 		t.Run(identity, func(t *testing.T) {
+			t.Parallel()
 			parent := discoveryRefFixture(t)
 			testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/parent/repo.git\n")
 			root := filepath.Join(parent, "child")
@@ -58,8 +60,10 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 }
 
 func TestSeedBootstrapSource_NoRepository(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"absent", "gitfile", "config", "lookup"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "scan.yaml", "admitted\n")
 			d := &discoverer{cfg: Config{Path: root, Store: store.New()}}
@@ -92,6 +96,7 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 }
 
 func TestNormalizeGitURL_CanonicalForms(t *testing.T) {
+	t.Parallel()
 	want := "github.com/owner/repo"
 	cases := []string{
 		"ssh://git@github.com/Owner/Repo.git",
@@ -108,6 +113,7 @@ func TestNormalizeGitURL_CanonicalForms(t *testing.T) {
 }
 
 func TestNormalizeGitURL_RejectsNonRemoteShapes(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		"",
 		"file:///tmp/repo",
@@ -122,6 +128,7 @@ func TestNormalizeGitURL_RejectsNonRemoteShapes(t *testing.T) {
 }
 
 func TestNormalizeGitURL_TrailingSlashAndDotGit(t *testing.T) {
+	t.Parallel()
 	a := normalizeGitURL("https://github.com/owner/repo.git/")
 	b := normalizeGitURL("https://github.com/owner/repo")
 	if a != b {
@@ -130,6 +137,7 @@ func TestNormalizeGitURL_TrailingSlashAndDotGit(t *testing.T) {
 }
 
 func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
+	t.Parallel()
 	want := "github.com/owner/repo"
 	cases := []string{
 		"https://github.com/owner/repo?deploy_key=prod",
@@ -152,6 +160,7 @@ func TestNormalizeGitURL_StripsQueryAndFragment(t *testing.T) {
 }
 
 func TestNormalizeGitURL_IPv6Host(t *testing.T) {
+	t.Parallel()
 	got := normalizeGitURL("https://[2001:db8::1]:8080/owner/repo.git")
 	want := "2001:db8::1/owner/repo"
 	if got != want {
@@ -160,6 +169,7 @@ func TestNormalizeGitURL_IPv6Host(t *testing.T) {
 }
 
 func TestNormalizeGitURL_RejectsRelativeScpStyle(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		":onlypath",
 		"./has:colon",
@@ -173,6 +183,7 @@ func TestNormalizeGitURL_RejectsRelativeScpStyle(t *testing.T) {
 }
 
 func TestNormalizeGitURL_HostOrPathMissing(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		"https://github.com",
 		"https://github.com/",

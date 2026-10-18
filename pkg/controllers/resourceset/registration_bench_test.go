@@ -182,6 +182,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 }
 
 func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
 	var renders, updates atomic.Int64

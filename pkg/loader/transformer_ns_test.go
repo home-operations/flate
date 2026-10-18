@@ -63,6 +63,7 @@ func leafKS(name, path string) *manifest.Kustomization {
 }
 
 func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeFlatopsOverlay(t, root, "apps")
 	writeFile(t, root, "apps/apps/namespace.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
@@ -94,6 +95,7 @@ spec: {path: ./leaf}
 		{"parent fallback", "flux-system", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			id := manifest.NamedResource{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization, Namespace: tc.namespace, Name: child.Name}
 			if _, ok := s.Get[*manifest.Kustomization](id); ok != tc.want {
 				t.Errorf("stored identity %s present=%t, want %t", id, ok, tc.want)
@@ -110,6 +112,7 @@ spec: {path: ./leaf}
 }
 
 func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, authored string
 		namespaces     []string
@@ -120,6 +123,7 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 		{name: "mounted replacement", namespaces: []string{"red", "blue", ""}, mounted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root, local := t.TempDir(), t.TempDir()
 			st := store.New()
 			source := &manifest.GitRepository{Name: "view"}
@@ -228,6 +232,7 @@ spec: {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitReposit
 }
 
 func TestStampTransformerTargetNamespaces_PlainNamespaceUntouched(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// A plain `namespace:` directive with NO NamespaceTransformer — the
 	// existing metadata.namespace inheritance owns this; we must not
@@ -253,6 +258,7 @@ resources:
 }
 
 func TestStampTransformerTargetNamespaces_TransformerDeclines(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, from, to string }{
 		{"other kind", "kind: NamespaceTransformer", "kind: LabelTransformer"},
 		{"unset only", "fieldSpecs:", "unsetOnly: true\nfieldSpecs:"},
@@ -262,6 +268,7 @@ func TestStampTransformerTargetNamespaces_TransformerDeclines(t *testing.T) {
 		{"invalid subject mode", "fieldSpecs:", "setRoleBindingSubjects: invalid\nfieldSpecs:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFlatopsOverlay(t, root, "other")
 			writeFile(t, root, "transformers/transformer.yaml", strings.Replace(namespaceTransformer, tc.from, tc.to, 1))
@@ -278,6 +285,7 @@ func TestStampTransformerTargetNamespaces_TransformerDeclines(t *testing.T) {
 }
 
 func TestStampTransformerTargetNamespaces_DeepestOverlayWins(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// Outer overlay injects "outer"; an inner overlay nested under it
 	// injects "inner". The KS lives under the inner overlay, so inner
@@ -352,6 +360,7 @@ func stampReplacementsKS(t *testing.T, root, overlayDir, overlayKustomization st
 }
 
 func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, from, to, want string
 		file                 bool
@@ -383,6 +392,7 @@ func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
 		{name: "file and source value", file: true, from: "- path: ../../components/replacements/ks.yaml", to: "- path: ../../components/replacements/ks.yaml\n    sourceValue: foreign"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			rule := strings.TrimSuffix(nsReplacementRule, "\n")
 			if tc.file {
@@ -407,6 +417,7 @@ func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
 // A malformed overlay kustomization.yaml (namespace must be a scalar, not a
 // map) parses to ok=false and yields no stamp — best-effort, never a panic.
 func TestStampTransformerTargetNamespaces_MalformedOverlayIgnored(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	got := stampReplacementsKS(t, root, "apps/storage", "namespace:\n  unexpected: map\nresources:\n  - ./app/ks.yaml\n")
 	if got.TargetNamespace != "" {
@@ -417,6 +428,7 @@ func TestStampTransformerTargetNamespaces_MalformedOverlayIgnored(t *testing.T) 
 // A `replacements: {path:}` whose external file is malformed (a map where a
 // list of rules is expected) yields no stamp rather than a panic.
 func TestStampTransformerTargetNamespaces_MalformedReplacementsFileIgnored(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, root, "components/replacements/ks.yaml", "this: is not a list\n")
 	got := stampReplacementsKS(t, root, "apps/storage", `namespace: storage
@@ -433,6 +445,7 @@ resources:
 // A KS whose ancestor dirs carry no kustomization.yaml at all resolves to no
 // injected namespace (the walk terminates cleanly at the repo root).
 func TestStampTransformerTargetNamespaces_NoEnclosingOverlay(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := store.New()
 	ks := leafKS("bare", "./apps/bare/app/workload")
@@ -448,6 +461,7 @@ func TestStampTransformerTargetNamespaces_NoEnclosingOverlay(t *testing.T) {
 // TestResolveRef_Rejections locks the strict in-repo guard: remote, absolute,
 // repo-escaping, and empty refs are rejected; a normal relative ref resolves.
 func TestResolveRef_Rejections(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, base, ref string }{
 		{"empty", "apps/x", ""},
 		{"remote scheme", "apps/x", "https://example.com/repo//base?ref=v1"},
@@ -455,6 +469,7 @@ func TestResolveRef_Rejections(t *testing.T) {
 		{"escapes repo root", "apps/x", "../../../../../../etc"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got, ok := resolveRef(tc.base, tc.ref); ok {
 				t.Errorf("resolveRef(%q,%q)=(%q,true), want rejected", tc.base, tc.ref, got)
 			}
@@ -470,6 +485,7 @@ func TestResolveRef_Rejections(t *testing.T) {
 // is not found (the cap stops the descent), and a reference cycle terminates via
 // the visited set instead of looping.
 func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// A linear chain d0 → d1 → … each via `resources: - ../d{i+1}`, with the
 	// NamespaceTransformer only at the deepest dir — reached at a depth beyond
@@ -495,6 +511,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 
 // Deepest enclosing overlay wins for the replacements pattern too.
 func TestStampTransformerTargetNamespaces_ReplacementsDeepestOverlayWins(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, root, "components/replacements/ks.yaml", nsReplacementRule)
 	writeFile(t, root, "apps/outer/kustomization.yaml", `namespace: outer

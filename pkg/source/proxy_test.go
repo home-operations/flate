@@ -9,6 +9,7 @@ import (
 )
 
 func TestResolveProxy(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, kind, owner, wantError string
 		secret                       *manifest.Secret
@@ -27,6 +28,7 @@ func TestResolveProxy(t *testing.T) {
 			secret: &manifest.Secret{StringData: map[string]any{"address": "http://proxy.example.com:8080", "username": "alice", "password": "hunter2"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var lookup [2]string
 			calls := 0
 			var getter SecretGetter
@@ -64,6 +66,7 @@ func TestResolveProxy(t *testing.T) {
 }
 
 func TestProxyConfig_URL_BasicAuth(t *testing.T) {
+	t.Parallel()
 	p := &ProxyConfig{
 		Address:  "http://proxy.example.com:8080",
 		Username: "alice",

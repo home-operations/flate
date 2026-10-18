@@ -6,6 +6,7 @@ import (
 )
 
 func TestDiscoveryIndex_DataOwnersNamespaceBridge(t *testing.T) {
+	t.Parallel()
 	raw := NamedResource{Kind: KindConfigMap, Name: "settings"}
 	projected := raw
 	projected.Namespace = "apps"
@@ -51,6 +52,7 @@ func BenchmarkDiscoveryIndex_Lookup(b *testing.B) {
 }
 
 func TestDiscoveryIndex_ReadersOfFileReplay(t *testing.T) {
+	t.Parallel()
 	exact := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "exact"}
 	ancestor := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "ancestor"}
 	index := &DiscoveryIndex{Readers: map[string][]NamedResource{

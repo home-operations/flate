@@ -9,6 +9,7 @@ import (
 )
 
 func TestSHA256Hex(t *testing.T) {
+	t.Parallel()
 	// Known vector: sha256("") and sha256("abc").
 	if got := SHA256Hex(nil); got != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
 		t.Errorf("SHA256Hex(nil) = %q", got)
@@ -81,6 +82,7 @@ func TestFingerprint_JSONEquivalence(t *testing.T) {
 }
 
 func TestFingerprint_UnsupportedContent(t *testing.T) {
+	t.Parallel()
 	cycle := make(map[string]any)
 	cycle["cycle"] = cycle
 	for _, tt := range []struct {
@@ -94,6 +96,7 @@ func TestFingerprint_UnsupportedContent(t *testing.T) {
 		{"invalid marshaler", json.RawMessage(`{"incomplete":`)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := Fingerprint(tt.payload); got != "" {
 				t.Fatalf("Fingerprint = %q, want empty key", got)
 			}
@@ -102,6 +105,7 @@ func TestFingerprint_UnsupportedContent(t *testing.T) {
 }
 
 func TestFingerprint_Concurrent(t *testing.T) {
+	t.Parallel()
 	const callers = 16
 	var wg sync.WaitGroup
 	start := make(chan struct{})

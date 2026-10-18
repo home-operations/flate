@@ -159,6 +159,7 @@ func gitHTTPHandler(t *testing.T, root string) http.Handler {
 }
 
 func TestFetcher_TLSOperations(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	mustInitRepo(t, root)
 	head := mustTagHEAD(t, root, "v1.0.0")
@@ -177,6 +178,7 @@ func TestFetcher_TLSOperations(t *testing.T) {
 		{name: "fallback", ref: &manifest.GitRepositoryRef{Commit: head}, refuse: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			cert, ca := tlsGitCertificate(t)
 			crt, key := testutil.SelfSignedClientCert(t)
 			clients := x509.NewCertPool()
@@ -241,12 +243,14 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 }
 
 func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
+	t.Parallel()
 	module := t.TempDir()
 	mustInitRepo(t, module)
 	moduleHash := plumbing.NewHash(mustHead(t, module))
 	for _, child := range []string{"file", "private-ca"} {
 		for _, exact := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/exact=%t", child, exact), func(t *testing.T) {
+				t.Parallel()
 				root := t.TempDir()
 				cert, ca := tlsGitCertificate(t)
 				parentHandler, moduleHandler := gitHTTPHandler(t, root), gitHTTPHandler(t, module)
@@ -445,6 +449,7 @@ func gitRepoWithSecret(name, url, secretName string) *manifest.GitRepository {
 }
 
 func TestFetcher_ResolveTLS(t *testing.T) {
+	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	crt, key := testutil.SelfSignedClientCert(t)
 	for _, tc := range []struct {
@@ -465,6 +470,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 		{name: "invalid-client", secret: "tls", data: map[string]any{"tls.crt": "invalid", "tls.key": "invalid"}, wantError: "parse tls.crt/tls.key"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: tc.data} }}
 			url := tc.url
 			if url == "" {
@@ -488,6 +494,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 }
 
 func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
+	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	f := &Fetcher{Secrets: func(_, name string) *manifest.Secret {
 		if name == "proxy" {

@@ -15,6 +15,7 @@ import (
 type foreignTree struct{ fs.ReadLinkFS }
 
 func TestBuilder_ForeignLower(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(nil)
 	must(t, b.AddFile("dir/file", []byte("lower"), 0o644))
 	must(t, b.AddFile("dir/other", []byte("other"), 0o644))
@@ -22,6 +23,7 @@ func TestBuilder_ForeignLower(t *testing.T) {
 	lower := build(t, b)
 	for name, input := range map[string]fs.FS{"indexed": lower, "readlink": foreignTree{ReadLinkFS: lower}, "map": fstest.MapFS{"dir/file": {Data: []byte("lower")}, "dir/other": {Data: []byte("other")}}} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			b := tree.NewBuilder(input)
 			must(t, b.AddFile("dir/file", []byte("upper"), 0o644))
 			data, err := b.ReadFile("dir/file")
@@ -66,6 +68,7 @@ func (deniedFS) Open(n string) (fs.File, error) {
 }
 
 func TestBuilder_LowerError(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(deniedFS{})
 	if _, err := b.ReadFile("file"); !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("lower error: %v", err)
@@ -86,6 +89,7 @@ func (f *countedDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
+	t.Parallel()
 	lower := &countedDirFS{FS: fstest.MapFS{"apps/one/file": {Data: []byte("one")}, "apps/two/file": {Data: []byte("two")}}}
 	b := tree.NewBuilder(lower)
 	must(t, b.AddFile("apps/one/generated", []byte("upper"), 0o644))
@@ -109,6 +113,7 @@ func TestBuilder_ForeignDirectoriesStayLazy(t *testing.T) {
 }
 
 func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(fstest.MapFS{"d/a": {Data: []byte("a")}, "d/b": {Data: []byte("b")}, "d/sub/c": {Data: []byte("c")}})
 	must(t, b.RemoveAll("d/a"))
 	must(t, b.RemoveAll("d/sub"))
@@ -127,6 +132,7 @@ func TestBuilder_RemoveAllMasksForeignListing(t *testing.T) {
 }
 
 func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
+	t.Parallel()
 	lower := fstest.MapFS{}
 	for i := range 64 {
 		lower[fmt.Sprintf("d%d/f", i)] = &fstest.MapFile{Data: []byte("x")}
@@ -156,6 +162,7 @@ func TestBuilder_SealedForeignOverlayConcurrentReads(t *testing.T) {
 }
 
 func TestBuilder_StackedForeignRemovals(t *testing.T) {
+	t.Parallel()
 	b := tree.NewBuilder(fstest.MapFS{
 		"d/a":     {Data: []byte("a")},
 		"d/b":     {Data: []byte("b")},
@@ -166,6 +173,7 @@ func TestBuilder_StackedForeignRemovals(t *testing.T) {
 	lower := build(t, b)
 	for _, added := range []bool{false, true} {
 		t.Run(fmt.Sprintf("added=%v", added), func(t *testing.T) {
+			t.Parallel()
 			upper := tree.NewBuilder(lower)
 			want := []string{"b"}
 			if added {

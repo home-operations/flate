@@ -112,6 +112,7 @@ metadata: {name: foreign}
 // emitRenderedChildren lands the ConfigMap as a rendered artifact,
 // status flips Ready, artifact carries a fingerprint.
 func TestReconcile_HappyPath(t *testing.T) {
+	t.Parallel()
 	c, s, root := newControllerWithFixture(t)
 	testutil.WriteFile(t, root, "apps/cm.yaml", namespaceIdentityDocs)
 	ks := &manifest.Kustomization{
@@ -158,6 +159,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 }
 
 func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		strategy  kustomizev1.SubstituteStrategy
@@ -200,6 +202,7 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c, s, root := newControllerWithFixture(t)
 			input := tc.input
 			if input == "" {
@@ -257,6 +260,7 @@ data: {greeting: '%s'}
 // the issue by AddObject'ing the same KS twice and verifying the
 // artifact's identity persists (SetArtifact dedupes via DeepEqual).
 func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
+	t.Parallel()
 	c, s, root := newControllerWithFixture(t)
 	testutil.WriteFile(t, root, "apps/cm.yaml", namespaceIdentityDocs)
 	ks := &manifest.Kustomization{
@@ -321,6 +325,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 // of reconcile fired on every re-run; post-fix it is suppressed when
 // the object is already Ready.
 func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
+	t.Parallel()
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
@@ -378,6 +383,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 // pre-fingerprint progress writes, not the genuine "rendering"
 // downgrade.
 func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
+	t.Parallel()
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
@@ -433,6 +439,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 // points at a directory that doesn't exist → kustomize.RenderFlux
 // errors → reconcile returns it → status flips Failed.
 func TestReconcile_MissingPathFails(t *testing.T) {
+	t.Parallel()
 	c, s, _ := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{
 		Name: "broken", Namespace: "flux-system",
@@ -456,6 +463,7 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 // dependsOn target is in StatusFailed, reconcile must return
 // DependencyFailedError without rendering.
 func TestReconcile_DependsOnFailed(t *testing.T) {
+	t.Parallel()
 	c, s, _ := newControllerWithFixture(t)
 	dep := &manifest.Kustomization{Name: "dep", Namespace: "flux-system"}
 	s.AddObject(dep)
@@ -483,7 +491,9 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 }
 
 func TestReconcile_Suspension(t *testing.T) {
+	t.Parallel()
 	t.Run("initial suspension", func(t *testing.T) {
+		t.Parallel()
 		c, s, _ := newControllerWithFixture(t)
 		ks := &manifest.Kustomization{
 			Name: "suspended", Namespace: "flux-system",
@@ -514,6 +524,7 @@ func TestReconcile_Suspension(t *testing.T) {
 		{name: "refreshed/oci_cascade", suspended: true, cascade: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			suspended := tt.suspended
 			c, st, root := newControllerWithFixture(t)
 			testutil.WriteFile(t, root, "apps/cm.yaml", `apiVersion: v1
@@ -602,6 +613,7 @@ data: {greeting: hi}
 }
 
 func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
+	t.Parallel()
 	c, st, root := newControllerWithFixture(t)
 	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", Contents: map[string]any{}}
 	st.AddObject(ks)

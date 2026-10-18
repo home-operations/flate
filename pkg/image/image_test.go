@@ -6,6 +6,7 @@ import (
 )
 
 func TestExtract_Deployment(t *testing.T) {
+	t.Parallel()
 	doc := map[string]any{
 		"kind": "Deployment",
 		"spec": map[string]any{
@@ -34,6 +35,7 @@ func TestExtract_Deployment(t *testing.T) {
 }
 
 func TestExtract_FindsImageInArbitraryFieldName(t *testing.T) {
+	t.Parallel()
 	// CNPG Cluster uses "imageName"; a custom CRD might use anything.
 	// We don't care — every string value is candidate.
 	doc := map[string]any{
@@ -47,6 +49,7 @@ func TestExtract_FindsImageInArbitraryFieldName(t *testing.T) {
 }
 
 func TestExtract_FindsImageInUnknownKind(t *testing.T) {
+	t.Parallel()
 	// A Service with an annotation referencing an image should
 	// still surface that image — value-based detection means there's
 	// no "unknown kind" gap.
@@ -65,6 +68,7 @@ func TestExtract_FindsImageInUnknownKind(t *testing.T) {
 }
 
 func TestExtract_DigestOnly(t *testing.T) {
+	t.Parallel()
 	doc := map[string]any{
 		"spec": map[string]any{
 			"image": "ghcr.io/owner/foo@sha256:" + sha256(),
@@ -77,6 +81,7 @@ func TestExtract_DigestOnly(t *testing.T) {
 }
 
 func TestExtract_Nested(t *testing.T) {
+	t.Parallel()
 	// Kubernetes 1.31 image volume: {reference: "..."}.
 	doc := map[string]any{
 		"spec": map[string]any{
@@ -92,6 +97,7 @@ func TestExtract_Nested(t *testing.T) {
 }
 
 func TestExtract_RejectsNonImages(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		value any
@@ -110,6 +116,7 @@ func TestExtract_RejectsNonImages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			doc := map[string]any{"x": tc.value}
 			got := Extract(doc)
 			if len(got) != 0 {
@@ -120,6 +127,7 @@ func TestExtract_RejectsNonImages(t *testing.T) {
 }
 
 func Test_isImageRef(t *testing.T) {
+	t.Parallel()
 	yes := []string{
 		"ghcr.io/owner/repo:v1",
 		"ghcr.io/owner/repo@sha256:" + sha256(),
@@ -131,6 +139,7 @@ func Test_isImageRef(t *testing.T) {
 	}
 	for _, s := range yes {
 		t.Run("yes/"+s, func(t *testing.T) {
+			t.Parallel()
 			if !isImageRef(s) {
 				t.Errorf("expected image ref")
 			}
@@ -160,6 +169,7 @@ func Test_isImageRef(t *testing.T) {
 	}
 	for _, s := range no {
 		t.Run("no/"+s, func(t *testing.T) {
+			t.Parallel()
 			if isImageRef(s) {
 				t.Errorf("expected NOT image ref")
 			}

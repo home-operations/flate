@@ -26,6 +26,7 @@ import (
 // commonFlags subcommand and ends up on commonFlags.cacheDir for the
 // downstream buildOrchCfg → orchestrator.Config.CacheDir handoff.
 func TestBindCommon_CacheDirFlag(t *testing.T) {
+	t.Parallel()
 	var f commonFlags
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	bindCommon(fs, &f)
@@ -43,6 +44,7 @@ func TestBindCommon_CacheDirFlag(t *testing.T) {
 // bucket fetchers, so dropping that assignment would silently disable the
 // flag with every other test still green.
 func TestBindCommon_ForceGenericProviderFlag(t *testing.T) {
+	t.Parallel()
 	parse := func(t *testing.T, args ...string) orchestrator.Config {
 		t.Helper()
 		var f commonFlags
@@ -137,6 +139,7 @@ func TestCacheDir_EmptyUsesMemory(t *testing.T) {
 }
 
 func TestOutputValue_Validates(t *testing.T) {
+	t.Parallel()
 	var out string
 	v := &outputValue{target: &out, allowed: []output.Format{output.FormatYAML, output.FormatJSON}}
 
@@ -178,6 +181,7 @@ func writeBaselineWorktree(t *testing.T, root, common string) {
 }
 
 func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
+	t.Parallel()
 	const currentURL = "https://example.invalid/fork.git"
 	const baselineURL = "https://example.invalid/upstream.git"
 	for _, tc := range []struct {
@@ -198,6 +202,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 		{name: "sorted remotes", currentGit: true, baseline: "sorted", want: []string{currentURL, baselineURL}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			current, orig := t.TempDir(), t.TempDir()
 			if tc.currentGit {
 				writeBaselineGit(t, current, currentURL)
@@ -298,6 +303,7 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 }
 
 func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		file    string
@@ -313,6 +319,7 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 		{name: "current fallback open", file: ".git", data: "gitdir: missing\n", current: true, want: "working tree"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			current, orig := t.TempDir(), t.TempDir()
 			selected := orig
 			if tc.current {

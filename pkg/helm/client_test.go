@@ -13,8 +13,10 @@ import (
 )
 
 func TestLoadChart_ValidationAcrossSources(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmChart, manifest.KindGitRepository} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			st, hr, dir := ociRenderFixture(t)
 			hr = hr.Clone()
 			hr.Chart.RepoKind = kind
@@ -38,6 +40,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 }
 
 func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
+	t.Parallel()
 	st, hr, first := ociRenderFixture(t)
 	hr = hr.Clone()
 	hr.ChartRef = nil
@@ -70,6 +73,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 }
 
 func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
+	t.Parallel()
 	st, hr, dir := ociRenderFixture(t)
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
 	cli, err := NewClient(newTestCache(t, ""))

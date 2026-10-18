@@ -12,6 +12,7 @@ import (
 )
 
 func TestEncoder_TestNotesFooter(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		notes []Note
@@ -30,6 +31,7 @@ func TestEncoder_TestNotesFooter(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b}).Test(TestReport{}, nil, tc.notes, 0); err != nil {
 				t.Fatal(err)
@@ -40,6 +42,7 @@ func TestEncoder_TestNotesFooter(t *testing.T) {
 }
 
 func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
+	t.Parallel()
 	ok := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
 	pass := TestReport{Cases: []Case{{ID: ok, Outcome: OutcomePassed}}, Passed: 1}
 	var pb bytes.Buffer
@@ -64,6 +67,7 @@ func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
 }
 
 func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
+	t.Parallel()
 	passed := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "changed"}
 	skipped := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "untouched"}
 	rep := TestReport{
@@ -92,6 +96,7 @@ func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
 }
 
 func TestEncoder_TestFailedNeverHidden(t *testing.T) {
+	t.Parallel()
 	failed := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "broken"}
 	rep := TestReport{Cases: []Case{{ID: failed, Outcome: OutcomeFailed, Reason: "boom"}}, Failed: 1}
 	var b bytes.Buffer
@@ -104,6 +109,7 @@ func TestEncoder_TestFailedNeverHidden(t *testing.T) {
 }
 
 func TestEncoder_TestColor(t *testing.T) {
+	t.Parallel()
 	pass := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "ok"}
 	fail := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "bad"}
 	rep := TestReport{
@@ -133,6 +139,7 @@ func TestEncoder_TestColor(t *testing.T) {
 }
 
 func TestEncoder_TestReturnsWriterError(t *testing.T) {
+	t.Parallel()
 	want := errors.New("write failed")
 	rep := TestReport{Cases: []Case{{ID: manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "apps"}}}}
 
@@ -142,6 +149,7 @@ func TestEncoder_TestReturnsWriterError(t *testing.T) {
 }
 
 func TestEncoder_TestMultilineColorAndNotes(t *testing.T) {
+	t.Parallel()
 	root := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "ns", Name: "root"}
 	child := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "ns", Name: "child"}
 	r := TestReport{
@@ -154,6 +162,7 @@ func TestEncoder_TestMultilineColorAndNotes(t *testing.T) {
 		color bool
 	}{{name: "plain"}, {name: "color", color: true}} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			color := tc.color
 			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim(kindLabel(root), color) + "  ns/root  " + Dim("first", color) +
 				"\n         " + Dim("second", color) + "\n         " + Dim("third", color) +

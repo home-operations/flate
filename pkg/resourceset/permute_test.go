@@ -7,6 +7,7 @@ import (
 )
 
 func TestPermute_UpstreamIDs(t *testing.T) {
+	t.Parallel()
 	got, err := permute([]providerInputs{
 		{name: "provider-1", inputs: []map[string]any{{"key1": "value1"}, {"key1": "value2"}}},
 		{name: "provider-2", inputs: []map[string]any{{"key2": "value1"}, {"key2": "value2"}}},
@@ -23,6 +24,7 @@ func TestPermute_UpstreamIDs(t *testing.T) {
 }
 
 func TestNormalizeKeyForTemplate_UpstreamKeys(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ key, want string }{
 		{"My_ResourceSet", "my_resourceset"},
 		{"My-ResourceSet", "my_resourceset"},
@@ -32,6 +34,7 @@ func TestNormalizeKeyForTemplate_UpstreamKeys(t *testing.T) {
 		{"A💻B", "ab"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, normalizeKeyForTemplate(tc.key), tc.want)
 		})
 	}

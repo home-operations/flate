@@ -11,6 +11,7 @@ import (
 )
 
 func TestTemplate_Deterministic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
@@ -58,6 +59,7 @@ data:
 }
 
 func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
@@ -69,6 +71,7 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
 		t.Run(plaintext, func(t *testing.T) {
+			t.Parallel()
 			out, err := cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, Options{})
 			if err != nil {
 				t.Fatal(err)

@@ -99,6 +99,7 @@ func TestClassify_CoreStates(t *testing.T) {
 }
 
 func TestClassify_ReplaceReadyExpr(t *testing.T) {
+	t.Parallel()
 	s := store.New()
 	dep := ksDep("infra")
 	s.UpdateStatus(dep.NamedResource, store.StatusReady, "")
@@ -115,6 +116,7 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 }
 
 func TestClassify_EdgeReadiness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		obj  manifest.BaseManifest
@@ -128,6 +130,7 @@ func TestClassify_EdgeReadiness(t *testing.T) {
 		{name: "Secret ignores pending and CEL", obj: &manifest.Secret{Name: "dependency", Namespace: "apps"}, expr: "invalid [", want: ClassReady},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			s := store.New()
 			s.AddObject(tc.obj)
 			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "working")

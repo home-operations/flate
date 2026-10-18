@@ -19,6 +19,7 @@ import (
 )
 
 func TestAutoResolve_LazyBaseReads(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, current string
 		changed       bool
@@ -31,6 +32,7 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 		{name: "unchanged", current: "base"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			initRepoWithFile(t, root, "file", "base")
 			writeAndCommit(t, root, "unchanged.yaml", "same")
@@ -121,8 +123,10 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 }
 
 func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
+	t.Parallel()
 	for _, behavior := range []string{"exclude", "reinclude"} {
 		t.Run(behavior, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			initRepoWithFile(t, root, "apps/a.yaml", "bystander")
 			pin := writeAndCommit(t, root, "apps/b.yaml", "unchanged")

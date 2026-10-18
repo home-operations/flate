@@ -36,6 +36,7 @@ func cmChild(t *testing.T, root, name string, id manifest.NamedResource) {
 // same id, the auto-generated parent accumulates both and fails, and the error
 // now names BOTH producing paths (sorted) instead of just the one kustomize hit.
 func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "dup"})
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
@@ -64,6 +65,7 @@ func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
 // TestRenderFlux_DistinctIDs_NoDiagnostic confirms a healthy aggregate renders
 // without ever running the diagnostic.
 func TestRenderFlux_DistinctIDs_NoDiagnostic(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "a-cm"})
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "b-cm"})
@@ -80,6 +82,7 @@ func TestRenderFlux_DistinctIDs_NoDiagnostic(t *testing.T) {
 // TestRenderFlux_NonDuplicateError_Unannotated confirms a build failure that
 // isn't a duplicate id is surfaced verbatim — the diagnostic stays out of it.
 func TestRenderFlux_NonDuplicateError_Unannotated(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
 
@@ -93,6 +96,7 @@ func TestRenderFlux_NonDuplicateError_Unannotated(t *testing.T) {
 }
 
 func TestRenderFlux_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
@@ -110,6 +114,7 @@ func TestRenderFlux_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 // fallback: when the collision is between two leaf files of one kustomization
 // (no directory producer to attribute), the raw error stands unchanged.
 func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml",
 		"namespace: shared\nresources:\n- one.yaml\n- two.yaml\n")
@@ -132,6 +137,7 @@ func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 }
 
 func TestRenderFlux_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	var body strings.Builder
 	for i := range dupDiagBuildLimit + 1 {
@@ -170,6 +176,7 @@ func (f diagnosticFS) ReadFile(path string) ([]byte, error) {
 }
 
 func TestDuplicateID_BoundedRebuilds(t *testing.T) {
+	t.Parallel()
 	fsys := filesys.MakeFsInMemory()
 	var data strings.Builder
 	data.WriteString("resources:\n")

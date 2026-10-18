@@ -12,6 +12,7 @@ import (
 // chart's `{{ now | date … }}` renders identically every time instead of
 // drawing the wall clock.
 func TestFuncs_NowIsFixed(t *testing.T) {
+	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	raw, ok := fm["now"]
 	if !ok {
@@ -39,6 +40,7 @@ func TestFuncs_NowIsFixed(t *testing.T) {
 }
 
 func TestFuncs_KeysAreSorted(t *testing.T) {
+	t.Parallel()
 	keys := Funcs(SeedFor("rel", "ns"))["keys"].(func(...map[string]any) []string)
 	for _, tc := range []struct {
 		name  string
@@ -55,6 +57,7 @@ func TestFuncs_KeysAreSorted(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			assert.Diff(t, keys(tc.dicts...), tc.want)
 		})
 	}

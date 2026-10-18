@@ -172,8 +172,17 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 
 - Stdlib `testing` only; never testify or Ginkgo. Names: `TestThing_Behavior`, `TestE2E_*`
   (in-process via `cli.Run`, no build tags, no network), `BenchmarkThing_Case` with `b.Loop()`.
-- Table-driven with `t.Run`; `t.Parallel` only where the package already uses it; helpers call
-  `t.Helper()`.
+- Table-driven with `t.Run`; helpers call `t.Helper()`.
+- Tests and subtests call `t.Parallel` unless they touch process-global state: `t.Setenv`,
+  `t.Chdir`, `slog.SetDefault` or `log.SetOutput` (including through `cli.Run`),
+  `ssrfguard.Restrict`, go-git protocol registration, a package variable, or
+  `testing.AllocsPerRun`. Such a test stays serial. Never call `t.Parallel` inside a
+  `synctest` bubble.
+- A matrix axis exists only where the code under test branches on it. Worker counts vary only
+  where concurrency is the subject; elsewhere use one count >= 2. Determinism is shown with
+  two runs. No iteration loops to provoke races: use explicit synchronization or
+  `testing/synctest`; no real `time.Sleep` outside benchmarks.
+- `TestE2E_*` asserts only through `cli.Run`; anything else belongs in the package's tests.
 - Fixtures: `t.TempDir()` plus `testutil.WriteFile`; shared corpora live in `testdata/<scenario>/`
   and are documented in `testdata/TESTDATA.md`. Assert with `internal/assert` or `cmp.Diff`
   (`-want +got`). No golden files.

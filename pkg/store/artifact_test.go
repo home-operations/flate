@@ -14,6 +14,7 @@ type hookFS struct{ open func(string) (fs.File, error) }
 func (h *hookFS) Open(name string) (fs.File, error) { return h.open(name) }
 
 func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
 	events := 0
@@ -72,6 +73,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 }
 
 func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
+	t.Parallel()
 	s := New()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
 	events := 0

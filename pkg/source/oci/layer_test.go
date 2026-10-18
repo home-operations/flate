@@ -14,6 +14,7 @@ import (
 )
 
 func TestPickLayer_Selection(t *testing.T) {
+	t.Parallel()
 	unknown := ocispec.Descriptor{MediaType: "application/vnd.unknown", Data: []byte("unknown")}
 	chart := ocispec.Descriptor{MediaType: registry.ChartLayerMediaType, Data: []byte("chart")}
 	prov := ocispec.Descriptor{MediaType: registry.ProvLayerMediaType, Data: []byte("provenance")}
@@ -36,6 +37,7 @@ func TestPickLayer_Selection(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, ok := pickLayer(tc.layers, tc.selector)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)

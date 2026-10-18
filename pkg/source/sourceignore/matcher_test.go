@@ -9,6 +9,7 @@ import (
 )
 
 func TestNewFS_PatternDefaults(t *testing.T) {
+	t.Parallel()
 	defaultMatches := []string{".git/HEAD", ".github/workflows/ci.yml", "app/icons/logo.png", "app/.sops.yaml"}
 	defaultKeeps := []string{"app/keep.yaml", "app/cache.tmp", "other/cache.tmp"}
 	patternKeeps := []string{"app/keep.yaml", ".github/workflows/ci.yml", "app/icons/logo.png", "app/.sops.yaml"}
@@ -74,6 +75,7 @@ func TestNewFS_PatternDefaults(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			for rel, body := range tc.files {
 				testutil.WriteFile(t, root, rel, body)
@@ -91,14 +93,17 @@ func TestNewFS_PatternDefaults(t *testing.T) {
 				policy *Matcher
 			}{{"loaded", matcher}, {"replaced_extra", original.WithExtra(extra)}} {
 				t.Run(candidate.name, func(t *testing.T) {
+					t.Parallel()
 					policy := candidate.policy
 					for _, rel := range tc.match {
 						t.Run("match/"+rel, func(t *testing.T) {
+							t.Parallel()
 							assert.Equal(t, policy.Match(rel, false), true)
 						})
 					}
 					for _, rel := range tc.keep {
 						t.Run("keep/"+rel, func(t *testing.T) {
+							t.Parallel()
 							assert.Equal(t, policy.Match(rel, false), false)
 						})
 					}

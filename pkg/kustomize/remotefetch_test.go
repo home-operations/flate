@@ -28,8 +28,10 @@ import (
 )
 
 func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				entered, release := make(chan struct{}), make(chan struct{})
 				hits := 0
@@ -89,6 +91,7 @@ func TestFetchRemote_CancelDoesNotPoisonCache(t *testing.T) {
 }
 
 func TestIsHTTPClientError(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		err  error
@@ -172,10 +175,12 @@ type remoteRoundTrip func(*http.Request) (*http.Response, error)
 func (f remoteRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestFetchRemote_PolicyIsolation(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, reverse := range []bool{false, true} {
 			for _, equal := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%d/reverse-%t/equal-%t", concurrency, reverse, equal), func(t *testing.T) {
+					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
 						entered, release := make(chan struct{}), make(chan struct{})
 						hits := 0
@@ -387,10 +392,12 @@ type remoteBody struct {
 func (b remoteBody) Close() error { return b.close() }
 
 func TestFetchRemote_CloseJoinsAcquisition(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, backing := range []string{"memory", "disk"} {
 			for _, stage := range []string{"headers", "read", "cleanup", "publication", "backoff"} {
 				t.Run(fmt.Sprintf("%d/%s/%s", concurrency, backing, stage), func(t *testing.T) {
+					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
 						root := ""
 						if backing == "disk" {
@@ -530,9 +537,11 @@ func TestFetchRemote_CloseJoinsAcquisition(t *testing.T) {
 }
 
 func TestFetchRemote_CloseJoinsKeyWait(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		for _, backing := range []string{"memory", "disk"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
+				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					root := ""
 					if backing == "disk" {
@@ -580,8 +589,10 @@ func TestFetchRemote_CloseJoinsKeyWait(t *testing.T) {
 }
 
 func TestFetchRemote_ExactSuccessor(t *testing.T) {
+	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				c := newTestTreeCache(t, "")
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -825,6 +836,7 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 }
 
 func TestRemoteInput_UnavailableGit(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		artifact *store.SourceArtifact
@@ -836,6 +848,7 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 		{name: "digest generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Digest: "digest"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c := newTestTreeCache(t, "")
 			c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 				return tc.artifact, nil

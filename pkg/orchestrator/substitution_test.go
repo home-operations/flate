@@ -114,6 +114,7 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 		name   string
 		object manifest.BaseManifest
 	}{
+		{"typed nil ConfigMap", (*manifest.ConfigMap)(nil)},
 		{"missing name", &manifest.ConfigMap{Namespace: "apps"}},
 		{"missing namespace", &manifest.Secret{Name: "external"}},
 	} {

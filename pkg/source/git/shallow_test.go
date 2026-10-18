@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -52,10 +53,27 @@ func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, arti
 func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepo(t, src)
-	mustTagHEAD(t, src, "v1.0.0")
+	parentHash := plumbing.NewHash(mustHead(t, src))
+	mustCommitFile(t, src, "f.txt", "one")
+	selectedHash := plumbing.NewHash(mustTagHEAD(t, src, "v1.0.0"))
 	mustCommitFile(t, src, "f.txt", "two")
 	mustTagHEAD(t, src, "v2.0.0")
 	mustSetRefToHEAD(t, src, "refs/heads/feature")
+
+	sourceRepo, err := git.PlainOpen(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := sourceRepo.CommitObject(selectedHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected.ParentHashes) != 1 || selected.ParentHashes[0] != parentHash {
+		t.Fatalf("source commit parents = %v, want [%s]", selected.ParentHashes, parentHash)
+	}
+	if _, err := sourceRepo.CommitObject(parentHash); err != nil {
+		t.Fatalf("source parent commit: %v", err)
+	}
 
 	root := t.TempDir()
 	cache := newGitCache(t, root)
@@ -71,6 +89,16 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	}
 
 	generationRepo := openGeneration(t, f, repo, art)
+	selected, err = generationRepo.CommitObject(selectedHash)
+	if err != nil {
+		t.Fatalf("fetched commit: %v", err)
+	}
+	if len(selected.ParentHashes) != 1 || selected.ParentHashes[0] != parentHash {
+		t.Fatalf("fetched commit parents = %v, want [%s]", selected.ParentHashes, parentHash)
+	}
+	if _, err := generationRepo.CommitObject(parentHash); !errors.Is(err, plumbing.ErrObjectNotFound) {
+		t.Fatalf("shallow parent commit: got %v, want %v", err, plumbing.ErrObjectNotFound)
+	}
 	refs, err := generationRepo.References()
 	if err != nil {
 		t.Fatalf("References: %v", err)

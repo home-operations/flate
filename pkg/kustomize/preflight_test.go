@@ -397,6 +397,8 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 		{name: "openapi", control: base + "openapi: {path: $URL/schema.json}\n", replies: map[string]string{"/schema.json": `{"swagger":"2.0","definitions":{}}`}, want: "name: demo"},
 		{name: "inferred-key", control: base + "configMapGenerator: [{name: generated, files: [$URL/file.txt]}]\n", replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
 		{name: "explicit-key", control: base + "configMapGenerator: [{name: generated, files: [chosen=$URL/file.txt]}]\n", replies: map[string]string{"/file.txt": "contents"}, want: "chosen: contents"},
+		{name: "invalid-key-grammar", control: base + "configMapGenerator: [{name: generated, files: ['key=$URL/file.txt=extra']}]\n", wantErr: "key name or file path contains '='"},
+		{name: "invalid-empty-key", control: base + "configMapGenerator: [{name: generated, files: ['=$URL/file.txt']}]\n", wantErr: "missing key name"},
 		{name: "configmap-envs", control: base + "configMapGenerator: [{name: generated, envs: [$URL/env]}]\n", replies: map[string]string{"/env": "marker=env-value\n"}, want: "marker: env-value"},
 		{name: "configmap-env", control: base + "configMapGenerator: [{name: generated, env: $URL/env}]\n", replies: map[string]string{"/env": "marker=env-value\n"}, want: "marker: env-value"},
 		{name: "secret-files", control: base + "secretGenerator: [{name: generated, files: [$URL/file.txt]}]\n", replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: Y29udGVudHM="},

@@ -21,26 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func TestFetcher_ResolveTransport_MissingProxyOwner(t *testing.T) {
-	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
-	repo := &manifest.GitRepository{
-		Name: "repo", Namespace: "ns", URL: "https://host/repo",
-		ProxySecretRef: &manifest.LocalObjectReference{Name: "missing"},
-	}
-	_, err := f.resolveTransport(repo)
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Fatalf("expected missing-secret error; got %v", err)
-	}
-	missing, ok := errors.AsType[*source.MissingSecretError](err)
-	if !ok {
-		t.Fatalf("expected MissingSecretError; got %T", err)
-	}
-	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "ns/repo"})
-	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": GitRepository ns/ns/repo: secret ns/missing not found")
-}
-
-func TestFetcher_WipedCredentials(t *testing.T) {
+func TestFetcher_SecretReferences(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -49,39 +30,85 @@ func TestFetcher_WipedCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	type secretCase struct {
+		name, field             string
+		data                    map[string]any
+		encoded, proxy, unwired bool
+		wantMissing             bool
+		wantError               string
+	}
+	cases := []secretCase{
+		{name: "missing proxy", proxy: true, wantMissing: true},
+		{name: "incomplete basic", data: map[string]any{"username": "alice"}, wantError: "missing username/password"},
+		{name: "unwired getter", unwired: true, wantError: "SecretGetter"},
+	}
 	for _, field := range []string{"tls.crt", "identity", "known_hosts", "bearerToken"} {
 		for _, encoded := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/encoded=%t", field, encoded), func(t *testing.T) {
-				data := map[string]any{"identity": string(pem.EncodeToMemory(block)), "username": "u", "password": "p", field: "..PLACEHOLDER_" + field + ".."}
-				sec := &manifest.Secret{StringData: data}
-				if encoded {
+			cases = append(cases, secretCase{
+				name: fmt.Sprintf("%s/encoded=%t", field, encoded), field: field, encoded: encoded,
+				data:        map[string]any{"identity": string(pem.EncodeToMemory(block)), "username": "u", "password": "p", field: "..PLACEHOLDER_" + field + ".."},
+				wantMissing: field == "tls.crt" || field == "identity",
+			})
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sec *manifest.Secret
+			if tc.data != nil {
+				sec = &manifest.Secret{StringData: tc.data}
+				if tc.encoded {
 					sec.StringData, sec.Data = nil, map[string]any{}
-					for k, v := range data {
+					for k, v := range tc.data {
 						sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
 					}
 				}
-				f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
-				repo := &manifest.GitRepository{Name: "g", Namespace: "ns", URL: "https://host/repo", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-				if field == "identity" || field == "known_hosts" {
-					repo.URL = "ssh://git@host/repo"
+			}
+			f := &Fetcher{}
+			if !tc.unwired {
+				f.Secrets = func(_, _ string) *manifest.Secret { return sec }
+			}
+			repo := &manifest.GitRepository{Name: "g", Namespace: "ns", URL: "https://host/repo", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
+			if tc.field == "identity" || tc.field == "known_hosts" {
+				repo.URL = "ssh://git@host/repo"
+			}
+			var err error
+			if tc.proxy {
+				repo.Name, repo.SecretRef = "repo", nil
+				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
+				_, err = f.resolveTransport(repo)
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok {
+					t.Fatalf("expected MissingSecretError; got %T", err)
 				}
-				if field == "tls.crt" {
-					_, err = f.resolveTLS(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
-				} else {
-					var auth transport.AuthMethod
-					auth, err = f.resolveAuth(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
-					if field == "bearerToken" {
-						if _, ok := auth.(*githttp.BasicAuth); !ok {
-							t.Fatalf("got %T, want basic auth", auth)
-						}
+				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "ns/repo"})
+				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+				assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": GitRepository ns/ns/repo: secret ns/missing not found")
+			} else if tc.field == "tls.crt" {
+				_, err = f.resolveTLS(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
+			} else {
+				var auth transport.AuthMethod
+				if f.Secrets != nil {
+					sec = f.Secrets(repo.Namespace, repo.SecretRef.Name)
+				}
+				auth, err = f.resolveAuth(repo, sec)
+				if tc.field == "bearerToken" {
+					if _, ok := auth.(*githttp.BasicAuth); !ok {
+						t.Fatalf("got %T, want basic auth", auth)
 					}
 				}
-				missing := field == "tls.crt" || field == "identity"
-				if missing && !errors.Is(err, manifest.ErrMissingSecret) || !missing && err != nil {
-					t.Fatalf("missing=%t, error=%v", missing, err)
+			}
+			if tc.wantMissing {
+				if !errors.Is(err, manifest.ErrMissingSecret) {
+					t.Fatalf("expected missing-secret error: %v", err)
 				}
-			})
-		}
+			} else if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("expected %q error; got %v", tc.wantError, err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -163,23 +190,6 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 	}
 }
 
-func TestFetcher_HTTPSMissingCreds(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"username": "alice"}}
-		},
-	}
-	repo := &manifest.GitRepository{
-		Name: "g", Namespace: "ns",
-		URL:       "https://github.com/x/y.git",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
-	_, err := f.resolveAuth(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
-	if err == nil || !strings.Contains(err.Error(), "missing username/password") {
-		t.Errorf("expected missing-creds error; got %v", err)
-	}
-}
-
 func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
@@ -192,19 +202,6 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 	}
 	if auth != nil {
 		t.Errorf("expected nil auth (anonymous); got %T", auth)
-	}
-}
-
-func TestFetcher_SecretRefMissingGetter(t *testing.T) {
-	f := &Fetcher{} // no Secrets
-	repo := &manifest.GitRepository{
-		Name: "g", Namespace: "ns",
-		URL:       "https://github.com/x/y.git",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
-	_, err := f.resolveAuth(repo, nil)
-	if err == nil || !strings.Contains(err.Error(), "SecretGetter") {
-		t.Errorf("expected SecretGetter error; got %v", err)
 	}
 }
 

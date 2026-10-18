@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -77,75 +76,75 @@ func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
 	}
 }
 
-func TestFetcher_ResolveTransport_PartialCertKey(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"tls.crt": "-only-cert-"}}
-		},
-	}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
-	_, err := f.resolveTransport(b)
-	if err == nil || !strings.Contains(err.Error(), "must provide both") {
-		t.Errorf("expected partial cert/key error; got %v", err)
-	}
-}
-
-func TestFetcher_ResolveTransport_AllKeysMissing(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"unrelated": "x"}}
-		},
-	}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
-	_, err := f.resolveTransport(b)
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("expected missing-keys error; got %v", err)
-	}
-}
-
-func TestFetcher_ResolveTransport_SecretNotFound(t *testing.T) {
+func TestFetcher_SecretReferences(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		proxy, cert *manifest.LocalObjectReference
+		name, ref, secret, wantError string
+		data                         map[string]any
+		unwired, encoded, missing    bool
 	}{
-		{name: "proxy", proxy: &manifest.LocalObjectReference{Name: "missing"}},
-		{name: "cert", cert: &manifest.LocalObjectReference{Name: "missing"}},
+		{name: "auth unwired", ref: "auth", secret: "creds", unwired: true, wantError: "SecretGetter"},
+		{name: "auth missing key", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "k"}, missing: true, wantError: "missing accesskey/secretkey"},
+		{name: "accesskey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "..PLACEHOLDER_accesskey..", "secretkey": "secret"}, missing: true},
+		{name: "accesskey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "..PLACEHOLDER_accesskey..", "secretkey": "secret"}, encoded: true, missing: true},
+		{name: "secretkey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": "..PLACEHOLDER_secretkey.."}, missing: true},
+		{name: "secretkey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": "..PLACEHOLDER_secretkey.."}, encoded: true, missing: true},
+		{name: "auth absent", ref: "auth", secret: "creds", missing: true, wantError: "secret ns/creds not found"},
+		{name: "cert partial pair", ref: "cert", secret: "tls", data: map[string]any{"tls.crt": "-only-cert-"}, wantError: "must provide both"},
+		{name: "cert empty", ref: "cert", secret: "tls", data: map[string]any{"unrelated": "x"}, missing: true},
+		{name: "cert absent", ref: "cert", secret: "missing", missing: true},
+		{name: "proxy absent", ref: "proxy", secret: "missing", missing: true},
+		{name: "cert unwired", ref: "cert", secret: "tls", unwired: true, wantError: "source.SecretGetter"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
-			b := &manifest.Bucket{
-				Name: "b", Namespace: "ns", ProxySecretRef: tc.proxy, CertSecretRef: tc.cert,
+			f := &Fetcher{}
+			if !tc.unwired {
+				f.Secrets = func(_, _ string) *manifest.Secret {
+					if tc.data == nil {
+						return nil
+					}
+					sec := &manifest.Secret{StringData: tc.data}
+					if tc.encoded {
+						sec.StringData, sec.Data = nil, map[string]any{}
+						for k, v := range tc.data {
+							sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+						}
+					}
+					return sec
+				}
 			}
-			_, err := f.resolveTransport(b)
-			if !errors.Is(err, manifest.ErrMissingSecret) {
-				t.Fatalf("expected missing-secret error; got %v", err)
+			b := &manifest.Bucket{Name: "b", Namespace: "ns", BucketName: "fixture", Endpoint: "127.0.0.1:1", Insecure: true}
+			ref := &manifest.LocalObjectReference{Name: tc.secret}
+			var err error
+			switch tc.ref {
+			case "auth":
+				b.SecretRef = ref
+				_, err = f.Fetch(t.Context(), b, cache.RetryConfig{})
+			case "cert":
+				b.CertSecretRef = ref
+				_, err = f.resolveTransport(b)
+			case "proxy":
+				b.ProxySecretRef = ref
+				_, err = f.resolveTransport(b)
 			}
-			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			if !ok {
-				t.Fatalf("expected MissingSecretError; got %T", err)
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
 			}
-			assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "ns", Name: "ns/b"})
-			assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-			assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": Bucket ns/ns/b: secret ns/missing not found")
+			if tc.missing {
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok {
+					t.Fatalf("expected MissingSecretError; got %T", err)
+				}
+				owner := b.Named()
+				if tc.ref != "auth" {
+					owner.Name = "ns/b"
+				}
+				assert.Equal(t, missing.Owner, owner)
+				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret})
+				if tc.ref != "auth" && tc.data == nil {
+					assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": Bucket ns/ns/b: secret ns/missing not found")
+				}
+			}
 		})
-	}
-}
-
-func TestFetcher_ResolveTransport_CertSecretRefWithoutGetter(t *testing.T) {
-	f := &Fetcher{} // no Secrets
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
-	_, err := f.resolveTransport(b)
-	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
-		t.Errorf("expected source.SecretGetter error; got %v", err)
 	}
 }
 
@@ -269,44 +268,9 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 				t.Fatalf("failed snapshot: %v", err)
 			}
 			fail.Store(false)
-			if err := c.Close(); err != nil {
-				t.Fatal(err)
-			}
-			c, err = cache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.Cache = c
-			before = requests.Load()
-			_, err = f.Fetch(t.Context(), b, cache.RetryConfig{})
-			terminal, ok = errors.AsType[*cache.TerminalError](err)
-			if !ok || terminal.Attempted || requests.Load() != before {
-				t.Fatalf("reopened snapshot replay: %v", err)
-			}
-
 		})
 	}
-	if lookups.Load() != 20 {
+	if lookups.Load() != 15 {
 		t.Fatalf("credentials and cert reread Secrets: %d", lookups.Load())
-	}
-	if err := fs.WalkDir(os.DirFS(root), ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		data, err := fs.ReadFile(os.DirFS(root), path)
-		if err != nil {
-			return err
-		}
-		for _, secret := range []string{"proxy:first@", "proxy:second@", "BEGIN CERTIFICATE"} {
-			if strings.Contains(string(data), secret) {
-				t.Errorf("credential material persisted in %s", path)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 }

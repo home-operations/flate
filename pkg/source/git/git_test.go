@@ -181,59 +181,11 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	}
 }
 
-// TestFetcher_RestrictSchemesBlocksFileURL: with RestrictSchemes on (the
-// untrusted-render guard, #743), a file:// GitRepository is rejected before
-// any clone with an ErrInput-wrapped error naming the scheme; with it off
-// (the default) the same file:// source clones normally. Guards against a
-// fork-PR file:// source disclosing an arbitrary in-pod git repo.
-func TestFetcher_RestrictSchemesBlocksFileURL(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	repo := &manifest.GitRepository{
-		Name: "evil", Namespace: "flux-system",
-		URL: "file://" + src,
-	}
-
-	blocked := &Fetcher{Cache: newGitCache(t, t.TempDir()), RestrictSchemes: true}
-	_, err := blocked.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err == nil {
-		t.Fatal("RestrictSchemes: true must reject a file:// GitRepository")
-	}
-	if !errors.Is(err, manifest.ErrInput) {
-		t.Errorf("error must wrap manifest.ErrInput; got %v", err)
-	}
-	if !strings.Contains(err.Error(), "scheme not allowed") {
-		t.Errorf("error must name the rejected scheme; got %v", err)
-	}
-
-	allowed := &Fetcher{Cache: newGitCache(t, t.TempDir())} // RestrictSchemes defaults off
-	if _, err := allowed.Fetch(context.Background(), repo, sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("RestrictSchemes off must allow file://: %v", err)
-	}
-}
-
-// TestFetcher_RestrictSchemesAllowsRemoteURLs: RestrictSchemes only blocks
-// local/plaintext schemes — an https:// or scp-style (git@host:path) URL
-// passes the validateRepo scheme check even when the guard is on. Asserted at
-// the validation layer to avoid a live clone of an unreachable remote.
-func TestFetcher_RestrictSchemesAllowsRemoteURLs(t *testing.T) {
-	f := &Fetcher{RestrictSchemes: true}
-	for _, url := range []string{"https://github.com/o/r", "ssh://git@github.com/o/r", "git@github.com:o/r.git"} {
-		repo := &manifest.GitRepository{
-			Name: "r", Namespace: "flux-system",
-			URL: url,
-		}
-		if err := f.validateRepo(repo); err != nil {
-			t.Errorf("validateRepo(%q) under RestrictSchemes must pass: %v", url, err)
-		}
-	}
-}
-
 func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 	cases := map[string]bool{
 		"https://github.com/o/r":    true,
 		"ssh://git@github.com/o/r":  true,
-		"git@github.com:o/r.git":    true, // scp-style → SSH
+		"git@github.com:o/r.git":    true,
 		"user@host.xz:path/to/repo": true,
 		"host.xz:path/to/repo":      false,
 		"file:///srv/repo":          false,
@@ -242,7 +194,7 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 		"/bare/local/path":          false,
 		"./relative":                false,
 		"./a@b":                     false,
-		"ssh-but-not-scheme://x":    false, // not the ssh:// prefix
+		"ssh-but-not-scheme://x":    false,
 		"":                          false,
 	}
 	for url, want := range cases {
@@ -252,322 +204,169 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 			if want && err != nil || !want && !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("allowed = %t, validateRepo = %v", want, err)
 			}
+			if !want {
+				f.Cache = new(sourcecache.Cache)
+				_, err := f.Fetch(t.Context(), &manifest.GitRepository{URL: url}, sourcecache.RetryConfig{})
+				if !errors.Is(err, manifest.ErrInput) {
+					t.Fatalf("public Fetch must reject before acquisition: %v", err)
+				}
+				if strings.HasPrefix(url, "file://") && !strings.Contains(err.Error(), "scheme not allowed") {
+					t.Fatalf("error must name the rejected scheme: %v", err)
+				}
+			}
 		})
 	}
 }
 
-func TestFetcher_MutableDefaultRefRefreshesCache(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL: "file://" + src,
-	}
-	f := &Fetcher{Cache: cache}
-
-	art1, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch first: %v", err)
-	}
-	want := mustCommitFile(t, src, "later.txt", "new content")
-	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch second: %v", err)
-	}
-	if art2.Revision == art1.Revision {
-		t.Fatalf("mutable default ref reused stale revision %s", art2.Revision)
-	}
-	if art2.Revision != want {
-		t.Fatalf("revision = %s, want %s", art2.Revision, want)
-	}
-	if _, err := fs.Stat(art2.FS, path.Join("later.txt")); err != nil {
-		t.Fatalf("refreshed checkout missing later.txt: %v", err)
-	}
-}
-
-func TestFetcher_MutableRefUsesFreshIntervalCache(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:      "file://" + src,
-		Interval: metav1.Duration{Duration: time.Hour},
-	}
-	f := &Fetcher{Cache: cache}
-
-	art1, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch first: %v", err)
-	}
-	mustCommitFile(t, src, "later.txt", "new content")
-	art2, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch second: %v", err)
-	}
-	if art2.Revision != art1.Revision {
-		t.Fatalf("fresh interval cache should reuse revision %s, got %s", art1.Revision, art2.Revision)
-	}
-	if _, err := fs.Stat(art2.FS, path.Join("later.txt")); !os.IsNotExist(err) {
-		t.Fatalf("fresh interval cache should not include later commit, stat err=%v", err)
-	}
-}
-
-func TestFetcher_MutableRefreshRetainsAcquisitionIdentity(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	firstCommit := mustHead(t, src)
-	f := &Fetcher{Cache: newGitCache(t, t.TempDir())}
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system", URL: "file://" + src,
-		RecurseSubmodules: true,
-	}
-	first, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	assert.NoError(t, err)
-	secondCommit := mustCommitFile(t, src, "hello.txt", "updated")
-	second, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	assert.NoError(t, err)
-	cachedRepo := *repo
-	cachedRepo.Interval.Duration = time.Hour
-	hit, err := f.Fetch(t.Context(), &cachedRepo, sourcecache.RetryConfig{})
-	assert.NoError(t, err)
-	assert.Equal(t, first.Revision, firstCommit)
-	assert.Equal(t, second.Revision, secondCommit)
-	assert.Equal(t, hit.Revision, secondCommit)
-	assert.Equal(t, first.Key, second.Key)
-	assert.Equal(t, second.Key, hit.Key)
-	for _, art := range []*store.SourceArtifact{first, second, hit} {
-		view, pin, err := source.ReadView(t.Context(), art.FS, false)
-		assert.NoError(t, err)
-		assert.Equal(t, pin != "", true)
-		assert.Equal(t, pin.(string) == "", false)
-		assert.Equal(t, view == art.FS, true)
-		data, err := fs.ReadFile(view, "hello.txt")
-		assert.NoError(t, err)
-		want := "updated"
-		if art == first {
-			want = "hi"
-		}
-		assert.Equal(t, string(data), want)
+func TestFetcher_Freshness(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		interval      time.Duration
+		depth         int
+		recurse, fail bool
+	}{
+		{name: "mutable default"},
+		{name: "fresh interval", interval: time.Hour},
+		{name: "acquisition identity", recurse: true},
+		{name: "failed refresh", fail: true},
+		{name: "advanced shallow tip", depth: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := t.TempDir()
+			mustInitRepo(t, src)
+			initial := mustHead(t, src)
+			f := &Fetcher{Cache: newGitCache(t, t.TempDir()), Depth: tc.depth}
+			repo := &manifest.GitRepository{
+				Name: "test", Namespace: "flux-system", URL: "file://" + src,
+				Interval: metav1.Duration{Duration: tc.interval}, RecurseSubmodules: tc.recurse,
+			}
+			first, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			assert.Equal(t, first.Revision, initial)
+			if tc.fail {
+				assert.NoError(t, os.RemoveAll(src))
+				if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err == nil {
+					t.Fatal("expected refresh to fail after removing upstream repo")
+				}
+				if _, err := fs.Stat(first.FS, "hello.txt"); err != nil {
+					t.Fatalf("failed refresh removed held generation: %v", err)
+				}
+				data, err := fs.ReadFile(first.FS, "hello.txt")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), "hi")
+				return
+			}
+			mustCommitFile(t, src, "hello.txt", "updated")
+			tip := mustCommitFile(t, src, "later.txt", "new content")
+			if tip == initial {
+				t.Fatal("tip did not move")
+			}
+			second, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			want := tip
+			if tc.interval != 0 {
+				want = initial
+			}
+			assert.Equal(t, second.Revision, want)
+			assert.Equal(t, second.Key, first.Key)
+			_, err = fs.Stat(second.FS, "later.txt")
+			if tc.interval != 0 {
+				if !os.IsNotExist(err) {
+					t.Fatalf("fresh interval included later commit: %v", err)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+			cached := *repo
+			cached.Interval.Duration = time.Hour
+			hit, err := f.Fetch(t.Context(), &cached, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			assert.Equal(t, hit.Revision, want)
+			assert.Equal(t, hit.Key, second.Key)
+			for _, art := range []*store.SourceArtifact{first, second, hit} {
+				view, pin, err := source.ReadView(t.Context(), art.FS, false)
+				assert.NoError(t, err)
+				assert.Equal(t, pin != "", true)
+				assert.Equal(t, pin.(string) == "", false)
+				assert.Equal(t, view == art.FS, true)
+				data, err := fs.ReadFile(view, "hello.txt")
+				assert.NoError(t, err)
+				content := "updated"
+				if art == first || tc.interval != 0 {
+					content = "hi"
+				}
+				assert.Equal(t, string(data), content)
+			}
+		})
 	}
 }
 
-func TestFetcher_MutableRefreshFailureKeepsHeldGeneration(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL: "file://" + src,
-	}
-	f := &Fetcher{Cache: cache}
-
-	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch first: %v", err)
-	}
-	if err := os.RemoveAll(src); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{}); err == nil {
-		t.Fatal("expected refresh to fail after removing upstream repo")
-	}
-	if _, err := fs.Stat(art.FS, path.Join("hello.txt")); err != nil {
-		t.Fatalf("failed mutable refresh removed previous committed slot: %v", err)
-	}
-}
-
-// TestFetcher_RefByName exercises spec.ref.name handling — flate
-// resolves it to a commit via git.ResolveRevision and checks out the
-// resulting hash.
-func TestFetcher_RefByName(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	tagged := mustTagHEAD(t, src, "v0.1.0")
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:       "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{Name: "refs/tags/v0.1.0"},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch by ref.name: %v", err)
-	}
-	if art.Revision != tagged {
-		t.Errorf("Revision = %q, want %q (tag → commit)", art.Revision, tagged)
-	}
-}
-
-// TestFetcher_RefByName_Unresolvable surfaces a clear error when the
-// ref name can't be resolved.
-func TestFetcher_RefByName_Unresolvable(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:       "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/does-not-exist"},
-	}
-	f := &Fetcher{Cache: cache}
-	_, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err == nil {
-		t.Fatalf("expected unresolvable-ref error")
-	}
-}
-
-func TestFetcher_RefByNameFallbackFetchesExplicitRef(t *testing.T) {
+func TestFetcher_References(t *testing.T) {
 	src := t.TempDir()
 	mustInitRepoWithFiles(t, src, map[string]string{
-		"apps/a/manifest.yaml": "kind: ConfigMap",
-		"apps/b/manifest.yaml": "kind: Secret",
+		"hello.txt": "hi", "apps/a/manifest.yaml": "kind: ConfigMap", "apps/b/manifest.yaml": "kind: Secret",
 	})
-	want := mustSetRefToHEAD(t, src, "refs/pull/1/head")
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:            "file://" + src,
-		Reference:      &sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"},
-		SparseCheckout: []string{"apps/a"},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch non-branch ref.name with sparse checkout: %v", err)
-	}
-	if art.Revision != want {
-		t.Errorf("revision = %q, want %q", art.Revision, want)
-	}
-	if _, err := fs.Stat(art.FS, path.Join("apps", "a", "manifest.yaml")); err != nil {
-		t.Errorf("sparse-included file missing: %v", err)
-	}
-	if _, err := fs.Stat(art.FS, path.Join("apps", "b", "manifest.yaml")); !os.IsNotExist(err) {
-		t.Errorf("sparse-excluded file should be absent; stat err = %v", err)
-	}
-}
-
-func TestFetcher_SemVerRef(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	mustTagHEAD(t, src, "v1.0.0")
-	want := mustCommitFile(t, src, "version.txt", "v1.1.0")
-	mustTagHEAD(t, src, "v1.1.0")
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL:       "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch semver: %v", err)
-	}
-	if art.Revision != want {
-		t.Errorf("semver revision = %q, want %q", art.Revision, want)
-	}
-	if _, err := fs.Stat(art.FS, path.Join("version.txt")); err != nil {
-		t.Errorf("semver checkout missing v1.1 file: %v", err)
-	}
-}
-
-func TestFetcher_CommitPrecedesRefName(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
 	first := mustTagHEAD(t, src, "v1.0.0")
-	mustCommitFile(t, src, "version.txt", "v1.1.0")
-	mustTagHEAD(t, src, "v1.1.0")
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL: "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{
-			Commit: first,
-			Name:   "refs/tags/v1.1.0",
-		},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch commit+name: %v", err)
-	}
-	if art.Revision != first {
-		t.Errorf("revision = %q, want commit %q", art.Revision, first)
-	}
-	if _, err := fs.Stat(art.FS, path.Join("version.txt")); !os.IsNotExist(err) {
-		t.Errorf("commit should have won over ref.name; version.txt stat err = %v", err)
-	}
-}
-
-func TestFetcher_CommitPrecedesUnresolvableRefName(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	first := mustTagHEAD(t, src, "v1.0.0")
-	mustCommitFile(t, src, "version.txt", "v1.1.0")
-
-	cache := newGitCache(t, t.TempDir())
-	repo := &manifest.GitRepository{
-		Name: "test", Namespace: "flux-system",
-		URL: "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{
-			Commit: first,
-			Name:   "refs/pull/does-not-exist/head",
-		},
-	}
-	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch commit+unresolvable name: %v", err)
-	}
-	if art.Revision != first {
-		t.Errorf("revision = %q, want commit %q", art.Revision, first)
-	}
-}
-
-func TestFetcher_CommitMustBeReachableFromBranch(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	initial := mustHead(t, src)
-	mainOnly := mustCommitFile(t, src, "main-only.txt", "main")
-	mustSetRefToHash(t, src, "refs/heads/staging", initial)
-
-	cache := newGitCache(t, t.TempDir())
-	f := &Fetcher{Cache: cache}
-
-	commitOnly := &manifest.GitRepository{
-		Name: "commit-only", Namespace: "flux-system",
-		URL:       "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{Commit: mainOnly},
-	}
-	if _, err := f.Fetch(context.Background(), commitOnly, sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("commit-only fetch should populate the unconstrained cache slot: %v", err)
-	}
-
-	constrained := &manifest.GitRepository{
-		Name: "constrained", Namespace: "flux-system",
-		URL: "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{
-			Branch: "staging",
-			Commit: mainOnly,
-		},
-	}
-	_, err := f.Fetch(context.Background(), constrained, sourcecache.RetryConfig{})
-	if err == nil {
-		t.Fatal("expected branch-constrained commit fetch to fail")
-	}
-	if !strings.Contains(err.Error(), "not reachable from branch") {
-		t.Fatalf("error should explain branch reachability, got %v", err)
+	mustSetRefToHash(t, src, "refs/heads/staging", first)
+	mustCommitFile(t, src, "second.txt", "two")
+	mustCommitFile(t, src, "chart.yaml", "tagged")
+	tip := mustCommitFile(t, src, "version.txt", "v2")
+	mustTagHEAD(t, src, "v2.0.0")
+	mustSetRefToHEAD(t, src, "refs/pull/1/head")
+	for _, tc := range []struct {
+		name          string
+		ref           *manifest.GitRepositoryRef
+		depth         int
+		sparse        []string
+		want          string
+		files, absent []string
+		warmCommit    string
+		wantErr       bool
+		errText       string
+	}{
+		{name: "HEAD", depth: 1, want: tip, files: []string{"hello.txt", "second.txt"}},
+		{name: "tag", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, depth: 1, want: tip, files: []string{"chart.yaml"}},
+		{name: "branch", ref: &manifest.GitRepositoryRef{Branch: "staging"}, depth: 1, want: first, files: []string{"hello.txt"}, absent: []string{"version.txt"}},
+		{name: "name", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, want: first},
+		{name: "unresolvable name", ref: &manifest.GitRepositoryRef{Name: "refs/heads/does-not-exist"}, wantErr: true},
+		{name: "explicit name fallback", ref: &manifest.GitRepositoryRef{Name: "refs/pull/1/head"}, sparse: []string{"apps/a"}, want: tip, files: []string{"apps/a/manifest.yaml"}, absent: []string{"apps/b/manifest.yaml"}},
+		{name: "semver", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0", SemVer: ">=1.1.0"}, want: tip, files: []string{"version.txt"}},
+		{name: "shallow semver", ref: &manifest.GitRepositoryRef{SemVer: ">=1.0.0"}, depth: 1, want: tip, files: []string{"version.txt"}},
+		{name: "commit", ref: &manifest.GitRepositoryRef{Commit: first}, want: first, absent: []string{"version.txt"}},
+		{name: "commit precedes name", ref: &manifest.GitRepositoryRef{Commit: first, Name: "refs/tags/v2.0.0"}, want: first, absent: []string{"version.txt"}},
+		{name: "commit precedes unresolvable name", ref: &manifest.GitRepositoryRef{Commit: first, Name: "refs/pull/does-not-exist/head"}, want: first},
+		{name: "commit branch reachability", ref: &manifest.GitRepositoryRef{Commit: tip, Branch: "staging"}, warmCommit: tip, wantErr: true, errText: "not reachable from branch"},
+		{name: "shallow sparse", depth: 1, sparse: []string{"apps/a"}, want: tip, files: []string{"apps/a/manifest.yaml"}, absent: []string{"apps/b/manifest.yaml"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &Fetcher{Cache: newGitCache(t, t.TempDir()), Depth: tc.depth}
+			repo := &manifest.GitRepository{Name: "test", Namespace: "flux-system", URL: "file://" + src, Reference: tc.ref, SparseCheckout: tc.sparse}
+			if tc.warmCommit != "" {
+				unconstrained := *repo
+				unconstrained.Reference = &manifest.GitRepositoryRef{Commit: tc.warmCommit}
+				_, err := f.Fetch(t.Context(), &unconstrained, sourcecache.RetryConfig{})
+				assert.NoError(t, err)
+			}
+			art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			if tc.wantErr {
+				if err == nil || tc.errText != "" && !strings.Contains(err.Error(), tc.errText) {
+					t.Fatalf("Fetch error = %v, want failure containing %q", err, tc.errText)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, art.Revision, tc.want)
+			for _, file := range tc.files {
+				if _, err := fs.Stat(art.FS, file); err != nil {
+					t.Errorf("included file %s missing: %v", file, err)
+				}
+			}
+			for _, file := range tc.absent {
+				if _, err := fs.Stat(art.FS, file); !os.IsNotExist(err) {
+					t.Errorf("excluded file %s present: %v", file, err)
+				}
+			}
+		})
 	}
 }
 
@@ -671,48 +470,6 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 	}
 	if art2.Revision != art.Revision {
 		t.Errorf("warm Fetch returned a different revision: %q vs %q", art2.Revision, art.Revision)
-	}
-}
-
-func TestFetcher_CommitCacheKeyIncludesIgnore(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{
-		"hello.txt": "hello",
-		"docs.md":   "docs",
-	})
-	commit := mustHead(t, src)
-	cache := newGitCache(t, t.TempDir())
-	f := &Fetcher{Cache: cache}
-
-	ignore := "docs.md\n"
-	ignoredRepo := &manifest.GitRepository{
-		Name: "ignored", Namespace: "flux-system",
-		URL:       "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-		Ignore:    &ignore,
-	}
-	ignored, err := f.Fetch(context.Background(), ignoredRepo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch ignored: %v", err)
-	}
-	if _, err := fs.Stat(ignored.FS, path.Join("docs.md")); !os.IsNotExist(err) {
-		t.Fatalf("ignored checkout should not contain docs.md: %v", err)
-	}
-
-	plainRepo := &manifest.GitRepository{
-		Name: "plain", Namespace: "flux-system",
-		URL:       "file://" + src,
-		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
-	}
-	plain, err := f.Fetch(context.Background(), plainRepo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("Fetch plain: %v", err)
-	}
-	if plain.Key == ignored.Key {
-		t.Fatalf("different ignore policies reused cache slot %s", plain.Key)
-	}
-	if _, err := fs.Stat(plain.FS, path.Join("docs.md")); err != nil {
-		t.Fatalf("plain checkout lost docs.md through ignored cache slot: %v", err)
 	}
 }
 

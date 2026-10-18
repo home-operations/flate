@@ -3,7 +3,6 @@ package bucket_test
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,88 +45,6 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not implemented") {
 		t.Errorf("error should say 'not implemented'; got %v", err)
-	}
-}
-
-func TestFetcher_SecretRefWithoutGetter(t *testing.T) {
-	f := &bucket.Fetcher{} // no Secrets
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		Provider:   sourcev1.BucketProviderGeneric,
-		BucketName: "x", Endpoint: "minio:9000",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
-	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
-	if err == nil {
-		t.Fatalf("expected error when SecretRef set but no SecretGetter")
-	}
-	if !strings.Contains(err.Error(), "SecretGetter") {
-		t.Errorf("error should mention SecretGetter; got %v", err)
-	}
-}
-
-func TestFetcher_SecretRefMissingKeys(t *testing.T) {
-	f := &bucket.Fetcher{
-		Secrets: func(ns, name string) *manifest.Secret {
-			return &manifest.Secret{
-				Name: name, Namespace: ns,
-				StringData: map[string]any{"accesskey": "k"}, // secretkey missing
-			}
-		},
-	}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		Provider:   sourcev1.BucketProviderGeneric,
-		BucketName: "x", Endpoint: "minio:9000",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
-	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
-	if err == nil {
-		t.Fatalf("expected error when accesskey/secretkey missing")
-	}
-	if !strings.Contains(err.Error(), "missing accesskey/secretkey") {
-		t.Errorf("error should say missing accesskey/secretkey; got %v", err)
-	}
-}
-
-func TestFetcher_WipedCredentials(t *testing.T) {
-	for _, field := range []string{"accesskey", "secretkey"} {
-		for _, encoded := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/encoded=%t", field, encoded), func(t *testing.T) {
-				data := map[string]any{"accesskey": "access", "secretkey": "secret", field: "..PLACEHOLDER_" + field + ".."}
-				sec := &manifest.Secret{StringData: data}
-				if encoded {
-					sec.StringData, sec.Data = nil, map[string]any{}
-					for k, v := range data {
-						sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
-					}
-				}
-				f := &bucket.Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
-				b := &manifest.Bucket{Name: "b", Namespace: "ns", BucketName: "fixture", Endpoint: "127.0.0.1:1", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-				if _, err := f.Fetch(t.Context(), b, cache.RetryConfig{}); !errors.Is(err, manifest.ErrMissingSecret) {
-					t.Fatalf("got %v, want ErrMissingSecret", err)
-				}
-			})
-		}
-	}
-}
-
-func TestFetcher_SecretRefNotFound(t *testing.T) {
-	f := &bucket.Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret { return nil },
-	}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		Provider:   sourcev1.BucketProviderGeneric,
-		BucketName: "x", Endpoint: "minio:9000",
-		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
-	}
-	_, err := f.Fetch(context.Background(), b, cache.RetryConfig{})
-	if err == nil {
-		t.Fatalf("expected error when SecretRef not resolvable")
-	}
-	if !strings.Contains(err.Error(), "secret ns/creds not found") {
-		t.Errorf("error should name the missing secret; got %v", err)
 	}
 }
 

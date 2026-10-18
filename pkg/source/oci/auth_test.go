@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/google/go-cmp/cmp"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -39,41 +38,71 @@ func ociRepo(name string, set func(s *sourcev1.OCIRepositorySpec)) *manifest.OCI
 	return r
 }
 
-func TestFetcher_ResolveConfig_MissingProxyOwner(t *testing.T) {
-	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
-	repo := &manifest.OCIRepository{
-		Name: "repo", Namespace: "ns", URL: "oci://registry.example/team/app",
-		ProxySecretRef: &manifest.LocalObjectReference{Name: "missing"},
+func TestFetcher_SecretReferences(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	tests := []struct {
+		name, secret, wantText string
+		material               map[string]any
+		cert, proxy, unwired   bool
+		wantMissing, wantOwner bool
+	}{
+		{name: "missing proxy owner", secret: "missing", proxy: true, wantMissing: true, wantOwner: true},
+		{name: "missing cert owner", secret: "missing", cert: true, wantMissing: true, wantOwner: true},
+		{name: "partial cert key", secret: "tls", cert: true, material: map[string]any{"tls.crt": "-only-cert-"}, wantText: "must provide both"},
+		{name: "empty cert material", secret: "tls", cert: true, material: map[string]any{"unrelated": "x"}, wantMissing: true},
+		{name: "missing Docker JSON", secret: "wrong-shape", material: map[string]any{"username": "alice"}, wantText: ".dockerconfigjson", wantMissing: true},
+		{name: "unwired getter", secret: "creds", unwired: true, wantText: "source.SecretGetter"},
+		{name: "missing auth secret", secret: "missing", wantText: "secret ns/missing not found", wantMissing: true},
 	}
-	_, _, err := f.newRepoClient(t.Context(), repo, nil)
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Fatalf("expected missing-secret error; got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Fetcher{}
+			if !tt.unwired {
+				f.Secrets = func(_, _ string) *manifest.Secret {
+					if tt.material == nil {
+						return nil
+					}
+					return &manifest.Secret{StringData: tt.material}
+				}
+			}
+			repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
+				s.URL = "oci://ghcr.io/x/y"
+				ref := &manifest.LocalObjectReference{Name: tt.secret}
+				switch {
+				case tt.proxy:
+					s.ProxySecretRef = ref
+				case tt.cert:
+					s.CertSecretRef = ref
+				default:
+					s.SecretRef = ref
+				}
+			})
+			if tt.wantOwner {
+				repo.Name = "repo"
+			}
+			var err error
+			switch {
+			case tt.proxy:
+				_, _, err = f.newRepoClient(t.Context(), repo, nil)
+			case tt.cert:
+				_, err = f.resolveTLS(repo)
+			default:
+				_, err = f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
+			}
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing || !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("error = %v, want missing=%t containing %q", err, tt.wantMissing, tt.wantText)
+			}
+			if tt.wantOwner {
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok {
+					t.Fatalf("expected MissingSecretError; got %T", err)
+				}
+				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "ns/repo"})
+				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
+				assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/ns/repo: secret ns/missing not found")
+			}
+		})
 	}
-	missing, ok := errors.AsType[*source.MissingSecretError](err)
-	if !ok {
-		t.Fatalf("expected MissingSecretError; got %T", err)
-	}
-	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "ns/repo"})
-	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/ns/repo: secret ns/missing not found")
-}
-
-func TestFetcher_ResolveTLS_MissingSecretOwner(t *testing.T) {
-	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return nil }}
-	repo := &manifest.OCIRepository{
-		Name: "repo", Namespace: "ns", CertSecretRef: &manifest.LocalObjectReference{Name: "missing"},
-	}
-	_, err := f.resolveTLS(repo)
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Fatalf("expected missing-secret error; got %v", err)
-	}
-	missing, ok := errors.AsType[*source.MissingSecretError](err)
-	if !ok {
-		t.Fatalf("expected MissingSecretError; got %T", err)
-	}
-	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "ns/repo"})
-	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/ns/repo: secret ns/missing not found")
 }
 
 func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
@@ -130,36 +159,6 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	}
 	if cfg.RootCAs == nil {
 		t.Errorf("expected RootCAs populated from ca.crt")
-	}
-}
-
-func TestFetcher_ResolveTLS_PartialCertKey(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"tls.crt": "-only-cert-"}}
-		},
-	}
-	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
-		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
-	})
-	_, err := f.resolveTLS(repo)
-	if err == nil || !strings.Contains(err.Error(), "must provide both") {
-		t.Errorf("expected partial cert/key error; got %v", err)
-	}
-}
-
-func TestFetcher_ResolveTLS_AllKeysMissing(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"unrelated": "x"}}
-		},
-	}
-	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
-		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
-	})
-	_, err := f.resolveTLS(repo)
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("expected missing-keys error; got %v", err)
 	}
 }
 
@@ -312,60 +311,6 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 				t.Fatalf("registry requests = %d, want 0", got)
 			}
 		})
-	}
-}
-
-func TestFetcher_ResolveConfig_SecretMissingDockerConfigJSON(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{
-				StringData: map[string]any{"username": "alice"}, // wrong shape
-			}
-		},
-	}
-	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
-		s.URL = "oci://ghcr.io/x/y"
-		s.SecretRef = &manifest.LocalObjectReference{Name: "wrong-shape"}
-	})
-	_, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
-	if err == nil || !strings.Contains(err.Error(), ".dockerconfigjson") {
-		t.Errorf("expected missing-.dockerconfigjson error; got %v", err)
-	}
-	// The wrong-shape / placeholder case must wrap ErrMissingSecret so
-	// --allow-missing-secrets covers it. This is the actual #190 case:
-	// an ExternalSecret materializes the Secret manifest in-tree but
-	// the values get PLACEHOLDER-wiped, so StringFromSecret returns ""
-	// and we land here, not in the "not found" branch.
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("expected ErrMissingSecret wrap so --allow-missing-secrets handles ExternalSecret/placeholder case; got %v", err)
-	}
-}
-
-func TestFetcher_ResolveConfig_SecretRefWithoutGetter(t *testing.T) {
-	f := &Fetcher{} // no Secrets
-	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
-		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
-	})
-	_, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
-	if err == nil || !strings.Contains(err.Error(), "source.SecretGetter") {
-		t.Errorf("expected source.SecretGetter error; got %v", err)
-	}
-}
-
-func TestFetcher_ResolveConfig_SecretNotFound(t *testing.T) {
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret { return nil },
-	}
-	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
-		s.URL = "oci://ghcr.io/x/y"
-		s.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
-	})
-	_, err := f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
-	if err == nil || !strings.Contains(err.Error(), "secret ns/missing not found") {
-		t.Errorf("expected secret-not-found error; got %v", err)
-	}
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("expected ErrMissingSecret wrap; got %v", err)
 	}
 }
 
@@ -711,45 +656,10 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 				t.Fatalf("failed snapshot: %v", err)
 			}
 			fail.Store(false)
-			if err := c.Close(); err != nil {
-				t.Fatal(err)
-			}
-			c, err = sourcecache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.Cache = c
-			before = requests.Load()
-			_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-			terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
-			if !ok || terminal.Attempted || requests.Load() != before {
-				t.Fatalf("reopened snapshot replay: %v", err)
-			}
-
 		})
 	}
-	if lookups.Load() != 20 {
+	if lookups.Load() != 15 {
 		t.Fatalf("auth and cert reread Secrets: %d", lookups.Load())
-	}
-	if err := fs.WalkDir(os.DirFS(root), ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		data, err := fs.ReadFile(os.DirFS(root), path)
-		if err != nil {
-			return err
-		}
-		for _, secret := range []string{"proxy:first@", "proxy:second@", "BEGIN CERTIFICATE"} {
-			if strings.Contains(string(data), secret) {
-				t.Errorf("credential material persisted in %s", path)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 

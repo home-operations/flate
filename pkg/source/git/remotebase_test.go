@@ -37,126 +37,78 @@ func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {
 	}
 }
 
-func TestFetchRemoteBase_Tag(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "tag-content"})
-	tagged := mustTagHEAD(t, src, "v0.2.2")
-
-	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v0.2.2", MaxAge: time.Hour}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("FetchRemoteBase tag: %v", err)
-	}
-	if art.Revision != tagged {
-		t.Errorf("revision = %q, want tagged %q", art.Revision, tagged)
-	}
-	assertWorktree(t, art.FS, "kustomization.yaml", "tag-content")
-}
-
-func TestFetchRemoteBase_Branch(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "v1"})
-	initial := mustHead(t, src)
-	mustCommitFile(t, src, "kustomization.yaml", "v2") // advance the default branch
-	mustSetRefToHash(t, src, "refs/heads/feature", initial)
-
-	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "feature", MaxAge: time.Hour}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("FetchRemoteBase branch: %v", err)
-	}
-	if art.Revision != initial {
-		t.Errorf("branch revision = %q, want %q (the branch tip, not HEAD)", art.Revision, initial)
-	}
-	assertWorktree(t, art.FS, "kustomization.yaml", "v1")
-}
-
-func TestFetchRemoteBase_Commit(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "c1"})
-	first := mustHead(t, src)
-	mustCommitFile(t, src, "kustomization.yaml", "c2")
-
-	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: first, MaxAge: time.Hour}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("FetchRemoteBase commit: %v", err)
-	}
-	if art.Revision != first {
-		t.Errorf("commit revision = %q, want %q", art.Revision, first)
-	}
-	assertWorktree(t, art.FS, "kustomization.yaml", "c1")
-}
-
-func TestFetchRemoteBase_HashNeverExpires(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepo(t, src)
-	ref := mustSetRefToHEAD(t, src, "refs/tags/pin")
-	f := newRemoteBaseFetcher(t)
-	request := RemoteBaseRequest{URL: "file://" + src, Ref: ref, MaxAge: time.Nanosecond}
-	first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(src); err != nil {
-		t.Fatal(err)
-	}
-	second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
-	if err != nil || second.Key != first.Key {
-		t.Fatalf("expired hash hit: %+v, %v", second, err)
-	}
-}
-
-func TestFetchRemoteBase_HEAD(t *testing.T) {
+func TestFetchRemoteBase_References(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "a@b")
-	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "head-content"})
-	head := mustHead(t, src)
-
-	for _, url := range []string{"file://" + src, src} {
-		t.Run(url, func(t *testing.T) {
+	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "v1"})
+	first := mustTagHEAD(t, src, "v0.2.2")
+	mustSetRefToHash(t, src, "refs/heads/feature", first)
+	head := mustCommitFile(t, src, "kustomization.yaml", "v2")
+	for _, tc := range []struct {
+		name, url, ref, revision, content string
+	}{
+		{"tag", "file://" + src, "v0.2.2", first, "v1"},
+		{"branch", "file://" + src, "feature", first, "v1"},
+		{"commit", "file://" + src, first, first, "v1"},
+		{"HEAD file URL", "file://" + src, "", head, "v2"},
+		{"HEAD local path", src, "", head, "v2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			f := newRemoteBaseFetcher(t)
-			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, MaxAge: time.Hour}, sourcecache.RetryConfig{})
+			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: tc.url, Ref: tc.ref, MaxAge: time.Hour}, sourcecache.RetryConfig{})
 			if err != nil {
-				t.Fatalf("FetchRemoteBase HEAD: %v", err)
+				t.Fatal(err)
 			}
-			if art.Revision != head {
-				t.Errorf("HEAD revision = %q, want %q", art.Revision, head)
+			if art.Revision != tc.revision {
+				t.Errorf("revision = %q, want %q", art.Revision, tc.revision)
 			}
-			assertWorktree(t, art.FS, "kustomization.yaml", "head-content")
+			assertWorktree(t, art.FS, "kustomization.yaml", tc.content)
 		})
 	}
 }
 
-func TestFetchRemoteBase_CacheHit(t *testing.T) {
-	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "x"})
-	mustTagHEAD(t, src, "v1.0.0")
-
-	f := newRemoteBaseFetcher(t)
-	art1, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v1.0.0", MaxAge: time.Hour}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("first FetchRemoteBase: %v", err)
-	}
-	if err := os.RemoveAll(src); err != nil {
-		t.Fatal(err)
-	}
-	art2, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file://" + src, Ref: "v1.0.0", MaxAge: time.Hour}, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("second FetchRemoteBase: %v", err)
-	}
-	if art1.Key != art2.Key {
-		t.Errorf("cache hit should reuse slot: %q vs %q", art1.Key, art2.Key)
-	}
-	if art1.Revision != art2.Revision {
-		t.Errorf("revision mismatch across cache hit: %q vs %q", art1.Revision, art2.Revision)
+func TestFetchRemoteBase_Freshness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hash bool
+		age  time.Duration
+	}{
+		{name: "tag interval", age: time.Hour},
+		{name: "hash never expires", hash: true, age: time.Nanosecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := t.TempDir()
+			mustInitRepoWithFiles(t, src, map[string]string{"kustomization.yaml": "x"})
+			hash := mustTagHEAD(t, src, "v1.0.0")
+			ref := "v1.0.0"
+			if tc.hash {
+				ref = hash
+			}
+			f := newRemoteBaseFetcher(t)
+			request := RemoteBaseRequest{URL: "file://" + src, Ref: ref, MaxAge: tc.age}
+			first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(src); err != nil {
+				t.Fatal(err)
+			}
+			second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatalf("offline cache hit: %v", err)
+			}
+			if first.Key != second.Key || first.Revision != second.Revision {
+				t.Fatalf("cache identity/revision changed: %+v / %+v", first, second)
+			}
+			assertWorktree(t, second.FS, "kustomization.yaml", "x")
+		})
 	}
 }
 
-func TestFetchRemoteBase_RequiresMirrorAndCache(t *testing.T) {
-	f := &Fetcher{} // no Mirrors, no Cache
+func TestFetchRemoteBase_RequiresCache(t *testing.T) {
+	f := &Fetcher{}
 	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("want ErrInput without mirror+cache, got %v", err)
+		t.Fatalf("want ErrInput without cache, got %v", err)
 	}
 }
 

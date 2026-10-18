@@ -1,6 +1,8 @@
 package git
 
 import (
+	"io/fs"
+	"os"
 	"testing"
 
 	gitlib "github.com/go-git/go-git/v5"
@@ -11,7 +13,7 @@ import (
 
 func TestFetcher_ContentIsolation(t *testing.T) {
 	root := t.TempDir()
-	mustInitRepo(t, root)
+	mustInitRepoWithFiles(t, root, map[string]string{"hello.txt": "hello", "docs.tmp": "docs"})
 	commit := mustSetRefToHEAD(t, root, "refs/heads/other")
 	c := newGitCache(t, "")
 	f := &Fetcher{Cache: c}
@@ -19,6 +21,9 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	first, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := fs.Stat(first.FS, "docs.tmp"); err != nil {
+		t.Fatalf("plain checkout lost docs.tmp: %v", err)
 	}
 	for _, tc := range []struct {
 		name     string
@@ -54,6 +59,18 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 			}
 			if (art.Key == first.Key) != tc.wantSame {
 				t.Fatalf("identity=%q, base=%q, want same=%t", art.Key, first.Key, tc.wantSame)
+			}
+			if tc.name == "ignore" {
+				if _, err := fs.Stat(art.FS, "docs.tmp"); !os.IsNotExist(err) {
+					t.Fatalf("ignored checkout retained docs.tmp: %v", err)
+				}
+				plain, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := fs.Stat(plain.FS, "docs.tmp"); err != nil {
+					t.Fatalf("plain checkout lost docs.tmp after ignored acquisition: %v", err)
+				}
 			}
 		})
 	}

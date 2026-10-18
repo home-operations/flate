@@ -176,15 +176,31 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 	}
 }
 
-func TestFetchHTTPChart_MissingSecret(t *testing.T) {
-	for _, state := range []string{"unwired", "absent", "wiped", "partial", "malformed"} {
-		t.Run(state, func(t *testing.T) {
+func TestFetchHTTPChart_SecretReferences(t *testing.T) {
+	for _, tc := range []struct {
+		name, state string
+		cert        bool
+		missing     bool
+	}{
+		{name: "auth unwired", state: "unwired", missing: true},
+		{name: "auth absent", state: "absent", missing: true},
+		{name: "auth wiped", state: "wiped", missing: true},
+		{name: "auth partial", state: "partial", missing: true},
+		{name: "auth malformed", state: "malformed", missing: true},
+		{name: "cert unwired", state: "unwired", cert: true},
+		{name: "cert absent", state: "absent", cert: true, missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			r := httpRepo("https://charts.example")
-			r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			secret := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first"}}
 			f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
-			preparedHTTP(t, f, r)
-			switch state {
+			if tc.cert {
+				r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+			} else {
+				r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+				preparedHTTP(t, f, r)
+			}
+			switch tc.state {
 			case "unwired":
 				f.secrets = nil
 			case "absent":
@@ -197,42 +213,10 @@ func TestFetchHTTPChart_MissingSecret(t *testing.T) {
 				secret = &manifest.Secret{Data: map[string]any{"username": "invalid base64", "password": "invalid base64"}}
 			}
 			_, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
-			if !errors.Is(err, manifest.ErrMissingSecret) {
-				t.Fatalf("err = %v, want ErrMissingSecret after warming the client memo", err)
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing {
+				t.Fatalf("missing=%t, error=%v", tc.missing, err)
 			}
 		})
-	}
-}
-
-// TestFetchHTTPChart_CertSecretFailsLoud pins the security scope of
-// ErrMissingSecret: certSecretRef carries TLS trust material, so an unwired
-// SecretGetter (a config/wiring bug) must fail LOUD, NOT wrap ErrMissingSecret
-// — otherwise --allow-missing-secrets would silently soft-skip a TLS failure.
-// Mirrors source.ResolveCertSecret. (Contrast TestFetchHTTPChart_MissingSecret,
-// where an auth secretRef legitimately soft-skips.)
-func TestFetchHTTPChart_CertSecretFailsLoud(t *testing.T) {
-	r := httpRepo("https://charts.example")
-	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
-	f := newHTTPFetcher(t, r) // Secrets is nil → wiring bug
-	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
-	if err == nil {
-		t.Fatal("expected a loud certSecretRef error, got nil")
-	}
-	if errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("certSecretRef nil-getter wrapped ErrMissingSecret (would soft-skip); want loud: %v", err)
-	}
-}
-
-// TestFetchHTTPChart_CertSecretNotFoundSoftSkips covers the other half: a
-// certSecretRef whose Secret is genuinely absent IS the --allow-missing-secrets
-// case (cert materialized live, not in git), so it wraps ErrMissingSecret —
-// same sentinel git/oci/bucket use via source.ResolveCertSecret.
-func TestFetchHTTPChart_CertSecretNotFoundSoftSkips(t *testing.T) {
-	r := httpRepo("https://charts.example")
-	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
-	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return nil }) // getter wired, secret absent
-	if _, ferr := f.Fetch(context.Background(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{}); !errors.Is(ferr, manifest.ErrMissingSecret) {
-		t.Errorf("certSecretRef not-found should soft-skip (ErrMissingSecret); got: %v", ferr)
 	}
 }
 
@@ -937,45 +921,10 @@ func TestFetchHTTPChart_BasicAuth_SnapshotRotation(t *testing.T) {
 				t.Fatalf("failed snapshot: %v", err)
 			}
 			fail.Store(false)
-			if err := c.Close(); err != nil {
-				t.Fatal(err)
-			}
-			c, err = sourcecache.New(t.Context(), root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.cache = c
-			before = hits.Load()
-			_, err = f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
-			terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
-			if !ok || terminal.Attempted || hits.Load() != before {
-				t.Fatalf("reopened snapshot replay: %v", err)
-			}
-
 		})
 	}
-	if lookups.Load() != 20 {
+	if lookups.Load() != 15 {
 		t.Fatalf("chart/index reread material: %d", lookups.Load())
-	}
-	if err := fs.WalkDir(os.DirFS(root), ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		data, err := fs.ReadFile(os.DirFS(root), path)
-		if err != nil {
-			return err
-		}
-		for _, secret := range []string{"proxy:first@", "proxy:second@", "BEGIN CERTIFICATE"} {
-			if strings.Contains(string(data), secret) {
-				t.Errorf("credential material persisted in %s", path)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 

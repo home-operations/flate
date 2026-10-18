@@ -148,194 +148,97 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	}
 }
 
-func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
-	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
-	srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
-
-	f := &Fetcher{Cache: newSourceCache(t)}
-	repo := &manifest.OCIRepository{
-		Name:      "mutable",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+func TestFetcher_Freshness(t *testing.T) {
+	tests := []struct {
+		name                     string
+		interval                 time.Duration
+		pinned, advance, offline bool
+		failRefresh, blockBlobs  bool
+	}{
+		{name: "mutable tag refresh", advance: true},
+		{name: "fresh interval", interval: time.Hour, advance: true, offline: true},
+		{name: "warm tag hit", interval: time.Hour, blockBlobs: true},
+		{name: "failed refresh", offline: true, failRefresh: true},
+		{name: "digest pinned offline", pinned: true, offline: true},
 	}
-
-	art1, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("first Fetch: %v", err)
-	}
-	if got := mustReadFile(t, art1.FS, "app.yaml"); !strings.Contains(got, "v1") {
-		t.Fatalf("first fetch content = %q", got)
-	}
-
-	setArtifact(1)
-	art2, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("second Fetch: %v", err)
-	}
-	if art2.Digest == art1.Digest {
-		t.Fatalf("mutable tag reused stale digest %s", art2.Digest)
-	}
-	if art2.Key != art1.Key || art2.Revision == art1.Revision {
-		t.Fatalf("refresh identity: key=%q/%q revision=%q/%q", art1.Key, art2.Key, art1.Revision, art2.Revision)
-	}
-	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v2") {
-		t.Fatalf("second fetch content = %q", got)
-	}
-}
-
-func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
-	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
-	srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
-
-	f := &Fetcher{Cache: newSourceCache(t)}
-	repo := &manifest.OCIRepository{
-		Name:      "mutable",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Interval:  metav1.Duration{Duration: time.Hour},
-		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
-	}
-
-	art1, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("first Fetch: %v", err)
-	}
-	setArtifact(1)
-	srv.Close()
-	art2, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("second Fetch should use fresh resolve cache without registry: %v", err)
-	}
-	if art2.Digest != art1.Digest {
-		t.Fatalf("fresh interval cache should reuse digest %s, got %s", art1.Digest, art2.Digest)
-	}
-	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v1") {
-		t.Fatalf("fresh interval cache content = %q", got)
-	}
-}
-
-func TestFetcher_TagCacheHitSkipsSecondPull(t *testing.T) {
-	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	srv, failBlobs := startFakeRegistryWithBlobGate(t, v1)
-
-	f := &Fetcher{Cache: newSourceCache(t)}
-	repo := &manifest.OCIRepository{
-		Name:      "stable-tag",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/stable-tag", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Interval:  metav1.Duration{Duration: time.Hour},
-		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
-	}
-
-	art1, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("first Fetch: %v", err)
-	}
-	failBlobs()
-	art2, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("second Fetch should use cached tag digest without pulling blobs: %v", err)
-	}
-	if art2.Digest != art1.Digest {
-		t.Fatalf("digest changed on stable tag cache hit: %s -> %s", art1.Digest, art2.Digest)
-	}
-	if got := mustReadFile(t, art2.FS, "app.yaml"); !strings.Contains(got, "v1") {
-		t.Fatalf("cached tag content = %q", got)
-	}
-}
-
-func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
-	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	srv, _ := startMutableFakeRegistry(t, v1)
-
-	f := &Fetcher{Cache: newSourceCache(t)}
-	repo := &manifest.OCIRepository{
-		Name:      "mutable",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
-	}
-
-	art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("first Fetch: %v", err)
-	}
-	srv.Close()
-	if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err == nil {
-		t.Fatal("expected refresh to fail after registry shutdown")
-	}
-	if got := mustReadFile(t, art.FS, "app.yaml"); !strings.Contains(got, "v1") {
-		t.Fatalf("failed mutable refresh damaged previous slot; app.yaml = %q", got)
-	}
-}
-
-func TestFetcher_DigestRefUsesCachedSlot(t *testing.T) {
-	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	srv := startFakeRegistry(t, v1.manifest, v1.config, v1.layer)
-
-	f := &Fetcher{Cache: newSourceCache(t)}
-	repo := &manifest.OCIRepository{
-		Name:      "pinned",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/pinned", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
-	}
-	if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("first Fetch: %v", err)
-	}
-	srv.Close()
-	if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("digest-pinned cache hit should not need registry: %v", err)
-	}
-}
-
-func TestFetcher_DigestCacheKeyIncludesLayerSelector(t *testing.T) {
-	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	srv := startFakeRegistry(t, v1.manifest, v1.config, v1.layer)
-	f := &Fetcher{Cache: newSourceCache(t)}
-
-	copyRepo := &manifest.OCIRepository{
-		Name:      "copy",
-		Namespace: "test",
-		URL:       fmt.Sprintf("oci://%s/app", mustURL(t, srv.URL).Host),
-		Insecure:  true,
-		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
-		LayerSelector: &sourcev1.OCILayerSelector{
-			Operation: sourcev1.OCILayerCopy,
-		},
-	}
-	copyArt, err := f.Fetch(t.Context(), copyRepo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("copy Fetch: %v", err)
-	}
-	if got, err := fs.ReadFile(copyArt.FS, "layer.tar.gz"); err != nil || !bytes.Equal(got, v1.layer) {
-		t.Fatalf("copy artifact changed layer bytes: %v", err)
-	}
-
-	extractRepo := &manifest.OCIRepository{
-		Name:      "extract",
-		Namespace: "test",
-		URL:       copyRepo.URL,
-		Insecure:  true,
-		Reference: &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest},
-	}
-	extractArt, err := f.Fetch(t.Context(), extractRepo, sourcecache.RetryConfig{})
-	if err != nil {
-		t.Fatalf("extract Fetch: %v", err)
-	}
-	if extractArt.Key == copyArt.Key {
-		t.Fatalf("different layer selectors reused cache slot %s", extractArt.Key)
-	}
-	if got := mustReadFile(t, extractArt.FS, "app.yaml"); !strings.Contains(got, "v1") {
-		t.Fatalf("extract artifact content = %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+			v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
+			srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
+			var resolves, pulls atomic.Int32
+			var blockBlobs atomic.Bool
+			handler := srv.Config.Handler
+			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/manifests/") {
+					resolves.Add(1)
+				}
+				if strings.Contains(r.URL.Path, "/blobs/") {
+					pulls.Add(1)
+					if blockBlobs.Load() {
+						http.Error(w, "blob pulls disabled", http.StatusServiceUnavailable)
+						return
+					}
+				}
+				handler.ServeHTTP(w, r)
+			})
+			f := &Fetcher{Cache: newSourceCache(t)}
+			repo := &manifest.OCIRepository{
+				Name: "freshness", Namespace: "test",
+				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+				Interval:  metav1.Duration{Duration: tt.interval},
+				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+			}
+			if tt.pinned {
+				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: v1.manifestDigest}
+			}
+			first, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mustReadFile(t, first.FS, "app.yaml"); got != "version: v1\n" {
+				t.Fatalf("first content = %q", got)
+			}
+			beforeResolve, beforePull := resolves.Load(), pulls.Load()
+			if beforeResolve == 0 || beforePull == 0 {
+				t.Fatalf("first fetch: resolves=%d pulls=%d", beforeResolve, beforePull)
+			}
+			if tt.advance {
+				setArtifact(1)
+			}
+			blockBlobs.Store(tt.blockBlobs)
+			if tt.offline {
+				srv.Close()
+			}
+			second, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			if tt.failRefresh {
+				if err == nil {
+					t.Fatal("expected refresh to fail after registry shutdown")
+				}
+				if got := mustReadFile(t, first.FS, "app.yaml"); got != "version: v1\n" {
+					t.Fatalf("failed refresh damaged held content: %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "version: v1\n"
+			if tt.advance && !tt.offline {
+				want = "version: v2\n"
+				if second.Digest == first.Digest || second.Revision == first.Revision || resolves.Load() <= beforeResolve || pulls.Load() <= beforePull {
+					t.Fatalf("mutable tag was not refreshed: digest=%s revision=%s resolves=%d pulls=%d", second.Digest, second.Revision, resolves.Load()-beforeResolve, pulls.Load()-beforePull)
+				}
+			} else if second.Digest != first.Digest || second.Revision != first.Revision || resolves.Load() != beforeResolve || pulls.Load() != beforePull {
+				t.Fatalf("cache hit changed digest/revision or requested content: resolves=%d pulls=%d", resolves.Load()-beforeResolve, pulls.Load()-beforePull)
+			}
+			if second.Key != first.Key {
+				t.Fatalf("acquisition key changed: %q -> %q", first.Key, second.Key)
+			}
+			if got := mustReadFile(t, second.FS, "app.yaml"); got != want {
+				t.Fatalf("second content = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -376,54 +279,6 @@ func startFakeRegistry(t *testing.T, manifestBytes, configBytes, layerBytes []by
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
-}
-
-func startFakeRegistryWithBlobGate(t *testing.T, art fakeOCIArtifact) (*httptest.Server, func()) {
-	t.Helper()
-	var (
-		mu         sync.RWMutex
-		blobsFail  bool
-		configBody = art.config
-		layerBody  = art.layer
-	)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/v2/"):
-			return
-		case strings.Contains(r.URL.Path, "/manifests/"):
-			w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
-			w.Header().Set("Docker-Content-Digest", art.manifestDigest)
-			_, _ = w.Write(art.manifest)
-		case strings.Contains(r.URL.Path, "/blobs/"):
-			mu.RLock()
-			fail := blobsFail
-			mu.RUnlock()
-			if fail {
-				http.Error(w, "blob pulls disabled", http.StatusServiceUnavailable)
-				return
-			}
-			_, digest, _ := strings.CutLast(r.URL.Path, "/")
-			switch digest {
-			case art.configDigest:
-				_, _ = w.Write(configBody)
-			case art.layerDigest:
-				_, _ = w.Write(layerBody)
-			default:
-				http.NotFound(w, r)
-			}
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	srv := httptest.NewTLSServer(mux)
-	t.Cleanup(srv.Close)
-	failBlobs := func() {
-		mu.Lock()
-		defer mu.Unlock()
-		blobsFail = true
-	}
-	return srv, failBlobs
 }
 
 type fakeOCIArtifact struct {
@@ -934,7 +789,7 @@ func (rt registryRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 }
 
 func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
-	for _, name := range []string{"unmatched", "empty", "defaults"} {
+	for _, name := range []string{"unmatched", "empty", "defaults", "digest selectors"} {
 		t.Run(name, func(t *testing.T) {
 			art := newFakeOCIArtifact(t, map[string]string{"file.yaml": "x", ".git/config": "git", "image.png": "image"})
 			if name == "empty" {
@@ -954,7 +809,11 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			if name == "unmatched" {
 				repo.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "unmatched/type"}
 			}
-			got, err := (&Fetcher{Cache: newSourceCache(t)}).Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			if name == "digest selectors" {
+				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: art.manifestDigest}
+			}
+			f := &Fetcher{Cache: newSourceCache(t)}
+			got, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if name == "unmatched" {
 				if err == nil {
 					t.Fatal("unmatched mediaType accepted")
@@ -970,6 +829,20 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 					t.Fatalf("empty artifact: entries=%v err=%v", entries, err)
 				}
 				return
+			}
+			if name == "digest selectors" {
+				copyRepo := *repo
+				copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
+				copied, err := f.Fetch(t.Context(), &copyRepo, sourcecache.RetryConfig{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if data, err := fs.ReadFile(copied.FS, "layer.tar.gz"); err != nil || !bytes.Equal(data, art.layer) {
+					t.Fatalf("copy artifact changed layer bytes: %v", err)
+				}
+				if copied.Key == got.Key {
+					t.Fatalf("different layer selectors reused cache key %q", got.Key)
+				}
 			}
 			for _, name := range []string{".git/config", "image.png"} {
 				if _, err := fs.Stat(got.FS, name); !errors.Is(err, fs.ErrNotExist) {

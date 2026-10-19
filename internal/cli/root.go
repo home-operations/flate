@@ -23,8 +23,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/spf13/cobra"
 )
+
+var renderPersistenceDisabledReason = sourcecache.RenderPersistenceDisabledReason()
 
 // New constructs the root command and wires every subcommand into it.
 // Callers that want full control over I/O streams should use Run.
@@ -41,9 +44,6 @@ func New(version string) *cobra.Command {
 	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
 	root.PersistentFlags().Bool("no-progress", false, "disable the live per-resource progress lines on stderr")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Env binding runs first so FLATE_LOG_LEVEL is honored by the
-		// validation below, and downstream RunE bodies see flags that
-		// reflect the merged (CLI > env > default) view.
 		if err := applyEnvVars(cmd); err != nil {
 			return err
 		}
@@ -62,7 +62,16 @@ func New(version string) *cobra.Command {
 		// binding) was set explicitly. If so the user asked for logs: stream
 		// them live to stderr on every command. Left at the default, chatter is
 		// deferred into the notes buffer that only `flate test` renders.
-		return setLogLevel(lvl, cmd.Flags().Changed("log-level"), logSink)
+		if err := setLogLevel(lvl, cmd.Flags().Changed("log-level"), logSink); err != nil {
+			return err
+		}
+		if cmd.Flags().Lookup("path") != nil && renderPersistenceDisabledReason != "" {
+			dir, _ := cmd.Flags().GetString("cache-dir")
+			if dir != "" && slog.Default().Enabled(cmd.Context(), slog.LevelWarn) {
+				_, _ = fmt.Fprintf(logSink, "flate warning: render persistence is disabled: %s; source caching remains available\n", renderPersistenceDisabledReason)
+			}
+		}
+		return nil
 	}
 
 	root.AddCommand(

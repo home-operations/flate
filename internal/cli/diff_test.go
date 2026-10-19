@@ -18,6 +18,8 @@ import (
 )
 
 func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	for _, tc := range []struct {
 		name       string
 		orig       string
@@ -106,7 +108,7 @@ spec:
 				if side == "" {
 					side = "current"
 				}
-				prefix := "flate warning: HelmRelease.helm.toolkit.fluxcd.io apps/demo: 1 object not rendered on the " + side + " side; diff suppressed ("
+				prefix := persistenceNotice + "flate warning: HelmRelease.helm.toolkit.fluxcd.io apps/demo: 1 object not rendered on the " + side + " side; diff suppressed ("
 				if !strings.HasPrefix(imageStderr, prefix) || !strings.Contains(imageStderr, "missing-ca") {
 					t.Fatalf("image suppression missing: %s", imageStderr)
 				}
@@ -329,13 +331,15 @@ func TestRun_DiffJSON(t *testing.T) {
 }
 
 func TestRun_DiffJSON_Empty(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	path := writeFixture(t)
 	for _, verb := range []string{"ks", "hr", "all"} {
 		t.Run(verb, func(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
 			assert.Equal(t, code, 0)
-			assert.Equal(t, stderr, "")
+			assert.Equal(t, stderr, persistenceNotice)
 			var compact bytes.Buffer
 			if err := json.Compact(&compact, []byte(stdout)); err != nil {
 				t.Fatal(err)
@@ -498,6 +502,8 @@ data: {greeting: hi}
 }
 
 func TestRun_DiffKS_PathOrigCustomSource(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	for _, tc := range []struct {
 		name    string
 		changed bool
@@ -519,9 +525,7 @@ data: {greeting: hola}
 			if code != 0 {
 				t.Fatalf("diff exited %d: %s", code, stderr)
 			}
-			if stderr != "" {
-				t.Errorf("local source should render without warnings: %s", stderr)
-			}
+			assert.Equal(t, stderr, persistenceNotice)
 			if tc.changed {
 				for _, want := range []string{"-  greeting: hola", "+  greeting: hi"} {
 					if !strings.Contains(stdout, want) {
@@ -536,6 +540,8 @@ data: {greeting: hola}
 }
 
 func TestRun_DiffKS_ExternalSourceDisclosure(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	current, orig := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/other-repo.git")
 	testutil.WriteFile(t, orig, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -567,8 +573,8 @@ data: {greeting: hola}
 						t.Errorf("missing disclosure %q: %s", want, stderr)
 					}
 				}
-			} else if stderr != "" {
-				t.Errorf("out-of-scope source should not warn: %s", stderr)
+			} else {
+				assert.Equal(t, stderr, persistenceNotice)
 			}
 		})
 	}

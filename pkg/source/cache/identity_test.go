@@ -29,7 +29,9 @@ func TestBuildIdentity_Stable(t *testing.T) {
 	original := info.String()
 	want := manifest.Fingerprint(original)
 	for range 2 {
-		assert.Equal(t, buildIdentity(info), want)
+		identity, reason := buildIdentity(info)
+		assert.Equal(t, identity, want)
+		assert.Equal(t, reason, "")
 	}
 	assert.Equal(t, info.String(), original)
 }
@@ -37,8 +39,9 @@ func TestBuildIdentity_Stable(t *testing.T) {
 func TestBuildIdentity_Dirty(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name string
-		info *debug.BuildInfo
+		name   string
+		info   *debug.BuildInfo
+		reason string
 	}{
 		{"dirty", &debug.BuildInfo{
 			Main: debug.Module{Path: flateModule, Version: "v0.6.5"},
@@ -46,17 +49,24 @@ func TestBuildIdentity_Dirty(t *testing.T) {
 				{Key: "vcs.revision", Value: "revision-a"},
 				{Key: "vcs.modified", Value: "true"},
 			},
-		}},
-		{"nil metadata", nil},
-		{"unversioned", &debug.BuildInfo{Main: debug.Module{Path: flateModule, Version: "(devel)"}}},
+		}, "the binary was built from a dirty checkout"},
+		{"nil metadata", nil, "build metadata is unavailable"},
+		{"unversioned", &debug.BuildInfo{Main: debug.Module{Path: flateModule, Version: "(devel)"}}, "the binary has no stamped build identity"},
 		{"local replacement", &debug.BuildInfo{
 			Main: debug.Module{Path: flateModule, Version: "v0.6.5"},
 			Deps: []*debug.Module{{Path: "example.com/module", Replace: &debug.Module{Path: "../local-module"}}},
-		}},
+		}, "a dependency replacement has no version"},
+		{"replacement before dirty", &debug.BuildInfo{
+			Main:     debug.Module{Path: flateModule, Version: "v0.6.5"},
+			Deps:     []*debug.Module{{Path: "example.com/module", Replace: &debug.Module{Path: "../local-module"}}},
+			Settings: []debug.BuildSetting{{Key: "vcs.modified", Value: "true"}},
+		}, "a dependency replacement has no version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, buildIdentity(tc.info), "")
+			identity, reason := buildIdentity(tc.info)
+			assert.Equal(t, identity, "")
+			assert.Equal(t, reason, tc.reason)
 		})
 	}
 }
@@ -68,9 +78,9 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		Main:     debug.Module{Path: flateModule, Version: "(devel)"},
 		Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "revision-a"}},
 	}
-	identityA := buildIdentity(info)
+	identityA, _ := buildIdentity(info)
 	info.Settings[0].Value = "revision-b"
-	identityB := buildIdentity(info)
+	identityB, _ := buildIdentity(info)
 	assert.Equal(t, identityA == "" || identityB == "" || identityA == identityB, false)
 	root := t.TempDir()
 	processIdentity = identityA
@@ -152,24 +162,40 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("dirty output changed persistent tags")
 	}
+	r, _, _, err = c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: Forever}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(r)
+	assert.NoError(t, errors.Join(readErr, r.Close()))
+	assert.Equal(t, string(data), "ordinary")
 }
 
 func TestBuildIdentity_Dependency(t *testing.T) {
 	t.Parallel()
-	info := &debug.BuildInfo{
-		Main: debug.Module{Path: "example.com/sdk", Version: "(devel)"},
-		Deps: []*debug.Module{{Path: flateModule, Version: "v0.6.5"}},
-	}
-	a := buildIdentity(info)
-	if a == "" {
-		t.Fatal("versioned SDK dependency is ineligible")
-	}
-	info.Deps[0].Version = "v0.6.6"
-	if b := buildIdentity(info); b == "" || a == b {
-		t.Fatal("dependency version did not change identity")
-	}
-	info.Deps[0].Replace = &debug.Module{Path: "example.com/fork", Version: "v0.6.7"}
-	if b := buildIdentity(info); b == "" || a == b {
-		t.Fatal("versioned replacement did not change identity")
+	for _, tc := range []struct {
+		name string
+		info *debug.BuildInfo
+	}{
+		{"main version", &debug.BuildInfo{Main: debug.Module{Path: flateModule, Version: "v0.6.5"}}},
+		{"SDK dependency", &debug.BuildInfo{
+			Main: debug.Module{Path: "example.com/sdk", Version: "(devel)"},
+			Deps: []*debug.Module{{Path: flateModule, Version: "v0.6.5"}},
+		}},
+		{"updated SDK dependency", &debug.BuildInfo{
+			Main: debug.Module{Path: "example.com/sdk", Version: "(devel)"},
+			Deps: []*debug.Module{{Path: flateModule, Version: "v0.6.6"}},
+		}},
+		{"versioned replacement", &debug.BuildInfo{
+			Main: debug.Module{Path: "example.com/sdk", Version: "(devel)"},
+			Deps: []*debug.Module{{Path: flateModule, Version: "v0.6.6", Replace: &debug.Module{Path: "example.com/fork", Version: "v0.6.7"}}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			identity, reason := buildIdentity(tc.info)
+			assert.Equal(t, identity, manifest.Fingerprint(tc.info.String()))
+			assert.Equal(t, reason, "")
+		})
 	}
 }

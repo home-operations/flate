@@ -537,6 +537,8 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 }
 
 func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	root := writeNamedScopeFixture(t)
 	want := "reconcile completed with 1 failure(s):\n  Kustomization.kustomize.toolkit.fluxcd.io/flux-system/outside: not found\n  (+1 blocked by failed/missing dependencies)"
 	for _, verb := range []string{"get", "test"} {
@@ -552,7 +554,7 @@ func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 			if verb == "test" {
 				expected = ""
 			}
-			assert.Equal(t, stderr, expected)
+			assert.Equal(t, stderr, persistenceNotice+expected)
 			cmd := New("test")
 			cmd.SetContext(t.Context())
 			cmd.SetArgs(args)
@@ -590,6 +592,8 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 }
 
 func TestRun_NamedScope_TestWarningFooter(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	for _, fatal := range []bool{false, true} {
 		t.Run(fmt.Sprint(fatal), func(t *testing.T) {
 			root := writeNamedScopeFixture(t)
@@ -610,7 +614,7 @@ func TestRun_NamedScope_TestWarningFooter(t *testing.T) {
 				assert.Equal(t, strings.Contains(stderr, "warnings"), false)
 				assert.Equal(t, strings.Count(stderr, "flate error:"), 0)
 			} else {
-				assert.Equal(t, stderr, "")
+				assert.Equal(t, stderr, persistenceNotice)
 			}
 		})
 	}
@@ -869,6 +873,8 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 }
 
 func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	for _, tc := range []struct {
 		kind, name, label string
 		visible           bool
@@ -893,7 +899,7 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 			testutil.WriteFile(t, root, file, string(body))
 			args := []string{"get", tc.kind, "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "name", "-l", tc.label}
 			stdout, stderr, code := runCLI(t, args...)
-			if code != 0 || (stdout != "") != tc.visible || strings.Contains(stderr, "no ") {
+			if code != 0 || (stdout != "") != tc.visible || stderr != persistenceNotice {
 				t.Fatalf("healthy named get: exit=%d stdout=%q stderr=%s", code, stdout, stderr)
 			}
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")

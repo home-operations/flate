@@ -508,19 +508,26 @@ func TestRun_DiffKS_NoOrigErrors(t *testing.T) {
 	}
 }
 
-// TestRun_DiffKS_TwoTreesNoDelta exercises diff between two identical
-// trees: should exit 0 with empty diff.
-func TestRun_DiffKS_TwoTreesNoDelta(t *testing.T) {
+func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
+	preservePersistenceNoticeState(t)
 	current := writeFixture(t)
-	// Copy fixture into a sibling tempdir to act as --path-orig.
 	orig := t.TempDir()
 	testutil.CopyTree(t, current, orig)
-	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig)
+	args := []string{"diff", "ks", "--path", current, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", "2"}
+	renderPersistenceDisabledReason = ""
+	stdout, stderr, code := runCLI(t, args...)
 	if code != 0 {
 		t.Fatalf("identical-tree diff exited %d: %s", code, stderr)
 	}
 	if strings.Contains(stdout, "@@") {
 		t.Errorf("identical tree should produce no hunks:\n%s", stdout)
+	}
+	renderPersistenceDisabledReason = persistenceReason
+	for range 2 {
+		got, gotErr, gotCode := runCLI(t, args...)
+		assert.Equal(t, gotCode, code)
+		assert.Equal(t, got, stdout)
+		assert.Equal(t, gotErr, persistenceNotice+stderr)
 	}
 }
 
@@ -654,6 +661,7 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		}
 	}
 	for _, argv := range [][]string{
+		{"build"},
 		{"build", "ks"},
 		{"build", "hr"},
 		{"build", "all"},
@@ -661,6 +669,8 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		{"diff", "hr"},
 		{"diff", "all"},
 		{"diff", "images"},
+		{"diff"},
+		{"get"},
 		{"get", "all"},
 		{"get", "images"},
 		{"get", "ks"},
@@ -668,6 +678,7 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		{"test", "all"},
 		{"test", "ks"},
 		{"test", "hr"},
+		{"test"},
 	} {
 		sub, _, err := cmd.Find(argv)
 		if err != nil {
@@ -675,6 +686,11 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		}
 		if sub.Flags().Lookup("kube-version") == nil {
 			t.Errorf("%v: missing helm flag kube-version", argv)
+		}
+		for _, name := range []string{"path", "cache-dir"} {
+			if sub.Flags().Lookup(name) == nil {
+				t.Errorf("%v: missing common flag %s", argv, name)
+			}
 		}
 		flag := sub.Flags().Lookup("disable-chart-digest-tracking")
 		if flag == nil || flag.Value.Type() != "boolfunc" || flag.NoOptDefVal != "true" {
@@ -684,6 +700,10 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 			t.Errorf("%v: missing environment usage", argv)
 		}
 	}
+	maintenance, _, err := cmd.Find([]string{"cache", "gc"})
+	assert.NoError(t, err)
+	assert.Equal(t, maintenance.Flags().Lookup("path") == nil, true)
+	assert.Equal(t, maintenance.Flags().Lookup("cache-dir") != nil, true)
 }
 
 func TestCompareDocs_OrdersByIdentity(t *testing.T) {

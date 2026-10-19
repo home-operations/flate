@@ -447,13 +447,26 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 }
 
 func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
-	for _, name := range []string{"success", "fatal-bootstrap"} {
+	for _, name := range []string{"success", "render-warning", "fatal-bootstrap"} {
 		t.Run(name, func(t *testing.T) {
 			oldBar, oldLogger, original := barSink, slog.Default(), os.Stderr
+			var o *orchestrator.Orchestrator
+			var raw *os.File
 			defer func() {
-				if os.Stderr != original {
-					_ = os.Stderr.Close()
-					os.Stderr = original
+				if o != nil {
+					if err := o.Stop(); err != nil {
+						t.Error(err)
+					}
+				}
+				captured := os.Stderr
+				os.Stderr = original
+				if captured != original && captured != raw {
+					_ = captured.Close()
+				}
+				if raw != nil {
+					if err := raw.Close(); err != nil {
+						t.Error(err)
+					}
 				}
 				barSink = oldBar
 				slog.SetDefault(oldLogger)
@@ -462,14 +475,22 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 			barSink = &barWriter{out: &out}
 			slog.SetDefault(slog.New(slog.NewTextHandler(barSink, &slog.HandlerOptions{Level: slog.LevelDebug})))
 			path := filepath.Join(t.TempDir(), "absent")
-			if name == "success" {
+			if name != "fatal-bootstrap" {
 				path = writeFixture(t)
 			}
-			o, result, err := runOrchestratorCfg(t.Context(), orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true})
-			if o != nil {
-				defer func() { assert.NoError(t, o.Stop()) }()
+			expected := original
+			if name == "render-warning" {
+				testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml]\ncommonLabels: {progress-warning: test}\n")
+				f, err := os.CreateTemp(t.TempDir(), "stderr")
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = f
+				os.Stderr = raw
+				expected = raw
 			}
-			if name == "success" {
+			o, result, err := runOrchestratorCfg(t.Context(), orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true})
+			if name != "fatal-bootstrap" {
 				assert.NoError(t, err)
 				if o == nil || result == nil {
 					t.Fatal("successful render returned nil")
@@ -477,7 +498,20 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 			} else if err == nil || o != nil || result != nil {
 				t.Fatalf("fatal bootstrap returned orchestrator=%v result=%v err=%v", o, result, err)
 			}
-			if os.Stderr != original {
+			if name == "render-warning" {
+				const warning = "# Warning: 'commonLabels' is deprecated."
+				if got := out.String(); !strings.Contains(got, warning) {
+					t.Errorf("render warning missing from sink: %q", got)
+				}
+				got, err := os.ReadFile(raw.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(got), warning) {
+					t.Errorf("render warning leaked to raw stderr: %q", got)
+				}
+			}
+			if os.Stderr != expected {
 				t.Error("shared helper left stderr captured")
 			}
 			if progressProgram(t, barSink) != nil {

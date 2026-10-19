@@ -940,3 +940,57 @@ func (r *changingChartResolver) LocalSourceArtifact(manifest.NamedResource) *sto
 	r.calls++
 	return artifact
 }
+
+func TestTemplateCache_ActionHookPolicy(t *testing.T) {
+	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Log("render persistence ineligible; running warm/fresh functional assertions without claiming disk hits")
+	}
+	resolver := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
+	warm, err := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	assert.NoError(t, err)
+	warm.SetSourceResolver(resolver)
+	for i, state := range []struct {
+		isUpgrade, install, upgrade, noHooks bool
+		wantHook                             bool
+	}{
+		{false, false, true, false, true},
+		{true, false, true, false, false},
+		{true, false, false, false, true},
+		{true, false, false, true, false},
+		{false, false, false, true, false},
+		{false, false, false, false, true},
+		{false, true, false, false, false},
+		{false, false, true, false, true},
+	} {
+		opts := Options{IsUpgrade: state.isUpgrade, NoHooks: state.noHooks}
+		want := []string{"ConfigMap/demo-cm"}
+		if state.wantHook {
+			want = append(want, "ConfigMap/demo-pre")
+		}
+		var first string
+		for repeat := range 2 {
+			hr := newHR()
+			hr.Install = &helmv2.Install{DisableHooks: state.install}
+			hr.Upgrade = &helmv2.Upgrade{DisableHooks: state.upgrade}
+			out, err := warm.Template(t.Context(), hr, nil, opts)
+			assert.NoError(t, err)
+			assert.Diff(t, templateResources(t, out), want)
+			fresh, err := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			assert.NoError(t, err)
+			fresh.SetSourceResolver(resolver)
+			freshHR := newHR()
+			freshHR.Install = &helmv2.Install{DisableHooks: state.install}
+			freshHR.Upgrade = &helmv2.Upgrade{DisableHooks: state.upgrade}
+			uncached, err := fresh.Template(t.Context(), freshHR, nil, opts)
+			assert.NoError(t, err)
+			assert.Diff(t, templateResources(t, uncached), want)
+			assert.Equal(t, out, uncached)
+			if repeat == 0 {
+				first = out
+			} else if out != first {
+				t.Errorf("state %d repeated output differs: %q != %q", i, out, first)
+			}
+		}
+	}
+}

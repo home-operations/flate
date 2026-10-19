@@ -606,3 +606,46 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplate_ShowOnlyFraming(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "demo/templates/a.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}")
+	testutil.WriteFile(t, dir, "demo/templates/b.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}")
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	const a = "---\n# Source: demo/templates/a.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}\n"
+	const b = "---\n# Source: demo/templates/b.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}\n"
+	for _, tc := range []struct {
+		name  string
+		paths []string
+		want  string
+		names []string
+	}{
+		{"both", []string{"demo/templates/a.yaml", "demo/templates/b.yaml"}, a + b, []string{"ConfigMap/a", "ConfigMap/b"}},
+		{"reversed-paths", []string{"demo/templates/b.yaml", "demo/templates/a.yaml"}, a + b, []string{"ConfigMap/a", "ConfigMap/b"}},
+		{"first", []string{"demo/templates/a.yaml"}, a, []string{"ConfigMap/a"}},
+		{"second", []string{"demo/templates/b.yaml"}, b, []string{"ConfigMap/b"}},
+		{"unmatched", []string{"demo/templates/missing.yaml"}, "", []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var first string
+			for i := range 2 {
+				hr := newHR()
+				hr.Chart.Name = "demo"
+				out, err := cli.Template(t.Context(), hr, nil, Options{ShowOnly: tc.paths})
+				assert.NoError(t, err)
+				assert.Equal(t, out, tc.want)
+				assert.Diff(t, templateResources(t, out), tc.names)
+				if i == 0 {
+					first = out
+				} else {
+					assert.Equal(t, out, first)
+				}
+			}
+		})
+	}
+}

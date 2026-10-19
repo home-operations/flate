@@ -207,13 +207,11 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	if hr.CRDsPolicy == string(helmv2.Skip) {
 		inst.IncludeCRDs = false
 	}
-	// HR-scoped install/upgrade.disableHooks OR'd with the CLI flag,
-	// mirroring helm-controller. Either side forces hooks off — and
-	// the same effective flag drives the post-render hook filter at
-	// the bottom of Template so they don't leak into the output.
-	disableHooks := opts.NoHooks ||
-		(hr.Install != nil && hr.Install.DisableHooks) ||
-		(hr.Upgrade != nil && hr.Upgrade.DisableHooks)
+	disableHooks := hr.Install != nil && hr.Install.DisableHooks
+	if opts.IsUpgrade {
+		disableHooks = hr.Upgrade != nil && hr.Upgrade.DisableHooks
+	}
+	disableHooks = opts.NoHooks || disableHooks
 	inst.DisableHooks = disableHooks
 	inst.IsUpgrade = opts.IsUpgrade
 	inst.EnableDNS = opts.EnableDNS
@@ -447,21 +445,26 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 // map allocation on the hot render path.
 func filterShowOnly(content string, paths []string) string {
 	var out strings.Builder
-	for section := range strings.SplitSeq(content, "\n---\n") {
+	var opening string
+	for section := range strings.SplitAfterSeq(content, "\n---\n") {
+		frame, nextOpening := section, ""
+		if strings.HasSuffix(section, "\n---\n") {
+			// The boundary newline terminates this frame; the separator opens the next.
+			frame = strings.TrimSuffix(section, "---\n")
+			nextOpening = "---\n"
+		}
 		var header string
-		for line := range strings.SplitSeq(section, "\n") {
+		for line := range strings.SplitSeq(frame, "\n") {
 			if rest, ok := strings.CutPrefix(line, sourceHeader); ok {
 				header = rest
 				break
 			}
 		}
-		if !slices.Contains(paths, header) {
-			continue
+		if slices.Contains(paths, header) {
+			out.WriteString(opening)
+			out.WriteString(frame)
 		}
-		if out.Len() > 0 {
-			out.WriteString("---\n")
-		}
-		out.WriteString(section)
+		opening = nextOpening
 	}
 	return out.String()
 }

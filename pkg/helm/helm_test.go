@@ -110,9 +110,15 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	}
 }
 
-// helmChartFixture stages a tiny chart with a hook, a test hook, and a
-// CM template that the templating tests share.
 func helmChartFixture(t *testing.T) *Client {
+	t.Helper()
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t)))
+	return cli
+}
+
+func helmChartDirectory(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
@@ -124,12 +130,7 @@ func helmChartFixture(t *testing.T) *Client {
 	testutil.WriteFile(t, dir, "mychart/templates/test-hook.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-test\n  annotations:\n    \"helm.sh/hook\": test\ndata:\n  k: v\n")
 
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
-	return cli
+	return dir
 }
 
 // localChartResolver wires a *store.Store containing a single
@@ -175,40 +176,99 @@ func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 	}
 }
 
+func templateResources(t *testing.T, raw string) []string {
+	t.Helper()
+	docs, err := manifest.SplitDocs([]byte(raw))
+	assert.NoError(t, err)
+	resources := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		name, _ := manifest.DocMetadata(doc)
+		resources = append(resources, manifest.DocKind(doc)+"/"+name)
+	}
+	return resources
+}
+
 func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 	t.Parallel()
 	cli := helmChartFixture(t)
-	hr := newHR()
-	hr.Test = &helmv2.Test{Enable: true}
-
-	out, err := cli.Template(context.Background(), hr, nil, Options{})
-	if err != nil {
-		t.Fatalf("Template: %v", err)
-	}
-	if !strings.Contains(out, "demo-test") {
-		t.Errorf("test hook should render when spec.test.enable=true: %s", out)
+	for _, tc := range []struct {
+		name string
+		skip bool
+		want []string
+	}{
+		{"enabled", false, []string{"ConfigMap/demo-cm", "ConfigMap/demo-pre", "ConfigMap/demo-test"}},
+		{"explicit-skip", true, []string{"ConfigMap/demo-cm", "ConfigMap/demo-pre"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+			hr.Test = &helmv2.Test{Enable: true}
+			out, err := cli.Template(t.Context(), hr, nil, Options{SkipTests: tc.skip})
+			assert.NoError(t, err)
+			assert.Diff(t, templateResources(t, out), tc.want)
+		})
 	}
 }
 
-func TestTemplate_HRInstallDisableHooks(t *testing.T) {
+func TestTemplate_ActionHookPolicy(t *testing.T) {
 	t.Parallel()
 	cli := helmChartFixture(t)
-	hr := newHR()
-	hr.Install = &helmv2.Install{DisableHooks: true}
-
-	out, err := cli.Template(context.Background(), hr, nil, Options{})
-	if err != nil {
-		t.Fatalf("Template: %v", err)
+	on, off := true, false
+	for _, tc := range []struct {
+		name              string
+		isUpgrade         bool
+		install, upgrade  *bool
+		noHooks, wantHook bool
+	}{
+		{"install-both-allow", false, &off, &off, false, true},
+		{"install-inactive-disables", false, &off, &on, false, true},
+		{"install-active-disables", false, &on, &off, false, false},
+		{"install-both-disable", false, &on, &on, false, false},
+		{"upgrade-both-allow", true, &off, &off, false, true},
+		{"upgrade-inactive-disables", true, &on, &off, false, true},
+		{"upgrade-active-disables", true, &off, &on, false, false},
+		{"upgrade-both-disable", true, &on, &on, false, false},
+		{"install-override", false, &off, &off, true, false},
+		{"upgrade-override", true, &off, &off, true, false},
+		{"install-nil-active", false, nil, &on, false, true},
+		{"upgrade-nil-active", true, &on, nil, false, true},
+		{"install-absent", false, nil, nil, false, true},
+		{"upgrade-absent", true, nil, nil, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+			if tc.install != nil {
+				hr.Install = &helmv2.Install{DisableHooks: *tc.install}
+			}
+			if tc.upgrade != nil {
+				hr.Upgrade = &helmv2.Upgrade{DisableHooks: *tc.upgrade}
+			}
+			out, err := cli.Template(t.Context(), hr, nil, Options{IsUpgrade: tc.isUpgrade, NoHooks: tc.noHooks})
+			assert.NoError(t, err)
+			want := []string{"ConfigMap/demo-cm"}
+			if tc.wantHook {
+				want = append(want, "ConfigMap/demo-pre")
+			}
+			assert.Diff(t, templateResources(t, out), want)
+		})
 	}
-	if strings.Contains(out, "demo-pre") {
-		t.Errorf("HR-scoped spec.install.disableHooks should suppress pre-install hook: %s", out)
-	}
-	// Positive control — non-hook resources must still render so we
-	// know the absence of "demo-pre" is hook-suppression, not a broken
-	// render path.
-	if !strings.Contains(out, "demo-cm") {
-		t.Errorf("expected non-hook ConfigMap to still render: %s", out)
-	}
+	t.Run("ShowOnlyHook", func(t *testing.T) {
+		t.Parallel()
+		hr := newHR()
+		hr.Install = &helmv2.Install{}
+		hr.Upgrade = &helmv2.Upgrade{DisableHooks: true}
+		opts := Options{ShowOnly: []string{"mychart/templates/pre-install-hook.yaml"}}
+		out, err := cli.Template(t.Context(), hr, nil, opts)
+		assert.NoError(t, err)
+		const want = "---\n# Source: mychart/templates/pre-install-hook.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n"
+		assert.Equal(t, out, want)
+		assert.Diff(t, templateResources(t, out), []string{"ConfigMap/demo-pre"})
+		opts.NoHooks = true
+		out, err = cli.Template(t.Context(), hr, nil, opts)
+		assert.NoError(t, err)
+		assert.Equal(t, out, "")
+	})
 }
 
 func TestReleaseManifest_HookSeparators(t *testing.T) {
@@ -466,77 +526,35 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	})
 }
 
-// TestFilterShowOnly covers the --show-only flag's filter logic: keep
-// only sections whose "# Source: <path>" header matches one of the
-// requested template paths. The function is wired into Options.ShowOnly
-// for CLI consumers; pin the matrix here so future refactors don't
-// silently break the flag.
 func TestFilterShowOnly(t *testing.T) {
 	t.Parallel()
-	rendered := `# Source: mychart/templates/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: keep-me
----
-# Source: mychart/templates/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: drop-me
----
-# Source: mychart/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: keep-me-too
-`
-
-	t.Run("KeepsListedPaths", func(t *testing.T) {
-		t.Parallel()
-		got := filterShowOnly(rendered, []string{
-			"mychart/templates/configmap.yaml",
-			"mychart/templates/service.yaml",
+	const first = "# Source: mychart/templates/configmap.yaml\nkind: ConfigMap\nmetadata: {name: keep-me}\n"
+	const a = "---\n" + first
+	const b = "---\n# Source: mychart/templates/secret.yaml\nkind: Secret\nmetadata: {name: drop-me}\n"
+	const c = "---\n# Source: mychart/templates/service.yaml\nkind: Service\nmetadata: {name: keep-me-too}\n"
+	for _, tc := range []struct {
+		name, content string
+		paths         []string
+		want          string
+	}{
+		{"all-framed", a + b + c, []string{"mychart/templates/configmap.yaml", "mychart/templates/secret.yaml", "mychart/templates/service.yaml"}, a + b + c},
+		{"KeepsListedPaths", first + b + c, []string{"mychart/templates/configmap.yaml", "mychart/templates/service.yaml"}, first + c},
+		{"first-only", a + b + c, []string{"mychart/templates/configmap.yaml"}, a},
+		{"header-only-first", first + b + c, []string{"mychart/templates/configmap.yaml"}, first},
+		{"later-only", a + b + c, []string{"mychart/templates/secret.yaml"}, b},
+		{"final-newline", a + b + c, []string{"mychart/templates/service.yaml"}, c},
+		{"no-final-newline", a + b + strings.TrimSuffix(c, "\n"), []string{"mychart/templates/service.yaml"}, strings.TrimSuffix(c, "\n")},
+		{"retained-blank-line", a + "\n" + b, []string{"mychart/templates/configmap.yaml"}, a + "\n"},
+		{"EmptyPathListProducesEmptyOutput", a + b + c, nil, ""},
+		{"MissingHeaderSkipped", "kind: ConfigMap\n", []string{"any/path.yaml"}, ""},
+		{"missing-header-before-selection", "kind: ConfigMap\n" + b, []string{"mychart/templates/secret.yaml"}, b},
+		{"UnmatchedPathProducesEmptyOutput", a + b + c, []string{"mychart/templates/nonexistent.yaml"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, filterShowOnly(tc.content, tc.paths), tc.want)
 		})
-		if !strings.Contains(got, "name: keep-me") {
-			t.Errorf("missing kept configmap: %s", got)
-		}
-		if !strings.Contains(got, "name: keep-me-too") {
-			t.Errorf("missing kept service: %s", got)
-		}
-		if strings.Contains(got, "name: drop-me") {
-			t.Errorf("unfiltered secret leaked through: %s", got)
-		}
-	})
-
-	t.Run("EmptyPathListProducesEmptyOutput", func(t *testing.T) {
-		t.Parallel()
-		got := filterShowOnly(rendered, nil)
-		if got != "" {
-			t.Errorf("nil show-only list should drop everything; got: %s", got)
-		}
-	})
-
-	t.Run("MissingHeaderSkipped", func(t *testing.T) {
-		t.Parallel()
-		noHeader := `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: orphan
-`
-		got := filterShowOnly(noHeader, []string{"any/path.yaml"})
-		if got != "" {
-			t.Errorf("doc with no Source header must be dropped; got: %s", got)
-		}
-	})
-
-	t.Run("UnmatchedPathProducesEmptyOutput", func(t *testing.T) {
-		t.Parallel()
-		got := filterShowOnly(rendered, []string{"mychart/templates/nonexistent.yaml"})
-		if got != "" {
-			t.Errorf("unmatched show-only path should drop everything; got: %s", got)
-		}
-	})
+	}
 }
 
 func TestOptions_SkipResourceKinds(t *testing.T) {

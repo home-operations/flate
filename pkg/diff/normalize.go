@@ -8,24 +8,16 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// normalizeDocs clones each Doc's manifest and rewrites fields that
-// should not participate verbatim in human-facing diffs: the listed
-// annotation/label keys (chart-bump noise like helm.sh/chart,
-// checksum/config, …) and ConfigMap.binaryData values (opaque base64
-// blobs whose verbatim diff is gibberish to a reviewer and
-// pathologically expensive for dyff to render on large hook payloads
-// like kube-prometheus-stack's CRD upgrade bundle). Deep-copies so
-// the original tree (shared with other consumers in the same
-// orchestrator run) is untouched.
-func normalizeDocs(docs []Doc, attrs, fields []string, hook func(map[string]any)) []Doc {
+// The copy flag is true only when every manifest on the side was deep-copied.
+func normalizeDocs(docs []Doc, attrs, fields []string, hook func(map[string]any)) ([]Doc, bool) {
 	if len(attrs) == 0 && len(fields) == 0 && hook == nil && !docsContainBinaryData(docs) {
-		return docs
+		return docs, false
 	}
 	out := make([]Doc, len(docs))
 	for i, d := range docs {
 		out[i] = Doc{Manifest: normalizeManifest(d.Manifest, attrs, fields, hook), Parent: d.Parent}
 	}
-	return out
+	return out, true
 }
 
 // normalizeManifest returns a normalized deep copy of m: strip the listed
@@ -47,11 +39,7 @@ func normalizeManifest(m map[string]any, attrs, fields []string, hook func(map[s
 	return c
 }
 
-// docsContainBinaryData reports whether any doc is a ConfigMap
-// carrying a non-empty binaryData field — the only shape
-// redactBinaryData would touch. Used so the zero-input fast path in
-// normalizeDocs stays allocation-free when neither strip attrs nor
-// binary payloads are present.
+// Empty binaryData maps also require normalization copies.
 func docsContainBinaryData(docs []Doc) bool {
 	for _, d := range docs {
 		if _, ok := configMapBinaryData(d.Manifest); ok {

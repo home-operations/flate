@@ -82,7 +82,7 @@ func BenchmarkNormalizeDocs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = normalizeDocs(docs, attrs, nil, nil)
+		_, _ = normalizeDocs(docs, attrs, nil, nil)
 	}
 }
 

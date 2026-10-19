@@ -3,6 +3,9 @@ package diff
 import (
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func renderDiff(t *testing.T, left, right []Doc, opts Options) string {
@@ -16,21 +19,36 @@ func renderDiff(t *testing.T, left, right []Doc, opts Options) string {
 
 func TestRenderDocs_NormalizeBeforePair(t *testing.T) {
 	t.Parallel()
-	for _, format := range []Format{FormatDiff, FormatHTML} {
-		t.Run(string(format), func(t *testing.T) {
+	for _, format := range []string{"changes", "json", "diff", "html", "github"} {
+		t.Run(format, func(t *testing.T) {
 			t.Parallel()
 			left, right := cm("old", "ns", "owner", "same"), cm("new", "ns", "owner", "same")
-			opts := Options{Format: format, Normalize: func(m map[string]any) {
-				m["metadata"].(map[string]any)["name"] = "normalized"
-			}}
-			if out := renderDiff(t, []Doc{left}, []Doc{right}, opts); out != "" {
-				t.Errorf("normalized identities should pair without a diff, got:\n%s", out)
+			before := []Doc{left, right}
+			for i := range before {
+				before[i].Manifest = manifest.DeepCopyMap(before[i].Manifest)
 			}
-			for _, doc := range []Doc{left, right} {
-				if doc.Manifest["metadata"].(map[string]any)["name"] == "normalized" {
-					t.Error("normalization mutated an input manifest")
+			calls := map[string]int{}
+			opts := Options{Format: Format(format), Normalize: func(m map[string]any) {
+				meta := m["metadata"].(map[string]any)
+				calls[meta["name"].(string)]++
+				meta["name"] = "normalized"
+				m["data"].(map[string]any)["k"] = "normalized"
+			}}
+			switch format {
+			case "changes":
+				assert.Equal(t, len(Changes([]Doc{left}, []Doc{right}, opts)), 0)
+			case "json":
+				got := jsonChanges(t, []Doc{left}, []Doc{right}, opts)
+				if len(got) != 0 {
+					t.Errorf("normalized identities should produce zero JSON changes, got %d: %+v", len(got), got)
+				}
+			default:
+				if out := renderDiff(t, []Doc{left}, []Doc{right}, opts); out != "" {
+					t.Errorf("normalized identities should pair without a diff, got:\n%s", out)
 				}
 			}
+			assert.Diff(t, calls, map[string]int{"old": 1, "new": 1})
+			assert.Diff(t, []Doc{left, right}, before)
 		})
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -30,7 +32,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 			right := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 			right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", tt.apiVersion
 			l, r := []Doc{left}, []Doc{right}
-			if got := pair(l, r); len(got) != tt.pairs {
+			if got, _, _ := pair(l, r, Options{}); len(got) != tt.pairs {
 				t.Fatalf("pairs = %+v, want %d", got, tt.pairs)
 			}
 			changes := Changes(l, r, Options{})
@@ -132,16 +134,19 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 			t.Cleanup(func() { slog.SetDefault(previous) })
 
-			first := cmDoc(parent, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "shadowed", "")
-			last := cmDoc(parent, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "retained", "")
+			first := cmDoc(parent, manifest.NamedResource{Name: "first", Namespace: "ns"}, "shadowed", "first-1")
+			last := cmDoc(parent, manifest.NamedResource{Name: "last", Namespace: "ns"}, "retained", "last-2")
 			last.Parent.Path = "new/apps"
 			last.Manifest["apiVersion"] = "v2"
-			other := cmDoc(parent, manifest.NamedResource{Name: "shared", Namespace: "ns"}, "other-side", "")
+			other := cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "ns"}, "other-side", "other-3")
 			left, right := []Doc{first, last}, []Doc{other}
 			if side == "right" {
 				left, right = right, left
 			}
-			pairs := pair(left, right)
+			pairs, _, _ := pair(left, right, Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
+				meta := m["metadata"].(map[string]any)
+				meta["name"], meta["namespace"] = "normalized", "normalized-ns"
+			}})
 			if len(pairs) != 1 {
 				t.Fatalf("expected one paired resource, got %d", len(pairs))
 			}
@@ -152,14 +157,61 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if retained["data"].(map[string]any)["k"] != "retained" || counterpart["data"].(map[string]any)["k"] != "other-side" {
 				t.Fatalf("expected last document paired with other side, got %+v", pairs[0])
 			}
+			retainedChart, counterpartChart := pairs[0].aChart, pairs[0].bChart
+			wantParent, wantVersion := other.Parent, "v1"
+			if side == "right" {
+				retainedChart, counterpartChart = counterpartChart, retainedChart
+				wantParent, wantVersion = last.Parent, "v2"
+			}
+			assert.Equal(t, retainedChart, "last-2")
+			assert.Equal(t, counterpartChart, "other-3")
+			assert.Equal(t, pairs[0].parent, wantParent)
+			assert.Equal(t, pairs[0].apiVersion, wantVersion)
+			assert.Equal(t, pairs[0].resource.Name, "normalized")
+			assert.Equal(t, chartLabel(retained), "")
+			assert.Equal(t, chartLabel(counterpart), "")
 			if strings.Count(logs.String(), "level=WARN") != 1 {
 				t.Fatalf("expected one duplicate warning, got %q", logs.String())
 			}
-			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v2", "kind=ConfigMap", "namespace=ns", "name=shared"} {
+			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v2", "kind=ConfigMap", "namespace=normalized-ns", "name=normalized"} {
 				if !strings.Contains(logs.String(), field) {
 					t.Errorf("warning missing %q: %s", field, logs.String())
 				}
 			}
 		})
 	}
+}
+
+func TestChangedPairs_NormalizeOncePerIteration(t *testing.T) {
+	t.Parallel()
+	left, right := []Doc{cm("x", "ns", "owner", "old")}, []Doc{cm("x", "ns", "owner", "new")}
+	before := []Doc{left[0], right[0]}
+	for i := range before {
+		before[i].Manifest = manifest.DeepCopyMap(before[i].Manifest)
+	}
+	calls := 0
+	seq := changedPairs(left, right, Options{Normalize: func(m map[string]any) {
+		calls++
+		meta := m["metadata"].(map[string]any)
+		meta["name"] = meta["name"].(string) + "-normalized"
+	}})
+	var first []output.LineChange
+	for c, err := range seq {
+		assert.NoError(t, err)
+		first = append(first, c)
+	}
+	assert.Equal(t, calls, 2)
+	if len(first) != 1 {
+		t.Fatalf("want one changed pair, got %+v", first)
+	}
+	assert.Equal(t, first[0].Resource.Name, "x-normalized")
+	calls = 0
+	var second []output.LineChange
+	for c, err := range seq {
+		assert.NoError(t, err)
+		second = append(second, c)
+	}
+	assert.Equal(t, calls, 2)
+	assert.Diff(t, second, first)
+	assert.Diff(t, []Doc{left[0], right[0]}, before)
 }

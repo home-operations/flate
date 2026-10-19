@@ -21,15 +21,16 @@ type pairedResource struct {
 	resource   manifest.NamedResource
 	apiVersion string
 	a, b       map[string]any
+	aChart     string
+	bChart     string
 }
 
 // changedPairs yields YAML differences after normalization, which can change identities.
 // A nil side marshals to an empty document, so its counterpart is a full add/remove.
 func changedPairs(left, right []Doc, opts Options) iter.Seq2[output.LineChange, error] {
 	return func(yield func(output.LineChange, error) bool) {
-		left = normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
-		right = normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
-		for _, p := range pair(left, right) {
+		paired, _, _ := pair(left, right, opts)
+		for _, p := range paired {
 			from, err := marshalForUnified(p.a)
 			if err != nil {
 				yield(output.LineChange{}, err)
@@ -78,9 +79,9 @@ type pairKey struct {
 // Deployment from HelmRelease B. The result is sorted by parent then
 // resource identity for deterministic output. Duplicate identities retain
 // the last document on each side, matching apply order, and emit a warning.
-func pair(left, right []Doc) []pairedResource {
+func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
-	add := func(side string, d Doc) {
+	add := func(side string, d Doc, chart string) {
 		kind := manifest.DocKind(d.Manifest)
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
@@ -93,9 +94,9 @@ func pair(left, right []Doc) []pairedResource {
 		}
 		p.parent = d.Parent
 		p.apiVersion = apiVersion
-		dst := &p.a
+		dst, dstChart := &p.a, &p.aChart
 		if side == "right" {
-			dst = &p.b
+			dst, dstChart = &p.b, &p.bChart
 		}
 		if *dst != nil {
 			slog.Warn("diff: duplicate document shadows an earlier document",
@@ -104,13 +105,15 @@ func pair(left, right []Doc) []pairedResource {
 				"parentPath", d.Parent.Path, "apiVersion", apiVersion,
 				"group", resource.Group, "kind", kind, "namespace", ns, "name", name)
 		}
-		*dst = d.Manifest
+		*dst, *dstChart = d.Manifest, chart
 	}
-	for _, d := range left {
-		add("left", d)
+	normalizedLeft, leftCopied := normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
+	for i, d := range normalizedLeft {
+		add("left", d, chartLabel(left[i].Manifest)) //nolint:gosec // G602: normalizeDocs preserves input length and order.
 	}
-	for _, d := range right {
-		add("right", d)
+	normalizedRight, rightCopied := normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
+	for i, d := range normalizedRight {
+		add("right", d, chartLabel(right[i].Manifest)) //nolint:gosec // G602: normalizeDocs preserves input length and order.
 	}
 	out := make([]pairedResource, 0, len(idx))
 	for _, p := range idx {
@@ -122,5 +125,5 @@ func pair(left, right []Doc) []pairedResource {
 			a.resource.Compare(b.resource),
 		)
 	})
-	return out
+	return out, leftCopied, rightCopied
 }

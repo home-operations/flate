@@ -14,11 +14,13 @@ import (
 
 // Whole-document input preserves dyff's Kubernetes identity pairing and native labels.
 func renderNative(left, right []Doc, opts Options) ([]byte, error) {
-	from, err := multiDocInput("from", normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize))
+	normalizedLeft, _ := normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
+	from, err := multiDocInput("from", normalizedLeft)
 	if err != nil {
 		return nil, err
 	}
-	to, err := multiDocInput("to", normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize))
+	normalizedRight, _ := normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
+	to, err := multiDocInput("to", normalizedRight)
 	if err != nil {
 		return nil, err
 	}

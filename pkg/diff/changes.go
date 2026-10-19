@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // ChangeStatus classifies how a resource differs between two doc sets.
@@ -48,31 +49,26 @@ type Change struct {
 	NewChart string `json:"newChart"`
 }
 
-// Changes pairs left against right by canonical parent and resource identity,
-// drops byte-identical resources, and returns the
-// remaining differences as structured data. Each side is normalized
-// (opts.StripAttrs / opts.StripFields, ConfigMap binaryData redaction,
-// then the optional opts.Normalize hook) before the equality check, so
-// render-time noise — chart-bump annotations, volatile spec fields, a
-// consumer's secret/cert redaction — never reads as a spurious change.
-// opts.Format is ignored (Changes returns data, not formatted bytes).
-//
-// This is the data RenderDocs renders: exposed so SDK consumers stop
-// re-implementing the pairing. The result is sorted by parent then
-// resource identity for deterministic output.
+// Changes normalizes left and right before pairing by canonical parent and
+// resource identity, and returns the differing resources as structured data.
+// Normalization strips opts.StripAttrs and opts.StripFields, redacts ConfigMap
+// binaryData, then applies opts.Normalize. Original chart labels are retained
+// as provenance. The result is sorted by parent then resource identity.
+// Returned manifests are independent of the input documents.
+// opts.Format is ignored.
 func Changes(left, right []Doc, opts Options) []Change {
-	// Pair the RAW docs so OldChart/NewChart can read helm.sh/chart
-	// before the strip removes it; normalize each side per-resource
-	// afterward. The canonical parent and resource pair key is
-	// untouched by normalization, so raw and normalized pair identically.
-	paired := pair(left, right)
+	paired, leftCopied, rightCopied := pair(left, right, opts)
 	out := make([]Change, 0, len(paired))
 	for _, p := range paired {
-		old := normalizeManifest(p.a, opts.StripAttrs, opts.StripFields, opts.Normalize)
-		nw := normalizeManifest(p.b, opts.StripAttrs, opts.StripFields, opts.Normalize)
-		status, differs := classify(old, nw)
+		status, differs := classify(p.a, p.b)
 		if !differs {
 			continue
+		}
+		if !leftCopied {
+			p.a = manifest.DeepCopyMap(p.a)
+		}
+		if !rightCopied {
+			p.b = manifest.DeepCopyMap(p.b)
 		}
 		out = append(out, Change{
 			Parent:     p.parent,
@@ -81,10 +77,10 @@ func Changes(left, right []Doc, opts Options) []Change {
 			Namespace:  p.resource.Namespace,
 			Name:       p.resource.Name,
 			Status:     status,
-			Old:        old,
-			New:        nw,
-			OldChart:   chartLabel(p.a),
-			NewChart:   chartLabel(p.b),
+			Old:        p.a,
+			New:        p.b,
+			OldChart:   p.aChart,
+			NewChart:   p.bChart,
 		})
 	}
 	return out

@@ -3,7 +3,9 @@ package tree_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"path"
 	"slices"
 	"sync"
 	"testing"
@@ -13,6 +15,218 @@ import (
 )
 
 type foreignTree struct{ fs.ReadLinkFS }
+
+func TestBuilder_MountRoot(t *testing.T) {
+	t.Parallel()
+	for _, indexed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indexed=%t", indexed), func(t *testing.T) {
+			t.Parallel()
+			tr, contract := rootMountFixture(t, indexed)
+			for _, view := range []struct {
+				name string
+				tree *tree.Tree
+			}{{"tree", tr}, {"sealed_overlay", build(t, tree.NewBuilder(tr))}} {
+				t.Run(view.name, func(t *testing.T) {
+					t.Parallel()
+					assertMountView(t, view.tree, contract)
+				})
+			}
+		})
+	}
+}
+
+func TestBuilder_MountReplacement(t *testing.T) {
+	t.Parallel()
+	for _, lower := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indexed_lower=%t", lower), func(t *testing.T) {
+			t.Parallel()
+			tr, contract := replacementMountFixture(t, lower)
+			for _, view := range []struct {
+				name string
+				tree *tree.Tree
+			}{{"tree", tr}, {"sealed_overlay", build(t, tree.NewBuilder(tr))}} {
+				t.Run(view.name, func(t *testing.T) {
+					t.Parallel()
+					assertMountView(t, view.tree, contract)
+				})
+			}
+		})
+	}
+}
+
+func TestBuilder_SealedMountConcurrentReads(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		name  string
+		build func(*testing.T, bool) (*tree.Tree, mountContract)
+	}{{"root", rootMountFixture}, {"replacement", replacementMountFixture}} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			tr, contract := fixture.build(t, true)
+			overlay := build(t, tree.NewBuilder(tr))
+			start := make(chan struct{})
+			var readers sync.WaitGroup
+			for range 2 {
+				readers.Go(func() {
+					<-start
+					assertMountView(t, tr, contract)
+					assertMountView(t, overlay, contract)
+				})
+			}
+			close(start)
+			readers.Wait()
+		})
+	}
+}
+
+type mountEntry struct {
+	name, data string
+	mode       fs.FileMode
+}
+
+type mountContract struct {
+	entries []mountEntry
+	missing []string
+}
+
+func rootMountFixture(t *testing.T, indexed bool) (*tree.Tree, mountContract) {
+	t.Helper()
+	b := tree.NewBuilder(nil)
+	contract := mountContract{entries: []mountEntry{
+		{name: ".", mode: fs.ModeDir | 0o750},
+		{name: "f", data: "mounted root", mode: 0o640},
+		{name: "sub", mode: fs.ModeDir | 0o710},
+		{name: "sub/g", data: "mounted nested", mode: 0o600},
+		{name: "sub/override", data: "indexed override", mode: 0o604},
+	}}
+	if indexed {
+		for _, name := range []string{"old", "old-sub/gone", "d2/keep"} {
+			must(t, b.AddFile(name, []byte("replaced"), 0o644))
+		}
+		contract.missing = []string{"old", "old-sub", "old-sub/gone", "d2", "d2/keep"}
+	}
+	must(t, b.Mount(".", fstest.MapFS{
+		".":            {Mode: fs.ModeDir | 0o750},
+		"f":            {Data: []byte("mounted root"), Mode: 0o640},
+		"sub":          {Mode: fs.ModeDir | 0o710},
+		"sub/g":        {Data: []byte("mounted nested"), Mode: 0o600},
+		"sub/override": {Data: []byte("mounted override"), Mode: 0o644},
+	}))
+	must(t, b.AddFile("sub/override", []byte("indexed override"), 0o604))
+	return build(t, b), contract
+}
+
+func replacementMountFixture(t *testing.T, lower bool) (*tree.Tree, mountContract) {
+	t.Helper()
+	b := tree.NewBuilder(nil)
+	for _, name := range []string{"d/old", "d/sub/old"} {
+		must(t, b.AddFile(name, []byte("replaced"), 0o600))
+	}
+	must(t, b.AddFile("d2/keep", []byte("outside"), 0o641))
+	if lower {
+		b = tree.NewBuilder(build(t, b))
+	}
+	must(t, b.Mount("d", fstest.MapFS{
+		".":   {Mode: fs.ModeDir | 0o750},
+		"new": {Data: []byte("mounted new"), Mode: 0o640},
+	}))
+	return build(t, b), mountContract{entries: []mountEntry{
+		{name: ".", mode: fs.ModeDir | 0o755},
+		{name: "d", mode: fs.ModeDir | 0o750},
+		{name: "d/new", data: "mounted new", mode: 0o640},
+		{name: "d2", mode: fs.ModeDir | 0o755},
+		{name: "d2/keep", data: "outside", mode: 0o641},
+	}, missing: []string{"d/old", "d/sub", "d/sub/old"}}
+}
+
+func assertMountView(t *testing.T, tr *tree.Tree, contract mountContract) {
+	t.Helper()
+	wantWalk := make([]string, 0, len(contract.entries))
+	for _, want := range contract.entries {
+		wantWalk = append(wantWalk, want.name)
+		info, err := fs.Stat(tr, want.name)
+		if err != nil {
+			t.Errorf("Stat(%q): %v", want.name, err)
+		} else if info.Mode() != want.mode {
+			t.Errorf("Stat(%q) mode = %v, want %v", want.name, info.Mode(), want.mode)
+		}
+		if want.mode.IsDir() {
+			entries, err := fs.ReadDir(tr, want.name)
+			if err != nil {
+				t.Errorf("ReadDir(%q): %v", want.name, err)
+				continue
+			}
+			var names, wantNames []string
+			for _, child := range contract.entries {
+				if child.name != "." && path.Dir(child.name) == want.name {
+					wantNames = append(wantNames, path.Base(child.name))
+				}
+			}
+			slices.Sort(wantNames)
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+				listed, err := entry.Info()
+				actual, statErr := fs.Stat(tr, path.Join(want.name, entry.Name()))
+				if err != nil || statErr != nil {
+					t.Errorf("listed %q metadata: Info=%v Stat=%v", entry.Name(), err, statErr)
+				} else if listed.Mode() != actual.Mode() || listed.Size() != actual.Size() {
+					t.Errorf("listed %q metadata disagrees with Stat", entry.Name())
+				}
+			}
+			if !slices.Equal(names, wantNames) {
+				t.Errorf("ReadDir(%q) = %v, want %v", want.name, names, wantNames)
+			}
+			continue
+		}
+		data, err := fs.ReadFile(tr, want.name)
+		if err != nil || string(data) != want.data {
+			t.Errorf("ReadFile(%q) = %q, %v; want %q", want.name, data, err, want.data)
+		}
+		file, err := tr.Open(want.name)
+		if err != nil {
+			t.Errorf("Open(%q): %v", want.name, err)
+			continue
+		}
+		opened, statErr := file.Stat()
+		data, readErr := io.ReadAll(file)
+		closeErr := file.Close()
+		if statErr != nil || readErr != nil || closeErr != nil || string(data) != want.data {
+			t.Errorf("opened %q = %q, Stat=%v Read=%v Close=%v", want.name, data, statErr, readErr, closeErr)
+		} else if opened.Mode() != want.mode || opened.Size() != int64(len(want.data)) {
+			t.Errorf("opened %q metadata = %v, %d", want.name, opened.Mode(), opened.Size())
+		}
+	}
+	for _, name := range contract.missing {
+		if _, err := fs.ReadFile(tr, name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("ReadFile(%q) = %v, want ErrNotExist", name, err)
+		}
+		if file, err := tr.Open(name); !errors.Is(err, fs.ErrNotExist) {
+			if err == nil {
+				file.Close()
+			}
+			t.Errorf("Open(%q) = %v, want ErrNotExist", name, err)
+		}
+		if _, err := fs.Stat(tr, name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("Stat(%q) = %v, want ErrNotExist", name, err)
+		}
+	}
+	slices.Sort(wantWalk)
+	for _, walk := range []struct {
+		name string
+		run  func(fs.WalkDirFunc) error
+	}{{"WalkDir", func(fn fs.WalkDirFunc) error { return fs.WalkDir(tr, ".", fn) }}, {"WalkRaw", func(fn fs.WalkDirFunc) error { return tr.WalkRaw(".", fn) }}} {
+		for range 2 {
+			var visited []string
+			err := walk.run(func(name string, _ fs.DirEntry, err error) error {
+				visited = append(visited, name)
+				return err
+			})
+			if err != nil || !slices.Equal(visited, wantWalk) {
+				t.Errorf("%s = %v, %v; want %v", walk.name, visited, err, wantWalk)
+			}
+		}
+	}
+}
 
 func TestBuilder_ForeignLower(t *testing.T) {
 	t.Parallel()

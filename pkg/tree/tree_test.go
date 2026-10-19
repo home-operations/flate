@@ -41,7 +41,7 @@ func build(tb testing.TB, b *tree.Builder) *tree.Tree {
 func fixture(tb testing.TB) *tree.Tree {
 	tb.Helper()
 	b := tree.NewBuilder(nil)
-	must(tb, b.AddDir("empty", 0o750))
+	must(tb, b.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o750}}))
 	must(tb, b.AddFile("dir/a +@日本.yaml", []byte("alpha"), 0o640))
 	must(tb, b.AddFile("dir/z.yaml", []byte("zulu"), 0o755))
 	must(tb, b.AddSymlink("alias", "dir/a +@日本.yaml"))
@@ -64,12 +64,16 @@ func TestTree_PlainPathsDoNotAllocateMetadata(t *testing.T) {
 	must(t, b.AddFile("dir/real.yaml", []byte("x"), 0o644))
 	must(t, b.AddSymlink("alias", "dir/real.yaml"))
 	tr := build(t, b)
+	mounted := tree.NewBuilder(nil)
+	must(t, mounted.Mount(".", fstest.MapFS{".": {Mode: fs.ModeDir | 0o755}}))
+	root := build(t, mounted)
 	for name, run := range map[string]func(){
-		"stat-file":  func() { _, _ = tr.Stat("dir/real.yaml") },
-		"stat-dir":   func() { _, _ = tr.Stat("dir") },
-		"stat-root":  func() { _, _ = tr.Stat(".") },
-		"lstat-link": func() { _, _ = tr.Lstat("alias") },
-		"readlink":   func() { _, _ = tr.ReadLink("alias") },
+		"stat-file":         func() { _, _ = tr.Stat("dir/real.yaml") },
+		"stat-dir":          func() { _, _ = tr.Stat("dir") },
+		"stat-root":         func() { _, _ = tr.Stat(".") },
+		"stat-mounted-root": func() { _, _ = root.Stat(".") },
+		"lstat-link":        func() { _, _ = tr.Lstat("alias") },
+		"readlink":          func() { _, _ = tr.ReadLink("alias") },
 	} {
 		t.Run(name, func(t *testing.T) { assert.Equal(t, testing.AllocsPerRun(100, run), 0.0) })
 	}

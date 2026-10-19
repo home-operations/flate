@@ -90,9 +90,12 @@ func (t *view) lookup(name string) (*node, error) {
 		return nil, fs.ErrNotExist
 	}
 	if t.input != nil {
-		for prefix := path.Dir(name); prefix != "."; prefix = path.Dir(prefix) {
+		for prefix := path.Dir(name); ; prefix = path.Dir(prefix) {
 			input := t.input.mounts[prefix]
 			if input == nil {
+				if prefix == "." {
+					break
+				}
 				continue
 			}
 			rel := strings.TrimPrefix(name, prefix+"/")

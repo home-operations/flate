@@ -72,17 +72,13 @@ func TestBuilder_FileDirConflictErrors(t *testing.T) {
 		first  func(*tree.Builder) error
 		second func(*tree.Builder) error
 	}{
-		{name: "file-then-dir", first: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
-			second: func(b *tree.Builder) error { return b.AddDir("a", 0o755) }},
-		{name: "dir-then-file", first: func(b *tree.Builder) error { return b.AddDir("a", 0o755) },
-			second: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) }},
 		{name: "file-then-child", first: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) },
 			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) }},
 		{name: "child-then-file", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
 			second: func(b *tree.Builder) error { return b.AddFile("a", nil, 0o600) }},
 		{name: "link-then-child", first: func(b *tree.Builder) error { return b.AddSymlink("a", ".") },
-			second: func(b *tree.Builder) error { return b.AddDir("a/b", 0o755) }},
-		{name: "dir-then-link", first: func(b *tree.Builder) error { return b.AddDir("a", 0o755) },
+			second: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) }},
+		{name: "dir-then-link", first: func(b *tree.Builder) error { return b.AddFile("a/b", nil, 0o600) },
 			second: func(b *tree.Builder) error { return b.AddSymlink("a", ".") }},
 	}
 	for _, tc := range cases {
@@ -104,7 +100,7 @@ func TestBuilder_Sealed(t *testing.T) {
 	must(t, b.AddFile("file", []byte("data"), 0o600))
 	tr := build(t, b)
 	assert.Equal(t, errors.Is(b.AddFile("file", nil, 0o600), tree.ErrSealed), true)
-	assert.Equal(t, errors.Is(b.AddDir("dir", 0o755), tree.ErrSealed), true)
+	assert.Equal(t, errors.Is(b.Mount("dir", fstest.MapFS{".": {Mode: fs.ModeDir | 0o755}}), tree.ErrSealed), true)
 	assert.Equal(t, errors.Is(b.AddSymlink("link", "file"), tree.ErrSealed), true)
 	assert.Equal(t, errors.Is(b.RemoveAll("."), tree.ErrSealed), true)
 	_, err := b.Build()
@@ -155,7 +151,6 @@ func TestOverlay_RemoveRecreate(t *testing.T) {
 	b := tree.NewBuilder(lower)
 	must(t, b.AddFile("dir/upper", []byte("upper"), 0o600))
 	must(t, b.RemoveAll("dir"))
-	must(t, b.AddDir("dir", 0o750))
 	must(t, b.AddFile("dir/new", []byte("new"), 0o600))
 	for _, name := range []string{"dir/a +@日本.yaml", "dir/z.yaml", "dir/upper"} {
 		_, err := b.Stat(name)
@@ -245,7 +240,7 @@ func TestOverlay_RemoveAllIsExact(t *testing.T) {
 				b = tree.NewBuilder(fixture(t))
 			} else {
 				b = tree.NewBuilder(nil)
-				must(t, b.AddDir("empty", 0o750))
+				must(t, b.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o750}}))
 			}
 			must(t, b.AddFile("dir/a", []byte("a"), 0o600))
 			must(t, b.AddFile("dir2/b", []byte("b"), 0o600))
@@ -293,7 +288,7 @@ func TestOverlay_RemoveAllRootKeepsRoot(t *testing.T) {
 				b = tree.NewBuilder(nil)
 			}
 			must(t, b.AddFile("upper/file", []byte("u"), 0o600))
-			must(t, b.AddDir("d", 0o700))
+			must(t, b.Mount("d", fstest.MapFS{".": {Mode: fs.ModeDir | 0o700}}))
 			must(t, b.RemoveAll("."))
 			info, err := b.Stat(".")
 			must(t, err)
@@ -316,8 +311,6 @@ func TestBuilder_RejectsMalformedKinds(t *testing.T) {
 	for name, err := range map[string]error{
 		"file-dir-bit":       b.AddFile("f", nil, fs.ModeDir|0o755),
 		"file-symlink-bit":   b.AddFile("f", nil, fs.ModeSymlink|0o777),
-		"dir-symlink-bit":    b.AddDir("d", fs.ModeSymlink|0o755),
-		"dir-file-bit":       b.AddDir("d", fs.ModeDevice|0o755),
 		"symlink-root":       b.AddSymlink(".", "x"),
 		"symlink-nul":        b.AddSymlink("l", "a\x00b"),
 		"symlink-empty-name": b.AddSymlink("", "x"),
@@ -331,10 +324,9 @@ func TestBuilder_RejectsMalformedKinds(t *testing.T) {
 func TestBuilder_Metadata(t *testing.T) {
 	t.Parallel()
 	b := tree.NewBuilder(nil)
-	must(t, b.AddDir("empty", 0o750))
+	must(t, b.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o750}}))
 	must(t, b.AddFile("implicit/file", []byte("x"), 0o600))
-	must(t, b.AddFile("later/file", []byte("x"), 0o600))
-	must(t, b.AddDir("later", 0o700))
+	must(t, b.Mount("later", fstest.MapFS{".": {Mode: fs.ModeDir | 0o700}, "file": {Data: []byte("x"), Mode: 0o600}}))
 	must(t, b.AddSymlink("link", "implicit/file"))
 	lower := build(t, b)
 	check := func(t *testing.T, tr *tree.Tree) {
@@ -346,6 +338,14 @@ func TestBuilder_Metadata(t *testing.T) {
 			must(t, err)
 			assert.Equal(t, info.Mode(), want)
 		}
+		for _, name := range []string{"later/file", "implicit/file"} {
+			data, err := tr.ReadFile(name)
+			must(t, err)
+			assert.Equal(t, string(data), "x")
+		}
+		entries, err := tr.ReadDir("empty")
+		must(t, err)
+		assert.Equal(t, len(entries), 0)
 		info, err := tr.Lstat("link")
 		must(t, err)
 		assert.Equal(t, info.Mode(), fs.ModeSymlink|0o777)
@@ -353,8 +353,8 @@ func TestBuilder_Metadata(t *testing.T) {
 	}
 	check(t, lower)
 	o := tree.NewBuilder(lower)
-	must(t, o.AddDir("empty", 0o700))
-	must(t, o.AddDir("implicit", 0o710))
+	must(t, o.Mount("empty", fstest.MapFS{".": {Mode: fs.ModeDir | 0o700}}))
+	must(t, o.Mount("implicit", fstest.MapFS{".": {Mode: fs.ModeDir | 0o710}, "file": {Data: []byte("x"), Mode: 0o600}}))
 	over := build(t, o)
 	info, err := over.Stat("empty")
 	must(t, err)

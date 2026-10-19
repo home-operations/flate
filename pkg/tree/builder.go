@@ -100,24 +100,6 @@ func (b *Builder) put(name string, n *node) error {
 	return nil
 }
 
-// AddDir creates a directory and missing parents. A file or link at that path
-// or any parent is a conflict; replacing a kind requires RemoveAll first.
-func (b *Builder) AddDir(name string, mode fs.FileMode) error {
-	p, err := b.normalize("adddir", name)
-	if err != nil {
-		return err
-	}
-	if mode.Type() != 0 && mode.Type() != fs.ModeDir {
-		return &fs.PathError{Op: "adddir", Path: name, Err: fs.ErrInvalid}
-	}
-	n, err := b.directory(p)
-	if err != nil {
-		return &fs.PathError{Op: "adddir", Path: name, Err: err}
-	}
-	n.mode = mode | fs.ModeDir
-	return nil
-}
-
 // AddFile copies data once. Duplicate files are last-wins; directories and
 // symlinks are conflicts until removed explicitly.
 func (b *Builder) AddFile(name string, data []byte, mode fs.FileMode) error {
@@ -210,7 +192,7 @@ func (b *Builder) Build() (*Tree, error) {
 	return t, nil
 }
 
-// Mount attaches immutable content at one directory without copying its bytes.
+// Mount replaces a directory's indexed subtree with immutable content without copying bytes.
 // Mounted inputs MUST remain read-only for the resulting tree lifetime.
 func (b *Builder) Mount(name string, input fs.FS) error {
 	p, err := b.normalize("mount", name)
@@ -232,5 +214,11 @@ func (b *Builder) Mount(name string, input fs.FS) error {
 		b.input.mounts = make(map[string]fs.FS)
 	}
 	b.input.mounts[p] = input
+	prefix := p + "/"
+	for key := range b.nodes {
+		if key != p && (p == "." || strings.HasPrefix(key, prefix)) {
+			delete(b.nodes, key)
+		}
+	}
 	return nil
 }

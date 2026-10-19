@@ -745,10 +745,14 @@ func TestResolvePaths_ReusesRoot(t *testing.T) {
 			assert.Equal(t, result.Source, result.BaseInput)
 			assert.Equal(t, result.ScanPath, current)
 			assert.Equal(t, result.BaseScanPath, original)
-			_, err = ResolvePaths(t.Context(), filepath.Join(root, "missing"), original)
+			missing := filepath.Join(root, "missing")
+			_, err = ResolvePaths(t.Context(), missing, original)
 			if !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("missing same-root scan was admitted: %v", err)
 			}
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+			assert.Equal(t, strings.Contains(err.Error(), missing), true)
 		})
 	}
 }

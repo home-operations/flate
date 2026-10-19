@@ -136,7 +136,7 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 		}
 	} else if after.ScanPath != before.ScanPath {
 		if _, err := os.Stat(after.ScanPath); err != nil {
-			return nil, fmt.Errorf("--path %q: %w", after.ScanPath, err)
+			return nil, fmt.Errorf("%w: --path %q: %w", manifest.ErrInput, after.ScanPath, err)
 		}
 	}
 	return &Result{Source: input, BaseInput: baseInput, ScanPath: after.ScanPath, BaseScanPath: before.ScanPath, SelfURLs: urls}, nil

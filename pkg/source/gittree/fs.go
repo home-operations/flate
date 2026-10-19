@@ -186,16 +186,6 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		case *localView:
 			current = current.OperationView()
 			current.location = opts.Location
-			if source && commit == plumbing.ZeroHash {
-				var err error
-				matcher, err = current.SourcePolicy(ctx)
-				if err != nil {
-					return nil, "", err
-				}
-				if opts.Ignore != "" {
-					matcher = matcher.WithExtra(opts.Ignore)
-				}
-			}
 		case *gitView:
 			if v.refresh != nil {
 				refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)

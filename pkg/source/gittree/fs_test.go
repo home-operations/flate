@@ -125,6 +125,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		parent := t.TempDir()
 		root := filepath.Join(parent, "root")
 		testutil.WriteFile(t, root, "regular.txt", "content")
+		testutil.WriteFile(t, root, "nested/deeper/regular.txt", "nested content")
 		testutil.WriteFile(t, parent, "outside", "outside")
 		for name, target := range map[string]string{"file-link": "regular.txt", "dir-link": ".", "dangling": "missing", "escape": "../outside"} {
 			assert.Equal(t, os.Symlink(target, filepath.Join(root, name)), nil)
@@ -144,6 +145,13 @@ func TestNew_EntryPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		data, err := fs.ReadFile(view, "nested/deeper/regular.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "nested content")
+		info, err := fs.Stat(view, "nested/deeper/regular.txt")
+		assert.NoError(t, err)
+		assert.Equal(t, info.Mode().IsRegular(), true)
+		assert.Equal(t, info.Size(), int64(len("nested content")))
 		for _, reader := range []struct {
 			name string
 			fs   fs.FS
@@ -151,7 +159,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 			t.Run(reader.name, func(t *testing.T) {
 				t.Parallel()
 				entries, err := fs.ReadDir(reader.fs, ".")
-				if err != nil || len(entries) != 1 || entries[0].Name() != "regular.txt" {
+				if err != nil || len(entries) != 2 || entries[0].Name() != "nested" || entries[1].Name() != "regular.txt" {
 					t.Fatalf("admitted entries = %v, %v", entries, err)
 				}
 				for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "socket"} {
@@ -559,6 +567,25 @@ func TestNew_EntryPolicy(t *testing.T) {
 			_, err = fs.Stat(shaped, name)
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 		}
+		testutil.WriteFile(t, root, ".sourceignore", "image.png\n")
+		second, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: input, Ignore: "image.png\n"})
+		assert.NoError(t, err)
+		assert.Equal(t, pin, "")
+		assert.Diff(t, second.PolicyEvidence(), any(content))
+		assert.Diff(t, shaped.PolicyEvidence(), any(content))
+		assert.Diff(t, policy.Evidence(), want)
+		_, err = fs.Stat(second, "kept")
+		assert.NoError(t, err)
+		for _, name := range []string{"image.png", "discard", "nested/hidden"} {
+			_, err = fs.Stat(second, name)
+			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+		}
+		assert.Equal(t, policy.Match("kept", false), false)
+		assert.Equal(t, policy.Match("image.png", false), false)
+		_, err = fs.Stat(shaped, "kept")
+		assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+		_, err = fs.Stat(shaped, "image.png")
+		assert.NoError(t, err)
 		retained, pin, err := operation(t, shaped, Source)
 		assert.NoError(t, err)
 		assert.Equal(t, pin, "")

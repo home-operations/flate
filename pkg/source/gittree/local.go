@@ -227,7 +227,7 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 		}
 	}
 	if parent := path.Dir(name); parent != "." {
-		if err := g.admitDirectory(parent, parentPath(name, abs)); err != nil {
+		if err := g.admitDirectory(parent, filepath.Dir(abs)); err != nil {
 			return nil, err
 		}
 	}
@@ -243,8 +243,4 @@ func (g *localView) admitDirectory(name, abs string) error {
 		return &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
 	}
 	return nil
-}
-
-func parentPath(name, abs string) string {
-	return abs[:len(abs)-len(name)+len(path.Dir(name))]
 }

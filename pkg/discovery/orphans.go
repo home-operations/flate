@@ -8,37 +8,23 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// promoteOrphans materializes file-indexed objects outside every local
-// Kustomization's path and resource graph. Owned objects must await transformed
-// render emission; the admission callback applies that boundary to siblings too.
 func (d *discoverer) promoteOrphans(standaloneSecrets []manifest.NamedResource) {
 	index := d.loader.Index
-	owned := func(id manifest.NamedResource, file string) bool {
-		owners, ancestors := index.OwnersOfFile(file)
-		return slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool { return owner != id }) ||
-			slices.ContainsFunc(ancestors, func(owner manifest.NamedResource) bool { return owner != id })
-	}
-	admit := func(obj manifest.BaseManifest) bool {
-		r, ok := index.Lookup(obj.Named())
-		return ok && r.Path != "" && !owned(obj.Named(), r.File)
-	}
-	// Pre-build absence identifies builder materialization. Remove all admitted
-	// stand-ins before any file promotion so real sibling Secrets take precedence.
+	// All admitted stand-ins MUST be removed before promotion so real sibling Secrets take precedence.
 	slices.SortFunc(standaloneSecrets, manifest.NamedResource.Compare)
 	var saved []*manifest.Secret
 	for _, id := range standaloneSecrets {
-		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && admit(obj) {
+		record, _ := index.Lookup(id)
+		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.admitOrphan(id, record.Path) {
 			saved = append(saved, obj)
 			d.cfg.Store.DeleteObject(id)
 		}
 	}
 	for id, record := range index.Files() {
-		if d.cfg.Store.GetObject(id) != nil {
+		if d.cfg.Store.GetObject(id) != nil || !d.admitOrphan(id, record.Path) {
 			continue
 		}
-		if owned(id, record.File) {
-			continue
-		}
+		admit := func(obj manifest.BaseManifest) bool { return d.admitOrphan(obj.Named(), record.Path) }
 		if !loader.Promote(d.cfg.Store, id, manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, loader.PromoteOptions{WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
@@ -48,4 +34,14 @@ func (d *discoverer) promoteOrphans(standaloneSecrets []manifest.NamedResource) 
 			d.cfg.Store.AddObject(obj)
 		}
 	}
+}
+
+func (d *discoverer) admitOrphan(id manifest.NamedResource, path string) bool {
+	record, ok := d.loader.Index.Lookup(id)
+	if !ok || record.Path == "" || record.Path != path {
+		return false
+	}
+	owners, ancestors := d.loader.Index.OwnersOfFile(record.File)
+	return !slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool { return owner != id }) &&
+		!slices.ContainsFunc(ancestors, func(owner manifest.NamedResource) bool { return owner != id })
 }

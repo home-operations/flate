@@ -4,12 +4,71 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/orphan-evidence"
+	input := fstest.MapFS{
+		"a.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x, namespace: default}\ndata: {VALUE: X}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: A}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: default}\ndata: {VALUE: S}\n")},
+		"z.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: Z}\n")},
+	}
+	x := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "x"}
+	shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "shared"}
+	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "sibling"}
+	for _, tc := range []struct {
+		name  string
+		order []manifest.NamedResource
+	}{
+		{"x_then_shared", []manifest.NamedResource{x, shared}},
+		{"shared_then_x", []manifest.NamedResource{shared, x}},
+		{"discovery", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+			l := loader.New(st)
+			for _, id := range []manifest.NamedResource{x, shared, sibling} {
+				file := "a.yaml"
+				if id == shared {
+					file = "z.yaml"
+				}
+				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: root + "/" + file, File: file}
+			}
+			d := &discoverer{cfg: Config{Store: st}, loader: l}
+			if tc.order == nil {
+				d.promoteOrphans(nil)
+			} else {
+				for _, id := range tc.order {
+					record, _ := l.Index.Lookup(id)
+					admit := func(obj manifest.BaseManifest) bool { return d.admitOrphan(obj.Named(), record.Path) }
+					if !loader.Promote(st, id, manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, loader.PromoteOptions{Admit: admit}) {
+						t.Fatalf("promotion failed for %s", id)
+					}
+				}
+			}
+			for _, want := range []struct {
+				id    manifest.NamedResource
+				value string
+			}{{x, "X"}, {shared, "Z"}, {sibling, "S"}} {
+				obj, ok := st.GetObject(want.id).(*manifest.ConfigMap)
+				if !ok {
+					t.Fatalf("missing ConfigMap %s", want.id)
+				}
+				if got := obj.Data["VALUE"]; got != want.value {
+					t.Errorf("%s VALUE=%v, want indexed %s", want.id, got, want.value)
+				}
+			}
+		})
+	}
+}
 
 func TestPromoteOrphans_ChecksEachSiblingsProducer(t *testing.T) {
 	t.Parallel()

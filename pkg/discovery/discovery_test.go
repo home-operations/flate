@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -229,6 +232,88 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 	if !ok || info.Status != store.StatusReady {
 		t.Errorf("aliased GitRepository should be Ready; got ok=%v info=%+v", ok, info)
 	}
+}
+
+func TestRun_AdmittedScanCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			assertAdmittedScanCoordinates(t, filepath.Join(t.TempDir(), "virtual"), kind, "")
+		})
+	}
+	t.Run("outside-root", func(t *testing.T) {
+		t.Parallel()
+		parent := t.TempDir()
+		root := filepath.Join(parent, "virtual")
+		input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
+		if _, err := discovery.Run(t.Context(), discovery.Config{
+			Input: input, Path: filepath.Join(parent, "outside"), Store: store.New(),
+		}); err == nil {
+			t.Fatal("scan outside admitted root succeeded")
+		}
+	})
+}
+
+func TestRun_AdmittedRelativeScanCoordinates(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+		t.Run(kind, func(t *testing.T) {
+			assertAdmittedScanCoordinates(t, filepath.Join(cwd, "virtual"), kind, "virtual")
+		})
+	}
+}
+
+func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
+	t.Helper()
+	if _, err := os.Stat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("virtual label exists on disk: %v", err)
+	}
+	body := testutil.KustomizationYAML("root", "flux-system", "  path: .\n  sourceRef: {kind: "+kind+", name: missing}\n")
+	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}}
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "flux-system", Name: "missing"}
+	wantIDs := []string{manifest.BootstrapSourceID.String(), testutil.KustomizationID("flux-system", "root").String(), source.String()}
+	slices.Sort(wantIDs)
+	run := func(scan string) store.SourceArtifact {
+		t.Helper()
+		st := store.New()
+		result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Path: scan, Store: st})
+		if err != nil {
+			t.Fatalf("Run with Path %q: %v", scan, err)
+		}
+		if result.RepoRoot != root || st.GetArtifact(manifest.BootstrapSourceID) != input {
+			t.Fatalf("bootstrap root = %q, artifact = %+v", result.RepoRoot, st.GetArtifact(manifest.BootstrapSourceID))
+		}
+		var ids []string
+		for kind := range manifest.Kinds() {
+			for _, obj := range st.ListObjects(kind.Group, kind.Kind) {
+				ids = append(ids, obj.Named().String())
+			}
+		}
+		slices.Sort(ids)
+		assert.Diff(t, ids, wantIDs)
+		status, present := st.GetStatus(source)
+		if !present || status.Status != store.StatusReady || status.Message != "local entry source" {
+			t.Fatalf("source readiness = %+v, present = %t", status, present)
+		}
+		alias, ok := st.GetArtifact(source).(*store.SourceArtifact)
+		if !ok || alias.LocalRoot != root || alias.LocalPath == "" || !alias.InputAlias {
+			t.Fatalf("source artifact = %+v", alias)
+		}
+		got, err := fs.ReadFile(alias.FS, "ks.yaml")
+		if err != nil || string(got) != body {
+			t.Fatalf("admitted alias bytes = %q, %v", got, err)
+		}
+		assert.Diff(t, input, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}})
+		aliasCopy := *alias
+		aliasCopy.FS = nil
+		return aliasCopy
+	}
+	assert.Diff(t, run(scan), run(root))
 }
 
 func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {

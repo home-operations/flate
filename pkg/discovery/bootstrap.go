@@ -62,6 +62,15 @@ func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArti
 	if admitted.FS == nil || admitted.LocalPath == "" {
 		return nil, fmt.Errorf("%w: bootstrap source input is unavailable", manifest.ErrInput)
 	}
+	if d.cfg.Path == "" {
+		d.cfg.Path = admitted.LocalPath
+	} else {
+		scanPath, err := filepath.Abs(d.cfg.Path)
+		if err != nil {
+			return nil, fmt.Errorf("%w: resolve scan path: %w", manifest.ErrInput, err)
+		}
+		d.cfg.Path = scanPath
+	}
 	d.remotes = make(map[string]struct{}, len(urls))
 	for _, raw := range urls {
 		if normalized := normalizeGitURL(raw); normalized != "" {

@@ -57,7 +57,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			st := store.New()
 			supplied := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {Data: []byte("supplied")}}}
 			preseeded := &store.SourceArtifact{LocalPath: seedRoot, LocalRoot: seedRoot, FS: fstest.MapFS{"file": {Data: []byte("preseeded")}}}
-			cfg := Config{Path: root, Store: st, SelfURLs: []string{"https://example.test/cluster"}}
+			cfg := Config{Store: st, SelfURLs: []string{"https://example.test/cluster"}}
 			want := supplied
 			switch scenario {
 			case "supplied":
@@ -65,7 +65,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 				st.SetArtifact(manifest.BootstrapSourceID, preseeded)
 			case "preseeded":
 				st.SetArtifact(manifest.BootstrapSourceID, preseeded)
-				cfg.Path, want = seedRoot, preseeded
+				want = preseeded
 			case "disk":
 				cfg.Path = t.TempDir()
 				testutil.WriteFile(t, cfg.Path, "file", "disk")
@@ -78,6 +78,9 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			if d.cfg.Path != got.LocalPath {
+				t.Fatalf("scan coordinate = %q, want admitted root %q", d.cfg.Path, got.LocalPath)
+			}
 			if want != nil && got != want {
 				t.Fatalf("bootstrap = %+v, want authoritative %+v", got, want)
 			}

@@ -37,8 +37,8 @@ type Result struct {
 type Config struct {
 	// Input is authoritative over a preseeded bootstrap artifact or disk admission.
 	Input *store.SourceArtifact
-	// Path is the scan entry point — the directory the file walker
-	// starts at (a Flux cluster's entry, e.g. kubernetes/flux/cluster).
+	// Path is the scan entry point, defaulting to the admitted input's LocalPath.
+	// Relative paths resolve against the working directory.
 	Path string
 	// RepoRoot is the source root that Kustomization spec.path values
 	// resolve against (the GitRepository artifact root). Supplied
@@ -120,25 +120,12 @@ type discoverer struct {
 	hasPins         bool
 }
 
-// loadManifests scans cfg.Path, then iteratively follows each loaded
-// Flux Kustomization's spec.path until a fixed point is reached.
-// ResourceSets are loaded into the store by the file walker but expanded
-// during the run by the ResourceSet controller (a first-class DAG node),
-// not here — discovery only resolves KS spec.path references.
 func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	l := d.loader
 	l.SourceRoot = repoRoot
 
-	scanRoot := repoRoot
-	if d.cfg.Path != "" {
-		var err error
-		scanRoot, err = filepath.Abs(d.cfg.Path)
-		if err != nil {
-			return err
-		}
-	}
 	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
-	name, err := filepath.Rel(input.LocalPath, scanRoot)
+	name, err := filepath.Rel(input.LocalPath, d.cfg.Path)
 	if err != nil {
 		return err
 	}
@@ -149,7 +136,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	total := 0
 	l.IgnoreFile = d.cfg.KRMIgnoreFile
-	if err := d.loadAt(ctx, scanRoot, &total); err != nil {
+	if err := d.loadAt(ctx, d.cfg.Path, &total); err != nil {
 		return err
 	}
 	l.IgnoreFile = ""
@@ -216,7 +203,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	l.PreferExisting = false
 	d.warnBootstrapAliases(repoRoot)
-	slog.Debug("discovery: loaded objects", "count", total, "scan_root", scanRoot, "source_root", repoRoot)
+	slog.Debug("discovery: loaded objects", "count", total, "scan_root", d.cfg.Path, "source_root", repoRoot)
 	return nil
 }
 

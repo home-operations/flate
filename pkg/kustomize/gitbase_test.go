@@ -18,6 +18,8 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/filesystem"
@@ -223,12 +225,12 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	}}, sourcecache.RetryConfig{})
+	})}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -253,12 +255,12 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	}}, sourcecache.RetryConfig{}); err != nil {
+	})}, sourcecache.RetryConfig{}); err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
 
@@ -447,7 +449,11 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 			})
 			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
 			render := func(interval string) ([]byte, error) {
-				return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": interval}}}, sourcecache.RetryConfig{})
+				duration, err := time.ParseDuration(interval)
+				if err != nil {
+					return nil, err
+				}
+				return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}}}, sourcecache.RetryConfig{})
 			}
 			update := func(name, body string) {
 				t.Helper()
@@ -544,7 +550,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 						}
 						retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 						input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": {Data: []byte("resources:\n  - https://example.invalid/owner/repo?ref=main\n")}}}
-						body, err := RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: map[string]any{"spec": map[string]any{"interval": "1h"}}}, retry)
+						body, err := RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}}}, retry)
 						done <- result{attempts, body, err}
 					}()
 				}

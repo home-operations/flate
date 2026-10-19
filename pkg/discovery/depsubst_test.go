@@ -40,7 +40,7 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 	}
 	supplier, _ := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "supplier"))
 	changed := supplier.Clone()
-	changed.PostBuildSubstitute["PREFIX"] = "later-"
+	changed.PostBuild.Substitute["PREFIX"] = "later-"
 	st.AddObject(changed)
 	assert.Equal(t, res.DependencySubstitutions.Resolve("${PREFIX:-dev-}config"), "prod-config")
 }

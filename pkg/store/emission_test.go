@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -502,7 +504,9 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 		child Child
 	}{{p, a}, {q, b}} {
 		_, inventory := s.GetEmission(contribution.owner)
-		assert.Diff(t, inventory.Children, []Child{contribution.child})
+		if diff := cmp.Diff(inventory.Children, []Child{contribution.child}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+			t.Fatalf("emission children changed (-want +got): %s", diff)
+		}
 		inventory.Finish()
 	}
 	changed := childWithLabels("q")

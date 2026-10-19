@@ -76,10 +76,10 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 		if manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace) {
 			slog.Debug("loader: skipped template doc (unresolved envsubst in name/namespace)",
 				"path", path, "id", id.String())
-			manifest.ReleaseIfNotRetained(doc, obj)
+			manifest.ReleaseDoc(doc)
 			continue
 		}
-		manifest.ReleaseIfNotRetained(doc, obj)
+		manifest.ReleaseDoc(doc)
 		yield(obj)
 	}
 	return nil

@@ -257,11 +257,11 @@ data:
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, _, _, err := manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	_, _, _, err = manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest.ReleaseIfNotRetained(next[0], parsed)
+	manifest.ReleaseDoc(next[0])
 	if delta := cmp.Diff(childBefore, childDoc); delta != "" {
 		t.Fatalf("replay changed bare release (-want +got):\n%s", delta)
 	}

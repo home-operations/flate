@@ -66,8 +66,7 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 	}
 }
 
-func TestVarsMap_Scalars(t *testing.T) {
+func TestVarsMap_Newlines(t *testing.T) {
 	t.Parallel()
-	assert.Diff(t, VarsMap(map[string]any{"TEXT": "one\ntwo", "NUMBER": 3, "BYTES": []byte("bytes"), "NESTED": map[string]any{"x": "y"}}),
-		map[string]string{"TEXT": "onetwo", "NUMBER": "3", "BYTES": "bytes"})
+	assert.Diff(t, VarsMap(map[string]string{"TEXT": "one\ntwo", "EMPTY": ""}), map[string]string{"TEXT": "onetwo", "EMPTY": ""})
 }

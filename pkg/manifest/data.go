@@ -3,7 +3,6 @@ package manifest
 import (
 	"fmt"
 	"iter"
-	"log/slog"
 	"strings"
 )
 
@@ -29,20 +28,14 @@ func scalarString(v any) (string, error) {
 	}
 }
 
-// VarsMap coerces flat scalar substitutions and strips newlines as Flux does.
-// Unsupported values are omitted.
-func VarsMap(in map[string]any) map[string]string {
+// VarsMap strips newlines from typed substitutions as Flux does.
+func VarsMap(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		s, err := scalarString(v)
-		if err != nil {
-			slog.Debug("manifest: dropping non-scalar substitute var", "key", k, "err", err)
-			continue
-		}
-		out[k] = strings.ReplaceAll(s, "\n", "")
+		out[k] = strings.ReplaceAll(v, "\n", "")
 	}
 	return out
 }

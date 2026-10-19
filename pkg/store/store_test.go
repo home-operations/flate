@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"reflect"
 	"slices"
 	"strings"
@@ -433,12 +435,16 @@ func TestStore_ListObjects_ByKindIndex(t *testing.T) {
 						t.Run(tt.name, func(t *testing.T) {
 							t.Parallel()
 
-							assert.Diff(t, got, tt.want)
+							if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+								t.Fatalf("listed objects changed (-want +got): %s", diff)
+							}
 						})
 					}
 					inventory := []manifest.BaseManifest{typed, foreign, other}
 					slices.SortFunc(inventory, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-					assert.Diff(t, s.ListObjects("", ""), inventory)
+					if diff := cmp.Diff(s.ListObjects("", ""), inventory, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+						t.Fatalf("stored objects changed (-want +got): %s", diff)
+					}
 					pair = []manifest.BaseManifest{typed, foreign}
 					if withdrawForeignFirst {
 						pair[0], pair[1] = pair[1], pair[0]
@@ -451,10 +457,14 @@ func TestStore_ListObjects_ByKindIndex(t *testing.T) {
 						if i == 0 {
 							remaining := pair[1]
 							assert.Equal(t, s.GetObject(remaining.Named()), remaining)
-							assert.Diff(t, s.ListObjects(remaining.Named().Group, id.Kind), []manifest.BaseManifest{remaining})
+							if diff := cmp.Diff(s.ListObjects(remaining.Named().Group, id.Kind), []manifest.BaseManifest{remaining}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+								t.Fatalf("stored objects changed (-want +got): %s", diff)
+							}
 						}
 					}
-					assert.Diff(t, s.ListObjects("", ""), []manifest.BaseManifest{other})
+					if diff := cmp.Diff(s.ListObjects("", ""), []manifest.BaseManifest{other}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+						t.Fatalf("stored objects changed (-want +got): %s", diff)
+					}
 				})
 			}
 		}

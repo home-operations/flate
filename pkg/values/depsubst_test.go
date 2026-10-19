@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -67,7 +68,7 @@ func TestDependencySubstitutions_ParsedDependsOn(t *testing.T) {
 			assert.Equal(t, resolved.DependsOn[0].Name, tt.want)
 			assert.Equal(t, resolved.DependsOn[0].Namespace, tt.wantNamespace)
 			st.AddObject(resolved)
-			if diff := cmp.Diff(before, original); diff != "" {
+			if diff := cmp.Diff(before, original, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("stored input mutated (-want +got):\n%s", diff)
 			}
 			if again := manifest.MapDependsOn(resolved, d.Resolve, d.Resolve); again != resolved {

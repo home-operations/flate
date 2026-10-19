@@ -210,7 +210,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		return err
 	}
 	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
-		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents, HeldSlot: c.Tasks,
+		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
 	}, c.retry)
 	if err != nil {
 		return err
@@ -221,17 +221,15 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	}
 	docs = manifest.FlattenLists(docs)
 
-	// Per-resource envsubst. Flux's kustomize-controller skips
-	// substitution on any resource carrying the
-	// "kustomize.toolkit.fluxcd.io/substitute: disabled" label or
-	// annotation — used in real repos for ConfigMaps that embed
-	// shell scripts with bash array expansions (${ARR[@]}) that
-	// envsubst's parser cannot handle. Mirror that behavior here:
-	// substitute per-doc, skip opted-out resources, so we match Flux
-	// bit-for-bit.
+	// Flux skips substitution on resources marked
+	// "kustomize.toolkit.fluxcd.io/substitute: disabled" to preserve shell
+	// expansions such as ${ARR[@]} that envsubst cannot parse.
 	strategy := (kustomizev1.Kustomization{Spec: ks.KustomizationSpec}).GetSubstituteStrategy()
-	if len(ks.PostBuildSubstitute) > 0 || strategy == kustomizev1.SubstituteStrategyAlways {
-		vars := manifest.VarsMap(ks.PostBuildSubstitute)
+	if ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 || strategy == kustomizev1.SubstituteStrategyAlways {
+		var vars map[string]string
+		if ks.PostBuild != nil {
+			vars = manifest.VarsMap(ks.PostBuild.Substitute)
+		}
 		for i, doc := range docs {
 			if manifest.HasSubstituteDisabled(doc) {
 				continue

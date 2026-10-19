@@ -224,7 +224,7 @@ spec:
 		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 			b.Fatal(err)
 		}
-		if len(ks.PostBuildSubstitute) != len(data) || ks.PostBuildSubstitute["VAR_49"] != "value-49" {
+		if len(ks.PostBuild.Substitute) != len(data) || ks.PostBuild.Substitute["VAR_49"] != "value-49" {
 			b.Fatal("shared ConfigMap substitutions were not expanded")
 		}
 	}

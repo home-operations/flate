@@ -197,7 +197,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 			t.Fatal("supplied object entered producer indexes")
 		}
 		stored, _ := o.store.Get[*manifest.Kustomization](id)
-		if len(stored.PostBuildSubstitute) != 0 || len(stored.PostBuild.Substitute) != 0 {
+		if len(stored.PostBuild.Substitute) != 0 {
 			t.Fatal("preparation mutated stored Kustomization")
 		}
 		if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady {

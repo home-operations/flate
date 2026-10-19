@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -924,6 +925,77 @@ func TestGitRepositoryRef_Validate(t *testing.T) {
 	}
 }
 
+func TestRenderDocument_SequentialClone(t *testing.T) {
+	t.Parallel()
+	ks, err := parseKustomization(mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps}
+spec: {path: ./p0}
+`))
+	assert.NoError(t, err)
+	first, err := ks.RenderDocument()
+	assert.NoError(t, err)
+	snapshot := DeepCopyMap(first)
+	clone := ks.Clone()
+	clone.Path = "./p1"
+	second, err := clone.RenderDocument()
+	assert.NoError(t, err)
+	assert.Equal(t, second["spec"].(map[string]any)["path"], any("./p1"))
+	assert.Diff(t, first, snapshot)
+	repeated, err := ks.RenderDocument()
+	assert.NoError(t, err)
+	assert.Diff(t, repeated, snapshot)
+}
+
+func TestRenderDocument_BufferOwnership(t *testing.T) {
+	factory := kustomizationEncoders.New
+	t.Cleanup(func() { kustomizationEncoders = sync.Pool{New: factory} })
+	var encoder *kustomizationEncoder
+	kustomizationEncoders = sync.Pool{New: func() any {
+		encoder = factory().(*kustomizationEncoder)
+		return encoder
+	}}
+	ks, err := parseKustomization(mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps}
+spec: {path: ./p0}
+`))
+	assert.NoError(t, err)
+	_, err = ks.RenderDocument()
+	assert.NoError(t, err)
+	if encoder == nil || encoder.buffer.Len() == 0 {
+		t.Fatal("render did not use an encoder buffer")
+	}
+	published := ks.projection.Load().raw
+	snapshot := bytes.Clone(published)
+	encoder.buffer.Bytes()[0] ^= 1
+	assert.Diff(t, published, snapshot)
+}
+
+func TestRenderDocument_OmitsInternalShape(t *testing.T) {
+	t.Parallel()
+	ks, err := parseKustomization(mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps}
+spec: {namePrefix: ""}
+`))
+	assert.NoError(t, err)
+	if ks.shape == nil {
+		t.Fatal("authored empty prefix did not produce a shape")
+	}
+	for range 2 {
+		doc, err := ks.RenderDocument()
+		assert.NoError(t, err)
+		if _, exists := doc["_flateShape"]; exists {
+			t.Error("render document contains internal shape")
+		}
+		assert.Equal(t, doc["spec"].(map[string]any)["namePrefix"], any(""))
+	}
+}
+
 func TestParseKustomization_DependsOn(t *testing.T) {
 	t.Parallel()
 	doc := mustYAML(t, `
@@ -966,31 +1038,8 @@ spec:
 	if len(k.PostBuild.SubstituteFrom) != 1 || !k.PostBuild.SubstituteFrom[0].Optional {
 		t.Errorf("substituteFrom = %+v", k.PostBuild.SubstituteFrom)
 	}
-	if k.PostBuildSubstitute["DOMAIN"] != "example.com" {
-		t.Errorf("substitute = %+v", k.PostBuildSubstitute)
-	}
-}
-
-func TestKustomization_UpdatePostBuildSubstitutions(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		vars map[string]any
-		want map[string]any
-	}{
-		{name: "empty", want: map[string]any{"K": "v"}},
-		{name: "existing", vars: map[string]any{"K": "old", "KEEP": "kept"}, want: map[string]any{"K": "v", "KEEP": "kept"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			k := &Kustomization{PostBuildSubstitute: tc.vars, Contents: map[string]any{"spec": map[string]any{}}}
-			k.UpdatePostBuildSubstitutions(map[string]any{"K": "v"})
-			assert.Diff(t, k.PostBuildSubstitute, tc.want)
-			spec := k.Contents["spec"].(map[string]any)
-			post := spec["postBuild"].(map[string]any)
-			sub := post["substitute"].(map[string]any)
-			assert.Diff(t, sub, map[string]any{"K": "v"})
-		})
+	if k.PostBuild.Substitute["DOMAIN"] != "example.com" {
+		t.Errorf("substitute = %+v", k.PostBuild.Substitute)
 	}
 }
 
@@ -1788,17 +1837,6 @@ func TestFlattenLists(t *testing.T) {
 	})
 }
 
-// TestParseDoc_PoolReuseConsistency drives the DecodeDocs sync.Pool
-// hard: 1000 parse-and-release iterations on a fixed input must yield
-// byte-identical typed results. Catches any aliasing or stale-state
-// bug introduced by reusing a cleared map[string]any across decodes.
-//
-// Covers the three retention shapes:
-//   - HelmRelease (decodeInto JSON round-trip, no doc retention)
-//   - Kustomization (retains the TOP-LEVEL doc as Contents — must not
-//     be returned to the pool)
-//   - ConfigMap (aliases the inner data submap; clear(top) leaves the
-//     submap independently rooted)
 func TestParseDoc_PoolReuseConsistency(t *testing.T) {
 	t.Parallel()
 	hr := []byte(`
@@ -1844,79 +1882,66 @@ data:
   key1: value1
   key2: value2
 `)
-
-	const iters = 1000
-	opts := defaultParseDocOptions()
-
-	for i := range iters {
-		// HelmRelease: doc fully releasable.
-		docs, err := DecodeDocs(bytes.NewReader(hr))
-		if err != nil {
-			t.Fatalf("HR iter %d DecodeDocs: %v", i, err)
-		}
-		obj, _, _, err := ParseDoc(docs[0], opts)
-		if err != nil {
-			t.Fatalf("HR iter %d ParseDoc: %v", i, err)
-		}
-		got, ok := obj.(*HelmRelease)
-		if !ok {
-			t.Fatalf("HR iter %d: not *HelmRelease", i)
-		}
-		if got.Name != "app" || got.Namespace != "default" {
-			t.Fatalf("HR iter %d: wrong identity %s/%s", i, got.Namespace, got.Name)
-		}
-		if got.Chart.Name != "app-template" || got.Chart.Version != "3.5.1" {
-			t.Fatalf("HR iter %d: chart drift %+v", i, got.Chart)
-		}
-		ReleaseIfNotRetained(docs[0], obj)
-
-		// Kustomization: must NOT be released (Contents retains doc).
-		ksDocs, err := DecodeDocs(bytes.NewReader(ks))
-		if err != nil {
-			t.Fatalf("KS iter %d DecodeDocs: %v", i, err)
-		}
-		kobj, _, _, err := ParseDoc(ksDocs[0], opts)
-		if err != nil {
-			t.Fatalf("KS iter %d ParseDoc: %v", i, err)
-		}
-		k, ok := kobj.(*Kustomization)
-		if !ok {
-			t.Fatalf("KS iter %d: not *Kustomization", i)
-		}
-		if k.Name != "apps" || k.Path != "./apps" {
-			t.Fatalf("KS iter %d: drift %s %s", i, k.Name, k.Path)
-		}
-		// Validate retained Contents survives ReleaseIfNotRetained.
-		ReleaseIfNotRetained(ksDocs[0], kobj)
-		if k.Contents["kind"] != "Kustomization" {
-			t.Fatalf("KS iter %d: Contents corrupted after Release: %v", i, k.Contents)
-		}
-
-		// ConfigMap: aliases inner data submap. Release of top-level
-		// must not corrupt the parsed inner data.
-		cmDocs, err := DecodeDocs(bytes.NewReader(cm))
-		if err != nil {
-			t.Fatalf("CM iter %d DecodeDocs: %v", i, err)
-		}
-		cobj, _, _, err := ParseDoc(cmDocs[0], opts)
-		if err != nil {
-			t.Fatalf("CM iter %d ParseDoc: %v", i, err)
-		}
-		c, ok := cobj.(*ConfigMap)
-		if !ok {
-			t.Fatalf("CM iter %d: not *ConfigMap", i)
-		}
-		if c.Data["key1"] != "value1" || c.Data["key2"] != "value2" {
-			t.Fatalf("CM iter %d: data drift %v", i, c.Data)
-		}
-		ReleaseIfNotRetained(cmDocs[0], cobj)
-		// Re-check after release: pooled top-level is gone but the
-		// inner submap must still hold our values.
-		if c.Data["key1"] != "value1" || c.Data["key2"] != "value2" {
-			t.Fatalf("CM iter %d: data corrupted post-release %v", i, c.Data)
-		}
+	secret := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: ns}\ndata: {key: dmFsdWU=}\n"
+	raw := "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: app}\nspec: {value: keep}\n"
+	for _, input := range []string{string(hr), string(ks), string(cm), secret, raw} {
+		t.Run(DocKind(mustYAML(t, input)), func(t *testing.T) {
+			t.Parallel()
+			docs, err := DecodeDocs(strings.NewReader(input))
+			assert.NoError(t, err)
+			obj, _, _, err := ParseDoc(docs[0], defaultParseDocOptions())
+			assert.NoError(t, err)
+			before := Fingerprint(obj)
+			var projected map[string]any
+			if k, ok := obj.(*Kustomization); ok {
+				projected, err = k.RenderDocument()
+				assert.NoError(t, err)
+			}
+			ReleaseDoc(docs[0])
+			next, err := DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {key: next}\n"))
+			assert.NoError(t, err)
+			ReleaseDoc(next[0])
+			assert.Equal(t, Fingerprint(obj), before)
+			switch v := obj.(type) {
+			case *Kustomization:
+				doc, err := v.RenderDocument()
+				assert.NoError(t, err)
+				assert.Diff(t, doc, projected)
+				start := make(chan struct{})
+				done := make(chan error, 2)
+				for i := range 2 {
+					changed := v.Clone()
+					changed.Path = fmt.Sprintf("typed-%d", i)
+					changed.PostBuild.Substitute["X"] = changed.Path
+					go func() {
+						<-start
+						edited, err := changed.RenderDocument()
+						if err == nil && edited["spec"].(map[string]any)["path"] != changed.Path {
+							err = fmt.Errorf("projection did not reflect typed path %q", changed.Path)
+						}
+						done <- err
+					}()
+				}
+				close(start)
+				for range 2 {
+					assert.NoError(t, <-done)
+				}
+				unchanged, err := v.RenderDocument()
+				assert.NoError(t, err)
+				assert.Diff(t, unchanged, projected)
+				assert.Diff(t, doc, projected)
+				assert.Equal(t, v.PostBuild.Substitute["X"], "y")
+			case *ConfigMap:
+				assert.Equal(t, v.Data["key1"], any("value1"))
+			case *Secret:
+				assert.Equal(t, v.Data["key"], any("dmFsdWU="))
+			case *RawObject:
+				assert.Equal(t, v.Spec["value"], any("keep"))
+			}
+		})
 	}
-	for _, input := range []string{string(hr), string(ks), string(cm), "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: app}\nspec: {value: keep}\n"} {
+
+	for _, input := range []string{string(hr), string(ks), string(cm), secret, raw} {
 		docs, err := DecodeDocs(strings.NewReader(input))
 		assert.NoError(t, err)
 		doc := docs[0]
@@ -1931,12 +1956,12 @@ data:
 		assert.NoError(t, err)
 		assert.Equal(t, replay.Named(), obj.Named())
 		assert.Equal(t, changed, false)
-		for range 10 {
+		{
 			next, err := DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\ndata: {key: next}\n"))
 			assert.NoError(t, err)
-			parsed, _, _, err := ParseDoc(next[0], opts)
+			_, _, _, err = ParseDoc(next[0], opts)
 			assert.NoError(t, err)
-			ReleaseIfNotRetained(next[0], parsed)
+			ReleaseDoc(next[0])
 		}
 		assert.Diff(t, doc, before)
 		expected := DeepCopyMap(before)
@@ -1944,8 +1969,6 @@ data:
 		assert.Diff(t, authoritative, expected)
 		assert.Diff(t, retained, expected)
 		switch obj := obj.(type) {
-		case *Kustomization:
-			assert.Diff(t, obj.Contents, before)
 		case *RawObject:
 			assert.Diff(t, obj.Spec, before["spec"])
 		}

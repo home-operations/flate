@@ -40,7 +40,6 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 			SourceRef: kustomizev1.CrossNamespaceSourceReference{
 				Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 			},
-			Contents: map[string]any{},
 		}
 		s.AddObject(ks)
 		ids = append(ids, ks.Named())

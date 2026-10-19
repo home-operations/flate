@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"slices"
 	"strings"
 	"sync"
@@ -381,7 +383,9 @@ spec:
 			})
 			_, after := st.GetEmission(rs.Named())
 			after.Finish()
-			assert.Diff(t, after.Children, before.Children)
+			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+				t.Fatalf("retained children changed (-want +got): %s", diff)
+			}
 			assert.Diff(t, after.Manifests, before.Manifests)
 			cm, ok := st.Get[*manifest.ConfigMap](children[1].Obj.Named())
 			if !ok || cm.Data["key"] != "value" {

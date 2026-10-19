@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -203,8 +205,12 @@ spec:
 			}
 			l.ApplyNamespaces(root)
 			if original != nil {
-				assert.Diff(t, original, snapshot)
-				assert.Diff(t, l.authoredObject(raw.Path, raw.Authored), snapshot)
+				if diff := cmp.Diff(original, snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+					t.Fatalf("authored object mutated (-want +got): %s", diff)
+				}
+				if diff := cmp.Diff(l.authoredObject(raw.Path, raw.Authored), snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+					t.Fatalf("authored object mutated (-want +got): %s", diff)
+				}
 				assert.Diff(t, l.recordNamespaces(raw, "myns"), tc.wantKS)
 				got, want := map[manifest.NamedResource][]manifest.NamedResource{}, map[manifest.NamedResource][]manifest.NamedResource{}
 				for id, r := range l.Index.Files() {

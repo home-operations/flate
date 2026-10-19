@@ -177,12 +177,12 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	}}, sourcecache.RetryConfig{})
+	})}, sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := newTestTreeCache(t, "")
 			cache.httpClient = srv.Client()
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoRawSpec}, sourcecache.RetryConfig{})
+			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil || !strings.Contains(string(out), "name: remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
@@ -497,9 +497,10 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				r.Header.Set("X-Flate-Preflight-Test", "yes")
 				return transport.RoundTrip(r)
 			})}
-			spec := demoRawSpec
+			spec := demoSpec
 			if tc.name == "generated-component" {
-				spec = map[string]any{"spec": map[string]any{"components": []any{"../component"}}}
+				spec = demoSpec.Clone()
+				spec.Components = []string{"../component"}
 			}
 			before := manifest.Fingerprint(spec)
 			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{})

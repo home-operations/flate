@@ -17,7 +17,7 @@
 // # Shadow fields
 //
 // HelmRelease and Kustomization embed the upstream Flux Spec struct.
-// Values, Chart and PostBuildSubstitute project fields whose decoded shapes differ.
+// Values and Chart project fields whose decoded shapes differ.
 // Dependency and source identities come from References over the authored spec.
 // Embedded specs MUST remain immutable after parse so projections cannot diverge.
 //

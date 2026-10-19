@@ -153,31 +153,37 @@ func TestHelmRelease_Clone_Isolation(t *testing.T) {
 	}
 }
 
-// Kustomization.Clone must deep-copy Contents — the nested map that
-// UpdatePostBuildSubstitutions walks and writes into.
 func TestKustomization_Clone_Isolation(t *testing.T) {
 	t.Parallel()
-	src := &Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		PostBuildSubstitute: map[string]any{"K": "v"},
-		Contents: map[string]any{
-			"spec": map[string]any{
-				"postBuild": map[string]any{
-					"substitute": map[string]any{"X": "y"},
-				},
-			},
-		},
-	}
+	doc := mustYAML(t, `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec:
+  patches: [null]
+  components: null
+  commonMetadata:
+    labels: {hotel: null, delta: null, alpha: null, golf: null, bravo: null, foxtrot: null, charlie: null, echo: null}
+    annotations: {zulu: null, tango: null, quebec: null, whiskey: null, romeo: null, xray: null, sierra: null, uniform: null}
+  patchesStrategicMerge: [{metadata: {name: original}}]
+  patchesJson6902: [{target: {kind: ConfigMap}, patch: [{op: remove, path: /data/old}]}]
+`)
+	src, err := parseKustomization(doc)
+	assert.NoError(t, err)
+	assert.Diff(t, src.shape.NullCommonLabels, []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"})
+	assert.Diff(t, src.shape.NullCommonAnnotations, []string{"quebec", "romeo", "sierra", "tango", "uniform", "whiskey", "xray", "zulu"})
+	snapshot := Fingerprint(src.Content(nil))
+	doc["spec"].(map[string]any)["patchesStrategicMerge"].([]any)[0].(map[string]any)["metadata"].(map[string]any)["name"] = "raw-edit"
+	assert.Equal(t, Fingerprint(src.Content(nil)), snapshot)
 	dst := src.Clone()
-	dst.PostBuildSubstitute["K"] = "MUTATED"
-	dst.Contents["spec"].(map[string]any)["postBuild"].(map[string]any)["substitute"].(map[string]any)["X"] = "MUTATED"
-
-	if src.PostBuildSubstitute["K"] != "v" {
-		t.Errorf("source PostBuildSubstitute aliased")
-	}
-	srcSub := src.Contents["spec"].(map[string]any)["postBuild"].(map[string]any)["substitute"].(map[string]any)
-	if srcSub["X"] != "y" {
-		t.Errorf("source Contents aliased: %v", srcSub)
+	dst.shape.Fields["components"] = "changed"
+	dst.shape.NullElements["patches"][0] = 5
+	dst.shape.NullCommonLabels[0] = "changed"
+	dst.shape.NullCommonAnnotations[0] = "changed"
+	dst.shape.Fields["patchesStrategicMerge"].([]any)[0].(map[string]any)["metadata"].(map[string]any)["name"] = "changed"
+	dst.shape.Fields["patchesJson6902"].([]any)[0].(map[string]any)["patch"].([]any)[0].(map[string]any)["path"] = "/changed"
+	assert.Equal(t, Fingerprint(src.Content(nil)), snapshot)
+	if Fingerprint(dst.Content(nil)) == snapshot {
+		t.Fatal("auxiliary input edits did not invalidate content")
 	}
 }
 
@@ -283,7 +289,7 @@ func TestKustomization_Clone_DeepCopiesEmbeddedSpec(t *testing.T) {
 
 func TestWithNamespace_Copy(t *testing.T) {
 	t.Parallel()
-	ks := &Kustomization{Name: "app", Namespace: "authored", Contents: map[string]any{"metadata": map[string]any{"namespace": "authored"}}}
+	ks := &Kustomization{Name: "app", Namespace: "authored"}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}
 	for _, tc := range []struct{ name, namespace string }{
 		{"projected", "effective"}, {"cleared", ""},
@@ -293,9 +299,7 @@ func TestWithNamespace_Copy(t *testing.T) {
 			projected := ks.WithNamespace(tc.namespace).(*Kustomization)
 			assert.Equal(t, projected.Named(), NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: tc.namespace, Name: "app"})
 			assert.Equal(t, ks.Named(), NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "authored", Name: "app"})
-			assert.Diff(t, ks.Contents, map[string]any{"metadata": map[string]any{"namespace": "authored"}})
 			assert.Diff(t, ks.PostBuild, &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}})
-			assert.Diff(t, projected.Contents, ks.Contents)
 			assert.Diff(t, projected.PostBuild, ks.PostBuild)
 		})
 	}

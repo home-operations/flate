@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"slices"
 	"strings"
 	"testing"
@@ -156,7 +158,9 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		assert.Diff(t, o.store.GetObject(obj.Named()), obj)
+		if diff := cmp.Diff(o.store.GetObject(obj.Named()), obj, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+			t.Fatalf("stored objects changed (-want +got): %s", diff)
+		}
 	}
 	slices.SortFunc(want, func(a, b map[string]any) int { return strings.Compare(manifest.DocKind(a), manifest.DocKind(b)) })
 	got := slices.Clone(art.Manifests)

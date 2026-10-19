@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -14,7 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-func emissionDependency(t *testing.T, name, spec string) *manifest.Kustomization {
+func emissionDependency(t *testing.T, name, spec string) (*manifest.Kustomization, map[string]any) {
 	t.Helper()
 	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML(name, "apps", spec)))
 	if err != nil {
@@ -24,7 +25,7 @@ func emissionDependency(t *testing.T, name, spec string) *manifest.Kustomization
 	if err != nil {
 		t.Fatal(err)
 	}
-	return obj.(*manifest.Kustomization)
+	return obj.(*manifest.Kustomization), docs[0]
 }
 
 func TestEmit_DependencySubstitutions(t *testing.T) {
@@ -41,28 +42,31 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			c := New(st, nil, "test")
-			parent := emissionDependency(t, "parent", "  path: ./children\n")
+			parent, parentDoc := emissionDependency(t, "parent", "  path: ./children\n")
 			st.AddObject(parent)
 			for i, declaration := range tt.declarations {
-				st.AddObject(emissionDependency(t, fmt.Sprintf("supplier-%d", i), fmt.Sprintf("  postBuild: {substitute: {PREFIX: %q, NS: resolved}}\n", declaration)))
+				supplier, _ := emissionDependency(t, fmt.Sprintf("supplier-%d", i), fmt.Sprintf("  postBuild: {substitute: {PREFIX: %q, NS: resolved}}\n", declaration))
+				st.AddObject(supplier)
 			}
 			if len(tt.declarations) != 0 {
 				c.Configure(Options{DependencySubstitutions: values.NewDependencySubstitutions(st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))})
 			}
-			st.AddObject(emissionDependency(t, "later-supplier", "  postBuild: {substitute: {PREFIX: 'later-'}}\n"))
-			literal := emissionDependency(t, "literal", "  dependsOn: [{name: plain}]\n")
-			child := emissionDependency(t, "child", "  path: ./app\n  dependsOn: [{name: '${PREFIX:-dev-}config', namespace: '${NS}', readyExpr: 'true'}]\n")
-			child.Contents["metadata"].(map[string]any)["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/substitute": "disabled"}
+			later, _ := emissionDependency(t, "later-supplier", "  postBuild: {substitute: {PREFIX: 'later-'}}\n")
+			st.AddObject(later)
+			literal, literalDoc := emissionDependency(t, "literal", "  dependsOn: [{name: plain}]\n")
+			child, childDoc := emissionDependency(t, "child", "  path: ./app\n  dependsOn: [{name: '${PREFIX:-dev-}config', namespace: '${NS}', readyExpr: 'true'}]\n")
+			childDoc["metadata"].(map[string]any)["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/substitute": "disabled"}
+			child.Annotations = map[string]string{"kustomize.toolkit.fluxcd.io/substitute": "disabled"}
 			before := child.Clone()
-			sibling := emissionDependency(t, "sibling", "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
-			docs := []map[string]any{literal.Contents, child.Contents, sibling.Contents}
+			sibling, siblingDoc := emissionDependency(t, "sibling", "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
+			docs := []map[string]any{literalDoc, childDoc, siblingDoc}
 			next := &store.Emission{
 				Children: []store.Child{
-					{Obj: literal, Doc: literal.Contents},
-					{Obj: child, Doc: child.Contents},
-					{Obj: sibling, Doc: sibling.Contents},
+					{Obj: literal, Doc: literalDoc},
+					{Obj: child, Doc: childDoc},
+					{Obj: sibling, Doc: siblingDoc},
 					{},
-					{Obj: parent, Doc: parent.Contents},
+					{Obj: parent, Doc: parentDoc},
 				},
 				Manifests: docs, Complete: true, Fingerprint: manifest.Fingerprint("inputs"), Render: []byte("retained"),
 			}
@@ -82,7 +86,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if !ok || got.DependsOn[0].Name != tt.want || got.DependsOn[0].Namespace != "${NS}" || got.DependsOn[0].ReadyExpr != "true" {
 				t.Fatalf("admitted child=%+v", got)
 			}
-			if diff := cmp.Diff(before, child); diff != "" {
+			if diff := cmp.Diff(before, child, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("caller object/document mutated (-want +got):\n%s", diff)
 			}
 			if next.Children[1].Obj != child || next.Children[2].Obj != sibling || sibling.DependsOn[0].Name != "${PREFIX:-dev-}config" {
@@ -94,7 +98,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			}
 			assert.Equal(t, string(accepted.Render), "retained")
 			assert.Equal(t, accepted.Children[0].Obj, manifest.BaseManifest(literal))
-			if diff := cmp.Diff(child.Contents, accepted.Children[1].Doc); diff != "" {
+			if diff := cmp.Diff(childDoc, accepted.Children[1].Doc); diff != "" {
 				t.Fatalf("child document changed (-want +got):\n%s", diff)
 			}
 			if _, handled, err := c.FingerprintDedup(parent.Named(), "inputs"); !handled || err != nil {
@@ -112,16 +116,18 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	st.AddObject(emissionDependency(t, "supplier", "  postBuild: {substitute: {PREFIX: 'prod-'}}\n"))
+	supplier, _ := emissionDependency(t, "supplier", "  postBuild: {substitute: {PREFIX: 'prod-'}}\n")
+	st.AddObject(supplier)
 	d := values.NewDependencySubstitutions(st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	controllers := make([]*Controller, 2)
 	parents := make([]*manifest.Kustomization, 2)
 	children := make([]*manifest.Kustomization, 2)
+	docs := make([]map[string]any, 2)
 	for i := range 2 {
 		controllers[i] = New(st, nil, "test")
 		controllers[i].Configure(Options{DependencySubstitutions: d})
-		parents[i] = emissionDependency(t, fmt.Sprintf("parent-%d", i), "  path: ./children\n")
-		children[i] = emissionDependency(t, fmt.Sprintf("child-%d", i), "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
+		parents[i], _ = emissionDependency(t, fmt.Sprintf("parent-%d", i), "  path: ./children\n")
+		children[i], docs[i] = emissionDependency(t, fmt.Sprintf("child-%d", i), "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")
 		st.AddObject(parents[i])
 	}
 	var ready, done sync.WaitGroup
@@ -134,7 +140,7 @@ func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 			ready.Done()
 			<-start
 			controllers[i].Emit(parents[i].Named(), &store.Emission{
-				Children: []store.Child{{Obj: children[i], Doc: children[i].Contents}}, Complete: true,
+				Children: []store.Child{{Obj: children[i], Doc: docs[i]}}, Complete: true,
 			})
 		}()
 	}

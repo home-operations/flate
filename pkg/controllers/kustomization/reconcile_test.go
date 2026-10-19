@@ -16,6 +16,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -110,7 +111,6 @@ func TestReconcile_HappyPath(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
@@ -344,7 +344,6 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
@@ -408,7 +407,6 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
@@ -466,7 +464,6 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
@@ -522,7 +519,6 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
@@ -553,7 +549,6 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		DependsOn: []kustomizev1.DependencyReference{
 			{Name: dep.Name, Namespace: dep.Namespace},
 		},
-		Contents: map[string]any{},
 	}
 	s.AddObject(ks)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
@@ -664,7 +659,7 @@ data: {greeting: hi}
 			if !ok || fresh == ks || fresh.Suspend != suspended || fresh.TargetNamespace != "refreshed" {
 				t.Fatalf("canonical replacement = %+v", fresh)
 			}
-			if diff := cmp.Diff(original, ks); diff != "" {
+			if diff := cmp.Diff(original, ks, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("original mutated (-want +got):\n%s", diff)
 			}
 			if owners := testutil.Owners(st.Productions(ks.Named(), nil)); !slices.Contains(owners, parent.Named()) {
@@ -691,7 +686,7 @@ data: {greeting: hi}
 func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 	t.Parallel()
 	c, st, root := newControllerWithFixture(t)
-	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", Contents: map[string]any{}}
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
 	st.AddObject(ks)
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("first reconcile: %+v", info)
@@ -838,7 +833,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			guard.deny.Store(false)
 			fresh := ks.Clone()
 			fresh.NamePrefix = "arbitrary-second-"
-			fresh.Contents["spec"].(map[string]any)["namePrefix"] = fresh.NamePrefix
+
 			s.AddObject(fresh)
 			if err := c.reconcile(t.Context(), fresh, manifest.DrainNone); err != nil {
 				t.Fatal(err)

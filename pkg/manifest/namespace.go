@@ -6,7 +6,12 @@ package manifest
 // should prefer a direct type-assert + nil-tolerant access so we
 // don't allocate when nothing will be written.
 func EnsureMetadata(doc map[string]any) map[string]any {
-	return childMap(doc, "metadata")
+	metadata, _ := doc["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = make(map[string]any)
+		doc["metadata"] = metadata
+	}
+	return metadata
 }
 
 // MergeStringMap merges in into md[key] as a map[string]any. Creates

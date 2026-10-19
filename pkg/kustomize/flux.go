@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"oras.land/oras-go/v2/errdef"
@@ -42,8 +41,8 @@ type RenderRequest struct {
 	Label string
 	// SubPath selects the source directory for this Kustomization.
 	SubPath string
-	// Spec is the complete Flux Kustomization document.
-	Spec map[string]any
+	// Spec is the prepared Flux Kustomization.
+	Spec *manifest.Kustomization
 }
 
 // RenderFlux consumes admitted sources through one filesystem and a private overlay.
@@ -73,9 +72,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err != nil {
 		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
-	spec, _ := req.Spec["spec"].(map[string]any)
-	interval, _ := spec["interval"].(string)
-	maxAge, _ := time.ParseDuration(interval)
+	maxAge := req.Spec.Interval.Duration
 	key := renderKey(req, root, ignore)
 	blobKey := sourcecache.BlobKey{Content: key, PersistOnly: true}
 	reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
@@ -115,12 +112,13 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, req.SubPath)
 	}
 	subDir = canonicalDir.String()
-	rawSpec, subPath := req.Spec, req.SubPath
+	ks, err := req.Spec.RenderDocument()
+	if err != nil {
+		return nil, err
+	}
+	subPath := req.SubPath
 
-	// Merge spec.patches/images/components/targetNamespace/namePrefix/nameSuffix
-	// into the kustomization.yaml exactly as flux's Generator does, then write it
-	// into the memory layer for the build to consume. See generate.go.
-	data, kfile, err := generateManifest(memFS, subDir, rawSpec)
+	data, kfile, err := generateManifest(memFS, subDir, ks)
 	if err != nil {
 		return nil, fmt.Errorf("flux kustomize generator: %w", err)
 	}
@@ -158,10 +156,10 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	// Owner labels first so user-supplied spec.commonMetadata wins on a key
 	// collision. Matches kustomize-controller's ordering: SetOwnerLabels runs at
 	// reconcile setup, SetCommonMetadata runs at apply time and overwrites.
-	if err := applyOwnerLabels(rm, rawSpec); err != nil {
+	if err := applyOwnerLabels(rm, ks); err != nil {
 		return nil, fmt.Errorf("apply owner labels %s: %w", subPath, err)
 	}
-	if err := applyCommonMetadata(rm, rawSpec); err != nil {
+	if err := applyCommonMetadata(rm, ks); err != nil {
 		return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
 	}
 	out, err := rm.AsYaml()
@@ -193,13 +191,13 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 		immutable = struct{ Key, Revision, Digest string }{req.Source.Key, req.Source.Revision, req.Source.Digest}
 	}
 	return manifest.Fingerprint(struct {
-		Spec        map[string]any
+		Spec        any
 		SourceRoot  string
 		SubPath     string
 		ApplyIgnore bool
 		Ignore      any
 		Immutable   any
-	}{req.Spec, root, req.SubPath, req.ApplyIgnore, ignore, immutable})
+	}{req.Spec.Content(nil), root, req.SubPath, req.ApplyIgnore, ignore, immutable})
 }
 
 type sourceRoot struct {

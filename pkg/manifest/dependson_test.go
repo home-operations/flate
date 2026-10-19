@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParseDoc_DependsOnNames(t *testing.T) {
@@ -66,10 +67,10 @@ spec:
 			if got == original {
 				t.Fatal("changed dependency did not clone")
 			}
-			if diff := cmp.Diff(want, got); diff != "" {
+			if diff := cmp.Diff(want, got, cmp.AllowUnexported(Kustomization{}), cmpopts.IgnoreFields(Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("transformed fields (-want +got):\n%s", diff)
 			}
-			if diff := cmp.Diff(before, original); diff != "" {
+			if diff := cmp.Diff(before, original, cmp.AllowUnexported(Kustomization{}), cmpopts.IgnoreFields(Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("authored object mutated (-want +got):\n%s", diff)
 			}
 			for ref := range References(got) {

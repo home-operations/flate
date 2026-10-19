@@ -520,7 +520,9 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 			t.Parallel()
 			results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{tc.root}, nil)
 			res := results[0]
-			assert.Diff(t, res.Objects, tc.objects)
+			if !slices.Equal(res.Objects, tc.objects) {
+				t.Fatal("selected objects differ from the render roster")
+			}
 			assert.Diff(t, res.Counts, map[string]int{tc.root.Kind: len(tc.objects)})
 			wantDocs := make(map[manifest.NamedResource][]map[string]any)
 			for _, obj := range tc.objects {
@@ -557,7 +559,9 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		run.Result.Failed = run.store.FailedResources()
 		selected, _, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
 		assert.Diff(t, slices.SortedFunc(maps.Keys(selected[0].Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{obj.Named(), eligible.Named()})
-		assert.Diff(t, selected[0].Objects, []manifest.BaseManifest{obj})
+		if !slices.Equal(selected[0].Objects, []manifest.BaseManifest{obj}) {
+			t.Fatal("selected objects differ from the render roster")
+		}
 		assert.Equal(t, len(run.store.FailedResources()), 3)
 	})
 

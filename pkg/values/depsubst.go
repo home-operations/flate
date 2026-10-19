@@ -18,7 +18,10 @@ func NewDependencySubstitutions(kustomizations []*manifest.Kustomization) Depend
 	union := map[string]string{}
 	conflicting := map[string]struct{}{}
 	for _, ks := range kustomizations {
-		for k, v := range manifest.VarsMap(ks.PostBuildSubstitute) {
+		if ks.PostBuild == nil {
+			continue
+		}
+		for k, v := range manifest.VarsMap(ks.PostBuild.Substitute) {
 			if _, bad := conflicting[k]; bad {
 				continue
 			}

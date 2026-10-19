@@ -136,7 +136,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
 						})
 						out, err := RenderFlux(t.Context(), c, RenderRequest{
-							Source: &store.SourceArtifact{FS: input}, Spec: demoRawSpec, HeldSlot: held,
+							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held,
 						}, sourcecache.RetryConfig{})
 						results <- result{out: out, err: err}
 					}

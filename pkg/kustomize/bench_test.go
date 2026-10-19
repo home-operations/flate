@@ -27,12 +27,12 @@ data:
 
 	cache := newTestTreeCache(b, "")
 
-	rawSpec := map[string]any{
+	rawSpec := parsedKS(b, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "small", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
-	}
+	})
 	input := localSource(b, src)
 	ctx := context.Background()
 
@@ -67,12 +67,12 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 		Source:  localSource(b, src),
 		Label:   src,
 		SubPath: "app",
-		Spec: map[string]any{
+		Spec: parsedKS(b, map[string]any{
 			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 			"kind":       "Kustomization",
 			"metadata":   map[string]any{"name": "cached", "namespace": "ns"},
 			"spec":       map[string]any{"path": "./app"},
-		},
+		}),
 	}
 	ctx := b.Context()
 	if _, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{}); err != nil {
@@ -130,12 +130,12 @@ data:
 
 	cache := newTestTreeCache(b, "")
 
-	rawSpec := map[string]any{
+	rawSpec := parsedKS(b, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "deep", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
-	}
+	})
 	input := localSource(b, src)
 	ctx := context.Background()
 
@@ -168,12 +168,12 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	cache := newTestTreeCache(b, "")
 	input := localSource(b, src)
 	ctx := context.Background()
-	rawSpec := map[string]any{
+	rawSpec := parsedKS(b, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "multi", "namespace": "ns"},
 		"spec":       map[string]any{},
-	}
+	})
 
 	b.ReportAllocs()
 	b.ResetTimer()

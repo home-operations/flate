@@ -52,16 +52,7 @@ resources:
 }
 
 func leafKS(name, path string) *manifest.Kustomization {
-	return &manifest.Kustomization{
-		Name: name,
-		Path: path,
-		Contents: map[string]any{
-			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-			"kind":       "Kustomization",
-			"metadata":   map[string]any{"name": name},
-			"spec":       map[string]any{"path": path},
-		},
-	}
+	return &manifest.Kustomization{Name: name, Path: path}
 }
 
 func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
@@ -112,11 +103,13 @@ func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
 func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, authored string
-		namespaces     []string
-		mounted        bool
+		name, authored, target string
+		namespaces             []string
+		mounted                bool
 	}{
 		{name: "flatops lifecycle", authored: "flux-system", namespaces: []string{"gpu-operator"}},
+		{name: "authored null target", authored: "flux-system", target: ", targetNamespace: null", namespaces: []string{"gpu-operator"}},
+		{name: "authored empty target", authored: "flux-system", target: ", targetNamespace: ''", namespaces: []string{"gpu-operator"}},
 		{name: "same identity", authored: "gpu-operator", namespaces: []string{"gpu-operator"}},
 		{name: "mounted replacement", namespaces: []string{"red", "blue", ""}, mounted: true},
 	} {
@@ -128,7 +121,7 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 			st.AddObject(source)
 			l := loaderFixture(st, nil)
 			l.SourceRoot = root
-			doc := testutil.KustomizationYAML("gpu-operator", fmt.Sprintf("%q", tc.authored), "  {path: ./output, sourceRef: {kind: GitRepository, name: view}}\n") + "---\n" + testutil.KustomizationYAML("explicit", fmt.Sprintf("%q", tc.authored), "  {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}\n")
+			doc := testutil.KustomizationYAML("gpu-operator", fmt.Sprintf("%q", tc.authored), "  {path: ./output, sourceRef: {kind: GitRepository, name: view}"+tc.target+"}\n") + "---\n" + testutil.KustomizationYAML("explicit", fmt.Sprintf("%q", tc.authored), "  {path: ./explicit, targetNamespace: authored, sourceRef: {kind: GitRepository, name: view}}\n")
 			check := func(ns string) {
 				for _, name := range []string{"gpu-operator", "explicit"} {
 					id := testutil.KustomizationID(ns, name)
@@ -140,9 +133,13 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 					if !ok || ks.TargetNamespace != want {
 						t.Fatalf("%s declaration = %+v, want targetNamespace %q", id, ks, want)
 					}
-					spec := ks.Contents["spec"].(map[string]any)
-					if target, _ := spec["targetNamespace"].(string); target != want {
-						t.Fatalf("%s Contents targetNamespace = %q, want %q", id, target, want)
+					projected, err := ks.RenderDocument()
+					if err != nil {
+						t.Fatal(err)
+					}
+					target, _ := projected["spec"].(map[string]any)["targetNamespace"].(string)
+					if target != want {
+						t.Fatalf("%s projected namespace = %v, %v", id, projected, err)
 					}
 					if _, ok := l.Index.Lookup(id); !ok {
 						t.Fatalf("%s missing from index", id)
@@ -395,9 +392,6 @@ func TestStampTransformerTargetNamespaces_Replacements(t *testing.T) {
 			got := stampReplacementsKS(t, root, "apps/storage", overlay)
 			if got.TargetNamespace != tc.want {
 				t.Fatalf("TargetNamespace=%q want %q", got.TargetNamespace, tc.want)
-			}
-			if target, _ := got.Contents["spec"].(map[string]any)["targetNamespace"].(string); target != tc.want {
-				t.Errorf("Contents targetNamespace=%q want %q", target, tc.want)
 			}
 		})
 	}

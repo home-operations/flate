@@ -448,7 +448,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	provider := NewStoreProvider(st, true)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		Contents: map[string]any{"spec": map[string]any{}},
+
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: "Unsupported", Name: "vars"},
 			{Kind: "ConfigMap", Name: "vars"},
@@ -460,8 +460,8 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 		t.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 	}
 	assert.Equal(t, ks.PostBuild, postBuild)
-	if ks.PostBuildSubstitute["DOMAIN"] != "example.com" || ks.PostBuildSubstitute["TOKEN"] != "core" {
-		t.Errorf("substitute: %+v", ks.PostBuildSubstitute)
+	if ks.PostBuild.Substitute["DOMAIN"] != "example.com" || ks.PostBuild.Substitute["TOKEN"] != "core" {
+		t.Errorf("substitute: %+v", ks.PostBuild.Substitute)
 	}
 }
 
@@ -476,15 +476,12 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 			}
 			ks := &manifest.Kustomization{
 				Name: "app", Namespace: "ns",
-				PostBuildSubstitute: map[string]any{"INLINE": "kept"},
-				PostBuild:           &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}}},
-				Contents:            map[string]any{"spec": map[string]any{}},
+				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"INLINE": "kept"}, SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}}},
 			}
 			if err := ExpandPostBuildSubstituteReference(ks, provider); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("got %v, want ErrInput", err)
 			}
-			assert.Diff(t, ks.PostBuildSubstitute, map[string]any{"INLINE": "kept"})
-			assert.Diff(t, ks.Contents, map[string]any{"spec": map[string]any{}})
+			assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
 		})
 	}
 }
@@ -512,13 +509,15 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			vars := map[string]any{"z-var": "v", "my-var": "v", "ok_name": "v"}
 			provider := &SliceProvider{}
 			if source == "inline" {
-				ks.PostBuildSubstitute = vars
+				ks.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"z-var": "v", "my-var": "v", "ok_name": "v"}}
 			} else {
 				ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "cm"}}}
 				provider.ConfigMaps = []*manifest.ConfigMap{{Name: "cm", Namespace: "ns", Data: vars}}
 			}
 
+			before := ks.Clone()
 			err := ExpandPostBuildSubstituteReference(ks, provider)
+			assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 			if !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 				t.Fatalf("expected invalid substitute reference, got %v", err)
 			}

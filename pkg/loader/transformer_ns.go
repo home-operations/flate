@@ -46,7 +46,7 @@ func (l *Loader) predictNamespaces(ks *manifest.Kustomization, repoRoot string, 
 		return ks, forced
 	}
 	updated := ks.Clone()
-	updated.SetTargetNamespace(res.ns)
+	updated.TargetNamespace = res.ns
 	return updated, forced
 }
 

@@ -37,8 +37,7 @@ func getDecodedMap() map[string]any {
 // putDecodedMap clears and returns the map to the pool. The clear is
 // mandatory: pooled maps must not leak prior entries into the next
 // caller. Callers must ensure no live reference to the top-level map
-// remains — parsers that retain the top-level doc (currently only
-// Kustomization's Contents field) must NOT release it. Inner submaps
+// remains. Inner submaps
 // retained by other parsers (ConfigMap.Data, Secret.Data)
 // stay alive independently — clear(m) only removes top-level entries.
 func putDecodedMap(m map[string]any) {
@@ -50,9 +49,7 @@ func putDecodedMap(m map[string]any) {
 }
 
 // ReleaseDoc returns a decoded document to the internal pool. Safe to
-// call only after the caller is done reading the top-level map AND
-// has confirmed no parser retained it. Use ReleaseIfNotRetained for
-// the post-ParseDoc dispatch helper.
+// call only after the caller is done reading the top-level map.
 //
 // Calling ReleaseDoc with a map that did not originate from
 // DecodeDocs is allowed but pollutes the pool; reserve for the
@@ -61,28 +58,13 @@ func ReleaseDoc(m map[string]any) {
 	putDecodedMap(m)
 }
 
-// ReleaseIfNotRetained returns doc to the pool unless obj retains a
-// reference to the top-level map. Currently only *Kustomization
-// retains (via its Contents field) — every other ParseDoc result
-// either round-trips through JSON (decodeInto) or aliases an inner
-// submap that clear(top) doesn't touch.
-//
-// Callers should invoke this after every successful ParseDoc whose
-// result they don't keep around in a form that aliases doc.
-func ReleaseIfNotRetained(doc map[string]any, obj BaseManifest) {
-	if _, retained := obj.(*Kustomization); retained {
-		return
-	}
-	putDecodedMap(doc)
-}
-
 // DecodeDocs reads zero or more YAML documents from r and returns each
 // as a generic map. Implicit timestamps retain their scalar text; explicit
 // tags and alias/merge construction use the upstream YAML policy. Empty maps
 // and recoverable LoadErrors are skipped; other errors wrap ErrInput.
 //
 // Returned maps belong to the caller. Release them only when no authoritative
-// document, Contents or render artifact retains them; never copy retained maps
+// document or render artifact retains them; never copy retained maps
 // merely to recycle the originals.
 func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 	dec := yaml.NewDecoder(r)

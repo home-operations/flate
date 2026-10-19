@@ -316,8 +316,8 @@ func stripMatchingQuotes(value string) (string, bool) {
 }
 
 // ExpandPostBuildSubstituteReference resolves substituteFrom references
-// against the provider and updates ks.PostBuildSubstitute (and its raw
-// Contents). Missing references are logged (Secrets silently) and the
+// against the provider and updates ks.PostBuild.Substitute. Missing
+// references are logged (Secrets silently) and the
 // substitution proceeds with what's available.
 func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) error {
 	return ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, p, nil)
@@ -326,21 +326,16 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 // ExpandPostBuildSubstituteReferenceWithSubstitutions applies overlay after
 // referenced and inline values. An overlay never enables absent postBuild.
 func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomization, p Provider, overlay map[string]string) error {
-	if ks == nil || len(ks.PostBuildSubstitute) == 0 && (ks.PostBuild == nil ||
-		len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 && len(overlay) == 0) {
+	if ks == nil || ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 && len(overlay) == 0 {
 		return nil
 	}
-	if ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
+	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
 		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
 	}
 
 	// Flux gives inline substitutions precedence over references.
-	values := map[string]any{}
-	var refs []manifest.SubstituteReference
-	if ks.PostBuild != nil {
-		refs = ks.PostBuild.SubstituteFrom
-	}
-	for _, ref := range refs {
+	values := map[string]string{}
+	for _, ref := range ks.PostBuild.SubstituteFrom {
 		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidValuesReference) {
@@ -377,14 +372,8 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 			return failure.err
 		}
 	}
-	// Layer inline spec.postBuild.substitute on top — inline wins on
-	// key collision per upstream LoadVariables order.
-	maps.Copy(values, ks.PostBuildSubstitute)
-	if ks.PostBuild != nil {
-		for name, value := range overlay {
-			values[name] = value
-		}
-	}
+	maps.Copy(values, ks.PostBuild.Substitute)
+	maps.Copy(values, overlay)
 
 	// Flux rejects invalid variable names; sort diagnostics for determinism.
 	var invalid []string
@@ -398,7 +387,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 		return fmt.Errorf("%w: substitute var name(s) %v invalid (must match %s)",
 			manifest.ErrInvalidSubstituteReference, invalid, varsubRegex.String())
 	}
-	ks.UpdatePostBuildSubstitutions(values)
+	ks.PostBuild.Substitute = values
 	return nil
 }
 

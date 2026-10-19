@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"github.com/go-git/go-git/v5/plumbing"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -89,13 +89,22 @@ func ksDoc(spec map[string]any) map[string]any {
 	}
 }
 
-func deepCopyDoc(t *testing.T, doc map[string]any) map[string]any {
-	t.Helper()
-	out, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&unstructured.Unstructured{Object: doc})
+func parsedKS(tb testing.TB, doc map[string]any) *manifest.Kustomization {
+	tb.Helper()
+	obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 	if err != nil {
-		t.Fatalf("deep copy doc: %v", err)
+		tb.Fatal(err)
 	}
-	return runtime.DeepCopyJSON(out)
+	return obj.(*manifest.Kustomization)
+}
+
+func renderDoc(tb testing.TB, ks *manifest.Kustomization) map[string]any {
+	tb.Helper()
+	doc, err := ks.RenderDocument()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return doc
 }
 
 func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
@@ -166,7 +175,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 			subPath: ".",
 			spec: map[string]any{"patchesJson6902": []any{
 				map[string]any{
-					"patch":  []any{map[string]any{"op": "replace", "path": "/spec/replicas", "value": int64(5)}},
+					"patch":  []any{map[string]any{"op": "replace", "path": "/spec/replicas", "value": int64(9007199254740993)}},
 					"target": map[string]any{"group": "apps", "version": "v1", "kind": "Deployment", "name": "app"},
 				},
 			}},
@@ -263,6 +272,56 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 		},
 	}
 
+	for _, field := range []string{"targetNamespace", "namePrefix", "nameSuffix"} {
+		for _, shape := range []string{"absent", "empty", "null"} {
+			spec := map[string]any{}
+			switch shape {
+			case "empty":
+				spec[field] = ""
+			case "null":
+				spec[field] = nil
+			}
+			cases = append(cases, struct {
+				name    string
+				files   map[string]string
+				subPath string
+				spec    map[string]any
+			}{field + "/" + shape, map[string]string{
+				"kustomization.yaml": existingKustomization("cm.yaml") + "namespace: original\nnamePrefix: before-\nnameSuffix: -after\n",
+				"cm.yaml":            cmYAML("config"),
+			}, ".", spec})
+		}
+	}
+	for _, field := range []string{"patches", "images", "components", "buildMetadata", "patchesStrategicMerge", "patchesJson6902"} {
+		for _, shape := range []string{"null", "null elements", "mixed null elements", "invalid field"} {
+			if shape == "invalid field" && field != "patchesStrategicMerge" && field != "patchesJson6902" {
+				continue
+			}
+			var value any
+			if shape == "invalid field" {
+				value = "not-a-list"
+			}
+			if shape == "null elements" {
+				value = []any{nil, nil}
+			}
+			if shape == "mixed null elements" {
+				var valid any = map[string]any{}
+				if field == "components" || field == "buildMetadata" {
+					valid = "keep"
+				}
+				value = []any{valid, nil, valid, nil}
+			}
+			cases = append(cases, struct {
+				name    string
+				files   map[string]string
+				subPath string
+				spec    map[string]any
+			}{field + "/" + shape, map[string]string{
+				"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config"),
+			}, ".", map[string]any{field: value}})
+		}
+	}
+
 	for _, namespace := range []string{"", "apps"} {
 		cases = append(cases, struct {
 			name    string
@@ -287,15 +346,18 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 			root := testutil.WriteTree(t, tc.files)
 			doc := ksDoc(tc.spec)
 
-			gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: deepCopyDoc(t, doc)})
-			want, _, _, err := gen.GenerateManifest(filepath.Join(root, tc.subPath))
-			if err != nil {
-				t.Fatalf("flux GenerateManifest: %v", err)
-			}
+			gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: manifest.DeepCopyMap(doc)})
+			want, _, _, wantErr := gen.GenerateManifest(filepath.Join(root, tc.subPath))
 
-			got, _, err := generateManifest(testTreeFS(t, root), filepath.Join(root, tc.subPath), deepCopyDoc(t, doc))
-			if err != nil {
-				t.Fatalf("generateManifest: %v", err)
+			borrowed := renderDoc(t, parsedKS(t, manifest.DeepCopyMap(doc)))
+			snapshot := manifest.DeepCopyMap(borrowed)
+			got, _, err := generateManifest(testTreeFS(t, root), filepath.Join(root, tc.subPath), borrowed)
+			assert.Diff(t, borrowed, snapshot)
+			if wantErr != nil || err != nil {
+				if fmt.Sprint(err) != fmt.Sprint(wantErr) {
+					t.Fatalf("generator error = %v, want %v", err, wantErr)
+				}
+				return
 			}
 
 			if string(got) != string(want) {
@@ -305,13 +367,50 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 	}
 }
 
+func TestGenerateManifest_TypedOverrides(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                string
+		authored, effective map[string]any
+	}{
+		{name: "scalar nulls", authored: map[string]any{"targetNamespace": nil, "namePrefix": nil, "nameSuffix": nil}, effective: map[string]any{"targetNamespace": "apps", "namePrefix": "pre-", "nameSuffix": "-post"}},
+		{name: "scalar empties", authored: map[string]any{"targetNamespace": "", "namePrefix": "", "nameSuffix": ""}, effective: map[string]any{"targetNamespace": "apps", "namePrefix": "pre-", "nameSuffix": "-post"}},
+		{name: "patches null", authored: map[string]any{"patches": nil}, effective: map[string]any{"patches": []any{map[string]any{"patch": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config}\ndata: {value: typed}\n"}}}},
+		{name: "patch element null", authored: map[string]any{"patches": []any{nil}}, effective: map[string]any{"patches": []any{map[string]any{"patch": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config}\ndata: {value: typed}\n"}}}},
+		{name: "images null", authored: map[string]any{"images": nil}, effective: map[string]any{"images": []any{map[string]any{"name": "nginx", "newTag": "typed"}}}},
+		{name: "image element null", authored: map[string]any{"images": []any{nil}}, effective: map[string]any{"images": []any{map[string]any{"name": "nginx", "newTag": "typed"}}}},
+		{name: "components null", authored: map[string]any{"components": nil}, effective: map[string]any{"components": []any{"./component"}}},
+		{name: "component element null", authored: map[string]any{"components": []any{nil}}, effective: map[string]any{"components": []any{"./component"}}},
+		{name: "buildMetadata null", authored: map[string]any{"buildMetadata": nil}, effective: map[string]any{"buildMetadata": []any{"originAnnotations"}}},
+		{name: "buildMetadata element null", authored: map[string]any{"buildMetadata": []any{nil}}, effective: map[string]any{"buildMetadata": []any{"originAnnotations"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("config")})
+			ks := parsedKS(t, ksDoc(tc.authored)).Clone()
+			plain := parsedKS(t, ksDoc(tc.effective))
+			ks.KustomizationSpec = plain.KustomizationSpec
+			got, _, err := generateManifest(testTreeFS(t, root), root, renderDoc(t, ks))
+			assert.NoError(t, err)
+			oracle := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: ksDoc(tc.effective)})
+			want, _, _, err := oracle.GenerateManifest(root)
+			assert.NoError(t, err)
+			assert.Equal(t, string(got), string(want))
+			assert.Equal(t, manifest.Fingerprint(ks.Content(nil)), manifest.Fingerprint(plain.Content(nil)))
+		})
+	}
+}
+
 func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace string
+		authored        any
 	}{
-		{name: "empty"},
-		{name: "target", namespace: "apps"},
+		{name: "empty", authored: ""},
+		{name: "target", namespace: "apps", authored: "apps"},
+		{name: "typed over empty", namespace: "apps", authored: ""},
+		{name: "typed over null", namespace: "apps"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -321,8 +420,10 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 				"role.yaml":          "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: role}\n",
 				"gateway.yaml":       "apiVersion: gateway.networking.k8s.io/v1\nkind: GatewayClass\nmetadata: {name: gateway}\n",
 			})
+			ks := parsedKS(t, ksDoc(map[string]any{"targetNamespace": tc.authored})).Clone()
+			ks.TargetNamespace = tc.namespace
 			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{
-				Source: localSource(t, root), SubPath: ".", Spec: ksDoc(map[string]any{"targetNamespace": tc.namespace}),
+				Source: localSource(t, root), SubPath: ".", Spec: ks,
 			}, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			docs, err := manifest.SplitDocs(out)
@@ -356,7 +457,7 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	// Behind the ignore filesystem, scanManifests never sees .sops.yaml so a
 	// path:./ build over the working tree renders the ConfigMap.
 	fsys := testIgnoreTreeFS(t, root)
-	data, kfile, err := generateManifest(fsys, root, ksDoc(nil))
+	data, kfile, err := generateManifest(fsys, root, renderDoc(t, parsedKS(t, ksDoc(nil))))
 	if err != nil {
 		t.Fatalf("generateManifest(ignore): %v", err)
 	}
@@ -380,7 +481,7 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	// Without the filter (a fetched artifact, already filtered, would not hit
 	// this), scanManifests includes .sops.yaml and fails to decode it — the bug
 	// the filter fixes.
-	if _, _, err := generateManifest(testTreeFS(t, root), root, ksDoc(nil)); err == nil {
+	if _, _, err := generateManifest(testTreeFS(t, root), root, renderDoc(t, parsedKS(t, ksDoc(nil)))); err == nil {
 		t.Fatal("expected generate/scan to fail on the unfiltered .sops.yaml, got nil")
 	}
 }

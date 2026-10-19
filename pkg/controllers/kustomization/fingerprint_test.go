@@ -6,6 +6,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -46,15 +47,40 @@ func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 // post-patch values.
 func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
 	t.Parallel()
-	base := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		Path: "./apps", TargetNamespace: "apps",
+	docs, err := manifest.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: flux-system}
+spec: {path: ./apps, targetNamespace: apps, postBuild: {substitute: {VALUE: initial}}}
+`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	patched := base.Clone()
-	patched.TargetNamespace = "production"
-
-	if got := replayKey(base.Content("/repo")); got == replayKey(patched.Content("/repo")) {
-		t.Errorf("fingerprint should differ when spec.targetNamespace mutates; both = %q", got)
+	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := obj.(*manifest.Kustomization)
+	key := replayKey(base.Content("/repo"))
+	for _, tc := range []struct {
+		name   string
+		change func(*manifest.Kustomization)
+	}{
+		{"prefix", func(k *manifest.Kustomization) { k.NamePrefix = "typed-" }},
+		{"namespace", func(k *manifest.Kustomization) { k.TargetNamespace = "production" }},
+		{"substitution", func(k *manifest.Kustomization) { k.PostBuild.Substitute["VALUE"] = "changed" }},
+		{"patch", func(k *manifest.Kustomization) { k.Patches = []fluxapis.Patch{{Patch: "changed"}} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			patched := base.Clone()
+			tc.change(patched)
+			if replayKey(patched.Content("/repo")) == key {
+				t.Fatal("effective spec change reused the fingerprint")
+			}
+			if replayKey(base.Content("/repo")) != key {
+				t.Fatal("clone edit mutated the original content")
+			}
+		})
 	}
 }
 
@@ -89,7 +115,7 @@ func TestKustomizationFingerprint_PreparedOverlay(t *testing.T) {
 	if replayKey(first.Content("/repo")) == replayKey(second.Content("/repo")) {
 		t.Fatal("effective overlay missing from dedup fingerprint")
 	}
-	if len(ks.PostBuildSubstitute) != 0 {
+	if len(ks.PostBuild.Substitute) != 0 {
 		t.Fatal("fingerprinting preparation mutated canonical manifest")
 	}
 }
@@ -100,7 +126,6 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
-			ks.PostBuild = &kustomizev1.PostBuild{}
 			ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "external"}}}
 			var fingerprints []string
 			for _, value := range []string{"first", "second", "first"} {
@@ -118,7 +143,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if prepared.PostBuildSubstitute["VALUE"] != value {
+				if prepared.PostBuild.Substitute["VALUE"] != value {
 					t.Fatal("supplied value missing from prepared manifest")
 				}
 				fingerprints = append(fingerprints, replayKey(prepared.Content("/repo")))
@@ -126,7 +151,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 			if fingerprints[0] == "" || fingerprints[0] == fingerprints[1] || fingerprints[0] != fingerprints[2] {
 				t.Fatalf("supplied values missing from stable fingerprint: %v", fingerprints)
 			}
-			if len(ks.PostBuildSubstitute) != 0 {
+			if len(ks.PostBuild.Substitute) != 0 {
 				t.Fatal("preparation mutated canonical manifest")
 			}
 		})

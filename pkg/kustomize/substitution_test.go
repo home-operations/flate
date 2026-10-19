@@ -7,6 +7,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -81,27 +82,27 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"VALUE": "overlay", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
-	if d := cmp.Diff(want, prepared.PostBuildSubstitute); d != "" {
+	want := map[string]string{"VALUE": "overlay", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
+	if d := cmp.Diff(want, prepared.PostBuild.Substitute); d != "" {
 		t.Fatalf("layers (-want +got): %s", d)
 	}
-	if got := prepared.Contents["metadata"].(map[string]any)["namespace"]; got != projected.Namespace {
+	if got := prepared.Namespace; got != projected.Namespace {
 		t.Fatalf("prepared namespace = %v, want %s", got, projected.Namespace)
 	}
-	if d := cmp.Diff(snapshot, original); d != "" {
+	if d := cmp.Diff(snapshot, original, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); d != "" {
 		t.Fatalf("stored input mutated (-want +got): %s", d)
 	}
 	if overlay["VALUE"] != "overlay" || overlay["EXTRA"] != "one\ntwo" {
 		t.Fatal("overlay mutated")
 	}
-	if prepared.Contents["spec"].(map[string]any)["postBuild"].(map[string]any)["substitute"].(map[string]any)["VALUE"] != "overlay" {
+	if prepared.PostBuild.Substitute["VALUE"] != "overlay" {
 		t.Fatal("effective values missing from prepared spec")
 	}
-	if manifest.VarsMap(prepared.PostBuildSubstitute)["EXTRA"] != "onetwo" {
+	if manifest.VarsMap(prepared.PostBuild.Substitute)["EXTRA"] != "onetwo" {
 		t.Fatal("overlay normalization changed")
 	}
 	ordinary, err := Prepare(projected, provider, nil)
-	if err != nil || ordinary.PostBuildSubstitute["VALUE"] != "inline" {
+	if err != nil || ordinary.PostBuild.Substitute["VALUE"] != "inline" {
 		t.Fatalf("exported Prepare changed: %v", err)
 	}
 	for _, tc := range []struct {
@@ -119,7 +120,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (len(got.PostBuildSubstitute) > 0) != tc.want {
+			if (got.PostBuild != nil && len(got.PostBuild.Substitute) > 0) != tc.want {
 				t.Fatal("overlay changed absent-postBuild behavior")
 			}
 		})

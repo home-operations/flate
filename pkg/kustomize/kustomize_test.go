@@ -24,12 +24,12 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: map[string]any{
+	_, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
-	}}, sourcecache.RetryConfig{})
+	})}, sourcecache.RetryConfig{})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -44,6 +44,7 @@ func TestRenderFlux_Metadata(t *testing.T) {
 		name, fixture, effectiveNamespace string
 		owner, common                     map[string]any
 		labels, annotations               map[string]any
+		editNull                          bool
 	}{
 		{
 			name:    "common metadata merges and overrides",
@@ -62,6 +63,37 @@ func TestRenderFlux_Metadata(t *testing.T) {
 			common: map[string]any{"labels": map[string]any{ownerName: "user-override", ownerNamespace: "user-ns-override"}},
 			labels: map[string]any{ownerName: "user-override", ownerNamespace: "user-ns-override"},
 		},
+		{
+			name:    "null common metadata preserves existing values",
+			fixture: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  labels: {app: existing}\n  annotations: {note: existing}\n",
+			owner:   map[string]any{"name": "owner", "namespace": "ns"},
+			common: map[string]any{
+				"labels":      map[string]any{"app": nil, ownerName: nil},
+				"annotations": map[string]any{"note": nil},
+			},
+			labels:      map[string]any{"app": "existing", ownerName: "owner", ownerNamespace: "ns"},
+			annotations: map[string]any{"note": "existing"},
+		},
+		{
+			name:    "empty common metadata overwrites existing values",
+			fixture: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  labels: {app: existing}\n  annotations: {note: existing}\n",
+			owner:   map[string]any{"name": "owner", "namespace": "ns"},
+			common: map[string]any{
+				"labels":      map[string]any{"app": "", ownerName: ""},
+				"annotations": map[string]any{"note": ""},
+			},
+			labels:      map[string]any{"app": "", ownerName: "", ownerNamespace: "ns"},
+			annotations: map[string]any{"note": ""},
+		},
+
+		{
+			name: "typed values replace null metadata", fixture: plain,
+			owner:       map[string]any{"name": "owner", "namespace": "ns"},
+			common:      map[string]any{"labels": map[string]any{ownerName: nil}, "annotations": map[string]any{"note": nil}},
+			labels:      map[string]any{ownerName: "typed", ownerNamespace: "ns"},
+			annotations: map[string]any{"note": "typed"}, editNull: true,
+		},
+
 		{
 			name: "effective owner namespace", fixture: plain,
 			owner: map[string]any{"name": "infra", "namespace": "authored"}, effectiveNamespace: "flux-system",
@@ -85,18 +117,30 @@ func TestRenderFlux_Metadata(t *testing.T) {
 			}
 			doc := ksDoc(spec)
 			doc["metadata"] = tc.owner
+			ks := parsedKS(t, doc)
+			if tc.editNull {
+				ks.CommonMetadata.Labels[ownerName] = "typed"
+				ks.CommonMetadata.Annotations["note"] = "typed"
+			}
 			if tc.effectiveNamespace != "" {
 				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 				assert.NoError(t, err)
 				projected := obj.WithNamespace(tc.effectiveNamespace).(*manifest.Kustomization)
 				prepared, err := Prepare(projected, nil, nil)
 				assert.NoError(t, err)
-				doc = prepared.Contents
+				ks = prepared
 			}
-			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{
-				Source: localSource(t, root), Label: root, SubPath: ".", Spec: doc,
-			}, sourcecache.RetryConfig{})
+			borrowed := renderDoc(t, ks)
+			snapshot := manifest.DeepCopyMap(borrowed)
+			cache := newTestTreeCache(t, "")
+			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: ks}
+			out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
+			assert.Diff(t, borrowed, snapshot)
+			repeated, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
+			assert.Equal(t, string(repeated), string(out))
+			assert.NoError(t, err)
+			assert.Diff(t, borrowed, snapshot)
 			var got map[string]any
 			assert.NoError(t, yaml.Unmarshal(out, &got))
 			md := got["metadata"].(map[string]any)

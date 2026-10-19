@@ -156,7 +156,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				if !slices.Contains(owners, testutil.KustomizationID("flux-system", "app-a")) {
 					t.Fatalf("side %d owners=%v", i, owners)
 				}
-				_, ns := manifest.DocMetadata(obj.Contents)
+				ns := obj.Namespace
 				assert.Equal(t, ns, "flux-system")
 				docs := rendered.Result.Manifests[consumer]
 				if len(docs) != 1 {

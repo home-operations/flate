@@ -15,13 +15,8 @@ import (
 
 // fluxKS is a minimal Flux Kustomization spec for driving RenderFlux against a
 // subPath; the auto-generate path keys off the directory, not these fields.
-func fluxKS() map[string]any {
-	return map[string]any{
-		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-		"kind":       "Kustomization",
-		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
-		"spec":       map[string]any{"path": "./apps"},
-	}
+func fluxKS() *manifest.Kustomization {
+	return &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
 }
 
 func cmChild(t *testing.T, root, name string, id manifest.NamedResource) {

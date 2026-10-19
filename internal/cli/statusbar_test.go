@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,12 +21,12 @@ var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 // codes are zero-width and must not count against the terminal budget.
 func visibleLen(s string) int { return len([]rune(ansiRE.ReplaceAllString(s, ""))) }
 
-// inflightModel builds a model with names tracked as in-flight (Pending).
 func inflightModel(color bool, names ...string) barModel {
 	m := newBarModel(color)
 	for _, n := range names {
-		m.track(testutil.KustomizationID("ns", n), store.StatusInfo{Status: store.StatusPending})
+		m.events.publish(testutil.KustomizationID("ns", n), store.StatusPending, time.Now())
 	}
+	m.drainEvents()
 	return m
 }
 
@@ -136,42 +137,42 @@ func TestSummarizeInflight(t *testing.T) {
 	}
 }
 
-// TestModel_Counts drives track through realistic events: counters track unique
-// terminal ids; Ready, Failed, and skipped all count as "done loading".
 func TestModel_Counts(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
 	a, b, s := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "suspended")
-	m.track(a, store.StatusInfo{Status: store.StatusPending})
-	m.track(b, store.StatusInfo{Status: store.StatusPending})
-	m.track(a, store.StatusInfo{Status: store.StatusReady})
-	m.track(b, store.StatusInfo{Status: store.StatusFailed, Message: "boom: chart not found"})
-	m.track(s, store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended})
+	m.events.publish(a, store.StatusPending, time.Now())
+	m.events.publish(b, store.StatusPending, time.Now())
+	m.events.publish(a, store.StatusReady, time.Now())
+	m.events.publish(b, store.StatusFailed, time.Now())
+	m.events.publish(s, store.StatusReady, time.Now())
 
+	m.drainEvents()
 	if m.done != 3 || m.total != 3 {
 		t.Errorf("counts: done=%d total=%d; want 3/3", m.done, m.total)
 	}
+	m.drainEvents()
 	if got := m.inflightLabels(); len(got) != 0 {
 		t.Errorf("all resources terminal but still in-flight: %v", got)
 	}
 }
 
-// TestModel_DedupAndInflight: an idempotent terminal re-write doesn't
-// double-count, and a resource drops out of the in-flight set the moment it
-// reaches a terminal status.
 func TestModel_DedupAndInflight(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
 	a := testutil.KustomizationID("ns", "a")
-	m.track(a, store.StatusInfo{Status: store.StatusPending})
+	m.events.publish(a, store.StatusPending, time.Now())
+	m.drainEvents()
 	if got := m.inflightLabels(); len(got) != 1 || got[0] != "a" {
 		t.Fatalf("in-flight after Pending = %v, want [a]", got)
 	}
-	m.track(a, store.StatusInfo{Status: store.StatusReady})
-	m.track(a, store.StatusInfo{Status: store.StatusReady}) // duplicate
+	m.events.publish(a, store.StatusReady, time.Now())
+	m.events.publish(a, store.StatusReady, time.Now()) // duplicate
+	m.drainEvents()
 	if m.done != 1 {
 		t.Errorf("duplicate Ready double-counted: done=%d, want 1", m.done)
 	}
+	m.drainEvents()
 	if got := m.inflightLabels(); len(got) != 0 {
 		t.Errorf("terminal resource still in-flight: %v", got)
 	}
@@ -188,11 +189,16 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			m := inflightModel(false, tc.names...)
+			m := newBarModel(false)
 			first := time.Unix(1, 0)
-			m.first[testutil.KustomizationID("ns", "bravo")] = first
-			m.first[testutil.KustomizationID("ns", "charlie")] = first
-			m.first[testutil.KustomizationID("ns", "alpha")] = first.Add(time.Second)
+			for _, name := range tc.names {
+				observedAt := first
+				if name == "alpha" {
+					observedAt = first.Add(time.Second)
+				}
+				m.events.publish(testutil.KustomizationID("ns", name), store.StatusPending, observedAt)
+			}
+			m.drainEvents()
 			assert.Diff(t, m.inflightLabels(), []string{"bravo", "charlie", "alpha"})
 		})
 	}
@@ -212,22 +218,74 @@ func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 	ids := append([]manifest.NamedResource{boot, chart}, declared...)
 
 	for _, id := range ids {
-		m.track(id, store.StatusInfo{Status: store.StatusPending})
+		m.events.publish(id, store.StatusPending, time.Now())
 	}
+	m.drainEvents()
 	if got := m.inflightLabels(); len(got) != len(declared) {
 		t.Fatalf("in-flight labels = %v, want %d declared resources", got, len(declared))
 	}
 	for _, id := range ids {
-		m.track(id, store.StatusInfo{Status: store.StatusReady})
+		m.events.publish(id, store.StatusReady, time.Now())
 	}
+	m.drainEvents()
 	if m.done != len(declared) || m.total != len(declared) {
 		t.Errorf("live counts: done=%d total=%d; want %d/%d", m.done, m.total, len(declared), len(declared))
 	}
 
 	m2 := newBarModel(false)
-	m2.track(boot, store.StatusInfo{Status: store.StatusPending})
-	m2.track(chart, store.StatusInfo{Status: store.StatusPending})
+	m2.events.publish(boot, store.StatusPending, time.Now())
+	m2.events.publish(chart, store.StatusPending, time.Now())
+	m2.drainEvents()
 	if got := m2.inflightLabels(); len(got) != 0 {
 		t.Errorf("synthetic ids listed in-flight: %v", got)
 	}
+}
+
+func TestModel_DelayedStatuses(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"initial", "after-start-tick"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			m := newBarModel(false)
+			a, b := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")
+			first := time.Unix(10, 0)
+			m.events.publish(a, store.StatusPending, first.Add(time.Second))
+			m.events.publish(b, store.StatusPending, first)
+			if phase == "initial" {
+				m.drainEvents()
+			} else {
+				updated, _ := m.Update(m.spinner.Tick())
+				m = updated.(barModel)
+			}
+			assert.Diff(t, m.inflightLabels(), []string{"b", "a"})
+			m.events.publish(a, store.StatusPending, first.Add(-time.Second))
+			m.events.publish(b, store.StatusReady, first.Add(2*time.Second))
+			m.events.publish(b, store.StatusReady, first.Add(3*time.Second))
+			updated, _ := m.Update(m.spinner.Tick())
+			m = updated.(barModel)
+			assert.Equal(t, m.first[a], first.Add(-time.Second))
+			assert.Equal(t, m.first[b], first)
+			assert.Equal(t, m.total, 2)
+			assert.Equal(t, m.done, 1)
+			assert.Diff(t, m.inflightLabels(), []string{"a"})
+			if m.events.head.Load() != nil {
+				t.Fatal("spinner left pending statuses")
+			}
+		})
+	}
+}
+
+func TestModel_DelayedElapsed(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		m := newBarModel(false)
+		start := time.Now()
+		time.Sleep(progressDelay)
+		m.drainEvents()
+		time.Sleep(250 * time.Millisecond)
+		assert.Equal(t, m.startedAt, start)
+		if got := m.View().Content; !strings.Contains(got, "0.5s") {
+			t.Fatalf("elapsed excludes delay: %q", got)
+		}
+	})
 }

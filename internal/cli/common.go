@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -399,44 +398,8 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestr
 	if err != nil {
 		return nil, nil, err
 	}
-	// Live status bar on stderr (TTY-gated via barSink). A Bubble Tea program
-	// runs the inline frame; store status events feed it via Program.Send, so
-	// its counters and spinner track the reconcile as it runs. stdout (the
-	// rendered output) is untouched. Defers run LIFO: the unsubscribe fires,
-	// then finishMsg clears the frame and the program is detached from slog
-	// before Render's callers print anything.
 	if barSink != nil {
-		// With no input attached, Bubble Tea's startup terminal queries would
-		// get answered into the shell's input buffer; queryFilterFile strips
-		// them (progressBarEnabled guarantees out is a TTY *os.File).
-		out := barSink.out
-		if f, ok := out.(*os.File); ok {
-			out = &queryFilterFile{File: f}
-		}
-		p := tea.NewProgram(newBarModel(barSink.color),
-			tea.WithOutput(out),
-			tea.WithInput(nil),         // output-only: never capture the keyboard
-			tea.WithoutSignalHandler(), // the CLI context owns Ctrl-C, not the bar
-		)
-		barSink.setProgram(p)
-		go func() { _, _ = p.Run() }()
-		// kustomize writes deprecation/sort-order warnings straight to the
-		// stderr fd (no injectable writer), which would shred the inline frame.
-		// Capture the fd for the bar's lifetime and demote those lines to
-		// slog.Debug — flate's own structured warnings still reach the user
-		// above the frame via barSink, while dependency fd chatter stays off the
-		// clean bar unless --log-level debug asks for it.
-		restoreStderr := captureStderr(func(line string) { slog.Debug(line) })
-		unsub := o.Store().AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-			p.Send(statusMsg{id: id, info: payload.(store.StatusInfo)})
-		}, false)
-		defer func() {
-			unsub()
-			restoreStderr() // restore os.Stderr + flush the drain while the frame is still live
-			p.Send(finishMsg{})
-			p.Wait()
-			barSink.setProgram(nil)
-		}()
+		defer barSink.progress(ctx, o.Store())()
 	}
 	res, err := o.Render(ctx)
 	// A Bootstrap failure has no Result. Callers must receive a nil

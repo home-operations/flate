@@ -3,15 +3,20 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // barSink is the slog routing adapter active while the live status bar runs; nil
@@ -22,11 +27,7 @@ import (
 // never touched — rendered output stays byte-deterministic.
 var barSink *barWriter
 
-// barWriter routes slog output around the Bubble Tea status bar. With a Program
-// attached (the bar is live), each record prints above the sticky frame via
-// Program.Println; without one, it writes straight through to the underlying
-// stderr. It is the io.Writer the root command points slog at, so log lines
-// never corrupt the bar.
+// barWriter routes logs above an active progress frame or directly to stderr.
 type barWriter struct {
 	out   io.Writer // underlying stderr (a *os.File TTY)
 	color bool      // whether the bar/report should emit ANSI on this stderr
@@ -52,11 +53,74 @@ func (w *barWriter) Write(p []byte) (int, error) {
 	prog := w.prog
 	w.mu.Unlock()
 	if prog != nil {
-		// Println places the line above the live frame and owns the newline.
-		prog.Println(strings.TrimRight(string(p), "\n"))
+		// Send releases a writer even when Run fails during initialization.
+		prog.Send(tea.Println(strings.TrimRight(string(p), "\n"))())
 		return len(p), nil
 	}
 	return w.out.Write(p)
+}
+
+const progressDelay = 250 * time.Millisecond
+
+func (w *barWriter) progress(ctx context.Context, s *store.Store) func() {
+	m := newBarModel(w.color)
+	events := m.events
+	restore := captureStderr(func(line string) { slog.Debug(line) })
+	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		events.publish(id, payload.(store.StatusInfo).Status, time.Now())
+	}, false)
+	completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		w.runProgress(ctx, m, completed, finish)
+	}()
+	return func() {
+		close(completed)
+		unsub()
+		restore()
+		close(finish)
+		<-done
+		events.head.Store(nil)
+	}
+}
+
+func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, finish <-chan struct{}) {
+	timer := time.NewTimer(time.Until(m.startedAt.Add(progressDelay)))
+	defer timer.Stop()
+	select {
+	case <-completed:
+		return
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	select {
+	case <-completed:
+		return
+	case <-ctx.Done():
+		return
+	default:
+	}
+	m.drainEvents()
+	out := w.out
+	if f, ok := out.(*os.File); ok {
+		out = &queryFilterFile{File: f}
+	}
+	p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(nil), tea.WithoutSignalHandler())
+	w.setProgram(p)
+	runDone := make(chan struct{})
+	go func() {
+		_, _ = p.Run()
+		w.setProgram(nil)
+		close(runDone)
+	}()
+	select {
+	case <-runDone:
+		return
+	case <-finish:
+		p.Send(finishMsg{})
+		<-runDone
+	}
 }
 
 // terminalQueries are the capability probes Bubble Tea writes at program start
@@ -110,8 +174,7 @@ func (f *queryFilterFile) Write(p []byte) (int, error) {
 // Bubble Tea hold barSink.out (the real stderr captured at startup), not the
 // os.Stderr variable this swaps.
 //
-// The caller installs it while the bar is live and defers restore() before the
-// program is torn down, so the last drained lines still land above the frame.
+// Restore must drain before an active program stops so tail logs remain routed.
 // The swap is race-free: it is installed once before Render fans out the build
 // goroutines (the only readers of os.Stderr) and restored once after Render
 // joins them, so no read races the write. If the pipe cannot be created,

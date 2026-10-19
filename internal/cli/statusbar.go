@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -21,20 +22,19 @@ import (
 //	⠹ [42/86] plex, factorio +3  12.3s
 //
 // Bubble Tea owns the render loop, the braille spinner (bubbles/spinner), resize,
-// and printing log lines above the frame; the store's status events feed it via
-// Program.Send. The bar is purely a loading indicator: it prints nothing
+// and printing log lines above the frame; store events are drained on ticks. The bar is purely a loading indicator: it prints nothing
 // permanent and clears itself (an empty View on finishMsg) when the run ends.
 // Failures aren't surfaced here — flate's end-of-run report prints them once the
 // bar is gone.
 //
-// Update runs on Bubble Tea's single goroutine, so the model needs no mutex even
-// though statusMsg crosses from the orchestrator's reconcile goroutines.
+// Update owns the model maps; store callbacks only publish pending events.
 type barModel struct {
 	spinner   spinner.Model
 	color     bool
 	width     int
 	startedAt time.Time
 	finished  bool // set on finishMsg → View renders empty so the bar vanishes
+	events    *progressEvents
 
 	// first records each id's first-seen time — drives in-flight ordering.
 	first    map[manifest.NamedResource]time.Time
@@ -46,10 +46,38 @@ type barModel struct {
 	total   int
 }
 
-// statusMsg carries one store status event into the bar's Update loop.
-type statusMsg struct {
-	id   manifest.NamedResource
-	info store.StatusInfo
+type progressEvent struct {
+	id         manifest.NamedResource
+	status     store.Status
+	observedAt time.Time
+	next       *progressEvent
+}
+
+type progressEvents struct {
+	head atomic.Pointer[progressEvent]
+}
+
+func (e *progressEvents) publish(id manifest.NamedResource, status store.Status, observedAt time.Time) {
+	event := &progressEvent{id: id, status: status, observedAt: observedAt}
+	for {
+		head := e.head.Load()
+		event.next = head
+		if e.head.CompareAndSwap(head, event) {
+			return
+		}
+	}
+}
+
+func (e *progressEvents) take() *progressEvent {
+	// Only the consumer owns detached links; a failed publisher CAS never reads them.
+	head := e.head.Swap(nil)
+	var first *progressEvent
+	for head != nil {
+		next := head.next
+		head.next = first
+		first, head = head, next
+	}
+	return first
 }
 
 // finishMsg clears the frame and quits the program — the bar leaves no trace.
@@ -61,6 +89,7 @@ func newBarModel(color bool) barModel {
 		color:     color,
 		width:     80,
 		startedAt: time.Now(),
+		events:    &progressEvents{},
 		first:     map[manifest.NamedResource]time.Time{},
 		inflight:  map[manifest.NamedResource]struct{}{},
 		printed:   map[manifest.NamedResource]store.Status{},
@@ -74,6 +103,7 @@ func (m barModel) Init() tea.Cmd { return m.spinner.Tick }
 func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
+		m.drainEvents()
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
@@ -82,9 +112,6 @@ func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.width = msg.Width
 		}
 		return m, nil
-	case statusMsg:
-		m.track(msg.id, msg.info)
-		return m, nil
 	case finishMsg:
 		m.finished = true
 		return m, tea.Quit
@@ -92,24 +119,32 @@ func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *barModel) track(id manifest.NamedResource, info store.StatusInfo) {
+func (m *barModel) drainEvents() {
+	for event := m.events.take(); event != nil; event = event.next {
+		m.track(event.id, event.status, event.observedAt)
+	}
+}
+
+func (m *barModel) track(id manifest.NamedResource, status store.Status, observedAt time.Time) {
 	if id.ReportHidden() {
 		return
 	}
-	if _, seen := m.first[id]; !seen {
-		m.first[id] = time.Now()
+	if first, seen := m.first[id]; !seen {
+		m.first[id] = observedAt
 		m.total++
-		if info.Status == store.StatusPending {
+		if status == store.StatusPending {
 			m.inflight[id] = struct{}{}
 		}
+	} else if observedAt.Before(first) {
+		m.first[id] = observedAt
 	}
-	if info.Status != store.StatusReady && info.Status != store.StatusFailed {
+	if status != store.StatusReady && status != store.StatusFailed {
 		return
 	}
-	if m.printed[id] == info.Status {
+	if m.printed[id] == status {
 		return
 	}
-	m.printed[id] = info.Status
+	m.printed[id] = status
 	delete(m.inflight, id)
 	m.done++
 }

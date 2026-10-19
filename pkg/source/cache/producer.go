@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,17 +26,111 @@ type acquisitionProducer interface {
 }
 
 type payload struct {
-	writer  io.Writer
-	memory  bytes.Buffer
-	hash    digest.Digester
-	discard func() error
+	writer    io.Writer
+	memory    bytes.Buffer
+	hash      digest.Digester
+	discard   func() error
+	key       acquireKey
+	previous  *entry
+	verified  bool
+	unchanged bool
+	written   int64
+}
+
+// ProducerInput writes new content or exposes the owner's last complete generation.
+type ProducerInput struct {
+	io.Writer
+	cache   *Cache
+	payload *payload
+}
+
+// Previous returns independent upstream metadata, or nil when no usable payload exists.
+// It retains no open reader and MUST only be called during production.
+func (p ProducerInput) Previous(ctx context.Context) (*ocispec.Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, &CacheError{err}
+	}
+	s := p.payload
+	if s == nil {
+		return nil, nil
+	}
+	e := s.previous
+	if e == nil || e.outcome != nil {
+		return nil, nil
+	}
+	if !s.verified {
+		prior := &entry{fs: e.fs, descriptor: e.descriptor, stored: e.stored, resolved: e.resolved}
+		if p.cache.store != nil {
+			upstream, at, valid := decode(e.stored, s.key.required)
+			if !valid {
+				s.previous = nil
+				return nil, nil
+			}
+			info, err := p.cache.root.Stat(blobPath(e.stored.Digest))
+			if errors.Is(err, fs.ErrNotExist) || err == nil && info.Size() != e.stored.Size {
+				s.previous = nil
+				return nil, nil
+			}
+			if err != nil {
+				return nil, &CacheError{err}
+			}
+			prior.descriptor, prior.resolved = upstream, at
+			if prior.fs == nil {
+				if err := s.key.producer.restore(ctx, p.cache, e.stored, prior); err != nil {
+					return nil, &CacheError{err}
+				}
+			}
+		}
+		if prior.fs == nil {
+			s.previous = nil
+			return nil, nil
+		}
+		s.previous, s.verified = prior, true
+		e = prior
+	}
+	desc := e.descriptor
+	desc.Annotations = maps.Clone(desc.Annotations)
+	return &desc, nil
+}
+
+// ProducerResult reports new bytes or successful validation of the previous payload.
+type ProducerResult struct {
+	ocispec.Descriptor
+	// Unchanged requires a usable previous payload and forbids writing new bytes.
+	Unchanged bool
+}
+
+func (s *payload) Write(data []byte) (int, error) {
+	n, err := s.writer.Write(data)
+	s.written += int64(n)
+	return n, err
+}
+
+func (s *payload) complete(ctx context.Context, c *Cache, result ProducerResult) (*entry, error) {
+	e := &entry{descriptor: result.Descriptor}
+	if result.Unchanged {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !s.verified {
+			if _, err := (ProducerInput{cache: c, payload: s}).Previous(ctx); err != nil {
+				return nil, err
+			}
+		}
+		if !s.verified || s.previous == nil || s.written != 0 {
+			return nil, fmt.Errorf("%w: unchanged production requires a previous payload and no new bytes", manifest.ErrInput)
+		}
+		e.fs, e.stored = s.previous.fs, s.previous.stored
+		s.unchanged = true
+	}
+	return e, nil
 }
 
 type acquisitionContent struct{ Archive, Blob, Git any }
 
 type archiveProducer struct {
 	key   ArchiveKey
-	write func(context.Context, io.Writer) (ocispec.Descriptor, error)
+	write func(context.Context, ProducerInput) (ProducerResult, error)
 }
 
 func (p archiveProducer) identity() string {
@@ -57,14 +153,14 @@ func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload)
 		_ = pw.CloseWithError(ctx.Err())
 		close(cancelDone)
 	})
-	var upstream ocispec.Descriptor
+	var result ProducerResult
 	var producerFailure, readerFailure error
 	g.Go(func() error {
 		if err := gctx.Err(); err != nil {
 			return err
 		}
-		desc, err := p.write(gctx, io.MultiWriter(pw, staged.writer))
-		upstream = desc
+		produced, err := p.write(gctx, ProducerInput{Writer: io.MultiWriter(staged, pw), cache: c, payload: staged})
+		result = produced
 		if re, ok := errors.AsType[*readerError](err); ok {
 			err = re.error
 		} else if err != nil {
@@ -97,11 +193,17 @@ func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload)
 	if !stop() {
 		<-cancelDone
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if result.Unchanged && producerFailure == nil {
+		return staged.complete(ctx, c, result)
+	}
 	if err != nil {
 		return nil, cmp.Or(ctx.Err(), readerFailure, producerFailure, err)
 	}
 	index.identify(staged.hash.Digest(), p.key)
-	return &entry{fs: index, descriptor: upstream}, nil
+	return &entry{fs: index, descriptor: result.Descriptor}, nil
 }
 
 func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
@@ -130,7 +232,7 @@ func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Des
 
 type blobProducer struct {
 	key   BlobKey
-	write func(context.Context, io.Writer) (ocispec.Descriptor, error)
+	write func(context.Context, ProducerInput) (ProducerResult, error)
 }
 
 func (p blobProducer) identity() string {
@@ -141,11 +243,17 @@ func (p blobProducer) identity() string {
 }
 
 func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-	descriptor, err := p.write(ctx, staged.writer)
+	result, err := p.write(ctx, ProducerInput{Writer: staged, cache: c, payload: staged})
 	if err != nil {
 		return nil, &producerError{err}
 	}
-	e := &entry{descriptor: descriptor}
+	e, err := staged.complete(ctx, c, result)
+	if err != nil {
+		return nil, err
+	}
+	if staged.unchanged {
+		return e, nil
+	}
 	if c.store == nil {
 		data := staged.memory.Bytes()
 		e.fs = fileFS{name: "content", identity: digest.FromBytes(data).String(), size: int64(len(data)), open: func() (io.ReadCloser, error) {

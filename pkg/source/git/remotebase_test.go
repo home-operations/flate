@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -77,6 +78,7 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 		age  time.Duration
 	}{
 		{name: "tag interval", age: time.Hour},
+		{name: "due branch"},
 		{name: "hash never expires", hash: true, age: time.Nanosecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,23 +90,72 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 			if tc.hash {
 				ref = hash
 			}
-			f := newRemoteBaseFetcher(t)
-			request := RemoteBaseRequest{URL: "file://" + src, Ref: ref, MaxAge: tc.age}
+			if tc.age == 0 {
+				ref = "master"
+			}
+			var advertisements, uploads, connections atomic.Int32
+			handler := gitHTTPHandler(t, src)
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					advertisements.Add(1)
+				} else {
+					uploads.Add(1)
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					connections.Add(1)
+				}
+			}
+			srv.Start()
+			t.Cleanup(srv.Close)
+			root := t.TempDir()
+			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+			request := RemoteBaseRequest{URL: srv.URL, Ref: ref, MaxAge: tc.age}
 			first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.RemoveAll(src); err != nil {
+			t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d", advertisements.Load(), uploads.Load(), connections.Load())
+			wantAdvertisements := int32(2)
+			if tc.hash {
+				wantAdvertisements = 1
+			}
+			if advertisements.Load() != wantAdvertisements || uploads.Load() != 1 {
+				t.Errorf("initial: advertisements=%d upload_pack=%d, want %d and 1", advertisements.Load(), uploads.Load(), wantAdvertisements)
+			}
+			beforeAdvertisements, beforeUploads, beforeConnections := advertisements.Load(), uploads.Load(), connections.Load()
+			wantContent, wantRevision := "x", first.Revision
+			if tc.age == 0 {
+				wantContent = "changed"
+				wantRevision = mustCommitFile(t, src, "kustomization.yaml", wantContent)
+			} else {
+				srv.Close()
+			}
+			if err := f.Cache.Close(); err != nil {
 				t.Fatal(err)
 			}
+			f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 			second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatalf("offline cache hit: %v", err)
 			}
-			if first.Key != second.Key || first.Revision != second.Revision {
+			if first.Key != second.Key || wantRevision != second.Revision {
 				t.Fatalf("cache identity/revision changed: %+v / %+v", first, second)
 			}
-			assertWorktree(t, second.FS, "kustomization.yaml", "x")
+			assertWorktree(t, second.FS, "kustomization.yaml", wantContent)
+			t.Logf("reopened: advertisements=%d upload_pack=%d new_connections=%d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, connections.Load()-beforeConnections)
+			wantRequests := int32(0)
+			if tc.age == 0 {
+				wantRequests = 1
+			}
+			if advertisements.Load()-beforeAdvertisements != 2*wantRequests || uploads.Load()-beforeUploads != wantRequests {
+				t.Errorf("reopened: advertisements=%d upload_pack=%d, want %d and %d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, 2*wantRequests, wantRequests)
+			}
+			if wantRequests == 0 && connections.Load() != beforeConnections {
+				t.Error("fresh remote base opened a connection")
+			}
 		})
 	}
 }

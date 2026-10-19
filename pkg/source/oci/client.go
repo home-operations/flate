@@ -2,7 +2,6 @@ package oci
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -55,28 +54,22 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 			return sec
 		}
 	}
-	tlsCfg, err := prepared.resolveTLS(repo)
+	owner := repo.Named()
+	owner.Name = repo.Namespace + "/" + repo.Name
+	tlsMaterial, err := source.ResolveCertSecret(prepared.Secrets, owner, repo.CertSecretRef)
 	if err != nil {
 		return nil, nil, err
 	}
-	owner := repo.Named()
-	owner.Name = repo.Namespace + "/" + repo.Name
 	proxy, err := source.ResolveProxy(f.Secrets, owner, repo.ProxySecretRef)
 	if err != nil {
 		return nil, nil, err
 	}
 	proxyPolicy := httpproxy.FromEnvironment()
-	tr, err := source.NewHTTPTransport(tlsCfg, proxy)
-	if err != nil {
-		return nil, nil, err
-	}
-	if proxy == nil {
-		proxyForURL := proxyPolicy.ProxyFunc()
-		tr.Proxy = func(req *http.Request) (*url.URL, error) { return proxyForURL(req.URL) }
-	}
-
 	target := &url.URL{Scheme: "https", Host: client.Reference.Host()}
-	selected, err := tr.Proxy(&http.Request{URL: target})
+	selected, err := proxyPolicy.ProxyFunc()(target)
+	if proxy != nil {
+		selected, err = proxy.URL()
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: resolve registry proxy: %w", manifest.ErrInput, err)
 	}
@@ -90,31 +83,18 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 	if cred != auth.EmptyCredential || certMaterial != nil || proxyIdentity != nil {
 		material = [3]any{cred, certMaterial, proxyIdentity}
 	}
-	client.Client = &auth.Client{Client: &http.Client{Transport: f.Network.HTTPTransport(tr)},
+	var credentials any
+	if cred != auth.EmptyCredential {
+		credentials = cred
+	}
+	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{TLS: tlsMaterial, Insecure: repo.Insecure,
+		Proxy: proxy, ProxyEnvironment: proxyPolicy, Credentials: credentials})
+	if err != nil {
+		return nil, nil, err
+	}
+	client.Client = &auth.Client{Client: &http.Client{Transport: tr},
 		Credential: auth.StaticCredential(client.Reference.Registry, cred)}
 	return client, material, nil
-}
-
-// resolveTLS builds a *tls.Config from spec.certSecretRef (PEM-encoded
-// tls.crt + tls.key + ca.crt — any subset acceptable) and/or spec.insecure.
-// Returns nil when no TLS customization is needed.
-func (f *Fetcher) resolveTLS(repo *manifest.OCIRepository) (*tls.Config, error) {
-	if repo.CertSecretRef == nil && !repo.Insecure {
-		return nil, nil
-	}
-	owner := repo.Named()
-	owner.Name = repo.Namespace + "/" + repo.Name
-	cfg, err := source.ResolveCertSecret(f.Secrets, owner, repo.CertSecretRef)
-	if err != nil {
-		return nil, err
-	}
-	if cfg == nil {
-		cfg = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	if repo.Insecure {
-		cfg.InsecureSkipVerify = true
-	}
-	return cfg, nil
 }
 
 // resolveRegistryConfig keeps Secret credentials in memory. Explicit registry

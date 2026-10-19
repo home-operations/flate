@@ -90,9 +90,10 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner := cachetest.New(t, "", sourcecache.New)
-	trees := kustomize.NewTreeCache(owner, nil)
+	tasks := task.NewBounded(2)
+	trees := kustomize.NewTreeCache(owner, nil, tasks)
 	t.Cleanup(trees.Close)
-	c := New(st, task.NewBounded(2), trees, false)
+	c := New(st, tasks, trees, false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
 	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n")))
 	if err != nil {

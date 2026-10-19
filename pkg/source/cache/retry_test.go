@@ -195,10 +195,10 @@ func TestAcquire_RetrySequence(t *testing.T) {
 						c := cachetest.New(t, root, New)
 						calls := 0
 						for i := range 2 {
-							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "eligibility"}, Policy{Retry: fastRetry(3)}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "eligibility"}, Policy{Retry: fastRetry(3)}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 								calls++
 								_, _ = io.WriteString(w, "partial")
-								return ocispec.Descriptor{}, tc.cause
+								return ProducerResult{}, tc.cause
 							})
 							want := tc.attempts * (i + 1)
 							if disk && tc.record {
@@ -250,17 +250,17 @@ func TestAcquire_RetrySequence(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				c := cachetest.New(t, "", New)
 				calls := 0
-				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "retry"}, Policy{Retry: fastRetry(tc.attempts)}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					calls++
 					if ctx.Err() != nil {
 						t.Error(ctx.Err())
 					}
 					if calls <= tc.failures {
 						_, _ = io.WriteString(w, "partial")
-						return ocispec.Descriptor{}, tc.failure
+						return ProducerResult{}, tc.failure
 					}
 					_, err := io.WriteString(w, "complete")
-					return ocispec.Descriptor{}, err
+					return ProducerResult{}, err
 				})
 				if calls != tc.want {
 					t.Fatalf("calls=%d, want %d", calls, tc.want)
@@ -298,7 +298,9 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
 						c := cachetest.New(t, t.TempDir(), New)
-						fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, connReset() }
+						fail := func(context.Context, ProducerInput) (ProducerResult, error) {
+							return ProducerResult{}, connReset()
+						}
 						r, _, outerID, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{}, producer(nil, ocispec.Descriptor{}))
 						if err != nil {
 							t.Fatal(err)
@@ -332,13 +334,13 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 						outer, inner := 0, 0
 						for range callers {
 							go func() {
-								_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(5)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+								_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(5)}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 									outer++
-									_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(7)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+									_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(7)}, func(context.Context, ProducerInput) (ProducerResult, error) {
 										inner++
-										return ocispec.Descriptor{}, connReset()
+										return ProducerResult{}, connReset()
 									})
-									return ocispec.Descriptor{}, err
+									return ProducerResult{}, err
 								})
 								done <- err
 							}()
@@ -387,10 +389,12 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 			cause := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 			terminal := &TerminalError{Err: cause, Attempted: attempted}
 			calls := 0
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 				calls++
-				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, terminal })
-				return ocispec.Descriptor{}, err
+				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
+					return ProducerResult{}, terminal
+				})
+				return ProducerResult{}, err
 			})
 			got, ok := errors.AsType[*TerminalError](err)
 			if !ok || got != terminal || calls != 1 || err.Error() != cause.Error() || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, cause) {
@@ -403,13 +407,13 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 			t.Parallel()
 			c := cachetest.New(t, "", New)
 			outer, inner := 0, 0
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 				outer++
-				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(attempts)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+				_, _, _, err := c.Blob(ctx, BlobKey{Content: "inner"}, Policy{Retry: fastRetry(attempts)}, func(context.Context, ProducerInput) (ProducerResult, error) {
 					inner++
-					return ocispec.Descriptor{}, connReset()
+					return ProducerResult{}, connReset()
 				})
-				return ocispec.Descriptor{}, err
+				return ProducerResult{}, err
 			})
 			if outer != 1 || inner != attempts || !errors.Is(err, syscall.ECONNRESET) {
 				t.Fatalf("calls=%d/%d, error=%v", outer, inner, err)
@@ -432,11 +436,11 @@ func TestAcquire_RetryFreshArchive(t *testing.T) {
 			var payloadTar bytes.Buffer
 			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "complete"}, 0o644)
 			payload := payloadTar.Bytes()
-			input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "partial"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "partial"}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				if calls == 1 {
 					_, _ = w.Write(payload[:len(payload)/2])
-					return ocispec.Descriptor{}, connReset()
+					return ProducerResult{}, connReset()
 				}
 				return producer(payload, ocispec.Descriptor{})(ctx, w)
 			})
@@ -469,13 +473,13 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 							if i == 0 {
 								attempts = 1
 							}
-							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: time.Hour, Retry: fastRetry(attempts)}, func(context.Context, ProducerInput) (ProducerResult, error) {
 								calls[i]++
 								if (i == 0 && !reverse || i == concurrency-1 && reverse) && calls[i] == 1 {
 									close(started)
 									<-release
 								}
-								return ocispec.Descriptor{}, connReset()
+								return ProducerResult{}, connReset()
 							})
 							done <- err
 						}()
@@ -495,9 +499,9 @@ func TestAcquire_PolicyIsolation(t *testing.T) {
 					cancelled := make(chan error, 1)
 					cancelCalls := 0
 					go func() {
-						_, _, _, err := c.Blob(cancelCtx, BlobKey{Content: "shared"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						_, _, _, err := c.Blob(cancelCtx, BlobKey{Content: "shared"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
 							cancelCalls++
-							return ocispec.Descriptor{}, nil
+							return ProducerResult{}, nil
 						})
 						cancelled <- err
 					}()
@@ -534,9 +538,9 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 		done := make(chan error, 1)
 		calls := 0
 		go func() {
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, ProducerInput) (ProducerResult, error) {
 				calls++
-				return ocispec.Descriptor{}, connReset()
+				return ProducerResult{}, connReset()
 			})
 			if r != nil {
 				err = errors.Join(err, r.Close())
@@ -570,9 +574,9 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 				calls := make([]int, concurrency)
 				for i := range concurrency {
 					go func() {
-						_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: RetryConfig{Attempts: 3, MinWait: time.Hour}}, func(context.Context, ProducerInput) (ProducerResult, error) {
 							calls[i]++
-							return ocispec.Descriptor{}, connReset()
+							return ProducerResult{}, connReset()
 						})
 						done <- err
 					}()
@@ -587,9 +591,9 @@ func TestAcquire_RetryCancellation(t *testing.T) {
 					}
 				}
 				for i := range concurrency {
-					_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+					_, _, _, err := c.Blob(ctx, BlobKey{Content: fmt.Sprintf("cancel-%d", i)}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
 						calls[i]++
-						return ocispec.Descriptor{}, nil
+						return ProducerResult{}, nil
 					})
 					if calls[i] != 1 || !errors.Is(err, context.Canceled) {
 						t.Errorf("pre-cancel calls=%d, error=%v", calls[i], err)
@@ -699,13 +703,13 @@ func TestAcquire_ReaderFailureCancelsAttempt(t *testing.T) {
 					calls := make([]int, concurrency)
 					for i := range concurrency {
 						go func() {
-							_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: fmt.Sprintf("invalid-%d", i)}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: fmt.Sprintf("invalid-%d", i)}, Policy{Retry: fastRetry(3)}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 								calls[i]++
 								_, _ = w.Write(bytes.Repeat([]byte("x"), 512))
 								<-ctx.Done()
 								canceled <- struct{}{}
 								<-release
-								return ocispec.Descriptor{}, errors.Join(ctx.Err(), connReset())
+								return ProducerResult{}, errors.Join(ctx.Err(), connReset())
 							})
 							done <- err
 						}()
@@ -746,10 +750,10 @@ func TestAcquire_BackoffResets(t *testing.T) {
 		for range 2 {
 			calls := 0
 			start := time.Now()
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				if calls == 1 {
-					return ocispec.Descriptor{}, connReset()
+					return ProducerResult{}, connReset()
 				}
 				return producer(nil, ocispec.Descriptor{})(ctx, w)
 			})
@@ -800,12 +804,12 @@ func TestAcquire_CleanupFailureStopsRetry(t *testing.T) {
 								return plumbing.ZeroHash, fail()
 							})
 						case "archive":
-							_, _, _, err = c.Acquire(t.Context(), ArchiveKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-								return ocispec.Descriptor{}, fail()
+							_, _, _, err = c.Acquire(t.Context(), ArchiveKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
+								return ProducerResult{}, fail()
 							})
 						case "blob":
-							_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-								return ocispec.Descriptor{}, fail()
+							_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "cleanup"}, Policy{Retry: fastRetry(3)}, func(context.Context, ProducerInput) (ProducerResult, error) {
+								return ProducerResult{}, fail()
 							})
 						}
 						done <- err

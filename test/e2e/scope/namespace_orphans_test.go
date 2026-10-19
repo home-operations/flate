@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"syscall"
@@ -21,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 	digest "github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func TestE2E_ChildKustomizationIdentity(t *testing.T) {
@@ -272,8 +270,8 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 				t.Fatal(err)
 			}
 			for attempt := range 12 {
-				_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-					return ocispec.Descriptor{}, &sourcecache.TerminalError{Err: syscall.ECONNRESET, Attempted: true}
+				_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					return sourcecache.ProducerResult{}, &sourcecache.TerminalError{Err: syscall.ECONNRESET, Attempted: true}
 				})
 				if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || !terminal.Attempted || !errors.Is(err, syscall.ECONNRESET) {
 					t.Fatalf("seeded failure lost its classification: %v", err)
@@ -296,9 +294,9 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+		_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			t.Fatal("fresh replay invoked producer")
-			return ocispec.Descriptor{}, nil
+			return sourcecache.ProducerResult{}, nil
 		})
 		if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
 			t.Fatalf("fresh replay lost its non-attempt classification: %v", err)
@@ -420,9 +418,9 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 	}
 	repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
 	chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
-	r, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	r, _, _, err := c.Blob(t.Context(), sourcecache.BlobKey{Content: struct{ Repository, Chart, Transport any }{repository.Content(), chart.Content(), nil}, Required: []string{"chart-version", "chart-url"}}, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		_, err := w.Write(archive)
-		return ocispec.Descriptor{Digest: digest.FromBytes(archive), Size: int64(len(archive)), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
+		return sourcecache.ProducerResult{Digest: digest.FromBytes(archive), Size: int64(len(archive)), Annotations: map[string]string{"flate.chart-version": "0.1.0", "flate.chart-url": "https://charts.example.invalid/demo-0.1.0.tgz"}}, err
 	})
 	if err != nil {
 		t.Fatal(err)

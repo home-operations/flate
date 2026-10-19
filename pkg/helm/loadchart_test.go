@@ -30,7 +30,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
@@ -336,9 +335,9 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				}
 				if tc.shape == "file" {
 					data := chartArchive(t, input)
-					r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: version}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: version}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 						_, err := io.Copy(w, bytes.NewReader(data))
-						return ocispec.Descriptor{}, err
+						return cache.ProducerResult{}, err
 					})
 					assert.NoError(t, err)
 					acquired = cache.FileFS("chart.tgz", r)

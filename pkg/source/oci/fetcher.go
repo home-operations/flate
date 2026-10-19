@@ -22,7 +22,7 @@ type Fetcher struct {
 	Cache          *cache.Cache
 	RegistryConfig string
 	Secrets        source.SecretGetter
-	// Network shares connection-timeout facts across this invocation.
+	// Network is the required non-nil invocation owner, borrowed by this fetcher.
 	Network *source.Network
 
 	// ForceGeneric skips the provider gate; the generic path then needs

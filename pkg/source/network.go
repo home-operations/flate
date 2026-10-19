@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,11 +21,24 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
-// Network retains first connection timeouts for one invocation. Its zero value
-// is usable; independent invocations MUST NOT share it through a cache owner.
+// Network owns compatible HTTP transports and first connection timeouts for one invocation.
+// Its zero value is usable; independent invocations MUST NOT share it through a cache owner.
 type Network struct {
-	endpoints atomic.Pointer[networkEndpoints]
+	endpoints   atomic.Pointer[networkEndpoints]
+	transports  atomic.Pointer[networkTransports]
+	defaultOnce sync.Once
+	defaultHTTP http.RoundTripper
 }
+
+// RoundTrip sends a request through the lazily selected default transport.
+func (n *Network) RoundTrip(r *http.Request) (*http.Response, error) {
+	n.defaultOnce.Do(func() {
+		n.defaultHTTP, _ = n.HTTPTransport(HTTPTransportConfig{})
+	})
+	return n.defaultHTTP.RoundTrip(r)
+}
+
+type networkTransports map[string]*networkTransport
 
 type networkEndpoint struct {
 	authority  string
@@ -49,12 +63,7 @@ type networkTransport struct {
 	proxy     func(*http.Request) (*url.URL, error)
 }
 
-// HTTPTransport wraps a fully configured, caller-private transport before its
-// first use. A nil Network passes through for unwired low-level SDK callers.
-func (n *Network) HTTPTransport(tr *http.Transport) http.RoundTripper {
-	if n == nil {
-		return tr
-	}
+func (n *Network) wrapHTTPTransport(tr *http.Transport) http.RoundTripper {
 	t := &networkTransport{network: n, transport: tr, proxy: tr.Proxy}
 	tr.Proxy = func(r *http.Request) (*url.URL, error) {
 		return r.Context().Value(networkRequestKey{}).(*networkRequest).proxy, nil
@@ -162,3 +171,19 @@ func networkAuthority(address string) string {
 	}
 	return net.JoinHostPort(host, port)
 }
+
+// Close releases idle HTTP connections after all users have joined.
+// Borrowers MUST leave cleanup to the invocation owner.
+func (n *Network) Close() {
+	if n == nil {
+		return
+	}
+	if transports := n.transports.Load(); transports != nil {
+		for _, tr := range *transports {
+			tr.transport.CloseIdleConnections()
+		}
+	}
+}
+
+// CloseIdleConnections releases this transport's idle connections.
+func (t *networkTransport) CloseIdleConnections() { t.transport.CloseIdleConnections() }

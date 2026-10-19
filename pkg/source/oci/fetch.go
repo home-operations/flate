@@ -61,10 +61,10 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, reque
 	}
 	var input fs.FS
 	var descriptor ocispec.Descriptor
-	produce := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	produce := func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		selected, err := resolveRef(ctx, request.client, repo, ref)
 		if err != nil {
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		}
 		selectedRepo := *repo
 		selectedRepo.Reference = &selected
@@ -105,20 +105,20 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 	return manifest.OCIRepositoryRef{Tag: tag}, nil
 }
 
-func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w io.Writer) (ocispec.Descriptor, error) {
+func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w cache.ProducerInput) (cache.ProducerResult, error) {
 	ref, selector := *repo.Reference, repo.LayerSelector
 	tag := cmp.Or(versionTag(ref), latestTag)
 	desc, err := client.Resolve(ctx, tag)
 	if err != nil {
-		return desc, fmt.Errorf("resolve %s: %w", tag, orasError(err))
+		return cache.ProducerResult{}, fmt.Errorf("resolve %s: %w", tag, orasError(err))
 	}
 	data, err := content.FetchAll(ctx, client, desc)
 	if err != nil {
-		return desc, fmt.Errorf("fetch manifest: %w", orasError(err))
+		return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(err))
 	}
 	var m ocispec.Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		return desc, err
+		return cache.ProducerResult{}, err
 	}
 	desc.Annotations = maps.Clone(m.Annotations)
 	if desc.Annotations == nil {
@@ -126,41 +126,49 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	}
 	desc.Annotations["flate.revision"] = ociRevision(ref, desc.Digest.String())
 	desc.Annotations["flate.resolved-tag"] = ref.Tag
+	previous, err := w.Previous(ctx)
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
+	if previous != nil && previous.Digest == desc.Digest {
+		return cache.ProducerResult{Descriptor: desc, Unchanged: true}, nil
+	}
+	result := cache.ProducerResult{Descriptor: desc}
 	layer, ok := pickLayer(m.Layers, selector)
 	if !ok {
 		if len(m.Layers) == 0 {
-			return desc, nil
+			return result, nil
 		}
-		return desc, fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))", layerMediaType(selector), len(m.Layers))
+		return result, fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))", layerMediaType(selector), len(m.Layers))
 	}
 	r, err := client.Fetch(ctx, layer)
 	if err != nil {
-		return desc, fmt.Errorf("fetch layer: %w", orasError(err))
+		return result, fmt.Errorf("fetch layer: %w", orasError(err))
 	}
 	defer func() { _ = r.Close() }()
 	verified := content.NewVerifyReader(r, layer)
 	if effectiveLayerOperation(selector) == sourcev1.OCILayerExtract {
 		gz, err := gzip.NewReader(verified)
 		if err != nil {
-			return desc, fmt.Errorf("gzip: %w", orasError(err))
+			return result, fmt.Errorf("gzip: %w", orasError(err))
 		}
 		_, copyErr := io.Copy(w, gz) //nolint:gosec // The archive consumer caps expanded regular payloads before publication.
 		closeErr := gz.Close()
 		if copyErr != nil {
-			return desc, orasError(copyErr)
+			return result, orasError(copyErr)
 		}
 		if closeErr != nil {
-			return desc, closeErr
+			return result, closeErr
 		}
 	} else {
 		if _, err := io.Copy(w, verified); err != nil {
-			return desc, orasError(err)
+			return result, orasError(err)
 		}
 	}
 	if _, err := io.Copy(io.Discard, verified); err != nil {
-		return desc, err
+		return result, err
 	}
-	return desc, verified.Verify()
+	return result, verified.Verify()
 }
 
 func orasError(err error) error {

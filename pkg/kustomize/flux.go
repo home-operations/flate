@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/kustomize/api/resmap"
 
@@ -25,11 +24,15 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
 type RenderRequest struct {
+	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
+	// Standalone callers leave it nil.
+	HeldSlot *task.Service
 	// Source.FS supplies content; nil Source or FS is unavailable.
 	// Empty Source.Key denotes mutable content validated on every cache hit.
 	Source *store.SourceArtifact
@@ -88,7 +91,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		if err != nil {
 			slog.Debug("kustomize: decode render frame", "err", err)
 		} else {
-			valid, err := snap.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge}, req.Source.Key != "")
+			valid, err := snap.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge, slot: req.HeldSlot}, req.Source.Key != "")
 			if err != nil {
 				return nil, err
 			}
@@ -101,6 +104,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	rec.immutable = req.Source.Key != ""
 	memFS := newTreeFS(lower, root, rec)
 	memFS.retry = retry
+	memFS.slot = req.HeldSlot
 	memFS.maxAge = maxAge
 	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
@@ -164,13 +168,13 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
-	reader, _, _, err = cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	reader, _, _, err = cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		frame, err := encodeFrame(rec.snapshot(), out)
 		if err != nil {
-			return ocispec.Descriptor{}, fmt.Errorf("encode kustomize render frame: %w", err)
+			return sourcecache.ProducerResult{}, fmt.Errorf("encode kustomize render frame: %w", err)
 		}
 		_, err = io.Copy(w, bytes.NewReader(frame))
-		return ocispec.Descriptor{}, err
+		return sourcecache.ProducerResult{}, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render cache publish: %w", err)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"io"
 	"io/fs"
 	"testing"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func ociRenderFixture(tb testing.TB) (*store.Store, *manifest.HelmRelease, string) {
@@ -66,9 +64,9 @@ func acquireChartFS(tb testing.TB, owner *cache.Cache, input fs.FS) fs.FS {
 	var buf bytes.Buffer
 	testutil.WriteTar(tb, &buf, files, 0o600)
 	data := buf.Bytes()
-	acquired, _, _, err := owner.Acquire(tb.Context(), cache.ArchiveKey{Content: tb.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	acquired, _, _, err := owner.Acquire(tb.Context(), cache.ArchiveKey{Content: tb.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		_, err := w.Write(data)
-		return ocispec.Descriptor{}, err
+		return cache.ProducerResult{}, err
 	})
 	if err != nil {
 		tb.Fatal(err)

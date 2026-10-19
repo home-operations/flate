@@ -56,10 +56,10 @@ func orderedArchive(t *testing.T, files ...string) []byte {
 	return data.Bytes()
 }
 
-func producer(data []byte, descriptor ocispec.Descriptor) func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-	return func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+func producer(data []byte, descriptor ocispec.Descriptor) func(context.Context, ProducerInput) (ProducerResult, error) {
+	return func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 		_, err := w.Write(data)
-		return descriptor, err
+		return ProducerResult{Descriptor: descriptor}, err
 	}
 }
 
@@ -91,9 +91,9 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Fatal(diff)
 			}
-			unexpected := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+			unexpected := func(context.Context, ProducerInput) (ProducerResult, error) {
 				t.Error("fresh hit called producer")
-				return want, errors.New("unexpected producer")
+				return ProducerResult{Descriptor: want}, errors.New("unexpected producer")
 			}
 			if disk {
 				if err := c.Close(); err != nil {
@@ -186,16 +186,16 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				t.Fatalf("held generation: %q, %v", data, err)
 			}
 			failure := errors.New("verification failed")
-			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				var partialArchive bytes.Buffer
 				testutil.WriteTar(t, &partialArchive, map[string]string{"file": "partial"}, 0o644)
 				_, _ = w.Write(partialArchive.Bytes())
-				return want, failure
+				return ProducerResult{Descriptor: want}, failure
 			}); !errors.Is(err, failure) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failure: %v", err)
 			}
 			calls := 0
-			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				var recoveredArchive bytes.Buffer
 				testutil.WriteTar(t, &recoveredArchive, map[string]string{"file": "v3"}, 0o644)
@@ -319,9 +319,9 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 					readers := []fs.FS{input}
 					if disk {
 						fresh := cachetest.New(t, root, New)
-						replayed, _, _, err := fresh.Acquire(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+						replayed, _, _, err := fresh.Acquire(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) {
 							t.Error("fresh owner refetched cached archive")
-							return ocispec.Descriptor{}, errors.New("unexpected fetch")
+							return ProducerResult{}, errors.New("unexpected fetch")
 						})
 						assert.NoError(t, err)
 						readers = append(readers, replayed)
@@ -383,7 +383,9 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 							if err != nil {
 								t.Fatal(err)
 							}
-							_, _, _, err = c.Blob(t.Context(), key, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, connReset() })
+							_, _, _, err = c.Blob(t.Context(), key, Policy{}, func(context.Context, ProducerInput) (ProducerResult, error) {
+								return ProducerResult{}, connReset()
+							})
 							if _, ok := errors.AsType[*TerminalError](err); !ok {
 								t.Fatal(err)
 							}
@@ -420,14 +422,14 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 							case "local":
 								cause = &fs.PathError{Op: "write", Path: "sink", Err: fs.ErrPermission}
 							}
-							fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							fill := func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 								calls++
 								if calls == 1 {
 									close(started)
 								}
 								<-release
 								if cause != nil {
-									return ocispec.Descriptor{}, cause
+									return ProducerResult{}, cause
 								}
 								return producer([]byte("complete"), ocispec.Descriptor{})(ctx, w)
 							}
@@ -538,8 +540,8 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 				c := cachetest.New(t, t.TempDir(), New)
 				key := BlobKey{Content: "due-canceled-winner"}
 				var id string
-				if _, _, _, err := c.Blob(t.Context(), key, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-					return ocispec.Descriptor{}, connReset()
+				if _, _, _, err := c.Blob(t.Context(), key, Policy{}, func(context.Context, ProducerInput) (ProducerResult, error) {
+					return ProducerResult{}, connReset()
 				}); err == nil {
 					t.Fatal("want initial failure")
 				}
@@ -553,13 +555,13 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 				winnerCtx, cancelWinner := context.WithCancel(t.Context())
 				defer cancelWinner()
 				started := make(chan struct{})
-				winnerFill := func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+				winnerFill := func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
 					calls.Add(1)
 					close(started)
 					<-ctx.Done()
-					return ocispec.Descriptor{}, ctx.Err()
+					return ProducerResult{}, ctx.Err()
 				}
-				liveFill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+				liveFill := func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 					calls.Add(1)
 					return producer([]byte("complete"), ocispec.Descriptor{})(ctx, w)
 				}
@@ -568,7 +570,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 					data string
 				}
 				done := make(chan result, callers)
-				launch := func(ctx context.Context, fill func(context.Context, io.Writer) (ocispec.Descriptor, error)) {
+				launch := func(ctx context.Context, fill func(context.Context, ProducerInput) (ProducerResult, error)) {
 					go func() {
 						r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
 						var data string
@@ -615,7 +617,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 			started, release := make(chan struct{}), make(chan struct{})
 			ids := make(chan string, concurrency)
 			var calls atomic.Int32
-			fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			fill := func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				if calls.Add(1) == 1 {
 					close(started)
 				}
@@ -869,9 +871,9 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 		}
 		calls := 0
 		for range 2 {
-			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outcome-save"}, Policy{MaxAge: Forever}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "outcome-save"}, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) {
 				calls++
-				return ocispec.Descriptor{}, connReset()
+				return ProducerResult{}, connReset()
 			})
 			if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, syscall.ECONNRESET) {
 				t.Fatalf("publication cause=%v", err)
@@ -895,7 +897,7 @@ func TestAcquire_TagSaveFailureDoesNotBecomeHit(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	fill := func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	fill := func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 		calls++
 		var payloadTar bytes.Buffer
 		testutil.WriteTar(t, &payloadTar, map[string]string{"file": "data"}, 0o644)
@@ -1028,7 +1030,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 						t.Fatalf("invalid restored metadata hit: id=%q, %v", failedID, err)
 					}
 					calls := 0
-					r, _, restoredID, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, restoredID, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 						calls++
 						return producer([]byte("refilled"), upstream)(ctx, w)
 					})
@@ -1086,15 +1088,15 @@ func TestAcquire_TrailingDataIsBounded(t *testing.T) {
 			}
 			c := cachetest.New(t, root, New)
 			var written int
-			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing"}, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				var payloadTar bytes.Buffer
 				testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
 				if _, err := w.Write(payloadTar.Bytes()); err != nil {
-					return ocispec.Descriptor{}, err
+					return ProducerResult{}, err
 				}
 				var err error
 				written, err = w.Write(make([]byte, 2<<20))
-				return ocispec.Descriptor{}, err
+				return ProducerResult{}, err
 			})
 			if err == nil {
 				t.Fatal("accepted trailing data beyond the limit")
@@ -1120,19 +1122,34 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 			defer cancel()
 			started := make(chan struct{})
 			go func() { <-started; cancel() }()
-			_, _, _, err := c.Acquire(ctx, ArchiveKey{Content: "source-cancel"}, Policy{MaxAge: 0}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Acquire(ctx, ArchiveKey{Content: "source-cancel"}, Policy{MaxAge: 0}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				var payloadTar bytes.Buffer
 				testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
 				if _, err := w.Write(payloadTar.Bytes()[:512]); err != nil {
-					return ocispec.Descriptor{}, err
+					return ProducerResult{}, err
 				}
 				close(started)
 				<-ctx.Done()
 				time.Sleep(time.Millisecond)
-				return ocispec.Descriptor{}, ctx.Err()
+				return ProducerResult{}, ctx.Err()
 			})
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancellation identity: %v", err)
+			}
+			key := ArchiveKey{Content: "independent-child"}
+			_, _, id, err := c.Acquire(t.Context(), key, Policy{}, producer(orderedArchive(t, "file", "same"), ocispec.Descriptor{}))
+			assert.NoError(t, err)
+			_, _, _, err = c.Acquire(t.Context(), key, Policy{}, func(ctx context.Context, _ ProducerInput) (ProducerResult, error) {
+				child, cancel := context.WithCancel(ctx)
+				cancel()
+				return ProducerResult{}, child.Err()
+			})
+			if !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) || t.Context().Err() != nil {
+				t.Fatalf("independently canceled child: %v", err)
+			}
+			v, _ := c.entries.Load(id)
+			if e := v.(*entry); e.fs != nil || !e.resolved.IsZero() {
+				t.Fatal("independently canceled child retained a successful entry")
 			}
 		})
 	}
@@ -1142,7 +1159,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 		key := BlobKey{Content: "source-completed-before-cancel"}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: 0}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: 0}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			desc, err := producer([]byte("completed"), ocispec.Descriptor{})(ctx, w)
 			cancel()
 			return desc, err
@@ -1164,15 +1181,182 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 	})
 }
 
+type archiveCompletionContext struct {
+	context.Context
+	child   atomic.Pointer[<-chan struct{}]
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *archiveCompletionContext) Err() error {
+	if child := c.child.Load(); child != nil && c.Context.Err() == nil {
+		select {
+		case <-*child:
+			// errgroup cancels its child only after both successful workers have joined.
+			c.once.Do(func() { close(c.entered); <-c.release })
+		default:
+		}
+	}
+	return c.Context.Err()
+}
+
+func TestAcquire_CancelAfterArchiveWorkers(t *testing.T) {
+	t.Parallel()
+	for _, backing := range []string{"memory", "disk"} {
+		for _, result := range []string{"unchanged", "fresh"} {
+			t.Run(backing+"/"+result, func(t *testing.T) {
+				t.Parallel()
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c := cachetest.New(t, root, New)
+				data := orderedArchive(t, "file", "same")
+				want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, Annotations: map[string]string{"flate.revision": "original"}}
+				keys := []ArchiveKey{{Content: "completion-one"}, {Content: "completion-two"}}
+				ids, pins := make([]string, len(keys)), make([]string, len(keys))
+				previous := make([]entry, len(keys))
+				for i, key := range keys {
+					input, _, id, err := c.Acquire(t.Context(), key, Policy{}, producer(data, want))
+					assert.NoError(t, err)
+					ids[i], pins[i] = id, AcquisitionIdentity(input)
+					v, _ := c.entries.Load(id)
+					previous[i] = *v.(*entry)
+				}
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					started, produce := make(chan struct{}), make(chan struct{})
+					done := make(chan struct{}, len(keys))
+					callbacks := make([]*archiveCompletionContext, len(keys))
+					for i, key := range keys {
+						callback := &archiveCompletionContext{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
+						callbacks[i] = callback
+						go func() {
+							input, _, id, err := c.Acquire(callback, key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+								prior, err := w.Previous(ctx)
+								if err != nil || prior == nil || cmp.Diff(want, *prior) != "" {
+									t.Errorf("previous descriptor: %+v, %v", prior, err)
+								}
+								child := ctx.Done()
+								callback.child.Store(&child)
+								started <- struct{}{}
+								<-produce
+								if result == "fresh" {
+									return producer(data, want)(ctx, w)
+								}
+								return ProducerResult{Descriptor: want, Unchanged: true}, nil
+							})
+							if input != nil || id != "" || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
+								var contents []byte
+								if input != nil {
+									contents, _ = fs.ReadFile(input, "file")
+								}
+								t.Errorf("post-worker cancellation: filesystem=%v identity=%q contents=%q error=%v", input != nil, id, contents, err)
+							}
+							done <- struct{}{}
+						}()
+					}
+					for range keys {
+						<-started
+					}
+					close(produce)
+					synctest.Wait()
+					for _, callback := range callbacks {
+						select {
+						case <-callback.entered:
+						default:
+							t.Error("post-worker cancellation checkpoint unreachable")
+						}
+					}
+					cancel()
+					for _, callback := range callbacks {
+						close(callback.release)
+					}
+					for range keys {
+						<-done
+					}
+				})
+				unexpected := func(context.Context, ProducerInput) (ProducerResult, error) {
+					t.Error("retained generation called producer")
+					return ProducerResult{}, errors.New("unexpected refetch")
+				}
+				for i, key := range keys {
+					v, _ := c.entries.Load(ids[i])
+					e := v.(*entry)
+					if !e.resolved.Equal(previous[i].resolved) || e.outcome != nil || cmp.Diff(previous[i].stored, e.stored) != "" {
+						t.Errorf("canceled attempt replaced original generation: resolved=%v, want %v", e.resolved, previous[i].resolved)
+					}
+					if backing == "disk" {
+						stored, err := c.store.Resolve(t.Context(), ids[i])
+						assert.NoError(t, err)
+						if diff := cmp.Diff(previous[i].stored, stored); diff != "" {
+							t.Error(diff)
+						}
+						payload, err := c.root.ReadFile(blobPath(stored.Digest))
+						if err != nil || !bytes.Equal(payload, data) {
+							t.Fatalf("retained archive payload: %v", err)
+						}
+					}
+					input, desc, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, unexpected)
+					if err != nil || id != ids[i] || AcquisitionIdentity(input) != pins[i] || cmp.Diff(want, desc) != "" {
+						t.Fatalf("retained acquisition: identity=%q, error=%v", id, err)
+					}
+					if content, err := fs.ReadFile(input, "file"); err != nil || string(content) != "same" {
+						t.Fatalf("retained content: %q, %v", content, err)
+					}
+				}
+				if backing == "disk" {
+					assert.NoError(t, c.Close())
+					c = cachetest.New(t, root, New)
+				}
+				for i, key := range keys {
+					input, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, unexpected)
+					assert.NoError(t, err)
+					if id != ids[i] || AcquisitionIdentity(input) != pins[i] {
+						t.Fatal("reopened generation changed identity")
+					}
+					v, _ := c.entries.Load(id)
+					if !v.(*entry).resolved.Equal(previous[i].resolved) {
+						t.Fatal("canceled attempt renewed resolution time")
+					}
+					input, _, id, err = c.Acquire(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+						prior, err := w.Previous(ctx)
+						if err != nil || prior == nil || cmp.Diff(want, *prior) != "" {
+							t.Errorf("forced refresh lost previous descriptor: %+v, %v", prior, err)
+							return ProducerResult{}, manifest.ErrInput
+						}
+						return ProducerResult{Descriptor: *prior, Unchanged: true}, nil
+					})
+					if err != nil || id != ids[i] || AcquisitionIdentity(input) != pins[i] {
+						t.Fatalf("forced refresh: identity=%q, error=%v", id, err)
+					}
+					if content, err := fs.ReadFile(input, "file"); err != nil || string(content) != "same" {
+						t.Fatalf("forced refresh content: %q, %v", content, err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
 	t.Parallel()
 	c := cachetest.New(t, t.TempDir(), New)
 	key := ArchiveKey{Content: "source-unchanged"}
 	var first time.Time
 	for range 2 {
-		var payloadTar bytes.Buffer
-		testutil.WriteTar(t, &payloadTar, map[string]string{"file": "same"}, 0o644)
-		_, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(payloadTar.Bytes(), ocispec.Descriptor{}))
+		_, _, id, err := c.Acquire(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+			previous, err := w.Previous(ctx)
+			if err != nil {
+				return ProducerResult{}, err
+			}
+			if previous != nil {
+				return ProducerResult{Descriptor: *previous, Unchanged: true}, nil
+			}
+			return producer(orderedArchive(t, "file", "same"), ocispec.Descriptor{})(ctx, w)
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1185,6 +1369,36 @@ func TestAcquire_UnchangedRefreshRenews(t *testing.T) {
 			t.Fatalf("resolution time not renewed: %v after %v", resolved, first)
 		}
 		first = resolved
+	}
+	for _, scenario := range []string{"missing previous", "wrote bytes", "producer error"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			c := cachetest.New(t, "", New)
+			key := ArchiveKey{Content: scenario}
+			if scenario != "missing previous" {
+				_, _, _, err := c.Acquire(t.Context(), key, Policy{}, producer(orderedArchive(t, "file", "same"), ocispec.Descriptor{}))
+				assert.NoError(t, err)
+			}
+			input, _, id, err := c.Acquire(t.Context(), key, Policy{}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+				if scenario == "producer error" {
+					return ProducerResult{Unchanged: true}, fs.ErrPermission
+				}
+				if scenario == "wrote bytes" {
+					_, err := w.Write(orderedArchive(t, "file", "new"))
+					if err != nil {
+						return ProducerResult{}, err
+					}
+				}
+				return ProducerResult{Unchanged: true}, nil
+			})
+			want := manifest.ErrInput
+			if scenario == "producer error" {
+				want = fs.ErrPermission
+			}
+			if input != nil || id != "" || !errors.Is(err, want) || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("invalid unchanged result: filesystem=%v identity=%q error=%v", input != nil, id, err)
+			}
+		})
 	}
 }
 
@@ -1225,16 +1439,16 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 					for i := range concurrency {
 						callbacks[i] = &archiveCancelContext{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
 						go func() {
-							_, _, _, err := c.Acquire(callbacks[i], ArchiveKey{Content: fmt.Sprintf("source-ignore-context-%d", i)}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+							_, _, _, err := c.Acquire(callbacks[i], ArchiveKey{Content: fmt.Sprintf("source-ignore-context-%d", i)}, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 								tw := tar.NewWriter(w)
 								if err := tw.WriteHeader(&tar.Header{Name: "file", Size: 1 << 30, Mode: 0o600}); err != nil {
-									return ocispec.Descriptor{}, err
+									return ProducerResult{}, err
 								}
 								started <- struct{}{}
 								<-write
 								var chunk [512]byte
 								_, err := tw.Write(chunk[:])
-								return ocispec.Descriptor{}, err
+								return ProducerResult{}, err
 							})
 							done <- err
 						}()
@@ -1296,7 +1510,7 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 	}
 	c = cachetest.New(t, root, New)
 	calls := 0
-	input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 		calls++
 		return producer(data, ocispec.Descriptor{})(ctx, w)
 	})
@@ -1344,14 +1558,14 @@ func TestAcquire_TrailingBoundary(t *testing.T) {
 					root = t.TempDir()
 				}
 				c := cachetest.New(t, root, New)
-				_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-boundary"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+				_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-boundary"}, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 					var payloadTar bytes.Buffer
 					testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
 					if _, err := w.Write(payloadTar.Bytes()); err != nil {
-						return ocispec.Descriptor{}, err
+						return ProducerResult{}, err
 					}
 					_, err := w.Write(make([]byte, maxTrailingBytes+extra))
-					return ocispec.Descriptor{}, err
+					return ProducerResult{}, err
 				})
 				if (err != nil) != (extra > 0) {
 					t.Fatalf("extra=%d: err=%v", extra, err)
@@ -1375,15 +1589,15 @@ func TestAcquire_TrailingFailureKeepsCacheIdentity(t *testing.T) {
 			testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x"}, 0o644)
 			data := payloadTar.Bytes()
 			trailingWriteFailed := false
-			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-failure"}, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-trailing-failure"}, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				if _, err := w.Write(data); err != nil {
-					return ocispec.Descriptor{}, err
+					return ProducerResult{}, err
 				}
 				trailing := make([]byte, 32<<10)
 				for {
 					if _, err := w.Write(trailing); err != nil {
 						trailingWriteFailed = true
-						return ocispec.Descriptor{}, err
+						return ProducerResult{}, err
 					}
 				}
 			})
@@ -1479,9 +1693,9 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			c = cachetest.New(t, root, New)
-			unexpected := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+			unexpected := func(context.Context, ProducerInput) (ProducerResult, error) {
 				t.Error("restored product called producer")
-				return ocispec.Descriptor{}, errors.New("unexpected producer")
+				return ProducerResult{}, errors.New("unexpected producer")
 			}
 			input, _, restoredID, err := c.Acquire(t.Context(), archiveKey, Policy{MaxAge: Forever}, unexpected)
 			if err != nil || restoredID != archiveID {
@@ -1782,10 +1996,10 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 				}
 			} else {
 				var r io.ReadCloser
-				r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+				r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) {
 					called = true
 					if !cleanup {
-						return ocispec.Descriptor{}, nil
+						return ProducerResult{}, nil
 					}
 					entries, err := fs.ReadDir(c.root.FS(), "oci")
 					if err != nil {
@@ -1817,7 +2031,7 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 						t.Fatal(err)
 					}
 					before = sweepSnapshot(t, outside)
-					return ocispec.Descriptor{}, failure
+					return ProducerResult{}, failure
 				})
 				if r != nil {
 					_ = r.Close()

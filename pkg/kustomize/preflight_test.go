@@ -275,7 +275,7 @@ func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
 		body := remoteBody{Reader: remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), close: func() error { return nil }}
 		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
 	})
-	_, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", io.Discard)
+	_, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", sourcecache.ProducerInput{Writer: io.Discard})
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized-body error=%v", err)
 	}
@@ -342,7 +342,7 @@ func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
 		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), remoteFetchMaxBytes)
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(reader), Header: make(http.Header)}, nil
 	})
-	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/atcap.yaml", io.Discard)
+	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/atcap.yaml", sourcecache.ProducerInput{Writer: io.Discard})
 	if err != nil || desc.Size != remoteFetchMaxBytes {
 		t.Fatalf("body exactly at cap: size=%d, error=%v", desc.Size, err)
 	}
@@ -371,7 +371,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			if err != nil || !strings.Contains(string(out), "name: remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
-			if _, err := cache.FetchRemote(t.Context(), url, sourcecache.RetryConfig{}); err != nil {
+			if _, err := cache.FetchRemote(t.Context(), url, sourcecache.RetryConfig{}, nil); err != nil {
 				t.Fatal(err)
 			}
 			if got := hits.Load(); got != 1 {
@@ -580,7 +580,7 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error { closes++; return closeErr }}}, nil
 			})
-			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", io.Discard)
+			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", sourcecache.ProducerInput{Writer: io.Discard})
 			if !errors.Is(err, closeErr) || closes != 1 || strings.Count(err.Error(), closeErr.Error()) != 1 {
 				t.Fatalf("body cleanup: %v closes=%d", err, closes)
 			}

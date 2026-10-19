@@ -137,7 +137,7 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
+	for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
 		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
 		if produce == nil {
 			if r != nil || !errors.Is(err, errdef.ErrNotFound) {

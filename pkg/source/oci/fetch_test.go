@@ -42,6 +42,13 @@ import (
 	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
+func newTestNetwork(tb testing.TB) *source.Network {
+	tb.Helper()
+	network := new(source.Network)
+	tb.Cleanup(network.Close)
+	return network
+}
+
 func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +98,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name:      "flux-manifests",
 		Namespace: "flux-system",
@@ -148,7 +155,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 	)
 	srv := startFakeRegistry(t, manifestBytes, configBytes, layerBytes)
 
-	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name:      "collider",
 		Namespace: "test",
@@ -198,7 +205,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			t.Parallel()
 			v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 			v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
-			srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
+			srv, setArtifact := newMutableFakeRegistry(t, v1, v2)
 			var resolves, pulls atomic.Int32
 			var blockBlobs atomic.Bool
 			handler := srv.Config.Handler
@@ -215,7 +222,8 @@ func TestFetcher_Freshness(t *testing.T) {
 				}
 				handler.ServeHTTP(w, r)
 			})
-			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+			srv.StartTLS()
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 			repo := &manifest.OCIRepository{
 				Name: "freshness", Namespace: "test",
 				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
@@ -272,6 +280,146 @@ func TestFetcher_Freshness(t *testing.T) {
 				t.Fatalf("second content = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestFetcher_Revalidation(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{sourcev1.OCILayerExtract, sourcev1.OCILayerCopy} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+			v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
+			srv, setArtifact := newMutableFakeRegistry(t, v1, v2)
+			var layers atomic.Int32
+			handler := srv.Config.Handler
+			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/blobs/") {
+					layers.Add(1)
+				}
+				handler.ServeHTTP(w, r)
+			})
+			srv.StartTLS()
+			root := t.TempDir()
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
+			repo := &manifest.OCIRepository{Name: "revalidate", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, LayerSelector: &sourcev1.OCILayerSelector{Operation: operation}}
+			var identity string
+			for _, phase := range []string{"initial", "unchanged", "reopened", "changed"} {
+				if phase == "reopened" {
+					if err := f.Cache.Close(); err != nil {
+						t.Fatal(err)
+					}
+					f.Cache = cachetest.New(t, root, sourcecache.New)
+				}
+				if phase == "changed" {
+					setArtifact(1)
+				}
+				before := layers.Load()
+				art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantLayers := int32(0)
+				if phase == "initial" || phase == "changed" {
+					wantLayers = 1
+				}
+				if got := layers.Load() - before; got != wantLayers {
+					t.Fatalf("%s layer GET=%d, want %d", phase, got, wantLayers)
+				}
+				got := sourcecache.AcquisitionIdentity(art.FS)
+				if phase == "initial" {
+					identity = got
+				} else if phase == "changed" {
+					if got == identity {
+						t.Fatal("changed manifest retained content identity")
+					}
+				} else if got != identity {
+					t.Fatal("revalidation changed content identity")
+				}
+				if operation == sourcev1.OCILayerExtract {
+					want := "version: v1\n"
+					if phase == "changed" {
+						want = "version: v2\n"
+					}
+					if got := mustReadFile(t, art.FS, "app.yaml"); got != want {
+						t.Fatalf("%s output=%q", phase, got)
+					}
+				} else {
+					want := v1.layer
+					if phase == "changed" {
+						want = v2.layer
+					}
+					got, err := fs.ReadFile(art.FS, source.OCICopiedLayerFilename)
+					if err != nil || !bytes.Equal(got, want) {
+						t.Fatalf("%s copied layer error=%v", phase, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestFetcher_Freshness_WarmConnections(t *testing.T) {
+	t.Parallel()
+	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+	srv, _ := newMutableFakeRegistry(t, artifact)
+	var heads, manifests, layers, connections atomic.Int32
+	handler := srv.Config.Handler
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/") && r.Method == http.MethodHead:
+			heads.Add(1)
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			manifests.Add(1)
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			layers.Add(1)
+		}
+		handler.ServeHTTP(w, r)
+	})
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	srv.StartTLS()
+	root := t.TempDir()
+	repo := &manifest.OCIRepository{
+		Name: "first", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+	}
+	for _, invocation := range []string{"cold", "reopened"} {
+		f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New), Network: newTestNetwork(t)}
+		beforeConnections := connections.Load()
+		for operation := range 2 {
+			beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()
+			request := *repo
+			request.Name = fmt.Sprintf("source-%d", operation)
+			art, err := f.Fetch(t.Context(), &request, sourcecache.RetryConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mustReadFile(t, art.FS, "app.yaml"); got != "version: v1\n" {
+				t.Fatalf("content=%q", got)
+			}
+			h, m, l := heads.Load()-beforeHeads, manifests.Load()-beforeManifests, layers.Load()-beforeLayers
+			t.Logf("%s operation=%d: tag_HEAD=%d manifest_GET=%d layer_GET=%d accepted_connections=%d", invocation, operation, h, m, l, connections.Load()-beforeConnections)
+			if h != 1 || m != 1 {
+				t.Errorf("due tag resolution: HEAD=%d GET=%d, want 1 each", h, m)
+			}
+			wantLayers := int32(0)
+			if invocation == "cold" && operation == 0 {
+				wantLayers = 1
+			}
+			if l != wantLayers {
+				t.Errorf("%s operation=%d: unchanged layer requests=%d, want %d", invocation, operation, l, wantLayers)
+			}
+		}
+		if got := connections.Load() - beforeConnections; got != 1 {
+			t.Errorf("%s: compatible sequential operations accepted %d connections, want 1", invocation, got)
+		}
+		if err := f.Cache.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -341,7 +489,7 @@ func newFakeOCIArtifact(t *testing.T, files map[string]string) fakeOCIArtifact {
 	}
 }
 
-func startMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*httptest.Server, func(int)) {
+func newMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*httptest.Server, func(int)) {
 	t.Helper()
 	if len(artifacts) == 0 {
 		t.Fatal("no OCI artifacts")
@@ -378,7 +526,7 @@ func startMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*http
 			http.NotFound(w, r)
 		}
 	})
-	srv := httptest.NewTLSServer(mux)
+	srv := httptest.NewUnstartedServer(mux)
 	t.Cleanup(srv.Close)
 	setArtifact := func(i int) {
 		mu.Lock()
@@ -441,7 +589,7 @@ func mustReadFile(t *testing.T, input fs.FS, path string) string {
 
 func TestFetcher_CacheIsolatesSources(t *testing.T) {
 	c := cachetest.New(t, t.TempDir(), sourcecache.New)
-	f := &Fetcher{Cache: c}
+	f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 	var keys []string
 	for _, body := range []string{"first", "second"} {
 		v := newFakeOCIArtifact(t, map[string]string{"app.yaml": body})
@@ -490,7 +638,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				current := *repo
-				fetcher := &Fetcher{Cache: c}
+				fetcher := &Fetcher{Network: newTestNetwork(t), Cache: c}
 				tc.change(&current, fetcher)
 				got, err := fetcher.fetch(t.Context(), &current, registryAcquisition{client, material}, sourcecache.RetryConfig{})
 				if err != nil {
@@ -568,7 +716,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { _ = c.Close() })
-				f := &Fetcher{Cache: c}
+				f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 				repo := &manifest.OCIRepository{Name: "tampered", Namespace: "test",
 					URL: "oci://" + mustURL(t, srv.URL).Host + "/chart", Insecure: true,
 					Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: metav1.Duration{Duration: time.Hour}}
@@ -673,7 +821,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				f := &Fetcher{Cache: c}
+				f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 				t.Cleanup(func() {
 					if err := f.Cache.Close(); err != nil {
 						t.Error(err)
@@ -836,7 +984,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: art.manifestDigest}
 			}
 			root := t.TempDir()
-			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 			got, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if name == "unmatched" {
 				if err == nil {
@@ -897,10 +1045,8 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 }
 
 func TestFetcher_NetworkRoutes(t *testing.T) {
-	t.Parallel()
 	for _, route := range []string{"registry", "token", "redirect", "tags", "manifest", "layer", "copy", "fallback"} {
 		t.Run(route, func(t *testing.T) {
-			t.Parallel()
 			var network source.Network
 			var bypass, requests atomic.Int32
 			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -908,29 +1054,30 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			t.Cleanup(target.Close)
-			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
-			tr, _ := source.NewHTTPTransport(nil, nil)
-			tr.Proxy = nil
-			seedDials := 0
-			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { seedDials++; return nil, cause }
-			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target.URL, nil)
-			_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
-			first, ok := errors.AsType[*sourcecache.TerminalError](err)
-			if !ok || !first.Attempted || seedDials != 1 {
-				t.Fatalf("seed: %v dials=%d", err, seedDials)
+			testutil.StubDNS(t, func(context.Context, string) error { return os.ErrDeadlineExceeded })
+			tr, err := network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
+			if err != nil {
+				t.Fatal(err)
 			}
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, strings.Replace(target.URL, "127.0.0.1", "example.com", 1), nil)
+			_, err = (&http.Client{Transport: tr}).Do(req)
+			first, ok := errors.AsType[*sourcecache.TerminalError](err)
+			if !ok || !first.Attempted {
+				t.Fatalf("seed: %v", err)
+			}
+			cause := first.Err
 			art := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
 			registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				switch {
 				case route == "token":
-					w.Header().Set("Www-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry"`, target.URL))
+					w.Header().Set("Www-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry"`, strings.Replace(target.URL, "127.0.0.1", "example.com", 1)))
 					w.WriteHeader(http.StatusUnauthorized)
 				case route == "redirect",
 					route == "tags" && strings.HasSuffix(r.URL.Path, "/tags/list"),
 					route == "manifest" && r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/manifests/"),
 					strings.Contains(r.URL.Path, "/blobs/"):
-					http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+					http.Redirect(w, r, strings.Replace(target.URL, "127.0.0.1", "example.com", 1), http.StatusTemporaryRedirect)
 				default:
 					w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
 					w.Header().Set("Docker-Content-Digest", art.manifestDigest)
@@ -943,7 +1090,7 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			t.Cleanup(registry.Close)
 			registryURL := registry.URL
 			if route == "registry" || route == "fallback" {
-				registryURL = target.URL
+				registryURL = strings.Replace(target.URL, "127.0.0.1", "example.com", 1)
 			}
 			repo := &manifest.OCIRepository{Name: "network", Namespace: "test", URL: "oci://" + mustURL(t, registryURL).Host + "/test/chart", Insecure: true,
 				Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"}}

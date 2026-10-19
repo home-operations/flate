@@ -1,11 +1,8 @@
 package helmchart
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net/http"
-	"net/url"
-	"sync"
 
 	"golang.org/x/net/http/httpproxy"
 
@@ -16,9 +13,9 @@ import (
 // httpRepository fixes auth and transport inputs for a chart and its nested index.
 type httpRepository struct {
 	*manifest.HelmRepository
-	identity, username, password string
-	client                       *http.Client
-	material                     any
+	username, password string
+	client             *http.Client
+	material           any
 }
 
 func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
@@ -55,7 +52,7 @@ func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, erro
 	}
 	owner := r.Named()
 	owner.Name = helmID(r)
-	tlsCfg, err := source.ResolveCertSecret(secrets, owner, r.CertSecretRef)
+	tlsMaterial, err := source.ResolveCertSecret(secrets, owner, r.CertSecretRef)
 	if err != nil {
 		return nil, err
 	}
@@ -69,45 +66,16 @@ func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, erro
 
 	if prepared.username != "" || prepared.password != "" || certMaterial != nil || proxyIdentity != nil {
 		prepared.material = [4]any{prepared.username, prepared.password, certMaterial, proxyIdentity}
-		prepared.identity = manifest.Fingerprint(prepared.material)
 	}
-	memo, ok := f.clients.Load(prepared.identity)
-	if !ok {
-		entry := &httpClient{}
-		entry.init = sync.OnceValues(func() (*http.Client, error) {
-			tr, err := helmTransport(tlsCfg)
-			if err != nil {
-				return nil, err
-			}
-			proxyForURL := proxyPolicy.ProxyFunc()
-			tr.Proxy = func(req *http.Request) (*url.URL, error) { return proxyForURL(req.URL) }
-			entry.transport = tr
-			return &http.Client{Transport: f.network.HTTPTransport(tr), Timeout: helmHTTPTimeout}, nil
-		})
-		memo, _ = f.clients.LoadOrStore(prepared.identity, entry)
+	var credentials any
+	if prepared.username != "" || prepared.password != "" {
+		credentials = [2]string{prepared.username, prepared.password}
 	}
-	prepared.client, err = memo.(*httpClient).init()
+	tr, err := f.network.HTTPTransport(source.HTTPTransportConfig{TLS: tlsMaterial, ProxyEnvironment: proxyPolicy,
+		Credentials: credentials, DisableCompression: true})
 	if err != nil {
 		return nil, err
 	}
+	prepared.client = &http.Client{Transport: tr, Timeout: helmHTTPTimeout}
 	return prepared, nil
-}
-
-// The transport MUST remain accessible when Network wraps the client's RoundTripper.
-type httpClient struct {
-	init      func() (*http.Client, error)
-	transport *http.Transport
-}
-
-// helmTransport builds the helm-specific HTTP transport kernel: the SSRF
-// egress guard (source.NewHTTPTransport) carrying tlsCfg, with compression
-// disabled to match helm's own getter transport (chart tarballs are already
-// compressed — the only source kind that disables it).
-func helmTransport(tlsCfg *tls.Config) (*http.Transport, error) {
-	tr, err := source.NewHTTPTransport(tlsCfg, nil)
-	if err != nil {
-		return nil, err
-	}
-	tr.DisableCompression = true
-	return tr, nil
 }

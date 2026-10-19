@@ -43,7 +43,7 @@ func TestNewHTTPTransport_ResponseHeaderTimeout(t *testing.T) {
 
 	start := time.Now()
 	var network Network
-	client := &http.Client{Transport: network.HTTPTransport(tr)}
+	client := &http.Client{Transport: network.wrapHTTPTransport(tr)}
 	resp, err := client.Get(srv.URL)
 	if err == nil {
 		_ = resp.Body.Close()
@@ -80,7 +80,7 @@ func TestNewHTTPTransport_AppliesTLSAndStaysBounded(t *testing.T) {
 		t.Fatal("TLSClientConfig not applied onto the bounded clone")
 	}
 	var network Network
-	resp, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Get(srv.URL)
+	resp, err := (&http.Client{Transport: network.wrapHTTPTransport(tr)}).Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET over custom TLS: %v", err)
 	}

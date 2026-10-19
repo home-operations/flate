@@ -34,32 +34,32 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 	if f.disableChartDigestTracking && isExactSemver(version) {
 		maxAge = cache.Forever
 	}
-	reader, desc, id, err := f.cache.Blob(ctx, key, cache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	reader, desc, id, err := f.cache.Blob(ctx, key, cache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		idx, err := f.fetchIndex(ctx, r, retry)
 		if err != nil {
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		}
 		cv, err := idx.Get(chartName, version)
 		if err != nil {
-			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s not found in %s: %w", manifest.ErrObjectNotFound, chartName, version, r.URL, err)
+			return cache.ProducerResult{}, fmt.Errorf("%w: chart %s@%s not found in %s: %w", manifest.ErrObjectNotFound, chartName, version, r.URL, err)
 		}
 		if len(cv.URLs) == 0 {
-			return ocispec.Descriptor{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs", manifest.ErrObjectNotFound, chartName, version, r.URL)
+			return cache.ProducerResult{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs", manifest.ErrObjectNotFound, chartName, version, r.URL)
 		}
 		chartURL, err := absChartURL(r.URL, cv.URLs[0])
 		if err != nil {
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		}
 		desc, err := r.get(ctx, chartURL, w)
 		if err != nil {
-			return desc, err
+			return cache.ProducerResult{Descriptor: desc}, err
 		}
 		expected := normalizeChartDigest(cv.Digest)
 		if expected != "" && desc.Digest.Encoded() != expected {
-			return desc, fmt.Errorf("chart %s@%s digest mismatch: index has %s, downloaded %s", chartName, cv.Version, expected, desc.Digest.Encoded())
+			return cache.ProducerResult{Descriptor: desc}, fmt.Errorf("chart %s@%s digest mismatch: index has %s, downloaded %s", chartName, cv.Version, expected, desc.Digest.Encoded())
 		}
 		desc.Annotations = map[string]string{"flate.chart-version": cv.Version, "flate.chart-url": chartURL, "flate.chart-digest": expected}
-		return desc, nil
+		return cache.ProducerResult{Descriptor: desc}, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", helmID(r.HelmRepository), err)
@@ -76,23 +76,23 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
 	var candidate *repo.IndexFile
 	var candidateDigest digest.Digest
-	reader, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	reader, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		candidate = nil
 		var buf bytes.Buffer
 		desc, err := r.get(ctx, indexURL, io.MultiWriter(w, &buf))
 		if err != nil {
-			return desc, err
+			return cache.ProducerResult{Descriptor: desc}, err
 		}
 		candidateDigest = desc.Digest
 		if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
 			candidate = v.(*repo.IndexFile)
-			return desc, nil
+			return cache.ProducerResult{Descriptor: desc}, nil
 		}
 		candidate, err = indexFromBytes(buf.Bytes())
 		if err != nil {
-			return desc, fmt.Errorf("parse %s: %w", indexURL, err)
+			return cache.ProducerResult{Descriptor: desc}, fmt.Errorf("parse %s: %w", indexURL, err)
 		}
-		return desc, nil
+		return cache.ProducerResult{Descriptor: desc}, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)

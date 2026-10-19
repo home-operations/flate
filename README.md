@@ -100,6 +100,8 @@ Repository precedence is frozen after discovery and before parallel reconciliati
 
 **Cache.** An empty cache root keeps source fetches in memory. Set `--cache-dir` or `FLATE_CACHE_DIR` to persist sources and eligible completed Helm and Kustomize renders through one cache owner. Source freshness follows Flux intervals. `flate cache gc` requires an explicit root: it retires named tags by payload last-use, prunes unreachable Git generations, and delegates blob reclamation to ORAS graph GC.
 
+Mutable Git sources refresh at the source interval, and mutable remote Git bases use the referencing Kustomization interval. Zero interval refreshes each run. Only commit-only references and raw hash bases are immutable; a branch plus a commit still requires validation. Compatible HTTP operations share connections within one invocation, with authentication kept on each client. Customized Git operations retain private transports: go-git v5.19.3 `plumbing/transport/http/transport.go`, `(*client).fetchTransport`, calls the mutating LRU `transports.Get` under `RLock`. Its `transportOptions.proxyURL` key is built in `newSession` (`plumbing/transport/http/common.go`) and passed to `addTransport`; authenticated proxies receive fresh `url.URL.User` pointers and therefore distinct keys. These paths can open a connection per operation.
+
 In a container, flate sets its soft memory limit to 80% of the cgroup limit unless `GOMEMLIMIT` is set (`AUTOMEMLIMIT` adjusts the ratio; `AUTOMEMLIMIT=off` disables it).
 
 ## Changed-only mode
@@ -214,6 +216,8 @@ for id, info := range res.Failed {
 }
 ```
 
+SDK callers that inject `source.Network` own its lifetime: join renders and close TreeCache workers before calling `Network.Close`. Orchestrators borrow injected networks; an internally created network closes after its render or both `RenderTrees` sides finish. Low-level OCI, Bucket and HelmChart fetchers require a caller-owned, non-nil `source.Network`; join all fetches before calling `Network.Close`.
+
 Other entry points worth knowing:
 
 - `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
@@ -240,14 +244,14 @@ Release artifacts (archives, the Homebrew cask, SBOMs, and Cosign signatures) ar
 
 ## Usage as pre-commit hook
 
-This repo provides a [pre-commit](https://pre-commit.com/) hook, which runs `flate test all`. 
+This repo provides a [pre-commit](https://pre-commit.com/) hook, which runs `flate test all`.
 It can also be used with [prek](https://prek.j178.dev/).
 
-Example `.pre-commit-config.yaml`: 
+Example `.pre-commit-config.yaml`:
 
 ```yaml
---- 
-  repos: 
+---
+repos:
   - repo: https://github.com/home-operations/flate
     rev: v0.7.0
     hooks:

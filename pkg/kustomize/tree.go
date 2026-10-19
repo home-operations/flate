@@ -2,6 +2,7 @@ package kustomize
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // GitBaseRequest carries a base identity and the referencing Flux interval.
@@ -42,10 +44,11 @@ type TreeCache struct {
 	gitBase GitBaseFetcher
 
 	// owner is borrowed; the caller closes it after renders, workers and readers finish.
+	tasks      *task.Service
 	owner      *cache.Cache
 	network    *source.Network
 	httpClient *http.Client
-	transport  *http.Transport
+	ownNetwork bool
 }
 
 const remoteClosed uint64 = 1 << 63
@@ -57,13 +60,25 @@ type remoteWorkers struct {
 	drain chan struct{}
 }
 
-// NewTreeCache borrows the nonnil owner for source and completed-render storage.
+// NewTreeCache borrows the nonnil storage owner and task service for this run.
+// A nil Network creates a private Network released by Close.
 // The caller MUST join renders, Close the TreeCache, and finish acquired readers
 // before closing owner. Close never releases the borrowed owner or Network.
-func NewTreeCache(owner *cache.Cache, network *source.Network) *TreeCache {
-	tr, _ := source.NewHTTPTransport(nil, nil)
-	return &TreeCache{owner: owner, network: network, transport: tr,
-		httpClient: &http.Client{Timeout: remoteFetchTimeout, Transport: network.HTTPTransport(tr)}}
+func NewTreeCache(owner *cache.Cache, network *source.Network, tasks *task.Service) *TreeCache {
+	ownNetwork := network == nil
+	if ownNetwork {
+		network = new(source.Network)
+	}
+	return &TreeCache{owner: owner, network: network, tasks: tasks,
+		ownNetwork: ownNetwork, httpClient: &http.Client{Timeout: remoteFetchTimeout, Transport: network,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("stopped after 10 redirects")
+				}
+				req.Header.Del("If-None-Match")
+				req.Header.Del("If-Modified-Since")
+				return nil
+			}}}
 }
 
 // Close freezes remote admission, cancels shared work and joins its complete
@@ -85,7 +100,9 @@ func (c *TreeCache) Close() {
 			})
 			<-workers.drain
 		}
-		c.transport.CloseIdleConnections()
+		if c.ownNetwork {
+			c.network.Close()
+		}
 		c.remoteFetches.Clear()
 		c.sourceRoots.Clear()
 	})

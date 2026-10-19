@@ -43,11 +43,11 @@ import (
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
-func tlsGitProxy(t *testing.T) (*httptest.Server, *atomic.Int32) {
+func tlsGitProxy(t *testing.T, authenticated bool) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var connects atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodConnect || r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:password")) {
+		if r.Method != http.MethodConnect || authenticated && r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy:password")) {
 			http.Error(w, "proxy auth", http.StatusProxyAuthRequired)
 			return
 		}
@@ -167,63 +167,102 @@ func TestFetcher_TLSOperations(t *testing.T) {
 	root := t.TempDir()
 	mustInitRepo(t, root)
 	head := mustTagHEAD(t, root, "v1.0.0")
-	for _, tc := range []struct {
-		name            string
-		ref             *manifest.GitRepositoryRef
-		recurse, refuse bool
-	}{
-		{name: "clone"},
-		{name: "branch", ref: &manifest.GitRepositoryRef{Branch: "master"}},
-		{name: "tag", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}},
-		{name: "semver", ref: &manifest.GitRepositoryRef{SemVer: ">=1.0.0"}},
-		{name: "named", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}},
-		{name: "clone-fetch", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, recurse: true},
-		{name: "exact", ref: &manifest.GitRepositoryRef{Commit: head}},
-		{name: "fallback", ref: &manifest.GitRepositoryRef{Commit: head}, refuse: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, route := range []string{"direct", "proxy", "authenticated-proxy"} {
+		t.Run(route, func(t *testing.T) {
 			t.Parallel()
-			cert, ca := tlsGitCertificate(t)
-			crt, key := testutil.SelfSignedClientCert(t)
-			clients := x509.NewCertPool()
-			clients.AppendCertsFromPEM([]byte(crt))
-			handler := gitHTTPHandler(t, root)
-			var requests atomic.Int32
-			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost && requests.Add(1) == 1 && tc.refuse {
-					http.Error(w, "exact request refused", http.StatusBadRequest)
-					return
-				}
-				handler.ServeHTTP(w, r)
-			}))
-			srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clients}
-			srv.Config.SetKeepAlivesEnabled(false)
-			srv.StartTLS()
-			t.Cleanup(srv.Close)
-			proxy, connects := tlsGitProxy(t)
-			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Secrets: func(_, name string) *manifest.Secret {
-				if name == "proxy" {
-					return &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "username": "proxy", "password": "password"}}
-				}
-				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca, "tls.crt": crt, "tls.key": key}}
-			}}
-			repo := gitRepoWithSecret("tls", srv.URL, "tls")
-			repo.Reference, repo.RecurseSubmodules = tc.ref, tc.recurse
-			repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
-			art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
-			if err != nil {
-				_, fallback := f.fallback.Load(srv.URL)
-				t.Fatalf("fetch: %v (requests=%d, fallback=%t)", err, requests.Load(), fallback)
-			}
-			if data, err := fs.ReadFile(art.FS, "hello.txt"); err != nil || string(data) != "hi" {
-				t.Fatalf("content=%q, error=%v", data, err)
-			}
-			want := int32(1)
-			if tc.refuse {
-				want = 2
-			}
-			if requests.Load() != want || connects.Load() < 2 {
-				t.Fatalf("upload requests=%d, want %d; proxy connects=%d", requests.Load(), want, connects.Load())
+			for _, tc := range []struct {
+				name            string
+				ref             *manifest.GitRepositoryRef
+				recurse, refuse bool
+			}{
+				{name: "clone"},
+				{name: "branch", ref: &manifest.GitRepositoryRef{Branch: "master"}},
+				{name: "tag", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}},
+				{name: "semver", ref: &manifest.GitRepositoryRef{SemVer: ">=1.0.0"}},
+				{name: "named", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}},
+				{name: "clone-fetch", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, recurse: true},
+				{name: "exact", ref: &manifest.GitRepositoryRef{Commit: head}},
+				{name: "fallback", ref: &manifest.GitRepositoryRef{Commit: head}, refuse: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					cert, ca := tlsGitCertificate(t)
+					crt, key := testutil.SelfSignedClientCert(t)
+					clients := x509.NewCertPool()
+					clients.AppendCertsFromPEM([]byte(crt))
+					handler := gitHTTPHandler(t, root)
+					var requests, advertisements, connections atomic.Int32
+					srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method == http.MethodGet {
+							advertisements.Add(1)
+						}
+						if r.Method == http.MethodPost && requests.Add(1) == 1 && tc.refuse {
+							http.Error(w, "exact request refused", http.StatusBadRequest)
+							return
+						}
+						handler.ServeHTTP(w, r)
+					}))
+					srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clients}
+					srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+						if state == http.StateNew {
+							connections.Add(1)
+						}
+					}
+					srv.StartTLS()
+					t.Cleanup(srv.Close)
+					proxy, connects := tlsGitProxy(t, route == "authenticated-proxy")
+					f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Secrets: func(_, name string) *manifest.Secret {
+						if name == "proxy" {
+							data := map[string]any{"address": proxy.URL}
+							if route == "authenticated-proxy" {
+								data["username"], data["password"] = "proxy", "password"
+							}
+							return &manifest.Secret{StringData: data}
+						}
+						return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca, "tls.crt": crt, "tls.key": key}}
+					}}
+					repo := gitRepoWithSecret("tls", srv.URL, "tls")
+					repo.Reference, repo.RecurseSubmodules = tc.ref, tc.recurse
+					if route != "direct" {
+						repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
+					}
+					art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+					if err != nil {
+						_, fallback := f.fallback.Load(srv.URL)
+						t.Fatalf("fetch: %v (requests=%d, fallback=%t)", err, requests.Load(), fallback)
+					}
+					if data, err := fs.ReadFile(art.FS, "hello.txt"); err != nil || string(data) != "hi" {
+						t.Fatalf("content=%q, error=%v", data, err)
+					}
+					want := int32(1)
+					if tc.refuse {
+						want = 2
+					}
+					if requests.Load() != want {
+						t.Fatalf("upload requests=%d, want %d", requests.Load(), want)
+					}
+					wantAdvertisements := int32(1)
+					if tc.recurse || tc.refuse {
+						wantAdvertisements = 2
+					}
+					if advertisements.Load() != wantAdvertisements {
+						t.Errorf("initial advertisements=%d, want %d", advertisements.Load(), wantAdvertisements)
+					}
+					t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d", advertisements.Load(), requests.Load(), connections.Load(), connects.Load())
+					_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Logf("after compatible operation: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d", advertisements.Load(), requests.Load(), connections.Load(), connects.Load())
+					if tc.ref == nil || tc.ref.Commit == "" {
+						wantAdvertisements *= 2
+						want *= 2
+					}
+					if advertisements.Load() != wantAdvertisements || requests.Load() != want {
+						t.Errorf("two operations: advertisements=%d upload_pack=%d, want %d and %d", advertisements.Load(), requests.Load(), wantAdvertisements, want)
+					}
+
+				})
 			}
 		})
 	}
@@ -376,7 +415,7 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 				name := fmt.Sprintf("ca%d", i)
 				secrets[name] = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca, "tls.crt": crt, "tls.key": key}}
 				repos[i] = gitRepoWithSecret(name, srv.URL, name)
-				proxy, connects := tlsGitProxy(t)
+				proxy, connects := tlsGitProxy(t, true)
 				proxies[i] = connects
 				secrets["proxy"+name] = &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "username": "proxy", "password": "password"}}
 				repos[i].ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy" + name}

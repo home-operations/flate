@@ -144,7 +144,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 	t.Parallel()
 	repo := ociRepo("oci://oci.trueforge.org/truecharts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot"}}
-	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub}
+	f := &Fetcher{network: newTestNetwork(t), repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub}
 
 	retry := cache.RetryConfig{Attempts: 3}
 	art, err := f.Fetch(context.Background(), helmChart("truecharts", "kromgo", "3.0.0"), retry)
@@ -170,7 +170,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 
 func TestFetch_RepoNotFound(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
+	f := &Fetcher{network: newTestNetwork(t), repos: func(_, _ string) *manifest.HelmRepository { return nil }}
 	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"), cache.RetryConfig{})
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound", err)
@@ -181,7 +181,7 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 	t.Parallel()
 	repo := ociRepo("oci://example.test/charts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
-	f := &Fetcher{repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub, disableChartDigestTracking: true}
+	f := &Fetcher{network: newTestNetwork(t), repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub, disableChartDigestTracking: true}
 	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0"), cache.RetryConfig{}); err != nil {
 		t.Fatal(err)
 	}

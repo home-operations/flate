@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -374,9 +375,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					c := cachetest.New(t, root, New)
 					key := BlobKey{Content: "recorded"}
 					calls := 0
-					fail := func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+					fail := func(context.Context, ProducerInput) (ProducerResult, error) {
 						calls++
-						return ocispec.Descriptor{}, connReset()
+						return ProducerResult{}, connReset()
 					}
 					policy := Policy{MaxAge: maxAge, Retry: fastRetry(3)}
 					r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("original"), ocispec.Descriptor{}))
@@ -412,7 +413,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 							t.Fatal(err)
 						}
 						c = cachetest.New(t, root, New)
-						for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, fail} {
+						for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, fail} {
 							_, _, _, err := c.Blob(t.Context(), key, policy, produce)
 							terminal, ok := errors.AsType[*TerminalError](err)
 							if !ok || terminal.Attempted || !errors.Is(err, syscall.ECONNRESET) || !errors.Is(err, manifest.ErrFlux) || calls != 3 {
@@ -603,10 +604,10 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 					}
 					persisted := backing == "disk" && identity != ""
 					calls := 0
-					r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 						calls++
 						_, err := io.WriteString(w, "completed")
-						return ocispec.Descriptor{}, err
+						return ProducerResult{}, err
 					})
 					if err != nil {
 						t.Fatal(err)
@@ -637,21 +638,26 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 						}
 						return
 					}
-					for range 2 {
-						r, _, _, err := c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
-							t.Fatal("disabled PersistOnly ran failing producer")
-							return ocispec.Descriptor{}, connReset()
-						})
+					produce := func(context.Context, ProducerInput) (ProducerResult, error) {
+						t.Fatal("disabled PersistOnly ran failing producer")
+						return ProducerResult{}, connReset()
+					}
+					ctx := t.Context()
+					allocs := testing.AllocsPerRun(100, func() {
+						r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(3)}, produce)
 						if err != nil {
 							t.Fatal(err)
 						}
 						if err := r.Close(); err != nil {
 							t.Fatal(err)
 						}
+					})
+					if allocs > 2 {
+						t.Fatalf("disabled publication allocated %.0f times, want at most 2", allocs)
 					}
-					ctx, cancel := context.WithCancel(t.Context())
+					ctx, cancel := context.WithCancel(ctx)
 					cancel()
-					for _, produce := range []func(context.Context, io.Writer) (ocispec.Descriptor, error){nil, producer(nil, ocispec.Descriptor{})} {
+					for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, producer(nil, ocispec.Descriptor{})} {
 						if r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, produce); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
 							t.Fatalf("disabled cancellation: %v", err)
 						}
@@ -712,9 +718,9 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 			}
 			key := BlobKey{Content: "blob-error", PersistOnly: persistOnly}
 			failure := errors.New("failed completed producer")
-			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				_, _ = io.WriteString(w, "partial")
-				return ocispec.Descriptor{}, failure
+				return ProducerResult{}, failure
 			})
 			if r != nil || !errors.Is(err, failure) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("producer error: %v", err)
@@ -790,4 +796,258 @@ func TestBlob_ConcurrentPayloads(t *testing.T) {
 	ready.Wait()
 	close(start)
 	joined.Wait()
+}
+
+func TestBlob_Revalidation(t *testing.T) {
+	t.Parallel()
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				root := ""
+				if backing == "disk" {
+					root = t.TempDir()
+				}
+				c := cachetest.New(t, root, New)
+				key := BlobKey{Content: "revalidated"}
+				original := ocispec.Descriptor{Size: 7, Annotations: map[string]string{"validator": "opaque"}}
+				r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), original))
+				if err != nil {
+					t.Fatal(err)
+				}
+				view := FileFS("content", r)
+				identity := AcquisitionIdentity(view)
+				assert.NoError(t, r.Close())
+				loaded, _ := c.entries.Load(id)
+				first := loaded.(*entry)
+				resolved := first.resolved
+				var before os.FileInfo
+				if root != "" {
+					before, err = c.root.Stat(blobPath(first.stored.Digest))
+					assert.NoError(t, err)
+					assert.NoError(t, c.Close())
+					c = cachetest.New(t, root, New)
+				}
+				time.Sleep(time.Second)
+				r, desc, gotID, err := c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+					previous, err := w.Previous(ctx)
+					if err != nil || previous == nil || previous.Annotations["validator"] != "opaque" {
+						t.Fatalf("previous=%+v, error=%v", previous, err)
+					}
+					previous.Annotations["validator"] = "mutated"
+					independent, err := w.Previous(ctx)
+					if err != nil || independent.Annotations["validator"] != "opaque" {
+						t.Fatalf("metadata alias: %+v, %v", independent, err)
+					}
+					previous.Annotations = map[string]string{"validator": "updated"}
+					return ProducerResult{Descriptor: *previous, Unchanged: true}, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if gotID != id || AcquisitionIdentity(FileFS("content", r)) != identity || desc.Annotations["validator"] != "updated" {
+					t.Fatalf("unchanged id=%q, descriptor=%+v", gotID, desc)
+				}
+				body, err := io.ReadAll(r)
+				assert.NoError(t, errors.Join(err, r.Close()))
+				assert.Equal(t, string(body), "payload")
+				loaded, _ = c.entries.Load(id)
+				next := loaded.(*entry)
+				if !next.resolved.After(resolved) {
+					t.Fatal("validation did not renew resolution time")
+				}
+				if root != "" {
+					after, err := c.root.Stat(blobPath(next.stored.Digest))
+					assert.NoError(t, err)
+					if !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+						t.Fatal("unchanged validation rewrote payload")
+					}
+					assert.NoError(t, c.Close())
+					c = cachetest.New(t, root, New)
+				}
+				r, desc, _, err = c.Blob(t.Context(), key, Policy{MaxAge: time.Second}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assert.NoError(t, r.Close())
+				if desc.Annotations["validator"] != "updated" {
+					t.Fatalf("validation metadata not persisted: %+v", desc)
+				}
+				loaded, _ = c.entries.Load(id)
+				if !loaded.(*entry).resolved.Equal(next.resolved) {
+					t.Fatal("resolution time not persisted")
+				}
+
+			})
+		})
+	}
+	t.Run("absent", func(t *testing.T) {
+		t.Parallel()
+		c := cachetest.New(t, "", New)
+		r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "absent"}, Policy{}, func(context.Context, ProducerInput) (ProducerResult, error) {
+			return ProducerResult{Unchanged: true}, nil
+		})
+		if r != nil || !errors.Is(err, manifest.ErrInput) {
+			t.Fatalf("unchanged without payload: %v", err)
+		}
+	})
+	t.Run("unchanged-parent-replacement", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		key := BlobKey{Content: "unchanged-parent-replacement"}
+		upstream := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 7, Annotations: map[string]string{"validator": "opaque"}}
+		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), upstream))
+		assert.NoError(t, err)
+		identity := AcquisitionIdentity(FileFS("content", r))
+		assert.NoError(t, r.Close())
+		stored, err := c.store.Resolve(t.Context(), id)
+		assert.NoError(t, err)
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		r, desc, gotID, err := c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+			previous, err := w.Previous(ctx)
+			if err != nil || previous == nil {
+				t.Fatalf("previous=%+v, error=%v", previous, err)
+			}
+			return ProducerResult{Descriptor: *previous, Unchanged: true}, nil
+		})
+		assert.NoError(t, err)
+		assert.Diff(t, desc, upstream)
+		assert.Equal(t, gotID, id)
+		view := FileFS("content", r)
+		assert.Equal(t, AcquisitionIdentity(view), identity)
+		body, err := io.ReadAll(r)
+		assert.NoError(t, errors.Join(err, r.Close()))
+		assert.Equal(t, string(body), "payload")
+		current, err := c.store.Resolve(t.Context(), id)
+		assert.NoError(t, err)
+		assert.Equal(t, current.Digest, stored.Digest)
+		parent := filepath.Dir(blobPath(stored.Digest))
+		assert.NoError(t, c.root.Rename(parent, parent+"-held"))
+		assert.NoError(t, c.root.Mkdir(parent, 0o750))
+		if body, err := fs.ReadFile(view, "content"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("unchanged view ignored replacement: body=%q, error=%v", body, err)
+		}
+		assert.NoError(t, c.root.Remove(parent))
+		outside := t.TempDir()
+		testutil.WriteFile(t, outside, stored.Digest.Encoded(), "outside")
+		assert.NoError(t, os.Symlink(outside, filepath.Join(root, parent)))
+		if body, err := fs.ReadFile(view, "content"); err == nil {
+			t.Fatalf("unchanged view accepted escaping parent: body=%q", body)
+		}
+	})
+	for _, invalid := range []string{"missing bytes", "corrupted-size"} {
+		t.Run(invalid, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			c := cachetest.New(t, root, New)
+			key := BlobKey{Content: "missing"}
+			r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("old"), ocispec.Descriptor{}))
+			assert.NoError(t, err)
+			assert.NoError(t, r.Close())
+			e, _ := c.entries.Load(id)
+			path := blobPath(e.(*entry).stored.Digest)
+			assert.NoError(t, c.root.Remove(path))
+			if invalid == "corrupted-size" {
+				testutil.WriteFile(t, root, path, "truncated")
+			}
+			assert.NoError(t, c.Close())
+			c = cachetest.New(t, root, New)
+			r, _, _, err = c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+				previous, err := w.Previous(ctx)
+				if err != nil || previous != nil {
+					t.Fatalf("invalid previous=%+v, error=%v", previous, err)
+				}
+				_, err = io.WriteString(w, "complete")
+				return ProducerResult{}, err
+			})
+			assert.NoError(t, err)
+			body, err := io.ReadAll(r)
+			assert.NoError(t, errors.Join(err, r.Close()))
+			assert.Equal(t, string(body), "complete")
+		})
+	}
+}
+
+func TestBlob_RevalidationFailures(t *testing.T) {
+	t.Parallel()
+	for _, disk := range []bool{false, true} {
+		for _, failure := range []string{"producer", "canceled", "partial", "publication", "outcome"} {
+			if !disk && failure == "publication" {
+				continue
+			}
+			t.Run(fmt.Sprintf("disk=%t/%s", disk, failure), func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					root := ""
+					if disk {
+						root = t.TempDir()
+					}
+					c := cachetest.New(t, root, New)
+					key := BlobKey{Content: "failed-validation"}
+					r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), ocispec.Descriptor{Annotations: map[string]string{"validator": "original"}}))
+					assert.NoError(t, err)
+					view := FileFS("content", r)
+					assert.NoError(t, r.Close())
+					var index []byte
+					r, _, _, err = c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+						previous, err := w.Previous(ctx)
+						if err != nil || previous == nil {
+							t.Fatalf("previous=%+v, error=%v", previous, err)
+						}
+						switch failure {
+						case "producer":
+							return ProducerResult{Descriptor: *previous, Unchanged: true}, fs.ErrPermission
+						case "outcome":
+							return ProducerResult{}, connReset()
+						case "canceled":
+							canceled, cancel := context.WithCancel(ctx)
+							cancel()
+							_, err = w.Previous(canceled)
+							return ProducerResult{Descriptor: *previous, Unchanged: true}, err
+						case "partial":
+							_, _ = io.WriteString(w, "partial")
+						case "publication":
+							index, err = c.root.ReadFile("oci/index.json")
+							assert.NoError(t, err)
+							assert.NoError(t, c.root.Remove("oci/index.json"))
+							assert.NoError(t, c.root.Mkdir("oci/index.json", 0o750))
+						}
+						return ProducerResult{Descriptor: *previous, Unchanged: true}, nil
+					})
+					if err == nil || r != nil || !errors.Is(err, manifest.ErrFlux) {
+						t.Fatalf("failed validation reader=%v, error=%v", r, err)
+					}
+					loaded, _ := c.entries.Load(id)
+					if !loaded.(*entry).resolved.IsZero() {
+						t.Fatal("failed validation granted freshness")
+					}
+					body, err := fs.ReadFile(view, "content")
+					if err != nil || string(body) != "payload" {
+						t.Fatalf("held payload=%q, error=%v", body, err)
+					}
+					if failure == "publication" {
+						assert.NoError(t, c.root.Remove("oci/index.json"))
+						assert.NoError(t, c.root.WriteFile("oci/index.json", index, 0o600))
+					}
+					if failure == "outcome" && disk {
+						outcome := loaded.(*entry).outcome
+						if outcome == nil || outcome.lastGood.Digest == "" {
+							t.Fatalf("last-good outcome=%+v", outcome)
+						}
+						if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, syscall.ECONNRESET) {
+							t.Fatalf("failure replay=%v", err)
+						}
+						time.Sleep(time.Second)
+					}
+					r, _, _, err = c.Blob(t.Context(), key, Policy{}, producer([]byte("complete"), ocispec.Descriptor{}))
+					assert.NoError(t, err)
+					body, err = io.ReadAll(r)
+					assert.NoError(t, errors.Join(err, r.Close()))
+					assert.Equal(t, string(body), "complete")
+				})
+			})
+		}
+	}
 }

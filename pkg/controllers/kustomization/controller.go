@@ -210,7 +210,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		return err
 	}
 	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
-		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents,
+		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks.Contents, HeldSlot: c.Tasks,
 	}, c.retry)
 	if err != nil {
 		return err

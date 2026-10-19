@@ -68,6 +68,7 @@ type Rendered struct {
 func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base, head Rendered, err error) {
 	if cfg.Network == nil {
 		cfg.Network = new(source.Network)
+		defer cfg.Network.Close()
 	}
 	if cfg.Cache == nil {
 		cfg.Cache, err = sourcecache.New(ctx, cfg.CacheDir)

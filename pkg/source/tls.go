@@ -15,10 +15,17 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ResolveCertSecret builds TLS from the configured Secret's client pair or CA.
+// TLSMaterial retains resolved certificate bytes and their validated TLS configuration.
+// Values returned by ResolveCertSecret are immutable.
+type TLSMaterial struct {
+	config *tls.Config
+	pem    [3]string
+}
+
+// ResolveCertSecret resolves TLS from the configured Secret's client pair or CA.
 // Missing or wiped material returns MissingSecretError; malformed real material
 // remains a failure. A nil ref leaves TLS unconfigured.
-func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*tls.Config, error) {
+func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*TLSMaterial, error) {
 	if ref == nil {
 		return nil, nil
 	}
@@ -46,7 +53,7 @@ func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *
 		return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w",
 			owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
 	}
-	return cfg, nil
+	return &TLSMaterial{config: cfg, pem: material}, nil
 }
 
 // BuildTLSConfig builds TLS from a client pair, a CA bundle, or both.

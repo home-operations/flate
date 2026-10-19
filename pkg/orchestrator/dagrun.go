@@ -17,6 +17,17 @@ import (
 // untranslated.
 type dagDispatcher struct{ o *Orchestrator }
 
+// Go admits scheduler bodies through the invocation's shared task service.
+func (d dagDispatcher) Go(ctx context.Context, name string, fn func(context.Context)) {
+	d.o.tasks.Go(ctx, name, fn)
+}
+
+// BlockTillDone cancels remote owners before joining the shared task service.
+func (d dagDispatcher) BlockTillDone() {
+	d.o.ksc.Trees.Close()
+	d.o.tasks.BlockTillDone()
+}
+
 func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
 	out, blocked := d.reconcile(ctx, id, drainLevel)
 	return out, blocked, id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet && d.o.rsc.WantsDrainRerun(id)
@@ -82,7 +93,8 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 // registered by Run (shared with the event path), so preflight cycle failures
 // are recorded before any node runs.
 func (o *Orchestrator) runDAG(ctx context.Context) error {
-	sched := schedule.New(o.tasks, dagDispatcher{o})
+	dispatcher := dagDispatcher{o}
+	sched := schedule.New(dispatcher, dispatcher)
 
 	// Wake adapters MUST be registered before any reconcile can publish output.
 	o.src.StartLifecycle()

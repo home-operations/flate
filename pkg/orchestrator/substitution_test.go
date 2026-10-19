@@ -24,7 +24,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func substitutionKS(name, path, postBuild string) string {
@@ -147,9 +146,9 @@ func TestNew_SubstitutionValidation(t *testing.T) {
 			}
 			if cfg.Cache != nil {
 				r, _, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{Content: "after-constructor-failure"}, sourcecache.Policy{MaxAge: sourcecache.Forever},
-					func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "caller-owned")
-						return ocispec.Descriptor{}, err
+						return sourcecache.ProducerResult{}, err
 					})
 				if err != nil {
 					t.Fatalf("constructor released borrowed owner: %v", err)

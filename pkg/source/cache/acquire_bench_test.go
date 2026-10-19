@@ -3,7 +3,6 @@ package cache
 import (
 	"bytes"
 	"context"
-	"io"
 	"testing"
 	"time"
 
@@ -32,9 +31,9 @@ func BenchmarkAcquire_Warm(b *testing.B) {
 			}
 			b.Run("acquire", func(b *testing.B) {
 				for b.Loop() {
-					if _, _, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+					if _, _, _, err := c.Acquire(b.Context(), key, Policy{MaxAge: time.Hour}, func(context.Context, ProducerInput) (ProducerResult, error) {
 						b.Fatal("warm acquisition called producer")
-						return ocispec.Descriptor{}, nil
+						return ProducerResult{}, nil
 					}); err != nil {
 						b.Fatal(err)
 					}

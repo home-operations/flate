@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"io"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -60,15 +58,16 @@ data: {greeting: hi}
 	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
 
 	owner := cachetest.New(t, "", sourcecache.New)
-	cache := kustomize.NewTreeCache(owner, nil)
+	tasks := task.NewBounded(2)
+	cache := kustomize.NewTreeCache(owner, nil, tasks)
 	t.Cleanup(cache.Close)
 
-	tasks := task.NewBounded(2)
 	c := New(s, tasks, cache, true)
 	c.Configure(Options{}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		c.Close()
+		cache.Close()
 		tasks.BlockTillDone()
 	})
 	return c, s, root
@@ -692,9 +691,10 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			owner, err := sourcecache.New(t.Context(), t.TempDir())
 			assert.NoError(t, err)
 			t.Cleanup(func() { _ = owner.Close() })
-			trees := kustomize.NewTreeCache(owner, nil)
+			tasks := task.NewBounded(2)
+			trees := kustomize.NewTreeCache(owner, nil, tasks)
 			t.Cleanup(trees.Close)
-			c := New(s, task.NewBounded(2), trees, false)
+			c := New(s, tasks, trees, false)
 			c.Configure(Options{Index: l.Index}, sourcecache.RetryConfig{})
 			if swapDuringRender {
 				guard.once = sync.Once{}
@@ -726,7 +726,9 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			empty.Finish()
 			s.SetArtifact(sourceID, &initial)
 			probe := sourcecache.BlobKey{Content: "source-coverage-persistence-probe", PersistOnly: true}
-			probeReader, _, _, err := owner.Blob(t.Context(), probe, sourcecache.Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) { return ocispec.Descriptor{}, nil })
+			probeReader, _, _, err := owner.Blob(t.Context(), probe, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+				return sourcecache.ProducerResult{}, nil
+			})
 			assert.NoError(t, err)
 			assert.NoError(t, probeReader.Close())
 			probeReader, _, _, probeErr := owner.Blob(t.Context(), probe, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)

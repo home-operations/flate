@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -218,13 +219,14 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 func TestFetcher_Freshness(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name          string
-		interval      time.Duration
-		depth         int
-		recurse, fail bool
+		name                  string
+		interval              time.Duration
+		depth                 int
+		recurse, fail, pinned bool
 	}{
 		{name: "mutable default"},
 		{name: "fresh interval", interval: time.Hour},
+		{name: "commit-only pin", pinned: true},
 		{name: "acquisition identity", recurse: true},
 		{name: "failed refresh", fail: true},
 		{name: "advanced shallow tip", depth: 1},
@@ -234,18 +236,44 @@ func TestFetcher_Freshness(t *testing.T) {
 			src := t.TempDir()
 			mustInitRepo(t, src)
 			initial := mustHead(t, src)
-			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Depth: tc.depth}
+			var advertisements, uploads, connections atomic.Int32
+			handler := gitHTTPHandler(t, src)
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					advertisements.Add(1)
+				} else {
+					uploads.Add(1)
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					connections.Add(1)
+				}
+			}
+			srv.Start()
+			t.Cleanup(srv.Close)
+			cacheDir := t.TempDir()
+			f := &Fetcher{Cache: cachetest.New(t, cacheDir, sourcecache.New), Depth: tc.depth}
 			repo := &manifest.GitRepository{
-				Name: "test", Namespace: "flux-system", URL: "file://" + src,
+				Name: "test", Namespace: "flux-system", URL: srv.URL,
 				Interval: metav1.Duration{Duration: tc.interval}, RecurseSubmodules: tc.recurse,
+			}
+			if tc.pinned {
+				repo.Reference = &manifest.GitRepositoryRef{Commit: initial}
 			}
 			first, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			assert.Equal(t, first.Revision, initial)
+			t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d", advertisements.Load(), uploads.Load(), connections.Load())
+			if advertisements.Load() != 1 || uploads.Load() != 1 {
+				t.Errorf("initial clone: advertisements=%d upload_pack=%d, want 1 each", advertisements.Load(), uploads.Load())
+			}
+			beforeAdvertisements, beforeUploads, beforeConnections := advertisements.Load(), uploads.Load(), connections.Load()
 			if tc.fail {
-				assert.NoError(t, os.RemoveAll(src))
+				srv.Close()
 				if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err == nil {
-					t.Fatal("expected refresh to fail after removing upstream repo")
+					t.Fatal("expected refresh to fail after upstream shutdown")
 				}
 				if _, err := fs.Stat(first.FS, "hello.txt"); err != nil {
 					t.Fatalf("failed refresh removed held generation: %v", err)
@@ -262,14 +290,23 @@ func TestFetcher_Freshness(t *testing.T) {
 			}
 			second, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
+			t.Logf("refresh: advertisements=%d upload_pack=%d new_connections=%d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, connections.Load()-beforeConnections)
+			if tc.interval != 0 || tc.pinned {
+				if advertisements.Load() != beforeAdvertisements || uploads.Load() != beforeUploads || connections.Load() != beforeConnections {
+					t.Error("fresh interval or commit-only pin performed network work")
+				}
+			}
+			if tc.interval == 0 && !tc.pinned && (advertisements.Load()-beforeAdvertisements != 1 || uploads.Load()-beforeUploads != 1) {
+				t.Errorf("due changed ref: advertisements=%d upload_pack=%d, want 1 each", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads)
+			}
 			want := tip
-			if tc.interval != 0 {
+			if tc.interval != 0 || tc.pinned {
 				want = initial
 			}
 			assert.Equal(t, second.Revision, want)
 			assert.Equal(t, second.Key, first.Key)
 			_, err = fs.Stat(second.FS, "later.txt")
-			if tc.interval != 0 {
+			if tc.interval != 0 || tc.pinned {
 				if !os.IsNotExist(err) {
 					t.Fatalf("fresh interval included later commit: %v", err)
 				}
@@ -278,10 +315,14 @@ func TestFetcher_Freshness(t *testing.T) {
 			}
 			cached := *repo
 			cached.Interval.Duration = time.Hour
+			beforeAdvertisements, beforeUploads, beforeConnections = advertisements.Load(), uploads.Load(), connections.Load()
 			hit, err := f.Fetch(t.Context(), &cached, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			assert.Equal(t, hit.Revision, want)
 			assert.Equal(t, hit.Key, second.Key)
+			if advertisements.Load() != beforeAdvertisements || uploads.Load() != beforeUploads || connections.Load() != beforeConnections {
+				t.Error("fresh follow-up performed network work")
+			}
 			for _, art := range []*store.SourceArtifact{first, second, hit} {
 				view, pin, err := source.OperationView(t.Context(), art.FS)
 				assert.NoError(t, err)
@@ -291,10 +332,19 @@ func TestFetcher_Freshness(t *testing.T) {
 				data, err := fs.ReadFile(view, "hello.txt")
 				assert.NoError(t, err)
 				content := "updated"
-				if art == first || tc.interval != 0 {
+				if art == first || tc.interval != 0 || tc.pinned {
 					content = "hi"
 				}
 				assert.Equal(t, string(data), content)
+			}
+			assert.NoError(t, f.Cache.Close())
+			f = &Fetcher{Cache: cachetest.New(t, cacheDir, sourcecache.New), Depth: tc.depth}
+			reopened, err := f.Fetch(t.Context(), &cached, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			assert.Equal(t, reopened.Revision, want)
+			t.Logf("reopened fresh: advertisements=%d upload_pack=%d new_connections=%d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, connections.Load()-beforeConnections)
+			if advertisements.Load() != beforeAdvertisements || uploads.Load() != beforeUploads || connections.Load() != beforeConnections {
+				t.Error("reopened fresh owner performed network work")
 			}
 		})
 	}

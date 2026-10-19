@@ -129,7 +129,7 @@ type Config struct {
 	CacheDir string
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
-	// Network shares connection-timeout facts across this invocation.
+	// Network shares compatible HTTP transports and connection-timeout facts for this invocation.
 	Network *source.Network
 	// ExternalChanges, when non-nil, supplies the file-level diff so
 	// the orchestrator skips its built-in change.Detect step. The
@@ -227,9 +227,9 @@ type Orchestrator struct {
 	// stopOnce guards Stop so a New+Bootstrap-then-abort caller's
 	// manual Stop and Run's deferred Stop don't double-close the
 	// staging cache / controller unsubs.
-	stopOnce    sync.Once
-	stopErr     error
-	closeCharts func()
+	stopOnce   sync.Once
+	stopErr    error
+	ownNetwork bool
 }
 
 // Result is the structured output of Orchestrator.Render: the rendered
@@ -307,8 +307,14 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 		return nil, errors.New("orchestrator: path is required")
 	}
 
-	if cfg.Network == nil {
+	ownNetwork := cfg.Network == nil
+	if ownNetwork {
 		cfg.Network = new(source.Network)
+		defer func() {
+			if err != nil {
+				cfg.Network.Close()
+			}
+		}()
 	}
 	owner := cfg.Cache
 	if owner == nil {
@@ -336,13 +342,13 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 		return nil, err
 	}
 	client.SetSourceResolver(helm.NewStoreSourceResolver(st))
-	trees := kustomize.NewTreeCache(owner, cfg.Network)
+	ts := task.NewBounded(cfg.Concurrency)
+	trees := kustomize.NewTreeCache(owner, cfg.Network, ts)
 	defer func() {
 		if err != nil {
 			trees.Close()
 		}
 	}()
-	ts := task.NewBounded(cfg.Concurrency)
 	srcCtrl := sourcectrl.New(st, ts)
 	// Every kind-specific fetcher is wired through source.Wrap so the
 	// concrete Fetch signature stays typed (no per-impl type
@@ -364,15 +370,16 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	srcCtrl.Fetchers[manifest.KindOCIRepository] = nil
 	srcCtrl.Fetchers[manifest.KindHelmChart] = nil
 	o := &Orchestrator{
-		cfg:      cfg,
-		cache:    owner,
-		store:    st,
-		tasks:    ts,
-		src:      srcCtrl,
-		ksc:      kustomization.New(st, ts, trees, cfg.WipeSecrets),
-		hrc:      helmrelease.New(base.New(st, ts, "helmrelease"), client, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:      resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		depGraph: newDependencyGraph(),
+		cfg:        cfg,
+		ownNetwork: ownNetwork,
+		cache:      owner,
+		store:      st,
+		tasks:      ts,
+		src:        srcCtrl,
+		ksc:        kustomization.New(st, ts, trees, cfg.WipeSecrets),
+		hrc:        helmrelease.New(base.New(st, ts, "helmrelease"), client, cfg.HelmOptions, cfg.WipeSecrets),
+		rsc:        resourcesetctrl.New(st, ts, cfg.WipeSecrets),
+		depGraph:   newDependencyGraph(),
 	}
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
@@ -567,9 +574,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request), retry)
 	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
-	chartFetcher, closeCharts := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{
+	chartFetcher := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{
 		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
-	o.closeCharts = closeCharts
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,7 +23,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func TestTemplate_SourceRootValuesFiles(t *testing.T) {
@@ -196,9 +194,9 @@ func TestTemplate_ValuesFilesFailures(t *testing.T) {
 	w := tar.NewWriter(&archive)
 	assert.NoError(t, w.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../absent"}))
 	assert.NoError(t, w.Close())
-	bucket, _, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{Content: "denied-values"}, cache.Policy{}, func(_ context.Context, out io.Writer) (ocispec.Descriptor, error) {
+	bucket, _, _, err := owner.Acquire(t.Context(), cache.ArchiveKey{Content: "denied-values"}, cache.Policy{}, func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
 		_, err := out.Write(archive.Bytes())
-		return ocispec.Descriptor{}, err
+		return cache.ProducerResult{}, err
 	})
 	assert.NoError(t, err)
 	fault := errors.New("values read failure")

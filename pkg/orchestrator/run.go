@@ -272,7 +272,7 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 // Stop unsubscribes controllers and joins remote workers before releasing owned
 // backing. Repeated calls return the same cleanup error; Store stays readable.
 // Callers MUST cancel and join any active Run before Stop. An injected Cache
-// remains caller-owned.
+// and Network remain caller-owned.
 func (o *Orchestrator) Stop() error {
 	o.stopOnce.Do(func() {
 		o.rsc.Close()
@@ -280,8 +280,8 @@ func (o *Orchestrator) Stop() error {
 		o.ksc.Close()
 		o.src.Close()
 		o.ksc.Trees.Close()
-		if o.closeCharts != nil {
-			o.closeCharts()
+		if o.ownNetwork {
+			o.cfg.Network.Close()
 		}
 		if o.cfg.Cache == nil && o.cache != nil {
 			o.stopErr = o.cache.Close()

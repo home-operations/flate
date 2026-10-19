@@ -16,7 +16,7 @@
 // parked node is never counted in flight, and nothing drops it except the
 // fixpoint, which only fires when nothing is running.
 //
-// The package depends only on pkg/manifest and pkg/task; all store and
+// The package depends only on pkg/manifest; all store and
 // controller interaction is behind the Dispatcher seam, so the scheduler is
 // unit-testable against a fake Dispatcher with no store or controllers.
 package schedule
@@ -28,7 +28,6 @@ import (
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 // NodeID identifies a schedulable node — a Kustomization, HelmRelease, or
@@ -72,6 +71,11 @@ type Dispatcher interface {
 	//   - rerun: re-evaluate this node at the structural fixpoint.
 	// drainLevel is one of manifest.DrainNone/manifest.DrainCascade/manifest.DrainForce.
 	Dispatch(ctx context.Context, id NodeID, drainLevel manifest.DrainLevel) (out Outcome, blocked []NodeID, rerun bool)
+}
+
+type taskService interface {
+	Go(context.Context, string, func(context.Context))
+	BlockTillDone()
 }
 
 type nodeState uint8
@@ -145,7 +149,7 @@ type node struct {
 // Seed the initial node set, wire store events to OnArrival/OnStatusWake,
 // then call Run.
 type Scheduler struct {
-	tasks *task.Service
+	tasks taskService
 	disp  Dispatcher
 
 	mu    sync.Mutex
@@ -172,7 +176,7 @@ type Scheduler struct {
 }
 
 // New constructs a Scheduler that runs bodies on tasks via disp.
-func New(tasks *task.Service, disp Dispatcher) *Scheduler {
+func New(tasks taskService, disp Dispatcher) *Scheduler {
 	s := &Scheduler{
 		tasks:     tasks,
 		disp:      disp,

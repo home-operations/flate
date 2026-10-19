@@ -72,8 +72,10 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			cache := cachetest.New(t, root, sourcecache.New)
 			lookups := make(chan struct{}, 2)
 			release := make(chan struct{})
+			network := new(src.Network)
+			t.Cleanup(network.Close)
 			f := &oci.Fetcher{
-				Cache: cache, RegistryConfig: config,
+				Cache: cache, Network: network, RegistryConfig: config,
 				Secrets: func(ns, name string) *manifest.Secret {
 					sec, _ := st.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name})
 					if sec == nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/task"
 
 	fluxfilesys "github.com/fluxcd/pkg/kustomize/filesys"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -28,6 +29,7 @@ type treeFS struct {
 	changed map[string]struct{}
 	maxAge  time.Duration
 	retry   cache.RetryConfig
+	slot    *task.Service
 	bases   map[string]string
 	origins []mountOrigin
 }

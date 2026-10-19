@@ -20,7 +20,6 @@ import (
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -34,6 +33,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // TestDetectOrphans drives the orphan-detection logic in isolation —
@@ -197,9 +197,9 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 				key := sourcecache.BlobKey{Content: "blob-before-stop"}
 				if cfg.Cache != nil {
 					reader, _, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour},
-						func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+						func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 							_, err := io.WriteString(w, "caller-owned")
-							return ocispec.Descriptor{}, err
+							return sourcecache.ProducerResult{}, err
 						})
 					assert.NoError(t, err)
 					assert.NoError(t, reader.Close())
@@ -1234,7 +1234,7 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees || o.bootstrapped {
 				t.Fatal("failed Bootstrap reopened its owner or rediscovered input")
 			}
-			if _, err := trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+			if _, err := trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 				t.Fatalf("failed Bootstrap left TreeCache open: %v", err)
 			}
 			fresh, err := New(t.Context(), cfg)
@@ -1431,10 +1431,10 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 			t.Cleanup(func() { _ = c.Close() })
 			calls := 0
 			key := sourcecache.BlobKey{Content: "blob-owner-test"}
-			produce := func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			produce := func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				calls++
 				_, err := io.WriteString(w, "held")
-				return ocispec.Descriptor{}, err
+				return sourcecache.ProducerResult{}, err
 			}
 			reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 			if err != nil {
@@ -1474,7 +1474,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
 			}
 			for _, side := range []Rendered{base, head} {
-				if _, err := side.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("partial side left TreeCache open: %v", err)
 				}
 			}
@@ -1505,23 +1505,32 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1); _, _ = io.WriteString(w, "new run") }))
 			t.Cleanup(srv.Close)
-			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
-			tr, _ := source.NewHTTPTransport(nil, nil)
-			tr.Proxy = nil
-			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { return nil, cause }
-			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
-			_, err = (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+			var failing atomic.Bool
+			failing.Store(true)
+			testutil.StubDNS(t, func(context.Context, string) error {
+				if failing.Load() {
+					return os.ErrDeadlineExceeded
+				}
+				return nil
+			})
+			target := strings.Replace(srv.URL, "127.0.0.1", "example.com", 1)
+			tr, err := network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
+			assert.NoError(t, err)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+			_, err = (&http.Client{Transport: tr}).Do(req)
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("seed: %v", err)
 			}
+			cause := terminal.Err
+			failing.Store(false)
 			for i, side := range []Rendered{base, head} {
-				if _, err := side.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.ksc.Trees.FetchRemote(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("returned side %d is not terminal: %v", i, err)
 				}
-				trees := kustomize.NewTreeCache(c, side.cfg.Network)
+				trees := kustomize.NewTreeCache(c, side.cfg.Network, task.NewBounded(2))
 				t.Cleanup(trees.Close)
-				_, err := trees.FetchRemote(t.Context(), fmt.Sprintf("%s/%d", srv.URL, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+				_, err := trees.FetchRemote(t.Context(), fmt.Sprintf("%s/%d", target, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}, nil)
 				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 				if !ok || terminal.Attempted || !errors.Is(err, cause) {
 					t.Fatalf("side %d: %v", i, err)
@@ -1538,13 +1547,13 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 				t.Fatal("Network leaked across invocations sharing Cache")
 			}
 			for _, side := range []Rendered{next, other} {
-				if _, err := side.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.ksc.Trees.FetchRemote(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("fresh returned side is not terminal: %v", err)
 				}
 			}
-			trees := kustomize.NewTreeCache(c, next.cfg.Network)
+			trees := kustomize.NewTreeCache(c, next.cfg.Network, task.NewBounded(2))
 			t.Cleanup(trees.Close)
-			input, err := trees.FetchRemote(t.Context(), srv.URL+"/0", sourcecache.RetryConfig{})
+			input, err := trees.FetchRemote(t.Context(), target+"/0", sourcecache.RetryConfig{}, nil)
 			var body []byte
 			if err == nil {
 				body, err = fs.ReadFile(input, "content")
@@ -1580,33 +1589,10 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var result *Result
-			cleanupCalls := 0
-			trackCleanup := func() {
-				cleanup := o.closeCharts
-				o.closeCharts = func() {
-					cleanupCalls++
-					if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
-						t.Errorf("chart cleanup preceded worker drain: %v", err)
-					}
-					reader, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "cleanup-order"}, sourcecache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
-						_, err := io.WriteString(w, "live")
-						return ocispec.Descriptor{}, err
-					})
-					assert.NoError(t, err)
-					if reader != nil {
-						assert.NoError(t, reader.Close())
-					}
-					if cleanup != nil {
-						cleanup()
-					}
-				}
-			}
 			switch boundary {
 			case "stop":
-				trackCleanup()
 				err = o.Stop()
 			case "bootstrap-error", "bootstrap-cancel":
-				trackCleanup()
 				if boundary == "bootstrap-error" {
 					o.cfg.Input = &store.SourceArtifact{}
 				} else {
@@ -1635,7 +1621,6 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
 				}
 				assert.NoError(t, o.Bootstrap(ctx))
-				trackCleanup()
 				if strings.HasPrefix(boundary, "run") {
 					if boundary == "run-cancel" {
 						cancel()
@@ -1669,11 +1654,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					t.Fatalf("Stop changed cached error: %v", got)
 				}
 			}
-
-			if cleanupCalls != 1 {
-				t.Fatalf("chart cleanup calls = %d, want 1 with injected cache and repeated Stop", cleanupCalls)
-			}
-			if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+			if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 				t.Fatalf("TreeCache not terminal: %v", err)
 			}
 			if result != nil && len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) == 0 {
@@ -1685,22 +1666,8 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 		o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-		cleanupCalls := 0
-		o.closeCharts = func() {
-			cleanupCalls++
-			if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
-				t.Errorf("chart cleanup preceded worker drain: %v", err)
-			}
-			res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
-			if err == nil && len(res.Errors) == 0 {
-				t.Error("owned backing released before chart cleanup")
-			}
-		}
 		assert.NoError(t, o.Stop())
 		assert.NoError(t, o.Stop())
-		if cleanupCalls != 1 {
-			t.Fatalf("chart cleanup calls = %d, want 1", cleanupCalls)
-		}
 		res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
 		if err != nil || len(res.Errors) != 0 {
 			t.Fatalf("owned backing not released after cleanup: %+v, %v", res, err)
@@ -1729,7 +1696,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 				callers := make(chan error, workers)
 				for range workers {
 					go func() {
-						_, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{})
+						_, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil)
 						callers <- err
 					}()
 				}
@@ -1745,7 +1712,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 					}
 				}
 				<-completed
-				if _, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}); !errors.Is(err, fs.ErrClosed) {
+				if _, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("run left TreeCache live: %v", err)
 				}
 				if root != "" {
@@ -1883,6 +1850,130 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			assert.Equal(t, rendered.Data["greeting"], "production")
 			assert.Equal(t, o.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")), false)
 			assert.Equal(t, o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling")) == nil, true)
+		})
+	}
+}
+
+func TestOrchestrator_NetworkOwnership(t *testing.T) {
+	for _, injected := range []bool{false, true} {
+		for _, failure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("injected=%t/bootstrap_failure=%t", injected, failure), func(t *testing.T) {
+				closed := make(chan struct{}, 2)
+				var opened atomic.Int32
+				srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }))
+				srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+					if state == http.StateNew {
+						opened.Add(1)
+					}
+					if state == http.StateClosed {
+						closed <- struct{}{}
+					}
+				}
+				srv.Start()
+				t.Cleanup(srv.Close)
+				cfg := Config{Path: t.TempDir(), Concurrency: 2}
+				if injected {
+					cfg.Network = new(source.Network)
+					t.Cleanup(cfg.Network.Close)
+				}
+				o, err := New(t.Context(), cfg)
+				assert.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				tr, err := o.cfg.Network.HTTPTransport(source.HTTPTransportConfig{})
+				assert.NoError(t, err)
+				response, err := (&http.Client{Transport: tr}).Get(srv.URL)
+				assert.NoError(t, err)
+				_, err = io.Copy(io.Discard, response.Body)
+				assert.NoError(t, errors.Join(err, response.Body.Close()))
+				if failure {
+					o.cfg.Input = &store.SourceArtifact{}
+					if err := o.Bootstrap(ctx); err == nil {
+						t.Fatal("bootstrap unexpectedly succeeded")
+					}
+				} else {
+					assert.NoError(t, o.Stop())
+				}
+				if _, err := o.ksc.Trees.FetchRemote(ctx, srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("workers not closed before network cleanup: %v", err)
+				}
+				if injected {
+					select {
+					case <-closed:
+						t.Fatal("borrower closed injected network")
+					default:
+					}
+					response, err := (&http.Client{Transport: tr}).Get(srv.URL)
+					assert.NoError(t, err)
+					_, err = io.Copy(io.Discard, response.Body)
+					assert.NoError(t, errors.Join(err, response.Body.Close()))
+					if opened.Load() != 1 {
+						t.Fatal("borrower discarded the caller's reusable connection")
+					}
+					o.cfg.Network.Close()
+				}
+				select {
+				case <-closed:
+				case <-ctx.Done():
+					t.Fatal("owned network retained idle connection")
+				}
+			})
+		}
+	}
+}
+
+func TestRenderTrees_NetworkOwnership(t *testing.T) {
+	for _, injected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("injected=%t", injected), func(t *testing.T) {
+			var opened atomic.Int32
+			closed := make(chan struct{}, 2)
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n")
+			}))
+			srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					opened.Add(1)
+				}
+				if state == http.StateClosed {
+					closed <- struct{}{}
+				}
+			}
+			srv.Start()
+			t.Cleanup(srv.Close)
+			cfg := Config{Concurrency: 2}
+			if injected {
+				cfg.Network = new(source.Network)
+				t.Cleanup(cfg.Network.Close)
+			}
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", ""))
+			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: ["+srv.URL+"/cm.yaml]\n")
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			base, head, err := RenderTrees(ctx, Tree{RepoRoot: root}, Tree{RepoRoot: root}, cfg)
+			assert.NoError(t, err)
+			if base.cfg.Network != head.cfg.Network || base.ownNetwork || head.ownNetwork {
+				t.Fatal("diff sides did not borrow the outer Network")
+			}
+			if opened.Load() == 0 {
+				t.Fatal("renders made no request")
+			}
+			if injected {
+				select {
+				case <-closed:
+					t.Fatal("diff side closed caller's Network")
+				default:
+				}
+				cfg.Network.Close()
+			}
+			for range opened.Load() {
+				select {
+				case <-closed:
+				case <-ctx.Done():
+					t.Fatal("outer owner retained idle transport")
+				}
+			}
 		})
 	}
 }

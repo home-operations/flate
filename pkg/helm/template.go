@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -127,9 +126,9 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
 	if key != "" {
-		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, err := io.WriteString(w, out)
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		})
 		if err != nil {
 			return "", fmt.Errorf("publish helm render cache: %w", err)

@@ -104,9 +104,9 @@ type readerError struct{ error }
 func (e *readerError) Unwrap() error     { return e.error }
 func (e *producerError) Unwrap() []error { return []error{manifest.ErrFlux, e.error} }
 
-// Acquire publishes a complete archive only after produce succeeds.
+// Acquire publishes a complete archive or revalidates its previous generation after produce succeeds.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (fs.FS, ocispec.Descriptor, string, error) {
+func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (fs.FS, ocispec.Descriptor, string, error) {
 	e, id, err := c.acquire(ctx, acquireKey{producer: archiveProducer{key: key, write: produce}, required: key.Required}, policy)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
@@ -117,9 +117,9 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, prod
 // Blob returns an independent reader over a complete generation. A nil producer only looks up
 // a fresh generation; zero Policy.MaxAge with a producer replaces the generation. Disabled
 // PersistOnly publication returns a closeable empty reader without running produce.
+// Unchanged production retains the previous payload and replaces its upstream metadata.
 // Its acquisition identity is empty on failure.
-func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, io.Writer) (ocispec.Descriptor, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
-	request := acquireKey{producer: blobProducer{key: key, write: produce}, required: key.Required, lookupOnly: produce == nil}
+func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
 	if key.PersistOnly {
 		id, ok := key.Content.(string)
 		if !ok || id == "" {
@@ -134,8 +134,9 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 			}
 			return io.NopCloser(strings.NewReader("")), ocispec.Descriptor{}, id, nil
 		}
-		request.required = nil
+		key.Required = nil
 	}
+	request := acquireKey{producer: blobProducer{key: key, write: produce}, required: key.Required, lookupOnly: produce == nil}
 	e, id, err := c.acquire(ctx, request, policy)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
@@ -227,7 +228,7 @@ func (c *Cache) attempt(ctx context.Context, key acquireKey, policy Policy, e *e
 		policy.Retry.Attempts = 1
 		ctx = context.WithValue(ctx, attemptCeilingKey{}, true)
 	}
-	result, err := c.fill(ctx, key)
+	result, err := c.fill(ctx, key, e)
 	if err != nil {
 		// A joined cleanup failure MUST retain cache failure attribution.
 		if producer, ok := errors.AsType[*producerError](err); !ok || !errors.Is(producer, err) {
@@ -235,8 +236,8 @@ func (c *Cache) attempt(ctx context.Context, key acquireKey, policy Policy, e *e
 		} else if _, terminal := errors.AsType[*TerminalError](err); !terminal && retryable(err) && policy.Retry.Attempts <= 1 {
 			err = &TerminalError{Err: err, Attempted: true}
 		}
-		// A canceled winner leaves the due state available to the next live waiter.
-		if due && (ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		// Caller cancellation MUST retain the previous generation and its freshness.
+		if ctx.Err() != nil || due && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return nil, err
 		}
 		next := &entry{stored: lastGood}
@@ -331,8 +332,8 @@ func fresh(at time.Time, maxAge time.Duration) bool {
 	return !at.IsZero() && (maxAge < 0 || maxAge > 0 && time.Since(at) < maxAge)
 }
 
-func (c *Cache) fill(ctx context.Context, key acquireKey) (result *entry, resultErr error) {
-	var staged payload
+func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry) (result *entry, resultErr error) {
+	staged := payload{key: key, previous: previous}
 	staged.writer = &staged.memory
 	var tmp *os.File
 	var tmpName string
@@ -374,12 +375,17 @@ func (c *Cache) fill(ctx context.Context, key acquireKey) (result *entry, result
 	if c.store == nil {
 		return e, nil
 	}
-	stored, err := c.publish(ctx, tmp, staged.hash.Digest(), e)
-	if err != nil {
-		return nil, err
-	}
-	if err := key.producer.restore(ctx, c, stored, e); err != nil {
-		return nil, err
+	var stored ocispec.Descriptor
+	if staged.unchanged {
+		stored = e.storedDescriptor(e.stored.Digest, e.stored.Size)
+	} else {
+		stored, err = c.publish(ctx, tmp, staged.hash.Digest(), e)
+		if err != nil {
+			return nil, err
+		}
+		if err := key.producer.restore(ctx, c, stored, e); err != nil {
+			return nil, err
+		}
 	}
 	closeErr := tmp.Close()
 	tmp = nil
@@ -405,18 +411,7 @@ func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	stored := ocispec.Descriptor{MediaType: "application/octet-stream", Digest: payload, Size: info.Size(), Annotations: maps.Clone(e.descriptor.Annotations)}
-	if stored.Annotations == nil {
-		stored.Annotations = make(map[string]string)
-	}
-	for k, v := range map[string]string{
-		"resolved-at":         e.resolved.Format(time.RFC3339Nano),
-		"upstream-digest":     e.descriptor.Digest.String(),
-		"upstream-size":       strconv.FormatInt(e.descriptor.Size, 10),
-		"upstream-media-type": e.descriptor.MediaType,
-	} {
-		stored.Annotations[prefix+k] = v
-	}
+	stored := e.storedDescriptor(payload, info.Size())
 	if err := c.store.Push(ctx, stored, tmp); err != nil {
 		if !errors.Is(err, errdef.ErrAlreadyExists) {
 			return stored, err
@@ -430,6 +425,22 @@ func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest
 		}
 	}
 	return stored, nil
+}
+
+func (e *entry) storedDescriptor(payload digest.Digest, size int64) ocispec.Descriptor {
+	stored := ocispec.Descriptor{MediaType: "application/octet-stream", Digest: payload, Size: size, Annotations: maps.Clone(e.descriptor.Annotations)}
+	if stored.Annotations == nil {
+		stored.Annotations = make(map[string]string)
+	}
+	for k, v := range map[string]string{
+		"resolved-at":         e.resolved.Format(time.RFC3339Nano),
+		"upstream-digest":     e.descriptor.Digest.String(),
+		"upstream-size":       strconv.FormatInt(e.descriptor.Size, 10),
+		"upstream-media-type": e.descriptor.MediaType,
+	} {
+		stored.Annotations[prefix+k] = v
+	}
+	return stored
 }
 
 func decode(stored ocispec.Descriptor, required []string) (ocispec.Descriptor, time.Time, bool) {

@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/internal/testutil"
+	"golang.org/x/net/http/httpproxy"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"os"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -75,7 +78,7 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 				}
 				return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
 			}
-			client := &http.Client{Transport: n.HTTPTransport(tr)}
+			client := &http.Client{Transport: n.wrapHTTPTransport(tr)}
 			t.Cleanup(tr.CloseIdleConnections)
 			for i := range concurrency {
 				go func() { results[i] <- networkGet(t.Context(), client, "http://wave.test") }()
@@ -112,7 +115,7 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 				calls.Add(1)
 				return nil, cause
 			}
-			client := &http.Client{Transport: n.HTTPTransport(tr)}
+			client := &http.Client{Transport: n.wrapHTTPTransport(tr)}
 			entered, release := make(chan struct{}, concurrency), make(chan struct{})
 			done := make(chan error, concurrency)
 			for range concurrency {
@@ -184,7 +187,7 @@ func TestNetwork_RouteIdentity(t *testing.T) {
 					}
 					return nil, failure
 				}
-				return &http.Client{Transport: n.HTTPTransport(tr)}
+				return &http.Client{Transport: n.wrapHTTPTransport(tr)}
 			}
 			requireNetworkTerminal(t, networkGet(t.Context(), client(tc.proxy, cause), tc.first), cause, true)
 			proxyCalls = 0
@@ -229,7 +232,7 @@ func TestNetwork_AttemptLiveness(t *testing.T) {
 						finished <- struct{}{}
 						return nil, networkTimeout()
 					}
-					client := &http.Client{Transport: n.HTTPTransport(tr)}
+					client := &http.Client{Transport: n.wrapHTTPTransport(tr)}
 					ctx, cancel := context.WithCancel(t.Context())
 					if deadline {
 						cancel()
@@ -282,7 +285,7 @@ func TestNetwork_AttemptLiveness(t *testing.T) {
 			tr, _ := NewHTTPTransport(nil, nil)
 			tr.Proxy = nil
 			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { calls++; return nil, tc.err }
-			client := &http.Client{Transport: n.HTTPTransport(tr)}
+			client := &http.Client{Transport: n.wrapHTTPTransport(tr)}
 			for range 2 {
 				err := networkGet(t.Context(), client, "http://excluded.test")
 				if _, ok := errors.AsType[*cache.TerminalError](err); ok || !errors.Is(err, tc.err) {
@@ -327,7 +330,7 @@ func TestNetwork_DeadlinePublicationRace(t *testing.T) {
 			}
 			return nil, cause
 		}
-		client := &http.Client{Transport: network.HTTPTransport(tr)}
+		client := &http.Client{Transport: network.wrapHTTPTransport(tr)}
 		ctx := pendingDeadline{deadline: time.Now().Add(time.Second), done: make(chan struct{})}
 		err := networkGet(ctx, client, "http://deadline.test")
 		if _, terminal := errors.AsType[*cache.TerminalError](err); terminal || !errors.Is(err, cause) {
@@ -363,7 +366,7 @@ func TestNetwork_RedirectEndpoint(t *testing.T) {
 		}
 		return dial(ctx, network, address)
 	}
-	client := &http.Client{Transport: network.HTTPTransport(tr)}
+	client := &http.Client{Transport: network.wrapHTTPTransport(tr)}
 	t.Cleanup(tr.CloseIdleConnections)
 	requireNetworkTerminal(t, networkGet(t.Context(), client, srv.URL+"/redirect"), cause, true)
 	if err := networkGet(t.Context(), client, srv.URL+"/healthy"); err != nil {
@@ -396,7 +399,7 @@ func TestNetwork_ResponseFailures(t *testing.T) {
 			t.Cleanup(srv.Close)
 			var network Network
 			tr, _ := NewHTTPTransport(nil, nil)
-			client := &http.Client{Transport: network.HTTPTransport(tr)}
+			client := &http.Client{Transport: network.wrapHTTPTransport(tr)}
 			t.Cleanup(tr.CloseIdleConnections)
 			for range 2 {
 				err := networkGet(t.Context(), client, srv.URL)
@@ -412,4 +415,213 @@ func TestNetwork_ResponseFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNetwork_TransportReuse(t *testing.T) {
+	t.Parallel()
+	t.Run("explicit-proxy", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name, address, password string
+			equal                   bool
+		}{
+			{name: "equivalent", address: "http://proxy.invalid", password: "first", equal: true},
+			{name: "host", address: "http://other.invalid", password: "first"},
+			{name: "credentials", address: "http://proxy.invalid", password: "rotated"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				var n Network
+				t.Cleanup(n.Close)
+				first, err := n.HTTPTransport(HTTPTransportConfig{Proxy: &ProxyConfig{Address: "http://proxy.invalid", Username: "user", Password: "first"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				second, err := n.HTTPTransport(HTTPTransportConfig{Proxy: &ProxyConfig{Address: tc.address, Username: "user", Password: tc.password}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (first == second) != tc.equal {
+					t.Fatal("transport selection did not follow explicit proxy material")
+				}
+			})
+		}
+	})
+	t.Run("default-first-use", func(t *testing.T) {
+		t.Parallel()
+		var n Network
+		t.Cleanup(n.Close)
+		var connections atomic.Int32
+		entered := make(chan struct{}, 3)
+		release := make(chan struct{})
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			entered <- struct{}{}
+			<-release
+			_, _ = io.WriteString(w, "ok")
+		}))
+		srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				connections.Add(1)
+			}
+		}
+		srv.Start()
+		t.Cleanup(srv.Close)
+		var wg sync.WaitGroup
+		var errs [2]error
+		for i := range errs {
+			wg.Go(func() {
+				errs[i] = networkGet(t.Context(), &http.Client{Transport: &n}, srv.URL)
+			})
+		}
+		<-entered
+		<-entered
+		close(release)
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		selected, err := n.HTTPTransport(HTTPTransportConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selected != n.defaultHTTP {
+			t.Fatal("default requests did not use the shared transport")
+		}
+		if err := networkGet(t.Context(), &http.Client{Transport: selected}, srv.URL); err != nil {
+			t.Fatal(err)
+		}
+		if connections.Load() != 2 {
+			t.Fatalf("accepted connections=%d, want 2", connections.Load())
+		}
+	})
+	t.Run("concurrent-first-selection", func(t *testing.T) {
+		t.Parallel()
+		var n Network
+		t.Cleanup(n.Close)
+		var connections atomic.Int32
+		closed := make(chan struct{}, 1)
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead && r.ProtoMajor == 2 {
+				<-r.Context().Done()
+				return
+			}
+			_, _ = io.WriteString(w, "ok")
+		}))
+		srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				connections.Add(1)
+			}
+			if state == http.StateClosed {
+				closed <- struct{}{}
+			}
+		}
+		srv.EnableHTTP2 = true
+		srv.StartTLS()
+		material := &TLSMaterial{config: srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}
+		material.config.NextProtos = []string{"h2", "http/1.1"}
+		t.Cleanup(srv.Close)
+		start := make(chan struct{})
+		var clients [2]http.Client
+		var errs [2]error
+		var wg sync.WaitGroup
+		for i := range clients {
+			wg.Go(func() {
+				<-start
+				clients[i].Transport, errs[i] = n.HTTPTransport(HTTPTransportConfig{TLS: material, ProxyEnvironment: &httpproxy.Config{}})
+			})
+		}
+		close(start)
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if clients[0].Transport != clients[1].Transport {
+			t.Fatal("concurrent selection escaped different transports")
+		}
+		for i := range clients {
+			if err := networkGet(t.Context(), &clients[i], srv.URL); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := range clients {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodHead, srv.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := clients[i].Do(req)
+			if err != nil {
+				t.Fatalf("shared registry HEAD: %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if connections.Load() != 1 {
+			t.Fatalf("accepted connections=%d, want 1", connections.Load())
+		}
+		t.Logf("compatible clients: requests=4 accepted_connections=%d", connections.Load())
+		n.Close()
+		select {
+		case <-closed:
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+	})
+	t.Run("effective-material", func(t *testing.T) {
+		t.Parallel()
+		ca, otherCA := testutil.SelfSignedCA(t), testutil.SelfSignedCA(t)
+		crt, key := testutil.SelfSignedClientCert(t)
+		otherCrt, otherKey := testutil.SelfSignedClientCert(t)
+		resolve := func(crt, key, ca string) *TLSMaterial {
+			cfg, err := BuildTLSConfig(crt, key, ca)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &TLSMaterial{config: cfg, pem: [3]string{crt, key, ca}}
+		}
+		for _, tc := range []struct {
+			name   string
+			change func(*HTTPTransportConfig)
+			equal  bool
+		}{
+			{name: "equivalent-certificates", equal: true, change: func(cfg *HTTPTransportConfig) { cfg.TLS = resolve(crt, key, ca) }},
+			{name: "ca", change: func(cfg *HTTPTransportConfig) { cfg.TLS = resolve(crt, key, otherCA) }},
+			{name: "client-certificate", change: func(cfg *HTTPTransportConfig) { cfg.TLS = resolve(otherCrt, otherKey, ca) }},
+			{name: "credentials", change: func(cfg *HTTPTransportConfig) { cfg.Credentials = [2]string{"user", "rotated"} }},
+			{name: "insecure", change: func(cfg *HTTPTransportConfig) { cfg.Insecure = true }},
+			{name: "proxy", change: func(cfg *HTTPTransportConfig) {
+				cfg.Proxy = &ProxyConfig{Address: "http://proxy.invalid", Username: "user", Password: "first"}
+			}},
+			{name: "proxy-credentials", change: func(cfg *HTTPTransportConfig) {
+				cfg.ProxyEnvironment = &httpproxy.Config{HTTPProxy: "http://user:rotated@proxy.invalid"}
+			}},
+			{name: "no-proxy", change: func(cfg *HTTPTransportConfig) {
+				cfg.ProxyEnvironment = &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid", NoProxy: "*.example.com"}
+			}},
+			{name: "compression", change: func(cfg *HTTPTransportConfig) { cfg.DisableCompression = true }},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				var n Network
+				t.Cleanup(n.Close)
+				cfg := HTTPTransportConfig{TLS: resolve(crt, key, ca), Credentials: [2]string{"user", "first"}, ProxyEnvironment: &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid"}}
+				first, err := n.HTTPTransport(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tc.change(&cfg)
+				second, err := n.HTTPTransport(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (first == second) != tc.equal {
+					t.Fatal("transport selection did not follow effective material")
+				}
+			})
+		}
+	})
 }

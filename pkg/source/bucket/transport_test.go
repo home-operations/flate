@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -25,57 +26,46 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
-func TestFetcher_ResolveTransport_NoCertSecretStaysBounded(t *testing.T) {
-	t.Parallel()
-	f := &Fetcher{}
-	b := &manifest.Bucket{Name: "b", Namespace: "ns"}
-	tr, err := f.resolveTransport(b)
-	if err != nil {
-		t.Fatalf("resolveTransport: %v", err)
-	}
-	// NewHTTPTransport now always returns a bounded transport (never nil), so
-	// even an anonymous bucket inherits the ResponseHeaderTimeout backstop.
-	if tr == nil {
-		t.Fatal("expected a bounded transport, got nil")
-	}
-	if tr.ResponseHeaderTimeout != source.ResponseHeaderTimeout {
-		t.Errorf("ResponseHeaderTimeout = %v; want %v", tr.ResponseHeaderTimeout, source.ResponseHeaderTimeout)
-	}
+func newTestNetwork(tb testing.TB) *source.Network {
+	tb.Helper()
+	network := new(source.Network)
+	tb.Cleanup(network.Close)
+	return network
 }
 
-func TestFetcher_ResolveTransport_FromSecret(t *testing.T) {
+func TestFetcher_ResolveTransport(t *testing.T) {
 	t.Parallel()
-	certPEM, keyPEM := testutil.SelfSignedServerCert(t)
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{
-				StringData: map[string]any{
-					"tls.crt": certPEM,
-					"tls.key": keyPEM,
-					"ca.crt":  certPEM,
-				},
+	for _, cert := range []bool{false, true} {
+		t.Run(fmt.Sprint(cert), func(t *testing.T) {
+			t.Parallel()
+			certPEM, keyPEM := testutil.SelfSignedServerCert(t)
+			f := &Fetcher{Network: newTestNetwork(t), Secrets: func(_, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{"tls.crt": certPEM, "tls.key": keyPEM, "ca.crt": certPEM}}
+			}}
+			b := &manifest.Bucket{Name: "b", Namespace: "ns"}
+			if cert {
+				b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 			}
-		},
-	}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		CertSecretRef: &manifest.LocalObjectReference{Name: "tls"},
-	}
-	tr, err := f.resolveTransport(b)
-	if err != nil {
-		t.Fatalf("resolveTransport: %v", err)
-	}
-	if tr == nil {
-		t.Fatalf("expected non-nil transport")
-	}
-	if tr.TLSClientConfig == nil {
-		t.Fatalf("expected TLSClientConfig set")
-	}
-	if len(tr.TLSClientConfig.Certificates) != 1 {
-		t.Errorf("expected 1 client cert, got %d", len(tr.TLSClientConfig.Certificates))
-	}
-	if tr.TLSClientConfig.RootCAs == nil {
-		t.Errorf("expected RootCAs populated from ca.crt")
+			cfg, err := f.resolveTransport(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected, err := f.Network.HTTPTransport(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			material, err := source.ResolveCertSecret(f.Secrets, b.Named(), b.CertSecretRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{TLS: material})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if selected != expected {
+				t.Fatal("transport does not match the bucket certificate reference")
+			}
+		})
 	}
 }
 
@@ -111,7 +101,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &Fetcher{}
+			f := &Fetcher{Network: newTestNetwork(t)}
 			if !tc.unwired {
 				f.Secrets = func(_, _ string) *manifest.Secret {
 					if tc.data == nil && tc.rawData == nil {
@@ -220,29 +210,29 @@ func TestFetcher_SecretReferences(t *testing.T) {
 }
 
 func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
-	t.Parallel()
+
+	var network source.Network
+	var calls atomic.Int32
+	testutil.StubDNS(t, func(context.Context, string) error { calls.Add(1); return os.ErrDeadlineExceeded })
+	tr, err := network.HTTPTransport(source.HTTPTransportConfig{})
+	assert.NoError(t, err)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://bucket.test", nil)
+	_, err = (&http.Client{Transport: tr}).Do(req)
+	terminal, ok := errors.AsType[*cache.TerminalError](err)
+	if !ok || !terminal.Attempted {
+		t.Fatalf("seed: %v", err)
+	}
+	cause, before := terminal.Err, calls.Load()
+	if before == 0 {
+		t.Fatal("seed performed no DNS lookup")
+	}
 	synctest.Test(t, func(t *testing.T) {
-		var network source.Network
-		tr, _ := source.NewHTTPTransport(nil, nil)
-		tr.Proxy = nil
-		cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
-		calls := 0
-		tr.DialContext = func(context.Context, string, string) (net.Conn, error) {
-			calls++
-			return nil, cause
-		}
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://bucket.test", nil)
-		_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
-		terminal, ok := errors.AsType[*cache.TerminalError](err)
-		if !ok || !terminal.Attempted {
-			t.Fatalf("seed: %v", err)
-		}
 		c := cachetest.New(t, "", cache.New)
 		start := time.Now()
 		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
-		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls != 1 || time.Since(start) > minio.DefaultRetryUnit {
-			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls, time.Since(start))
+		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before || time.Since(start) > minio.DefaultRetryUnit {
+			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls.Load(), time.Since(start))
 		}
 	})
 }
@@ -306,7 +296,7 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 				t.Setenv("no_proxy", "*")
 			}
 			c := cachetest.New(t, root, cache.New)
-			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret {
+			f := &Fetcher{Network: newTestNetwork(t), Cache: c, Secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
 				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca}}
 			}}

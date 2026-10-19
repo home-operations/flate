@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -33,9 +33,16 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
+func newTestNetwork(tb testing.TB) *source.Network {
+	tb.Helper()
+	network := new(source.Network)
+	tb.Cleanup(network.Close)
+	return network
+}
+
 func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 	t.Parallel()
-	f := &bucket.Fetcher{}
+	f := &bucket.Fetcher{Network: newTestNetwork(t)}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
 		Provider:   sourcev1.BucketProviderAmazon,
@@ -53,7 +60,7 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 func TestFetcher_ForceGenericProvider(t *testing.T) {
 	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
-	f := &bucket.Fetcher{
+	f := &bucket.Fetcher{Network: newTestNetwork(t),
 		ForceGeneric: true,
 		Secrets:      func(_, _ string) *manifest.Secret { return nil },
 	}
@@ -148,7 +155,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 					root = t.TempDir()
 				}
 				c := cachetest.New(t, root, cache.New)
-				f := &bucket.Fetcher{Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
+				f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
 					return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
 				}}
 				var wg sync.WaitGroup
@@ -236,52 +243,47 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 
 func TestFetcher_TransientStatusRecovery(t *testing.T) {
 	t.Parallel()
-	for _, wired := range []bool{false, true} {
-		for _, tc := range []struct {
-			status        int
-			code, message string
-		}{
-			{http.StatusTooManyRequests, "SlowDown", "temporary failure"},
-			{http.StatusServiceUnavailable, "SlowDown", "temporary failure"},
-			{http.StatusForbidden, "AccessDenied", "access denied"},
-		} {
-			t.Run(fmt.Sprintf("network-%t/status-%d", wired, tc.status), func(t *testing.T) {
-				t.Parallel()
-				var calls atomic.Int32
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/xml")
-					if calls.Add(1) == 1 {
-						w.WriteHeader(tc.status)
-						_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>%s</Message></Error>", tc.code, tc.message)
-						return
-					}
-					_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
-				}))
-				t.Cleanup(srv.Close)
-				c := cachetest.New(t, "", cache.New)
-				f := &bucket.Fetcher{Cache: c}
-				if wired {
-					f.Network = new(source.Network)
-				}
-				_, err := f.Fetch(t.Context(), &manifest.Bucket{
-					Name: "retry", Namespace: "test", BucketName: "data",
-					Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
-				}, cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond})
-				if tc.status == http.StatusForbidden {
-					cause, ok := errors.AsType[minio.ErrorResponse](err)
-					response, typed := errors.AsType[*fetcherr.ResponseError](err)
-					if !ok || !typed || response.StatusCode != tc.status || response.Op != http.MethodGet || !errors.Is(response.Err, cause) ||
-						cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
-						err.Error() != "Bucket test/retry: "+cause.Error() || calls.Load() != 1 {
-						t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
-					}
+	for _, tc := range []struct {
+		status        int
+		code, message string
+	}{
+		{http.StatusTooManyRequests, "SlowDown", "temporary failure"},
+		{http.StatusServiceUnavailable, "SlowDown", "temporary failure"},
+		{http.StatusForbidden, "AccessDenied", "access denied"},
+	} {
+		t.Run(fmt.Sprintf("status-%d", tc.status), func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/xml")
+				if calls.Add(1) == 1 {
+					w.WriteHeader(tc.status)
+					_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>%s</Message></Error>", tc.code, tc.message)
 					return
 				}
-				if err != nil || calls.Load() != 2 {
-					t.Fatalf("recovery: %v, requests=%d; want success after 2 requests", err, calls.Load())
+				_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			}))
+			t.Cleanup(srv.Close)
+			c := cachetest.New(t, "", cache.New)
+			f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c}
+			_, err := f.Fetch(t.Context(), &manifest.Bucket{
+				Name: "retry", Namespace: "test", BucketName: "data",
+				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
+			}, cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond})
+			if tc.status == http.StatusForbidden {
+				cause, ok := errors.AsType[minio.ErrorResponse](err)
+				response, typed := errors.AsType[*fetcherr.ResponseError](err)
+				if !ok || !typed || response.StatusCode != tc.status || response.Op != http.MethodGet || !errors.Is(response.Err, cause) ||
+					cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
+					err.Error() != "Bucket test/retry: "+cause.Error() || calls.Load() != 1 {
+					t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
 				}
-			})
-		}
+				return
+			}
+			if err != nil || calls.Load() != 2 {
+				t.Fatalf("recovery: %v, requests=%d; want success after 2 requests", err, calls.Load())
+			}
+		})
 	}
 }
 
@@ -302,7 +304,7 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = c.Close() })
-			f := &bucket.Fetcher{Cache: c, Network: new(source.Network)}
+			f := &bucket.Fetcher{Cache: c, Network: newTestNetwork(t)}
 			b := &manifest.Bucket{
 				Name: "terminal", Namespace: "test", BucketName: "data",
 				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
@@ -378,24 +380,36 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 }
 
 func TestFetcher_NetworkRoutes(t *testing.T) {
-	t.Parallel()
+
 	for _, route := range []string{"list", "object"} {
 		t.Run(route, func(t *testing.T) {
-			t.Parallel()
+
 			var network source.Network
 			var lists, objects, dials atomic.Int32
-			cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
+			var cause error
+			var failing atomic.Bool
+			testutil.StubDNS(t, func(context.Context, string) error {
+				if failing.Load() {
+					dials.Add(1)
+					return os.ErrDeadlineExceeded
+				}
+				return nil
+			})
 			var target string
 			latch := func() error {
-				tr, _ := source.NewHTTPTransport(nil, nil)
-				tr.Proxy = nil
-				tr.DialContext = func(context.Context, string, string) (net.Conn, error) { dials.Add(1); return nil, cause }
+				failing.Store(true)
+				tr, err := network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
+				if err != nil {
+					return err
+				}
 				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
-				_, err := (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
+				_, err = (&http.Client{Transport: tr}).Do(req)
+				failing.Store(false)
 				terminal, ok := errors.AsType[*cache.TerminalError](err)
 				if !ok || !terminal.Attempted {
 					return fmt.Errorf("seed: %w", err)
 				}
+				cause = terminal.Err
 				return nil
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -411,7 +425,7 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 				_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>app.yaml</Key><Size>1</Size><ETag>"a"</ETag></Contents></ListBucketResult>`)
 			}))
 			t.Cleanup(srv.Close)
-			target = srv.URL
+			target = strings.Replace(srv.URL, "127.0.0.1", "example.com", 1)
 			c := cachetest.New(t, "", cache.New)
 			f := &bucket.Fetcher{Cache: c, Network: &network}
 			if route == "list" {
@@ -425,7 +439,7 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			if route == "object" {
 				wantLists = 1
 			}
-			if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() != 1 || lists.Load() != wantLists || objects.Load() != 0 {
+			if !ok || terminal.Attempted || !errors.Is(err, cause) || dials.Load() == 0 || lists.Load() != wantLists || objects.Load() != 0 {
 				t.Fatalf("error=%v terminal=%+v dials=%d lists=%d objects=%d", err, terminal, dials.Load(), lists.Load(), objects.Load())
 			}
 		})

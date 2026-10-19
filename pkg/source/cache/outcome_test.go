@@ -266,9 +266,9 @@ func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
 	t.Parallel()
 	c := cachetest.New(t, t.TempDir(), New)
 	ctx, cancel := context.WithCancel(t.Context())
-	_, _, _, err := c.Blob(ctx, BlobKey{Content: "cancel-record"}, Policy{}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+	_, _, _, err := c.Blob(ctx, BlobKey{Content: "cancel-record"}, Policy{}, func(context.Context, ProducerInput) (ProducerResult, error) {
 		cancel()
-		return ocispec.Descriptor{}, connReset()
+		return ProducerResult{}, connReset()
 	})
 	if err == nil {
 		t.Fatal("want acquisition error")
@@ -549,7 +549,7 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "invalid"}, Policy{MaxAge: Forever}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "invalid"}, Policy{MaxAge: Forever}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				return producer([]byte("replacement"), ocispec.Descriptor{})(ctx, w)
 			})
@@ -797,9 +797,9 @@ func TestOutcome_AcquisitionValidity(t *testing.T) {
 					c = cachetest.New(t, root, New)
 				}
 				calls := 0
-				_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "validity"}, Policy{MaxAge: Forever, Retry: fastRetry(2)}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+				_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "validity"}, Policy{MaxAge: Forever, Retry: fastRetry(2)}, func(context.Context, ProducerInput) (ProducerResult, error) {
 					calls++
-					return ocispec.Descriptor{}, connReset()
+					return ProducerResult{}, connReset()
 				})
 				if scenario == "missing" || scenario == "corrupt" {
 					if _, ok := errors.AsType[*CacheError](err); !ok || calls != 0 {

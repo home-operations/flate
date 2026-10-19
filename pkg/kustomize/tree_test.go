@@ -19,6 +19,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/task"
 
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -45,7 +46,7 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 
 func newTestTreeCache(tb testing.TB, root string) *TreeCache {
 	tb.Helper()
-	c := NewTreeCache(cachetest.New(tb, root, cache.New), nil)
+	c := NewTreeCache(cachetest.New(tb, root, cache.New), nil, task.NewBounded(4))
 	tb.Cleanup(c.Close)
 	return c
 }
@@ -77,7 +78,7 @@ func TestTreeCache_Close(t *testing.T) {
 						workers.state.Store(remoteClosed)
 						close(workers.drain)
 						c.remoteFetches.Store(key, rf)
-						_, err := c.FetchRemote(t.Context(), key.url, key.retry)
+						_, err := c.FetchRemote(t.Context(), key.url, key.retry, nil)
 						if !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) || rf.cancel.Load() != nil {
 							t.Fatalf("rejected admission: %v, cancel=%v", err, rf.cancel.Load())
 						}
@@ -157,11 +158,11 @@ func TestTreeCache_Close(t *testing.T) {
 					if c.workers.CompareAndSwap(nil, candidate) {
 						t.Fatal("paused initializer replaced closed sentinel")
 					}
-					if _, err := c.FetchRemote(t.Context(), key.url, key.retry); !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) {
+					if _, err := c.FetchRemote(t.Context(), key.url, key.retry, nil); !errors.Is(err, fs.ErrClosed) || !errors.Is(err, manifest.ErrFlux) {
 						t.Fatalf("closed fetch: %v", err)
 					}
 					cancel()
-					if _, err := c.FetchRemote(ctx, key.url, key.retry); !errors.Is(err, context.Canceled) {
+					if _, err := c.FetchRemote(ctx, key.url, key.retry, nil); !errors.Is(err, context.Canceled) {
 						t.Fatalf("already canceled waiter: %v", err)
 					}
 					c.Close()
@@ -227,7 +228,7 @@ func TestTreeCache_CloseDoesNotLeak(t *testing.T) {
 				done := make(chan error, concurrency)
 				for i := range concurrency {
 					go func() {
-						_, err := c.FetchRemote(ctx, fmt.Sprintf("%s/%d", srv.URL, i), cache.RetryConfig{})
+						_, err := c.FetchRemote(ctx, fmt.Sprintf("%s/%d", srv.URL, i), cache.RetryConfig{}, nil)
 						done <- err
 					}()
 				}
@@ -240,7 +241,7 @@ func TestTreeCache_CloseDoesNotLeak(t *testing.T) {
 						t.Error(err)
 					}
 				}
-				if _, err := c.FetchRemote(t.Context(), srv.URL+"/warm", cache.RetryConfig{}); err != nil {
+				if _, err := c.FetchRemote(t.Context(), srv.URL+"/warm", cache.RetryConfig{}, nil); err != nil {
 					t.Error(err)
 				}
 				c.Close()
@@ -257,36 +258,82 @@ func TestTreeCache_CloseDoesNotLeak(t *testing.T) {
 
 func TestTreeCache_CloseAdmissionRace(t *testing.T) {
 	t.Parallel()
-	for _, concurrency := range []int{2, 4} {
-		t.Run(fmt.Sprint(concurrency), func(t *testing.T) {
+	for _, mode := range []string{"queued-http", "queued-validation"} {
+		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			owner := cachetest.New(t, "", cache.New)
-			for range 40 {
-				c := NewTreeCache(owner, nil)
-				c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
-					<-r.Context().Done()
-					return nil, r.Context().Err()
+			synctest.Test(t, func(t *testing.T) {
+				tasks := task.NewBounded(2)
+				c := NewTreeCache(cachetest.New(t, "", cache.New), nil, tasks)
+				held, release := make(chan struct{}, 2), make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(release) })
+				defer func() { unblock(); c.Close(); tasks.BlockTillDone() }()
+				for range 2 {
+					tasks.Go(t.Context(), "hold-slot", func(context.Context) { held <- struct{}{}; <-release })
+				}
+				<-held
+				<-held
+				c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
+					t.Error("canceled queued acquisition contacted its endpoint")
+					return nil, context.Canceled
 				})
-				start, done, closed := make(chan struct{}), make(chan error, concurrency), make(chan struct{}, concurrency)
-				for range concurrency {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				if mode == "queued-validation" {
 					go func() {
-						<-start
-						_, err := c.FetchRemote(t.Context(), "https://example.invalid/race", cache.RetryConfig{})
+						snap := readSetSnapshot{Remotes: []remoteEntry{{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/queued"}}}}
+						_, err := snap.stillValid(ctx, c, &treeFS{}, true)
 						done <- err
 					}()
-					go func() { <-start; c.Close(); closed <- struct{}{} }()
+				} else {
+					go func() {
+						_, err := c.FetchRemote(ctx, "https://example.invalid/queued", cache.RetryConfig{}, nil)
+						done <- err
+					}()
 				}
-				close(start)
-				for range concurrency {
+				synctest.Wait()
+				cancel()
+				synctest.Wait()
+				if mode == "queued-validation" {
+					select {
+					case <-done:
+						t.Error("validation returned before its queued completion settled")
+					default:
+					}
+					unblock()
+					if err := <-done; !errors.Is(err, context.Canceled) {
+						t.Fatalf("validation cancellation: %v", err)
+					}
+				} else {
+					if err := <-done; !errors.Is(err, context.Canceled) {
+						t.Fatalf("waiter cancellation: %v", err)
+					}
+					workers := c.workers.Load()
+					if workers == nil || workers.state.Load() != 1 {
+						t.Fatal("queued owner was not counted")
+					}
+					closed := make(chan struct{}, 2)
+					go func() { c.Close(); closed <- struct{}{} }()
+					synctest.Wait()
+					select {
+					case <-closed:
+						t.Error("Close returned before queued owner cleanup")
+					default:
+					}
+					go func() { c.Close(); closed <- struct{}{} }()
+					unblock()
 					<-closed
-					if err := <-done; !errors.Is(err, fs.ErrClosed) && !errors.Is(err, context.Canceled) {
-						t.Errorf("admission race: %v", err)
+					<-closed
+					if workers.state.Load() != remoteClosed {
+						t.Error("queued owner count leaked")
 					}
 				}
-				if c.workers.Load() != closedRemoteWorkers {
-					t.Fatal("initializer overwrote terminal sentinel")
+				c.Close()
+				tasks.BlockTillDone()
+				if c.workers.Load() != closedRemoteWorkers || tasks.Failures() != 0 {
+					t.Fatal("terminal admission or task accounting corrupted")
 				}
-			}
+			})
 		})
 	}
 }

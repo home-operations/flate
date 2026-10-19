@@ -3,7 +3,6 @@ package kustomize
 import (
 	"context"
 	"fmt"
-	"io"
 	"io/fs"
 	"math"
 	"sync"
@@ -12,7 +11,8 @@ import (
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 type remoteOperation uint8
@@ -38,7 +38,7 @@ type remoteIdentity struct {
 func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (fs.FS, remoteIdentity, error) {
 	switch r.Operation {
 	case remoteHTTP:
-		acquired, err := c.FetchRemote(ctx, r.URL, input.retry)
+		acquired, err := c.FetchRemote(ctx, r.URL, input.retry, input.slot)
 		if err != nil {
 			return nil, remoteIdentity{}, err
 		}
@@ -47,7 +47,23 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 		if c.gitBase == nil {
 			return nil, remoteIdentity{}, fmt.Errorf("%w: kustomization references remote git base %q but no git fetcher is wired", manifest.ErrInput, r.URL)
 		}
-		artifact, err := c.gitBase(ctx, GitBaseRequest{URL: r.URL, Ref: r.Ref, MaxAge: input.maxAge}, input.retry)
+		var artifact *store.SourceArtifact
+		var err error
+		fetch := func() {
+			if err = ctx.Err(); err == nil {
+				artifact, err = c.gitBase(ctx, GitBaseRequest{URL: r.URL, Ref: r.Ref, MaxAge: input.maxAge}, input.retry)
+			}
+		}
+		if input.slot == nil {
+			done := make(chan struct{})
+			c.tasks.Go(context.WithoutCancel(ctx), "kustomize/git-base", func(context.Context) {
+				defer close(done)
+				fetch()
+			})
+			<-done
+		} else {
+			fetch()
+		}
 		if err != nil {
 			return nil, remoteIdentity{}, err
 		}
@@ -79,7 +95,8 @@ type remoteKey struct {
 // and definitive client errors remain available for this TreeCache's lifetime.
 // Shared work outlives individual waiters and uses bounded HTTP requests. Only
 // Close guarantees worker cleanup; a FetchRemote return does not join the owner.
-func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.RetryConfig) (fs.FS, error) {
+// heldSlot is the borrowed service when the caller holds its slot, or nil.
+func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.RetryConfig, heldSlot *task.Service) (fs.FS, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -120,13 +137,23 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 				break
 			}
 		}
-		go func() {
+		c.tasks.Go(context.WithoutCancel(workerCtx), "kustomize/http-input", func(context.Context) {
 			defer func() {
 				if workers.state.Add(^uint64(0)) == remoteClosed {
 					close(workers.drain)
 				}
 			}()
-			reader, _, _, err := c.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			defer func() {
+				cancel()
+				rf.cancel.Store(nil)
+				close(rf.done)
+			}()
+			if err := workerCtx.Err(); err != nil {
+				rf.err = fmt.Errorf("%w: remote fetch: %w", manifest.ErrFlux, err)
+				c.remoteFetches.CompareAndDelete(key, rf)
+				return
+			}
+			reader, _, _, err := c.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				return c.httpGetURL(ctx, urlStr, w)
 			})
 			if err == nil {
@@ -137,18 +164,22 @@ func (c *TreeCache) FetchRemote(ctx context.Context, urlStr string, retry cache.
 			if err != nil && fetcherr.Classes(err)&fetcherr.Client == 0 {
 				c.remoteFetches.CompareAndDelete(key, rf)
 			}
-			cancel()
-			rf.cancel.Store(nil)
-			close(rf.done)
-		}()
+		})
 	})
-	select {
-	case <-rf.done:
-		if rf.err != nil {
-			return nil, rf.err
+	var input fs.FS
+	var err error
+	wait := func() {
+		select {
+		case <-rf.done:
+			input, err = rf.input, rf.err
+		case <-ctx.Done():
+			err = ctx.Err()
 		}
-		return rf.input, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
+	if heldSlot == nil {
+		wait()
+	} else {
+		heldSlot.YieldSlot(wait)
+	}
+	return input, err
 }

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
@@ -40,6 +40,12 @@ const remoteFetchMaxBytes = 64 << 20 // 64 MiB
 
 // Remote inputs live only in the private render overlay.
 const remoteResourcePrefix = ".flate-remote-"
+
+const (
+	httpOriginalURLAnnotation  = "flate.http-original-url"
+	httpETagAnnotation         = "flate.http-etag"
+	httpLastModifiedAnnotation = "flate.http-last-modified"
+)
 
 type inputKind uint8
 
@@ -580,29 +586,60 @@ func findMappingValue(node *yaml.Node, key string) *yaml.Node {
 	return found
 }
 
-// httpGetURL preserves per-attempt bounds beneath FetchRemote's shared acquisition.
-func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w io.Writer) (result ocispec.Descriptor, resultErr error) {
+func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
 	defer cancel()
+	previous, err := w.Previous(fetchCtx)
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return cache.ProducerResult{}, err
+	}
+	if previous != nil && previous.Annotations[httpOriginalURLAnnotation] == "true" {
+		if etag := previous.Annotations[httpETagAnnotation]; etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
+		if modified := previous.Annotations[httpLastModifiedAnnotation]; modified != "" {
+			req.Header.Set("If-Modified-Since", modified)
+		}
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return cache.ProducerResult{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return ocispec.Descriptor{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
+	if resp.StatusCode == http.StatusNotModified && previous != nil && (resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != "") {
+		result.Descriptor, result.Unchanged = *previous, true
+	} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
+	} else {
+		result.Annotations = make(map[string]string)
+		requestURL, responseURL := *req.URL, *resp.Request.URL
+		if requestURL.User != nil && responseURL.User != nil && *requestURL.User == *responseURL.User {
+			responseURL.User = requestURL.User
+		}
+		if requestURL == responseURL {
+			result.Annotations[httpOriginalURLAnnotation] = "true"
+		}
+	}
+	for _, validator := range [...]struct{ header, annotation string }{{"ETag", httpETagAnnotation}, {"Last-Modified", httpLastModifiedAnnotation}} {
+		if _, supplied := resp.Header[http.CanonicalHeaderKey(validator.header)]; supplied {
+			result.Annotations[validator.annotation] = resp.Header.Get(validator.header)
+		}
+	}
+	if result.Unchanged {
+		return result, nil
 	}
 	// The extra byte detects overflow without buffering an unbounded response.
 	size, err := io.Copy(w, io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return cache.ProducerResult{}, err
 	}
 	if size > remoteFetchMaxBytes {
-		return ocispec.Descriptor{}, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
+		return cache.ProducerResult{}, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
 	}
-	return ocispec.Descriptor{Size: size}, nil
+	result.Size = size
+	return result, nil
 }

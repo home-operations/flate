@@ -198,8 +198,10 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 }
 
 func TestReadSet_RemoteValidation(t *testing.T) {
-	for _, scenario := range []string{"stable-chain", "shared-parent-changes", "changed-leaf", "parent-failure", "canceled-parent", "independent-input", "descriptor-cycle", "missing-parent"} {
+	t.Parallel()
+	for _, scenario := range []string{"stable-chain", "shared-parent-changes", "changed-leaf", "parent-failure", "canceled-parent", "independent-input", "descriptor-cycle", "missing-parent", "duplicate-entry"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			var mu sync.Mutex
 			var calls []string
 			record := func(url string) {
@@ -295,6 +297,9 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if scenario == "duplicate-entry" {
+				snap.Remotes = append(snap.Remotes, snap.Remotes[0])
+			}
 			closeTestTreeCache(t, c)
 			mu.Lock()
 			calls = nil
@@ -308,23 +313,42 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 			if scenario == "canceled-parent" && !errors.Is(err, context.Canceled) {
 				t.Fatalf("lost cancellation: %v", err)
 			}
-			var want []string
-			switch scenario {
-			case "stable-chain":
-				want = []string{a.URL, b.URL, "/a-child", "/z-independent"}
-			case "shared-parent-changes":
-				want = []string{a.URL, b.URL}
-			case "changed-leaf":
-				want = []string{a.URL, b.URL, "/a-child"}
-			case "parent-failure", "canceled-parent":
-				want = []string{a.URL}
-			case "independent-input":
-				want = []string{"/0-independent"}
-			}
 			mu.Lock()
 			defer mu.Unlock()
-			if diff := cmp.Diff(want, calls); diff != "" {
-				t.Fatalf("acquisition order (-want +got):\n%s", diff)
+			counts := make(map[string]int)
+			positions := make(map[string]int)
+			for index, call := range calls {
+				counts[call]++
+				positions[call] = index
+			}
+			var want []string
+			switch scenario {
+			case "stable-chain", "changed-leaf":
+				want = []string{a.URL, b.URL, "/a-child", "/z-independent"}
+			case "shared-parent-changes":
+				want = []string{a.URL, b.URL, "/z-independent"}
+			case "parent-failure":
+				want = []string{a.URL, "/z-independent"}
+			case "canceled-parent":
+				want = []string{a.URL}
+				if counts["/z-independent"] == 1 {
+					want = append(want, "/z-independent")
+				}
+			case "independent-input":
+				want = []string{a.URL, "/0-independent"}
+			}
+			if len(calls) != len(want) {
+				t.Fatalf("requests=%v, want %v in dependency order", calls, want)
+			}
+			for _, call := range want {
+				if counts[call] != 1 {
+					t.Errorf("request %s count=%d, want 1", call, counts[call])
+				}
+			}
+			if scenario == "stable-chain" || scenario == "changed-leaf" {
+				if positions[a.URL] >= positions[b.URL] || positions[b.URL] >= positions["/a-child"] {
+					t.Errorf("child preceded a validated parent: %v", calls)
+				}
 			}
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +22,6 @@ import (
 	"time"
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
@@ -92,9 +92,9 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 
 func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	tb.Helper()
-	r, _, _, err := owner.Blob(tb.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	r, _, _, err := owner.Blob(tb.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		_, err := w.Write(raw)
-		return ocispec.Descriptor{}, err
+		return sourcecache.ProducerResult{}, err
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -382,10 +382,8 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 							return cmYAML(name)
 						}
 					}
-					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-						_, _ = fmt.Fprint(w, remoteBody())
-					}))
-					t.Cleanup(srv.Close)
+					var trace remoteHTTPTrace
+					srv := trace.serve(t, remoteBody)
 					const gitURL = "https://example.invalid/o/r.git"
 					ref := srv.URL + "/remote.yaml"
 					remoteFiles := map[string]string{}
@@ -473,19 +471,38 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 					}
 					closeTestTreeCache(t, cache)
 					cache = newCache(cacheDir)
+					before := len(trace.snapshot())
+					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || !valid {
+						t.Fatalf("reopened unchanged remote identity: %t, %v", valid, err)
+					}
 					out2, err := RenderFlux(t.Context(), cache, request(), sourcecache.RetryConfig{})
 					if err != nil || eligible && string(out2) != "SENTINEL\n" || !eligible && !bytes.Equal(out2, out1) {
 						t.Fatalf("unchanged fresh-owner render: %s, %v", out2, err)
 					}
+					if origin != "git" && origin != "nested-mount" {
+						got := trace.snapshot()[before:]
+						t.Logf("unchanged render: requests=%+v accepted_connections=%d", got, trace.connections.Load())
+						if len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" || got[0].Modified == "" || got[0].Status != http.StatusNotModified || got[0].Bytes != 0 {
+							t.Errorf("unchanged render must make one conditional GET with zero body bytes: %+v", got)
+						}
+					}
 					closeTestTreeCache(t, cache)
 					version.Store(2)
 					cache = newCache(cacheDir)
+					before = len(trace.snapshot())
 					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || valid {
 						t.Fatalf("changed remote identity: %t, %v", valid, err)
 					}
 					out3, err := RenderFlux(t.Context(), cache, request(), sourcecache.RetryConfig{})
 					if err != nil || !strings.Contains(string(out3), "remote-v2") || bytes.Equal(out3, out1) {
 						t.Fatalf("changed remote render: %s, %v", out3, err)
+					}
+					if origin != "git" && origin != "nested-mount" {
+						got := trace.snapshot()[before:]
+						t.Logf("changed render and preflight: requests=%+v accepted_connections=%d", got, trace.connections.Load())
+						if len(got) != 1 || got[0].Status != http.StatusOK || got[0].Bytes == 0 {
+							t.Errorf("changed render must acquire one response including subsequent preflight: %+v", got)
+						}
 					}
 					closeTestTreeCache(t, cache)
 				})
@@ -693,9 +710,9 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 					if (!validate || !eligible) && !errors.Is(err, errdef.ErrNotFound) {
 						return fmt.Errorf("lookup before completed publication: %w", err)
 					}
-					r, _, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := w.Write(frame)
-						return ocispec.Descriptor{}, err
+						return sourcecache.ProducerResult{}, err
 					})
 					if err != nil {
 						return err
@@ -703,9 +720,9 @@ func TestRenderFlux_CacheAcquisitionOverlap(t *testing.T) {
 					if err := r.Close(); err != nil {
 						return err
 					}
-					r, _, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{Content: struct{ Name string }{"ordinary-source"}}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					r, _, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{Content: struct{ Name string }{"ordinary-source"}}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "source")
-						return ocispec.Descriptor{}, err
+						return sourcecache.ProducerResult{}, err
 					})
 					if err != nil {
 						return err
@@ -802,7 +819,14 @@ func TestRenderFlux_RemoteCacheReachability(t *testing.T) {
 			var version, hits atomic.Int32
 			var unavailable, blocked atomic.Bool
 			entered := make(chan struct{}, 1)
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var trace remoteHTTPTrace
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				record := remoteHTTPRequest{Method: r.Method, Path: r.URL.Path, ETag: r.Header.Get("If-None-Match"), Modified: r.Header.Get("If-Modified-Since"), Status: http.StatusOK}
+				defer func() {
+					trace.mu.Lock()
+					trace.requests = append(trace.requests, record)
+					trace.mu.Unlock()
+				}()
 				hits.Add(1)
 				if blocked.Load() {
 					entered <- struct{}{}
@@ -810,12 +834,22 @@ func TestRenderFlux_RemoteCacheReachability(t *testing.T) {
 					return
 				}
 				if unavailable.Load() {
+					record.Status, record.Bytes = http.StatusNotFound, len("unavailable\n")
 					http.Error(w, "unavailable", http.StatusNotFound)
 					return
 				}
-				_, _ = io.WriteString(w, cmYAML(fmt.Sprintf("child-v%d", version.Load())))
+				record.Bytes, _ = io.WriteString(w, cmYAML(fmt.Sprintf("child-v%d", version.Load())))
 			}))
-			t.Cleanup(srv.Close)
+			srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					trace.connections.Add(1)
+				}
+			}
+			srv.Start()
+			t.Cleanup(func() {
+				srv.Close()
+				t.Logf("reachability: requests=%+v accepted_connections=%d", trace.snapshot(), trace.connections.Load())
+			})
 			const gitURL = "https://example.invalid/o/parent.git"
 			control := "resources: ['" + gitURL + "?ref=main']\n"
 			if scenario == "local-removes" {

@@ -36,7 +36,6 @@ type Fetcher struct {
 	cache   *cache.Cache        // content-addressed store for HTTP chart tarballs
 	network *source.Network
 
-	clients                    sync.Map                // map[string]*httpClient
 	indexCache                 sync.Map                // map[string]*repo.IndexFile
 	indexLocks                 *keylock.KeyMap[string] // serialize parsed memo publication
 	disableChartDigestTracking bool
@@ -46,26 +45,17 @@ type Fetcher struct {
 type Config struct {
 	// Cache remains caller-owned and MUST outlive acquired artifacts.
 	Cache *cache.Cache
-	// Network shares connection-timeout facts across this invocation.
+	// Network is the required non-nil invocation owner, borrowed by this fetcher.
 	Network *source.Network
 	// DisableChartDigestTracking makes exact chart versions immutable cache pins.
 	DisableChartDigestTracking bool
 }
 
-// New constructs a fetcher using the caller-owned acquisition cache.
-// Callers MUST finish and join fetches before invoking the returned cleanup.
-func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Config) (*Fetcher, func()) {
-	f := &Fetcher{secrets: secrets, repos: repos, oci: oci, cache: cfg.Cache,
-		network:                    cfg.Network,
-		disableChartDigestTracking: cfg.DisableChartDigestTracking, indexLocks: keylock.New[string]()}
-	return f, func() {
-		f.clients.Range(func(_, value any) bool {
-			if tr := value.(*httpClient).transport; tr != nil {
-				tr.CloseIdleConnections()
-			}
-			return true
-		})
-	}
+// New constructs a fetcher borrowing the caller's cache and required non-nil Network.
+func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Config) *Fetcher {
+	return &Fetcher{secrets: secrets, repos: repos, oci: oci, cache: cfg.Cache,
+		network: cfg.Network, disableChartDigestTracking: cfg.DisableChartDigestTracking,
+		indexLocks: keylock.New[string]()}
 }
 
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It

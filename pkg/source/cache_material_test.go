@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	"github.com/home-operations/flate/pkg/source/cache"
 )
@@ -100,7 +101,9 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 				assert.NoError(t, err)
 				t.Cleanup(func() { assert.NoError(t, owner.Close()) })
 				certLookups := 0
-				f := &bucket.Fetcher{Cache: owner, Secrets: func(ns, name string) *manifest.Secret {
+				network := new(source.Network)
+				t.Cleanup(network.Close)
+				f := &bucket.Fetcher{Network: network, Cache: owner, Secrets: func(ns, name string) *manifest.Secret {
 					assert.Equal(t, ns, b.Namespace)
 					switch name {
 					case "proxy":

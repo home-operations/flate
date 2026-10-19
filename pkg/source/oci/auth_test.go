@@ -58,7 +58,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &Fetcher{}
+			f := &Fetcher{Network: newTestNetwork(t)}
 			if !tt.unwired {
 				f.Secrets = func(_, _ string) *manifest.Secret {
 					if tt.material == nil {
@@ -87,7 +87,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			case tt.proxy:
 				_, _, err = f.newRepoClient(t.Context(), repo, nil)
 			case tt.cert:
-				_, err = f.resolveTLS(repo)
+				_, _, err = f.newRepoClient(t.Context(), repo, nil)
 			default:
 				_, err = f.resolveRegistryConfig(t.Context(), repo, sourcecache.RetryConfig{})
 			}
@@ -107,38 +107,46 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	}
 }
 
-func TestFetcher_ResolveTLS_NoCertSecretIsNil(t *testing.T) {
+func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{}
+	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", nil)
-	cfg, err := f.resolveTLS(repo)
+	repo.URL = "oci://registry.example/test"
+	client, _, err := f.newRepoClient(t.Context(), repo, nil)
 	if err != nil {
-		t.Fatalf("resolveTLS: %v", err)
+		t.Fatal(err)
 	}
-	if cfg != nil {
-		t.Errorf("expected nil TLS config when no CertSecretRef + Insecure=false")
+	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Client.(*auth.Client).Client.Transport != expected {
+		t.Fatal("transport applied customization without a certificate reference")
 	}
 }
 
 func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{}
+	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
-	cfg, err := f.resolveTLS(repo)
+	repo.URL = "oci://registry.example/test"
+	client, _, err := f.newRepoClient(t.Context(), repo, nil)
 	if err != nil {
-		t.Fatalf("resolveTLS: %v", err)
+		t.Fatal(err)
 	}
-	if cfg == nil || !cfg.InsecureSkipVerify {
-		t.Errorf("expected Insecure to set InsecureSkipVerify: %+v", cfg)
+	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Client.(*auth.Client).Client.Transport != expected {
+		t.Fatal("transport did not apply insecure policy")
 	}
 }
 
-// TestFetcher_ResolveTLS_FromSecret uses a real ephemeral cert/key
-// pair — tls.X509KeyPair actually parses it so we can't hardcode.
 func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	t.Parallel()
 	certPEM, keyPEM := testutil.SelfSignedServerCert(t)
-	f := &Fetcher{
+	f := &Fetcher{Network: newTestNetwork(t),
 		Secrets: func(_, _ string) *manifest.Secret {
 			return &manifest.Secret{
 				StringData: map[string]any{
@@ -152,24 +160,27 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
-	cfg, err := f.resolveTLS(repo)
+	repo.URL = "oci://registry.example/test"
+	client, _, err := f.newRepoClient(t.Context(), repo, nil)
 	if err != nil {
-		t.Fatalf("resolveTLS: %v", err)
+		t.Fatal(err)
 	}
-	if cfg == nil {
-		t.Fatalf("expected non-nil TLS config")
+	material, err := source.ResolveCertSecret(f.Secrets, repo.Named(), repo.CertSecretRef)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(cfg.Certificates) != 1 {
-		t.Errorf("expected 1 client certificate, got %d", len(cfg.Certificates))
+	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{TLS: material})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cfg.RootCAs == nil {
-		t.Errorf("expected RootCAs populated from ca.crt")
+	if client.Client.(*auth.Client).Client.Transport != expected {
+		t.Fatal("transport did not apply the certificate reference")
 	}
 }
 
 func TestFetcher_NonGenericProvider(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{}
+	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.URL = "oci://ghcr.io/x/y"
 		s.Provider = sourcev1.AmazonOCIProvider
@@ -201,7 +212,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 			dockerDir := t.TempDir()
 			t.Setenv("DOCKER_CONFIG", dockerDir)
 			testutil.WriteFile(t, dockerDir, "config.json", `{"auths":{"ghcr.io":{"username":"default","password":"default"}}}`)
-			f := &Fetcher{}
+			f := &Fetcher{Network: newTestNetwork(t)}
 			if tt.config != "" {
 				f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
 				testutil.WriteFileAt(t, f.RegistryConfig, tt.config)
@@ -277,7 +288,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			cache := cachetest.New(t, "", sourcecache.New)
-			f := &Fetcher{Cache: cache, Secrets: func(_, name string) *manifest.Secret {
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cache, Secrets: func(_, name string) *manifest.Secret {
 				if name == "creds" && (tt.cert || tt.proxy || tt.canceled) {
 					return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": `{"auths":{"ghcr.io":{"username":"alice","password":"hunter2"}}}`}}
 				}
@@ -319,7 +330,7 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 func TestFetcher_ForceGenericProvider(t *testing.T) {
 	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
-	f := &Fetcher{
+	f := &Fetcher{Network: newTestNetwork(t),
 		ForceGeneric: true,
 		Secrets:      func(_, _ string) *manifest.Secret { return nil },
 	}
@@ -368,7 +379,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				testutil.WriteFile(t, dockerDir, "config.json", tt.docker)
 			}
 			t.Setenv("DOCKER_CONFIG", dockerDir)
-			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return tt.secret }}
+			f := &Fetcher{Network: newTestNetwork(t), Secrets: func(_, _ string) *manifest.Secret { return tt.secret }}
 			if tt.config != "" {
 				f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
 				testutil.WriteFileAt(t, f.RegistryConfig, tt.config)
@@ -407,7 +418,14 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 }
 
 func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
-	t.Parallel()
+
+	var failing atomic.Bool
+	testutil.StubDNS(t, func(context.Context, string) error {
+		if failing.Load() {
+			return os.ErrDeadlineExceeded
+		}
+		return nil
+	})
 	const user, pass = "alice", "hunter2"
 	const chart = "name: app\nversion: 1.0.0\n"
 	art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": chart})
@@ -430,7 +448,8 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		upstream.Config.Handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	host := mustURL(t, srv.URL).Host
+	targetURL := strings.Replace(srv.URL, "127.0.0.1", "example.com", 1)
+	host := mustURL(t, targetURL).Host
 	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 	configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, auth)
 	cache := cachetest.New(t, "", sourcecache.New)
@@ -446,8 +465,8 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		URL: "oci://" + host + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: true,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	charts, cleanup := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache, Network: &network})
-	t.Cleanup(cleanup)
+	charts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, ociFetcher, helmchart.Config{Cache: cache, Network: &network})
+
 	got, err := charts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), sourcecache.RetryConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -462,8 +481,8 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, configPath, configJSON)
 	fallbackFetcher := &Fetcher{Cache: cache, Network: &network, RegistryConfig: configPath, Secrets: func(_, _ string) *manifest.Secret { return nil }}
-	fallbackCharts, fallbackCleanup := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
-	t.Cleanup(fallbackCleanup)
+	fallbackCharts := helmchart.New(nil, func(_, _ string) *manifest.HelmRepository { return repo }, fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
+
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	_, err = fallbackCharts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), retry)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
@@ -483,15 +502,18 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if got.Key == initialKey || got.Kind != manifest.KindHelmChart || mustReadFile(t, got.FS, "Chart.yaml") != chart {
 		t.Fatalf("fallback artifact=%+v", got)
 	}
-	tr, _ := source.NewHTTPTransport(nil, nil)
-	tr.Proxy = nil
-	cause := &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}
-	tr.DialContext = func(context.Context, string, string) (net.Conn, error) { return nil, cause }
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
-	_, err = (&http.Client{Transport: network.HTTPTransport(tr)}).Do(req)
-	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || !terminal.Attempted || !errors.Is(err, cause) {
+	failing.Store(true)
+	tr, err := network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, strings.Replace(srv.URL, "127.0.0.1", "example.com", 1), nil)
+	_, err = (&http.Client{Transport: tr}).Do(req)
+	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
+	if !ok || !terminal.Attempted {
 		t.Fatalf("seed: %v", err)
 	}
+	cause := terminal.Err
 	before := requests.Load()
 	_, err = missing.RetryWithRegistryConfig(t.Context(), configPath)
 	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, cause) || requests.Load() != before {
@@ -518,7 +540,7 @@ func TestFetcher_ResolveConfig_HelperSnapshot(t *testing.T) {
 	t.Setenv("no_proxy", "*")
 	store := &countedCredentials{}
 	repo := ociRepo("helper", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
-	client, first, err := (&Fetcher{}).newRepoClient(t.Context(), repo, store)
+	client, first, err := (&Fetcher{Network: newTestNetwork(t)}).newRepoClient(t.Context(), repo, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,12 +550,12 @@ func TestFetcher_ResolveConfig_HelperSnapshot(t *testing.T) {
 			t.Fatalf("helper was not frozen: calls=%d error=%v", store.calls, err)
 		}
 	}
-	_, second, err := (&Fetcher{}).newRepoClient(t.Context(), repo, store)
+	_, second, err := (&Fetcher{Network: newTestNetwork(t)}).newRepoClient(t.Context(), repo, store)
 	if err != nil || cmp.Equal(first, second) || store.calls != 2 {
 		t.Fatalf("next acquisition did not resolve rotated helper: calls=%d error=%v", store.calls, err)
 	}
 	store.failure = os.ErrPermission
-	failed, identity, err := (&Fetcher{}).newRepoClient(t.Context(), repo, store)
+	failed, identity, err := (&Fetcher{Network: newTestNetwork(t)}).newRepoClient(t.Context(), repo, store)
 	if failed != nil || identity != nil || !errors.Is(err, os.ErrPermission) || !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("failed helper admitted acquisition: %v", err)
 	}
@@ -625,7 +647,7 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 				t.Setenv("no_proxy", "*")
 			}
 			c := cachetest.New(t, root, sourcecache.New)
-			f := &Fetcher{Cache: c, Secrets: func(_, _ string) *manifest.Secret {
+			f := &Fetcher{Network: newTestNetwork(t), Cache: c, Secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
 				config := fmt.Sprintf(`{"auths":{%q:{"username":"alice","password":%q}}}`, mustURL(t, srv.URL).Host, password.Load().(string))
 				return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config, "ca.crt": ca}}
@@ -669,7 +691,7 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			testutil.WriteFileAt(t, config, `{"auths":{"ghcr.io":{"username":"alice","password":"test"}}}`)
 			c := cachetest.New(t, t.TempDir(), sourcecache.New)
 			var lookups atomic.Int32
-			f := &Fetcher{Cache: c, RegistryConfig: config, Secrets: func(_, name string) *manifest.Secret {
+			f := &Fetcher{Network: newTestNetwork(t), Cache: c, RegistryConfig: config, Secrets: func(_, name string) *manifest.Secret {
 				lookups.Add(1)
 				if name == "tls" {
 					return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}

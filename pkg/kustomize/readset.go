@@ -238,59 +238,93 @@ func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, in
 			}
 		}
 	}
-	order, ok := snap.remoteOrder()
-	if !ok {
-		return false, ctx.Err()
-	}
-	for _, index := range order {
-		remote := snap.Remotes[index]
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		_, identity, err := remote.Input.acquire(ctx, cache, input)
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
-		if err != nil || identity != remote.Identity {
-			return false, nil
-		}
-	}
-	return ctx.Err() == nil, ctx.Err()
+	return snap.validateRemotes(ctx, cache, input)
 }
 
-func (snap readSetSnapshot) remoteOrder() ([]int, bool) {
+func (snap readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {
 	if len(snap.Remotes) == 0 {
-		return nil, true
+		return ctx.Err() == nil, ctx.Err()
 	}
 	indices := make(map[remoteInput]int, len(snap.Remotes))
 	for index, entry := range snap.Remotes {
+		if _, duplicate := indices[entry.Input]; duplicate {
+			return false, ctx.Err()
+		}
 		indices[entry.Input] = index
 	}
-	state := make([]uint8, len(snap.Remotes))
-	order := make([]int, 0, len(snap.Remotes))
-	var visit func(int) bool
-	visit = func(index int) bool {
-		switch state[index] {
-		case 1:
-			return false
-		case 2:
-			return true
+	pending := make([]int, len(snap.Remotes))
+	children := make([][]int, len(snap.Remotes))
+	var ready []int
+	for index, entry := range snap.Remotes {
+		pending[index] = len(entry.Parents)
+		if pending[index] == 0 {
+			ready = append(ready, index)
 		}
-		state[index] = 1
-		for _, parent := range snap.Remotes[index].Parents {
+		for _, parent := range entry.Parents {
 			parentIndex, ok := indices[parent]
-			if !ok || !visit(parentIndex) {
-				return false
+			if !ok {
+				return false, ctx.Err()
+			}
+			children[parentIndex] = append(children[parentIndex], index)
+		}
+	}
+	var waves [][]int
+	visited := 0
+	for len(ready) > 0 {
+		waves = append(waves, ready)
+		visited += len(ready)
+		var next []int
+		for _, index := range ready {
+			for _, child := range children[index] {
+				pending[child]--
+				if pending[child] == 0 {
+					next = append(next, child)
+				}
 			}
 		}
-		state[index] = 2
-		order = append(order, index)
-		return true
+		ready = next
 	}
-	for index := range snap.Remotes {
-		if !visit(index) {
-			return nil, false
+	if visited != len(snap.Remotes) {
+		return false, ctx.Err()
+	}
+	results := make([]struct {
+		done  chan struct{}
+		valid bool
+	}, len(snap.Remotes))
+	validationInput := *input
+	validationInput.slot = cache.tasks
+	valid := true
+	validate := func() {
+		for _, wave := range waves {
+			if ctx.Err() != nil {
+				valid = false
+				return
+			}
+			for _, index := range wave {
+				results[index].done = make(chan struct{})
+				cache.tasks.Go(context.WithoutCancel(ctx), "kustomize/validate-input", func(context.Context) {
+					defer close(results[index].done)
+					if ctx.Err() != nil {
+						return
+					}
+					remote := snap.Remotes[index]
+					_, identity, err := remote.Input.acquire(ctx, cache, &validationInput)
+					results[index].valid = err == nil && identity == remote.Identity
+				})
+			}
+			for _, index := range wave {
+				<-results[index].done
+				valid = valid && results[index].valid
+			}
+			if !valid || ctx.Err() != nil {
+				return
+			}
 		}
 	}
-	return order, true
+	if input.slot == nil {
+		validate()
+	} else {
+		input.slot.YieldSlot(validate)
+	}
+	return valid && ctx.Err() == nil, ctx.Err()
 }

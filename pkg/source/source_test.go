@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -94,14 +93,14 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	var buf bytes.Buffer
 	testutil.WriteTar(t, &buf, map[string]string{"file": "content"}, 0o600)
 	data := buf.Bytes()
-	acquired, _, _, err := owner.Acquire(t.Context(), sourcecache.ArchiveKey{Content: "admission"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	acquired, _, _, err := owner.Acquire(t.Context(), sourcecache.ArchiveKey{Content: "admission"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		_, err := w.Write(data)
-		return ocispec.Descriptor{}, err
+		return sourcecache.ProducerResult{}, err
 	})
 	assert.NoError(t, err)
-	r, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "blob"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+	r, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "blob"}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		_, err := io.WriteString(w, "content")
-		return ocispec.Descriptor{}, err
+		return sourcecache.ProducerResult{}, err
 	})
 	assert.NoError(t, err)
 	blob := sourcecache.FileFS("file", r)

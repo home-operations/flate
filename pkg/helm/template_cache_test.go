@@ -25,7 +25,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"oras.land/oras-go/v2/errdef"
@@ -283,9 +282,9 @@ data:
 	}
 	writeBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey, data string) {
 		t.Helper()
-		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, err := io.WriteString(w, data)
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
 		assert.NoError(t, r.Close())
@@ -784,9 +783,9 @@ data:
 			}
 			values := map[string]any{"greeting": "hi", "fail": true}
 			key := cache.BlobKey{Content: computeTemplateKey(loaded, values, Options{}, newHR()), PersistOnly: true}
-			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				_, err := io.WriteString(w, first)
-				return ocispec.Descriptor{}, err
+				return cache.ProducerResult{}, err
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1054,9 +1053,9 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		assert.NoError(t, errors.Join(err, r.Close()))
 		assert.Equal(t, string(data), first)
 		cached := first + "# persistent hit witness\n"
-		r, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+		r, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, err := io.WriteString(w, cached)
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
 		assert.NoError(t, r.Close())

@@ -7,15 +7,18 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sync"
 	"testing"
 	"time"
 
+	"golang.org/x/net/http/httpproxy"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestHelmRepoTransport_NoCertRef(t *testing.T) {
@@ -27,40 +30,38 @@ func TestHelmRepoTransport_NoCertRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareHTTP: %v", err)
 	}
-	tr := prepared.client.Transport.(*http.Transport)
-	if tr.TLSClientConfig != nil && tr.TLSClientConfig.RootCAs != nil {
-		t.Fatal("unexpected custom CA roots")
+	expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if tr.DialContext == nil {
-		t.Fatal("the default helm transport must be egress-guarded (DialContext set)")
+	if prepared.client.Transport != expected {
+		t.Fatal("transport applied customization without a certificate reference")
 	}
 }
 
-// TestHelmRepoTransport_CertSecretYieldsGuardedTransport: a certSecretRef with
-// CA material yields a non-nil transport that is BOTH egress-guarded
-// (DialContext set) and TLS-configured (RootCAs from the CA), passed to helm via
-// WithTransport. Uses a real CA PEM so source.BuildTLSConfig accepts it.
-func TestHelmRepoTransport_CertSecretYieldsGuardedTransport(t *testing.T) {
+func TestHelmRepoTransport_CertSecret(t *testing.T) {
 	t.Parallel()
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	ca := testutil.SelfSignedCA(t)
 	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"ca.crt": testutil.SelfSignedCA(t)}}
+		return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
 	})
 
 	prepared, err := f.prepareHTTP(r)
 	if err != nil {
 		t.Fatalf("prepareHTTP: %v", err)
 	}
-	tr := prepared.client.Transport.(*http.Transport)
-	if tr == nil {
-		t.Fatal("certSecretRef should yield a per-repo transport")
+	material, err := source.ResolveCertSecret(f.secrets, r.Named(), r.CertSecretRef)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if tr.DialContext == nil {
-		t.Error("per-repo helm transport must be egress-guarded (DialContext set)")
+	expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{TLS: material, DisableCompression: true})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if tr.TLSClientConfig == nil || tr.TLSClientConfig.RootCAs == nil {
-		t.Error("certSecretRef CA must populate the transport's RootCAs")
+	if prepared.client.Transport != expected {
+		t.Fatal("transport did not apply the certificate reference")
 	}
 }
 
@@ -133,27 +134,17 @@ func TestHelmRepoTransport_ProxySnapshot(t *testing.T) {
 	first := preparedHTTP(t, f, r)
 	t.Setenv("http_proxy", "http://proxy:second@proxy.invalid:8080")
 	second := preparedHTTP(t, f, r)
-	if first.identity == second.identity {
+	if manifest.Fingerprint(first.material) == manifest.Fingerprint(second.material) {
 		t.Fatal("cross-host proxy rotation reused identity")
 	}
-	for _, host := range []string{"chart.invalid", "bypass.invalid"} {
-		req := &http.Request{URL: &url.URL{Scheme: "http", Host: host}}
-		old, err := first.client.Transport.(*http.Transport).Proxy(req)
+	for i, password := range []string{"first", "second"} {
+		expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true,
+			ProxyEnvironment: &httpproxy.Config{HTTPProxy: "http://proxy:" + password + "@proxy.invalid:8080", NoProxy: "bypass.invalid"}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		current, err := second.client.Transport.(*http.Transport).Proxy(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if host == "bypass.invalid" {
-			if old != nil || current != nil {
-				t.Fatal("captured bypass changed")
-			}
-		} else {
-			if old == nil || old.User.String() != "proxy:first" || current == nil || current.User.String() != "proxy:second" {
-				t.Fatal("captured proxy changed")
-			}
+		if []*httpRepository{first, second}[i].client.Transport != expected {
+			t.Fatal("transport did not retain its captured proxy environment")
 		}
 	}
 }
@@ -204,14 +195,14 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 				}
 			}
 			first, second := prepared[0], prepared[1]
-			if first.identity != second.identity || first.client != second.client || first.client.Transport != second.client.Transport {
-				t.Fatal("equal captured identities did not share a client and transport")
+			if manifest.Fingerprint(first.material) != manifest.Fingerprint(second.material) || first.client.Transport != second.client.Transport {
+				t.Fatal("equal captured identities did not share a transport")
 			}
-			if settings == "anonymous" && first.identity != "" {
+			if settings == "anonymous" && first.material != nil {
 				t.Fatal("anonymous identity must be empty")
 			}
-			if warm := preparedHTTP(t, f, r); warm.client != first.client {
-				t.Fatal("warm preparation replaced the client")
+			if warm := preparedHTTP(t, f, r); warm.client.Transport != first.client.Transport {
+				t.Fatal("warm preparation replaced the transport")
 			}
 			switch settings {
 			case "anonymous":
@@ -225,7 +216,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			}
 			changed := preparedHTTP(t, f, r)
 			equal := settings == "anonymous"
-			if (first.identity == changed.identity) != equal || (first.client == changed.client) != equal || (first.client.Transport == changed.client.Transport) != equal {
+			if (manifest.Fingerprint(first.material) == manifest.Fingerprint(changed.material)) != equal || (first.client.Transport == changed.client.Transport) != equal {
 				t.Fatal("client isolation did not follow captured identity")
 			}
 		})
@@ -233,6 +224,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 }
 
 func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
+	t.Parallel()
 	idle, closed := make(chan struct{}, 1), make(chan struct{}, 1)
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "chart")
@@ -247,28 +239,14 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 	}
 	srv.Start()
 	t.Cleanup(srv.Close)
-	f, cleanup := New(nil, nil, nil, Config{Network: new(source.Network)})
-	t.Cleanup(cleanup)
-	cleanup()
-	f.clients.Range(func(_, _ any) bool {
-		t.Error("unused cleanup constructed a client")
-		return true
-	})
+	network := newTestNetwork(t)
 	r := httpRepo(srv.URL)
-	prepared := preparedHTTP(t, f, r)
+	f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: cachetest.New(t, "", sourcecache.New), Network: network})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := prepared.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, readErr := io.Copy(io.Discard, resp.Body)
-	if err := errors.Join(readErr, resp.Body.Close()); err != nil {
-		t.Fatal(err)
+	_, err := f.Fetch(ctx, helmChart("repo", "app", "1.0.0"), sourcecache.RetryConfig{})
+	if err == nil {
+		t.Fatal("malformed index unexpectedly succeeded")
 	}
 	select {
 	case <-idle:
@@ -277,10 +255,10 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 	}
 	select {
 	case <-closed:
-		t.Fatal("connection closed before owner cleanup")
+		t.Fatal("borrower closed the transport")
 	default:
 	}
-	cleanup()
+	network.Close()
 	select {
 	case <-closed:
 	case <-ctx.Done():

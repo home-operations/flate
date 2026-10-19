@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -518,13 +517,13 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						input := &joinedTreeFS{}
 						input.acquire = func() error {
 							reader, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
-								func(ctx context.Context, _ io.Writer) (ocispec.Descriptor, error) {
+								func(ctx context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 									entered <- struct{}{}
 									<-ctx.Done()
 									canceled <- struct{}{}
 									<-release
 									completed <- struct{}{}
-									return ocispec.Descriptor{}, ctx.Err()
+									return sourcecache.ProducerResult{}, ctx.Err()
 								})
 							if reader != nil {
 								err = errors.Join(err, reader.Close())
@@ -568,9 +567,9 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						}
 					}
 					key := sourcecache.BlobKey{Content: "backing-survives"}
-					reader, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+					reader, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "live")
-						return ocispec.Descriptor{}, err
+						return sourcecache.ProducerResult{}, err
 					})
 					assert.NoError(t, err)
 					assert.NoError(t, reader.Close())

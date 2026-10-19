@@ -1,16 +1,13 @@
 // Package diff compares two sets of rendered Kubernetes manifests and
 // reports the resources whose rendered form differs.
 //
-// [RenderDocs] is the entry point, and it takes one of two paths by
-// [Format]. The dyff text styles (human default, github, brief, gitlab,
-// gitea) render the whole set through dyff at once: dyff pairs documents
-// by their Kubernetes identity and labels each diff natively with
-// apiVersion/kind/namespace/name. The plain unified diff takes a
-// per-resource path — each resource is paired against its counterpart,
-// keyed by parent KS/HR and resource identity (not just name, so a
-// Deployment from HelmRelease A never diffs against the same-named
-// Deployment from HelmRelease B), and the per-resource bodies are
-// concatenated.
+// [RenderDocs] matches normalized resources by canonical parent and resource
+// identity in every [Format]. Parent group, kind, namespace and name distinguish
+// producers; [Parent.Path] is display metadata. A resource moved between parents
+// is a removal and an addition, even when its contents are identical.
+// Native styles retain Kubernetes apiVersion/kind/namespace/name labels and use
+// dyff to compare each pair's contents. Unified, HTML and JSON formats present
+// the same pairs with their producing parents.
 //
 // Most styles delegate to [dyff], whose K8s-aware comparison pairs named
 // list entries (containers, env vars) by their identifier, so reordering

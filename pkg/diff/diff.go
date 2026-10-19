@@ -63,11 +63,10 @@ type Options struct {
 	Suppressed []Suppression
 }
 
-// RenderDocs is the top-level entry point: it compares the two doc sets and
-// returns the formatted diff for opts.Format. The dyff text styles
-// (github/human/brief/gitlab/gitea, and the zero value) render the whole
-// set through dyff for native per-resource labels; FormatDiff takes the
-// per-resource unified-diff path.
+// RenderDocs compares normalized documents by canonical parent and resource identity
+// and returns the formatted diff for opts.Format. Parent.Path is display metadata.
+// Native formats use dyff for content comparison and Kubernetes resource labels;
+// unified, HTML and JSON formats present the same canonical pairs.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
 	opts.Format = cmp.Or(opts.Format, FormatHuman)
 	switch opts.Format {

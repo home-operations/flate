@@ -20,6 +20,7 @@ type pairedResource struct {
 	parent     Parent
 	resource   manifest.NamedResource
 	apiVersion string
+	aPos, bPos int
 	a, b       map[string]any
 	aChart     string
 	bChart     string
@@ -81,7 +82,7 @@ type pairKey struct {
 // the last document on each side, matching apply order, and emit a warning.
 func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
-	add := func(side string, d Doc, chart string) {
+	add := func(side string, d Doc, chart string, pos int) {
 		kind := manifest.DocKind(d.Manifest)
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		name, ns := manifest.DocMetadata(d.Manifest)
@@ -89,14 +90,14 @@ func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 		k := pairKey{d.Parent.NamedResource, resource}
 		p, ok := idx[k]
 		if !ok {
-			p = &pairedResource{resource: resource}
+			p = &pairedResource{resource: resource, aPos: len(left), bPos: len(right)}
 			idx[k] = p
 		}
 		p.parent = d.Parent
 		p.apiVersion = apiVersion
-		dst, dstChart := &p.a, &p.aChart
+		dst, dstChart, dstPos := &p.a, &p.aChart, &p.aPos
 		if side == "right" {
-			dst, dstChart = &p.b, &p.bChart
+			dst, dstChart, dstPos = &p.b, &p.bChart, &p.bPos
 		}
 		if *dst != nil {
 			slog.Warn("diff: duplicate document shadows an earlier document",
@@ -105,15 +106,15 @@ func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 				"parentPath", d.Parent.Path, "apiVersion", apiVersion,
 				"group", resource.Group, "kind", kind, "namespace", ns, "name", name)
 		}
-		*dst, *dstChart = d.Manifest, chart
+		*dst, *dstChart, *dstPos = d.Manifest, chart, pos
 	}
 	normalizedLeft, leftCopied := normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	for i, d := range normalizedLeft {
-		add("left", d, chartLabel(left[i].Manifest)) //nolint:gosec // G602: normalizeDocs preserves input length and order.
+		add("left", d, chartLabel(left[i].Manifest), i)
 	}
 	normalizedRight, rightCopied := normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	for i, d := range normalizedRight {
-		add("right", d, chartLabel(right[i].Manifest)) //nolint:gosec // G602: normalizeDocs preserves input length and order.
+		add("right", d, chartLabel(right[i].Manifest), i)
 	}
 	out := make([]pairedResource, 0, len(idx))
 	for _, p := range idx {

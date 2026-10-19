@@ -15,20 +15,22 @@ import (
 func TestPair_DistinguishesByParent(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		name, parentGroup, parentName, apiVersion string
-		pairs                                     int
+		name, parentGroup, parentKind, parentNamespace, parentName, apiVersion string
+		pairs                                                                  int
 	}{
-		{"parent name", manifest.HelmReleaseDomain, "b", "apps/v1", 2},
-		{"parent group", "example.test", "a", "apps/v1", 2},
-		{"resource group", manifest.HelmReleaseDomain, "a", "example.test/v1", 2},
-		{"resource version", manifest.HelmReleaseDomain, "a", "apps/v2", 1},
+		{"parent name", manifest.HelmReleaseDomain, "HelmRelease", "ns", "b", "apps/v1", 2},
+		{"parent group", "example.test", "HelmRelease", "ns", "a", "apps/v1", 2},
+		{"resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "example.test/v1", 2},
+		{"resource version", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "apps/v2", 1},
+		{"parent kind", manifest.HelmReleaseDomain, "OtherProducer", "ns", "a", "apps/v1", 2},
+		{"parent namespace", manifest.HelmReleaseDomain, "HelmRelease", "other", "a", "apps/v1", 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			parent := Parent{NamedResource: testutil.HelmReleaseID("ns", "a")}
 			left := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
 			left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
-			parent.Group, parent.Name = tt.parentGroup, tt.parentName
+			parent.Group, parent.Kind, parent.Namespace, parent.Name = tt.parentGroup, tt.parentKind, tt.parentNamespace, tt.parentName
 			right := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 			right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", tt.apiVersion
 			l, r := []Doc{left}, []Doc{right}
@@ -60,6 +62,14 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 			if count != tt.pairs {
 				t.Errorf("line changes = %d, want %d", count, tt.pairs)
 			}
+			native := renderDiff(t, l, r, Options{Format: FormatGitHub})
+			if tt.pairs == 2 {
+				if strings.Count(native, "one document removed:") != 1 || strings.Count(native, "one document added:") != 1 {
+					t.Errorf("native lost parent/resource identity:\n%s", native)
+				}
+			} else if strings.Contains(native, "one document") || !strings.Contains(native, "@@ apiVersion @@") {
+				t.Errorf("native version update must be one content change:\n%s", native)
+			}
 			if tt.pairs == 1 && (changes[0].Status != StatusChanged || changes[0].APIVersion != tt.apiVersion) {
 				t.Errorf("version change must retain the current authored version: %+v", changes)
 			}
@@ -85,7 +95,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 			if got := Changes(left, right, Options{}); len(got) != 0 {
 				t.Fatalf("path-only move produced changes: %+v", got)
 			}
-			for _, format := range []Format{FormatDiff, FormatHTML} {
+			for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
 				out, err := RenderDocs(left, right, Options{Format: format})
 				if err != nil || len(out) != 0 {
 					t.Fatalf("%s path-only move produced output %q: %v", format, out, err)
@@ -96,7 +106,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 			if len(changes) != 1 || changes[0].Status != StatusChanged || changes[0].Parent != rightParent {
 				t.Fatalf("content change must use current parent: %+v", changes)
 			}
-			for _, format := range []Format{FormatDiff, FormatHTML} {
+			for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
 				out, err := RenderDocs(left, right, Options{Format: format})
 				if err != nil {
 					t.Fatal(err)
@@ -108,6 +118,10 @@ func TestPair_PathIsPresentation(t *testing.T) {
 					want := "--- " + tt.resource + "\n+++ " + tt.resource + "\n"
 					if !strings.HasPrefix(string(out), want) {
 						t.Errorf("unified headers want %q, got %s", want, out)
+					}
+				} else if format == FormatGitHub {
+					if !strings.Contains(string(out), "@@ data.k @@") || strings.Contains(string(out), "one document") {
+						t.Errorf("native path edit split one pair: %s", out)
 					}
 				} else if want := `<div class="rparent">` + tt.parent + `</div>`; !strings.Contains(string(out), want) {
 					t.Errorf("HTML parent heading missing %q", want)

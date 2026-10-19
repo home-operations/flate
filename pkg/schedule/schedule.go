@@ -240,8 +240,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			level := s.draining
 			s.mu.Unlock()
 			s.tasks.Go(runCtx, "schedule/"+id.String(), func(ctx context.Context) {
-				out, blocked, rerun := s.disp.Dispatch(ctx, id, level)
-				s.complete(id, out, blocked, rerun)
+				out := OutcomeTerminal
+				var blocked []NodeID
+				var rerun bool
+				defer func() {
+					s.complete(id, out, blocked, rerun)
+				}()
+				out, blocked, rerun = s.disp.Dispatch(ctx, id, level)
 			})
 			s.mu.Lock()
 		}

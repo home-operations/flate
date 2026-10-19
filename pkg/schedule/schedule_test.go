@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -224,6 +225,47 @@ func TestScheduler_FailedWakeStopsAtCap(t *testing.T) {
 	assert.Equal(t, len(s.runq), 0)
 	assert.Equal(t, s.nodes[second].productive, false)
 	assert.Equal(t, len(s.failedIdx[dep]), 2)
+}
+
+func TestScheduler_RunDispatchPanic(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				tasks := task.NewBounded(workers)
+				started := make(chan struct{})
+				s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
+					close(started)
+					panic("dispatch panic")
+				}))
+				s.Seed([]NodeID{testutil.KustomizationID("ns", "panic")})
+				done := make(chan error, 1)
+				go func() { done <- s.Run(ctx) }()
+				returned := false
+				defer func() {
+					cancel()
+					if !returned {
+						<-done
+					}
+				}()
+
+				<-started
+				tasks.BlockTillDone()
+				synctest.Wait()
+				select {
+				case err := <-done:
+					returned = true
+					assert.NoError(t, err)
+					assert.NoError(t, ctx.Err())
+					assert.Equal(t, tasks.Failures(), int64(1))
+				default:
+					t.Error("Run did not return after dispatch panic")
+				}
+			})
+		})
+	}
 }
 
 func TestScheduler_RunCancellationBoundary(t *testing.T) {

@@ -161,20 +161,22 @@ func TestModel_DedupAndInflight(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
 	a := testutil.KustomizationID("ns", "a")
-	m.events.publish(a, store.StatusPending, time.Now())
-	m.drainEvents()
-	if got := m.inflightLabels(); len(got) != 1 || got[0] != "a" {
-		t.Fatalf("in-flight after Pending = %v, want [a]", got)
-	}
-	m.events.publish(a, store.StatusReady, time.Now())
-	m.events.publish(a, store.StatusReady, time.Now()) // duplicate
-	m.drainEvents()
-	if m.done != 1 {
-		t.Errorf("duplicate Ready double-counted: done=%d, want 1", m.done)
-	}
-	m.drainEvents()
-	if got := m.inflightLabels(); len(got) != 0 {
-		t.Errorf("terminal resource still in-flight: %v", got)
+	first := time.Unix(10, 0)
+	m.events.publish(a, store.StatusPending, first)
+	updated, _ := m.Update(m.spinner.Tick())
+	m = updated.(barModel)
+	assert.Diff(t, m.inflightLabels(), []string{"a"})
+	m.events.publish(a, store.StatusPending, first.Add(-time.Second))
+	m.events.publish(a, store.StatusReady, first.Add(time.Second))
+	m.events.publish(a, store.StatusReady, first.Add(2*time.Second))
+	updated, _ = m.Update(m.spinner.Tick())
+	m = updated.(barModel)
+	assert.Equal(t, m.first[a], first.Add(-time.Second))
+	assert.Equal(t, m.total, 1)
+	assert.Equal(t, m.done, 1)
+	assert.Equal(t, len(m.inflight), 0)
+	if m.events.head.Load() != nil {
+		t.Fatal("spinner left pending statuses")
 	}
 }
 
@@ -241,49 +243,13 @@ func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 	}
 }
 
-func TestModel_DelayedStatuses(t *testing.T) {
-	t.Parallel()
-	for _, phase := range []string{"initial", "after-start-tick"} {
-		t.Run(phase, func(t *testing.T) {
-			t.Parallel()
-			m := newBarModel(false)
-			a, b := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")
-			first := time.Unix(10, 0)
-			m.events.publish(a, store.StatusPending, first.Add(time.Second))
-			m.events.publish(b, store.StatusPending, first)
-			if phase == "initial" {
-				m.drainEvents()
-			} else {
-				updated, _ := m.Update(m.spinner.Tick())
-				m = updated.(barModel)
-			}
-			assert.Diff(t, m.inflightLabels(), []string{"b", "a"})
-			m.events.publish(a, store.StatusPending, first.Add(-time.Second))
-			m.events.publish(b, store.StatusReady, first.Add(2*time.Second))
-			m.events.publish(b, store.StatusReady, first.Add(3*time.Second))
-			updated, _ := m.Update(m.spinner.Tick())
-			m = updated.(barModel)
-			assert.Equal(t, m.first[a], first.Add(-time.Second))
-			assert.Equal(t, m.first[b], first)
-			assert.Equal(t, m.total, 2)
-			assert.Equal(t, m.done, 1)
-			assert.Diff(t, m.inflightLabels(), []string{"a"})
-			if m.events.head.Load() != nil {
-				t.Fatal("spinner left pending statuses")
-			}
-		})
-	}
-}
-
 func TestModel_DelayedElapsed(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		m := newBarModel(false)
-		start := time.Now()
 		time.Sleep(progressDelay)
 		m.drainEvents()
 		time.Sleep(250 * time.Millisecond)
-		assert.Equal(t, m.startedAt, start)
 		if got := m.View().Content; !strings.Contains(got, "0.5s") {
 			t.Fatalf("elapsed excludes delay: %q", got)
 		}

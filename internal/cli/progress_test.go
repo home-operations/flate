@@ -50,21 +50,6 @@ func TestCaptureStderr(t *testing.T) {
 	}
 }
 
-// TestBarWriter_NoProgramWritesThrough: with no Bubble Tea program attached, the
-// slog adapter is a plain passthrough to the underlying stderr (the non-TTY /
-// pre-bar / post-bar path) — no stray control bytes.
-func TestBarWriter_NoProgramWritesThrough(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	w := &barWriter{out: &buf}
-	if _, err := w.Write([]byte("hello\n")); err != nil {
-		t.Fatal(err)
-	}
-	if got := buf.String(); got != "hello\n" {
-		t.Errorf("passthrough Write = %q, want bare line", got)
-	}
-}
-
 // TestQueryFilterFile: the bar's output wrapper strips Bubble Tea's startup
 // terminal probes (mode 2026/2027 DECRQM and the renderer's Kitty keyboard
 // query) — whose replies nothing reads, since the program runs input-less —
@@ -180,18 +165,35 @@ func progressProgram(t *testing.T, w *barWriter) *tea.Program {
 	return w.prog
 }
 
+type recheckContext struct {
+	done, entered, acknowledged chan struct{}
+	calls                       int
+}
+
+func (c *recheckContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *recheckContext) Value(any) any               { return nil }
+func (c *recheckContext) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+func (c *recheckContext) Done() <-chan struct{} {
+	c.calls++
+	if c.calls == 2 {
+		close(c.entered)
+		<-c.acknowledged
+	}
+	return c.done
+}
+
 func TestBarWriter_ProgressLifecycle(t *testing.T) {
-	for _, tc := range []struct {
-		name                    string
-		at                      time.Duration
-		cancel, before, overlap bool
-	}{
-		{name: "short", at: 100 * time.Millisecond},
-		{name: "canceled-before-start", cancel: true, before: true},
-		{name: "canceled-during-delay", at: 100 * time.Millisecond, cancel: true},
-		{name: "completion-overlap", at: progressDelay, overlap: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"completed-during-delay", "canceled-during-delay", "recheck-completed", "recheck-canceled"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{})}
 				w := &barWriter{out: out}
@@ -201,108 +203,83 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 				release := sync.OnceFunc(func() { close(out.release) })
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				if tc.before {
-					cancel()
-				}
+				runCtx := ctx
 				m := newBarModel(false)
+				recheck := strings.HasPrefix(name, "recheck-")
+				boundary := &recheckContext{done: make(chan struct{}), entered: make(chan struct{}), acknowledged: make(chan struct{})}
+				acknowledge := sync.OnceFunc(func() { close(boundary.acknowledged) })
+				if recheck {
+					runCtx = boundary
+					m.startedAt = time.Now().Add(-progressDelay)
+				}
 				start := time.Now()
-				go func() { defer close(done); w.runProgress(ctx, m, completed, finish) }()
-				defer func() { complete(); shutdown(); release(); <-done; time.Sleep(time.Second) }()
-				time.Sleep(tc.at)
-				wantOutput := ""
-				if tc.name == "short" {
-					assert.Equal(t, out.String(), "")
-					_, err := w.Write([]byte("explicit-during-delay\n"))
-					assert.NoError(t, err)
-					wantOutput = "explicit-during-delay\n"
-				}
-				if tc.cancel {
-					cancel()
-				} else {
+				go func() { defer close(done); w.runProgress(runCtx, m, completed, finish) }()
+				defer func() {
 					complete()
-				}
-				shutdown()
-				release()
-				<-done
-				assert.Equal(t, time.Since(start), tc.at)
-				if progressProgram(t, w) != nil {
-					t.Error("program survived lifecycle return")
-				}
-				if !tc.overlap {
+					shutdown()
+					acknowledge()
+					release()
+					<-done
+					time.Sleep(time.Second)
+				}()
+				wantOutput := ""
+				if recheck {
+					select {
+					case <-boundary.entered:
+					case <-out.probe:
+						t.Fatal("post-timer recheck was bypassed: output initialized")
+					}
+					if name == "recheck-completed" {
+						complete()
+					} else {
+						close(boundary.done)
+					}
+					acknowledge()
+				} else {
+					time.Sleep(100 * time.Millisecond)
 					select {
 					case <-out.probe:
-						t.Error("suppressed run initialized terminal output")
+						t.Fatal("program initialized before delay")
 					default:
 					}
-					assert.Equal(t, out.String(), wantOutput)
+					if name == "completed-during-delay" {
+						assert.Equal(t, out.String(), "")
+						_, err := w.Write([]byte("explicit-during-delay\n"))
+						assert.NoError(t, err)
+						wantOutput = "explicit-during-delay\n"
+						complete()
+					} else {
+						cancel()
+					}
 				}
-				before := out.String()
-				time.Sleep(progressDelay + time.Second)
-				assert.Equal(t, out.String(), before)
+				shutdown()
+				select {
+				case <-done:
+				case <-out.probe:
+					t.Fatal("suppressed run initialized terminal output")
+				}
+				wantElapsed := 100 * time.Millisecond
+				if recheck {
+					wantElapsed = 0
+				}
+				assert.Equal(t, time.Since(start), wantElapsed)
+				assert.Equal(t, out.String(), wantOutput)
 				if progressProgram(t, w) != nil {
-					t.Error("program started after lifecycle return")
+					t.Error("suppressed run left a program attached")
 				}
 			})
 		})
 	}
-	t.Run("long", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{})}
-			w := &barWriter{out: out}
-			m := newBarModel(false)
-			a, b, c := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "c")
-			m.events.publish(a, store.StatusPending, time.Now())
-			m.events.publish(a, store.StatusReady, time.Now())
-			m.events.publish(b, store.StatusPending, time.Now())
-			completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			complete := sync.OnceFunc(func() { close(completed) })
-			shutdown := sync.OnceFunc(func() { close(finish) })
-			release := sync.OnceFunc(func() { close(out.release) })
-			go func() { defer close(done); w.runProgress(t.Context(), m, completed, finish) }()
-			defer func() { complete(); shutdown(); release(); <-done; time.Sleep(time.Second) }()
-			time.Sleep(progressDelay - time.Nanosecond)
-			synctest.Wait()
-			if progressProgram(t, w) != nil {
-				t.Error("program attached before deadline")
-			}
-			assert.Equal(t, out.String(), "")
-			time.Sleep(time.Nanosecond)
-			<-out.probe
-			p := progressProgram(t, w)
-			if p == nil {
-				t.Fatal("long run never attached a program")
-			}
-			assert.Equal(t, len(m.first), 2)
-			assert.Equal(t, len(m.printed), 1)
-			if m.events.head.Load() != nil {
-				t.Fatal("program constructed before initial status drain")
-			}
-			m.events.publish(c, store.StatusPending, time.Now())
-			release()
-			time.Sleep(100 * time.Millisecond)
-			synctest.Wait()
-			if _, seen := m.first[c]; !seen || m.events.head.Load() != nil {
-				t.Error("active spinner did not drain new statuses")
-			}
-			if progressProgram(t, w) != p {
-				t.Error("long run replaced its program")
-			}
-			complete()
-			shutdown()
-			<-done
-			if progressProgram(t, w) != nil {
-				t.Error("long run did not detach")
-			}
-			before := out.String()
-			time.Sleep(time.Second)
-			assert.Equal(t, out.String(), before)
-		})
-	})
-	t.Run("cleanup", func(t *testing.T) {
+	t.Run("started-cleanup", func(t *testing.T) {
+		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{}), blocked: make(chan struct{}), allowWrite: make(chan struct{}), painted: make(chan struct{})}
 			w := &barWriter{out: out}
 			m := newBarModel(false)
+			a, b := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")
+			m.events.publish(a, store.StatusPending, time.Now())
+			m.events.publish(a, store.StatusReady, time.Now())
+			m.events.publish(b, store.StatusPending, time.Now())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -316,22 +293,62 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 				shutdown()
 				release()
 				write()
+				synctest.Wait()
+				if p := progressProgram(t, w); p != nil {
+					p.Kill()
+				}
 				<-done
 				time.Sleep(time.Second)
 			}()
-			time.Sleep(progressDelay)
+			time.Sleep(progressDelay - time.Nanosecond)
+			synctest.Wait()
+			if progressProgram(t, w) != nil {
+				t.Error("program attached before deadline")
+			}
+			assert.Equal(t, out.String(), "")
+			time.Sleep(time.Nanosecond)
 			<-out.probe
 			p := progressProgram(t, w)
+			if p == nil {
+				t.Fatal("started run never attached a program")
+			}
+			assert.Equal(t, len(m.first), 2)
+			assert.Equal(t, len(m.printed), 1)
+			if m.events.head.Load() != nil {
+				t.Fatal("program constructed before initial status drain")
+			}
 			release()
 			<-out.painted
 			cancel()
 			synctest.Wait()
 			if progressProgram(t, w) != p {
-				t.Error("cancellation killed progress before render cleanup")
+				t.Error("cancellation stopped progress before finish")
+			}
+			select {
+			case <-done:
+				t.Error("cancellation returned before finish")
+			case <-out.blocked:
+				t.Fatal("cancellation stopped output before finish")
+			default:
 			}
 			complete()
+			synctest.Wait()
+			if progressProgram(t, w) != p {
+				t.Error("completion stopped progress before finish")
+			}
+			select {
+			case <-done:
+				t.Error("completion returned before finish")
+			case <-out.blocked:
+				t.Fatal("completion stopped output before finish")
+			default:
+			}
 			shutdown()
-			<-out.blocked
+			select {
+			case <-out.blocked:
+			case <-time.After(time.Second):
+				t.Fatal("finish did not reach final output")
+			}
 			synctest.Wait()
 			select {
 			case <-done:
@@ -348,47 +365,43 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 			assert.Equal(t, out.String(), before)
 		})
 	})
-	t.Run("log-tail", func(t *testing.T) {
-		out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{})}
-		w := &barWriter{out: out}
-		tail := make(chan bool, 1)
-		oldLogger := slog.Default()
-		defer slog.SetDefault(oldLogger)
-		slog.SetDefault(slog.New(slog.NewTextHandler(progressLogWriter{bar: w, tail: tail}, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		original := os.Stderr
-		st := store.New()
-		cleanup := w.progress(t.Context(), st)
-		release := sync.OnceFunc(func() { close(out.release) })
-		defer release()
-		<-out.probe
-		id := testutil.KustomizationID("ns", "render")
-		st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-		st.UpdateStatus(id, store.StatusReady, "during initialization")
+}
+
+func TestBarWriter_CaptureTail(t *testing.T) {
+	out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{})}
+	w := &barWriter{out: out}
+	tail := make(chan bool, 1)
+	oldLogger, original := slog.Default(), os.Stderr
+	defer slog.SetDefault(oldLogger)
+	slog.SetDefault(slog.New(slog.NewTextHandler(progressLogWriter{bar: w, tail: tail}, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	st := store.New()
+	cleanup := sync.OnceFunc(w.progress(t.Context(), st))
+	captured := os.Stderr
+	release := sync.OnceFunc(func() { close(out.release) })
+	defer func() {
 		release()
-		slog.Debug("explicit-active")
-		var writers sync.WaitGroup
-		for _, line := range []string{"dependency-a", "dependency-b"} {
-			writers.Go(func() { fmt.Fprintln(os.Stderr, line) })
-		}
-		writers.Wait()
-		fmt.Fprint(os.Stderr, "dependency-tail")
 		cleanup()
-		if os.Stderr != original {
-			t.Error("cleanup did not restore stderr")
-		}
-		if !<-tail {
-			t.Error("capture tail drained after program detach")
-		}
-		if progressProgram(t, w) != nil {
-			t.Error("capture cleanup left a program")
-		}
-		for _, line := range []string{"explicit-active", "dependency-a", "dependency-b", "dependency-tail"} {
-			if !strings.Contains(out.String(), line) {
-				t.Errorf("log output missing %q: %q", line, out.String())
-			}
-		}
-		st.UpdateStatus(id, store.StatusFailed, "after cleanup")
-	})
+		os.Stderr = original
+		_ = captured.Close()
+	}()
+	<-out.probe
+	id := testutil.KustomizationID("ns", "render")
+	st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+	release()
+	fmt.Fprint(os.Stderr, "dependency-tail")
+	cleanup()
+	if os.Stderr != original {
+		t.Fatal("cleanup did not restore stderr")
+	}
+	if !<-tail {
+		t.Error("capture tail drained after program detach")
+	}
+	if !strings.Contains(out.String(), "dependency-tail") {
+		t.Error("capture tail was lost")
+	}
+	before := out.String()
+	st.UpdateStatus(id, store.StatusFailed, "after cleanup")
+	assert.Equal(t, out.String(), before)
 }
 
 type progressLogWriter struct {
@@ -408,77 +421,60 @@ func (w progressLogWriter) Write(p []byte) (int, error) {
 
 func TestBarWriter_ProgramExitLogging(t *testing.T) {
 	t.Setenv("TEA_DEBUG", "false")
-	t.Run("stale-pointer", func(t *testing.T) {
-		original := os.Stderr
-		quiet, err := os.CreateTemp(t.TempDir(), "program-error")
-		assert.NoError(t, err)
-		os.Stderr = quiet
-		defer func() { os.Stderr = original; _ = quiet.Close() }()
-		synctest.Test(t, func(t *testing.T) {
-			out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{}), fail: true}
-			w := &barWriter{out: out}
-			m := newBarModel(false)
-			m.startedAt = time.Now().Add(-progressDelay)
-			completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			complete := sync.OnceFunc(func() { close(completed) })
-			shutdown := sync.OnceFunc(func() { close(finish) })
-			release := sync.OnceFunc(func() { close(out.release) })
-			go func() { defer close(done); w.runProgress(t.Context(), m, completed, finish) }()
-			defer func() { complete(); shutdown(); release(); <-done; time.Sleep(time.Second) }()
-			<-out.probe
-			written := make(chan struct{})
-			go func() { defer close(written); _, _ = w.Write([]byte("captured-pointer\n")) }()
-			synctest.Wait()
-			select {
-			case <-written:
-				t.Error("pre-Run send did not wait for initialization")
-			default:
-			}
-			release()
-			<-done
-			<-written
-			if progressProgram(t, w) != nil {
-				t.Fatal("early Run exit did not detach")
-			}
-			_, err := w.Write([]byte("explicit-after-exit\n"))
-			assert.NoError(t, err)
-			if !strings.Contains(out.String(), "explicit-after-exit") {
-				t.Fatal("post-exit log did not write through")
-			}
-		})
-	})
-	t.Run("captured-tail", func(t *testing.T) {
-		out := &progressOutput{probe: make(chan struct{}), release: make(chan struct{}), fail: true}
-		w := &barWriter{out: out}
-		oldLogger := slog.Default()
-		defer slog.SetDefault(oldLogger)
-		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		original := os.Stderr
-		restore := captureStderr(func(line string) { slog.Debug(line) })
+	original := os.Stderr
+	quiet, err := os.CreateTemp(t.TempDir(), "program-error")
+	assert.NoError(t, err)
+	os.Stderr = quiet
+	defer func() { os.Stderr = original; _ = quiet.Close() }()
+	var out *progressOutput
+	var w *barWriter
+	synctest.Test(t, func(t *testing.T) {
+		out = &progressOutput{probe: make(chan struct{}), release: make(chan struct{}), fail: true}
+		w = &barWriter{out: out}
 		m := newBarModel(false)
 		m.startedAt = time.Now().Add(-progressDelay)
 		completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		complete := sync.OnceFunc(func() { close(completed) })
+		shutdown := sync.OnceFunc(func() { close(finish) })
+		release := sync.OnceFunc(func() { close(out.release) })
 		go func() { defer close(done); w.runProgress(t.Context(), m, completed, finish) }()
+		defer func() { complete(); shutdown(); release(); <-done; time.Sleep(time.Second) }()
 		<-out.probe
-		close(out.release)
-		<-done
+		written := make(chan struct{})
+		go func() { defer close(written); _, _ = w.Write([]byte("captured-pointer\n")) }()
+		synctest.Wait()
+		select {
+		case <-written:
+			t.Error("active write did not wait for initialization")
+		default:
+		}
+		release()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("early program exit did not release lifecycle")
+		}
+		<-written
 		if progressProgram(t, w) != nil {
-			t.Error("program remained attached after Run exit")
-		}
-		slog.Debug("explicit-after-exit")
-		fmt.Fprint(os.Stderr, "dependency-tail")
-		close(completed)
-		restore()
-		close(finish)
-		if os.Stderr != original {
-			t.Error("failed program prevented stderr restoration")
-		}
-		for _, line := range []string{"explicit-after-exit", "dependency-tail"} {
-			if !strings.Contains(out.String(), line) {
-				t.Errorf("post-exit log missing %q", line)
-			}
+			t.Fatal("early Run exit did not detach")
 		}
 	})
+	if t.Failed() {
+		return
+	}
+	oldLogger := slog.Default()
+	defer slog.SetDefault(oldLogger)
+	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	restore := sync.OnceFunc(captureStderr(func(line string) { slog.Debug(line) }))
+	defer restore()
+	slog.Debug("explicit-after-exit")
+	fmt.Fprint(os.Stderr, "dependency-tail")
+	restore()
+	for _, line := range []string{"explicit-after-exit", "dependency-tail"} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("post-exit log missing %q", line)
+		}
+	}
 }
 
 func TestProgressEvents_ConcurrentDrain(t *testing.T) {

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -9,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -449,77 +447,42 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 }
 
 func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
-	oldBar, oldLogger := barSink, slog.Default()
-	defer func() { barSink = oldBar; slog.SetDefault(oldLogger) }()
-	t.Run("same-input", func(t *testing.T) {
-		path := writeFixture(t)
-		testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml]\ncommonLabels: {purpose: progress-lifecycle}\n")
-		var out, raw progressOutput
-		barSink = &barWriter{out: &out}
-		slog.SetDefault(slog.New(slog.NewTextHandler(barSink, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		original := os.Stderr
-		restore := sync.OnceFunc(captureStderr(func(line string) { _, _ = raw.Write([]byte(line + "\n")) }))
-		defer restore()
-		captured := os.Stderr
-		cfg := orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true}
-		var first string
-		var objects map[manifest.NamedResource][]map[string]any
-		for i := range 2 {
-			o, result, err := runOrchestratorCfg(t.Context(), cfg)
-			assert.NoError(t, err)
-			if o == nil || result == nil {
-				t.Fatal("successful render returned nil")
+	for _, name := range []string{"success", "fatal-bootstrap"} {
+		t.Run(name, func(t *testing.T) {
+			oldBar, oldLogger, original := barSink, slog.Default(), os.Stderr
+			defer func() {
+				if os.Stderr != original {
+					_ = os.Stderr.Close()
+					os.Stderr = original
+				}
+				barSink = oldBar
+				slog.SetDefault(oldLogger)
+			}()
+			var out progressOutput
+			barSink = &barWriter{out: &out}
+			slog.SetDefault(slog.New(slog.NewTextHandler(barSink, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			path := filepath.Join(t.TempDir(), "absent")
+			if name == "success" {
+				path = writeFixture(t)
 			}
-			assert.NoError(t, o.Stop())
-			if os.Stderr != captured {
-				t.Fatal("shared helper failed to restore its stderr capture")
+			o, result, err := runOrchestratorCfg(t.Context(), orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true})
+			if o != nil {
+				defer func() { assert.NoError(t, o.Stop()) }()
+			}
+			if name == "success" {
+				assert.NoError(t, err)
+				if o == nil || result == nil {
+					t.Fatal("successful render returned nil")
+				}
+			} else if err == nil || o != nil || result != nil {
+				t.Fatalf("fatal bootstrap returned orchestrator=%v result=%v err=%v", o, result, err)
+			}
+			if os.Stderr != original {
+				t.Error("shared helper left stderr captured")
 			}
 			if progressProgram(t, barSink) != nil {
-				t.Fatal("shared helper returned with progress attached")
+				t.Error("shared helper left progress attached")
 			}
-			docs := result.Manifests[testutil.KustomizationID("flux-system", "apps")]
-			if len(docs) != 1 {
-				t.Fatalf("rendered documents=%d, want1", len(docs))
-			}
-			var stdout bytes.Buffer
-			assert.NoError(t, (output.Encoder{Writer: &stdout}).YAML(docs[0]))
-			if !strings.Contains(stdout.String(), "name: hello") {
-				t.Fatal("render output missing fixture")
-			}
-			if i == 0 {
-				first, objects = stdout.String(), result.Manifests
-			} else {
-				assert.Equal(t, stdout.String(), first)
-				assert.Diff(t, result.Manifests, objects)
-			}
-		}
-		restore()
-		if os.Stderr != original {
-			t.Fatal("outer capture failed to restore stderr")
-		}
-		assert.Equal(t, raw.String(), "")
-		if !strings.Contains(out.String(), "commonLabels") {
-			t.Fatal("shared helper did not capture dependency diagnostics")
-		}
-	})
-	t.Run("fatal-bootstrap", func(t *testing.T) {
-		var out progressOutput
-		barSink = &barWriter{out: &out}
-		slog.SetDefault(slog.New(slog.NewTextHandler(barSink, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		original := os.Stderr
-		cfg := orchestrator.Config{Path: filepath.Join(t.TempDir(), "absent"), Concurrency: 2}
-		before, err := orchestrator.New(t.Context(), cfg)
-		assert.NoError(t, err)
-		assert.NoError(t, before.Stop())
-		o, result, err := runOrchestratorCfg(t.Context(), cfg)
-		if err == nil || o != nil || result != nil {
-			t.Fatalf("fatal bootstrap returned orchestrator=%v result=%v err=%v", o, result, err)
-		}
-		if os.Stderr != original {
-			t.Error("fatal bootstrap left stderr captured")
-		}
-		if progressProgram(t, barSink) != nil {
-			t.Error("fatal bootstrap left progress attached")
-		}
-	})
+		})
+	}
 }

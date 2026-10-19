@@ -2,6 +2,7 @@ package change
 
 import (
 	"slices"
+	"sync"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -36,12 +37,6 @@ func (f *Filter) addRecursive(id manifest.NamedResource) []manifest.NamedResourc
 	return f.addRecursiveLocked(id)
 }
 
-// refObj wraps a NamedResource as a minimal BaseManifest for AddEmitted
-// call sites that exercise only keep-set membership — the emitted child's
-// own chartRef/sourceRef is resolved from the Store-backed ObjectLister
-// these tests construct, not off the manifest. Tests covering a render-
-// driven child whose deps must come from the manifest build a real typed
-// object instead (see TestAddEmitted_StampedHelmReleasePullsChartSource).
 func refObj(id manifest.NamedResource) manifest.BaseManifest {
 	apiVersion := "v1"
 	if id.Group != "" {
@@ -749,47 +744,145 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 	}
 }
 
-// TestAddEmitted_StampedHelmReleasePullsChartSource is the regression
-// fence for the k8s-gitops "OCIRepository <ns>/app-template artifact not
-// available" failures under `flate diff/test --base main`. A primary
-// parent KS emits a HelmRelease at render time: the HR carries no
-// metadata.namespace in source but is stamped to its parent KS's
-// targetNamespace on emit, so its emitted id differs from any discovery-
-// recorded one — AND it is not yet in the Store when AddEmitted runs (the
-// ordering contract). Its chartRef points at a SHARED OCIRepository
-// produced by a separate, unchanged Kustomization, so that source was
-// PreGate-skipped at startup. AddEmitted MUST read the chart source
-// straight off the emitted manifest (not the Store, which lacks the HR,
-// nor consumerRefs, keyed by the un-stamped id) so the source joins keep
-// and is returned for refiring its fetch. The ObjectLister is intentionally empty
-// and no consumerRefs are wired — proving the fix relies on the manifest.
 func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 	t.Parallel()
-	parent := testutil.KustomizationID("flux-system", "cluster-apps")
-	hr := &manifest.HelmRelease{
-		Name: "sonarr", Namespace: "media", // stamped from the parent KS's targetNamespace
-		Chart: manifest.HelmChart{
-			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system",
-		},
-	}
-	chartSrc := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+	for _, name := range []string{"new_child", "replaced_child"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			parent := testutil.KustomizationID("flux-system", "cluster-apps")
+			hr := &manifest.HelmRelease{
+				Name: "sonarr", Namespace: "media",
+				Chart: manifest.HelmChart{
+					RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoName: "app-template", RepoNamespace: "flux-system",
+				},
+			}
+			chartSrc := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
+			oldSource := chartSrc
+			oldSource.Name = "old-chart"
+			objects := testutil.EmptyLister()
+			if name == "replaced_child" {
+				old := *hr
+				old.Chart.RepoName = oldSource.Name
+				objects[old.Named()] = &old
+			}
+			f := NewFilter(NewSet([]string{"apps/media/kustomization.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "apps/media/kustomization.yaml"}, objects: objects}.index(), objects)
+			assert.Equal(t, f.ShouldReconcile(parent), true)
+			for _, id := range []manifest.NamedResource{hr.Named(), chartSrc, oldSource} {
+				assert.Equal(t, f.ShouldReconcile(id), false)
+			}
 
-	f := NewFilter(NewSet([]string{"apps/media/kustomization.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "apps/media/kustomization.yaml"}, root: "", objects: testutil.EmptyLister()}.index(), testutil.EmptyLister())
-	if !f.ShouldReconcile(parent) {
-		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
-	}
-	if f.ShouldReconcile(chartSrc) {
-		t.Fatalf("precondition: shared chart source must NOT be in keep before emission; keep=%v", f.KeepNames())
-	}
+			added := f.AddEmitted(parent, hr)
 
-	added := f.AddEmitted(parent, hr)
+			assert.Equal(t, len(added), 2)
+			for _, id := range []manifest.NamedResource{hr.Named(), chartSrc} {
+				if !f.ShouldReconcile(id) || !slices.Contains(added, id) {
+					t.Errorf("current identity %s not selected and returned: added=%v, keep=%v", id, added, f.KeepNames())
+				}
+			}
+			if f.ShouldReconcile(oldSource) || slices.Contains(added, oldSource) {
+				t.Errorf("obsolete source selected or returned: added=%v, keep=%v", added, f.KeepNames())
+			}
+		})
+	}
+}
 
-	if !f.ShouldReconcile(chartSrc) {
-		t.Errorf("emitted HR's chart source not kept — it stays PreGate-skipped and render fails 'artifact not available'; keep=%v", f.KeepNames())
+func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"ancestor_only", "primary"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			parent := testutil.KustomizationID("apps", "parent")
+			child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{
+				RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoName: "new-chart", RepoNamespace: "apps",
+			}}
+			f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index(), testutil.EmptyLister())
+			if name == "primary" {
+				f.addUngated(child.Named())
+			} else {
+				f.mu.Lock()
+				f.markKept(child.Named())
+				f.mu.Unlock()
+			}
+			assert.Equal(t, f.ShouldReconcile(child.Named()), true)
+			assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
+
+			added := f.AddEmitted(parent, child)
+
+			assert.Diff(t, added, []manifest.NamedResource{child.ChartSource()})
+			assert.Equal(t, f.ShouldReconcile(child.ChartSource()), true)
+			sentinel := testutil.KustomizationID("apps", "sentinel")
+			assert.Diff(t, f.AddEmitted(child.Named(), refObj(sentinel)), []manifest.NamedResource{sentinel})
+			assert.Equal(t, f.ShouldReconcile(sentinel), true)
+		})
 	}
-	if !slices.Contains(added, chartSrc) {
-		t.Errorf("AddEmitted did not return chart source %s, so Store.Refire never re-fetches it; added=%v", chartSrc, added)
+}
+
+func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
+	t.Parallel()
+	parent := testutil.KustomizationID("apps", "parent")
+	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{
+		RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoName: "new-chart", RepoNamespace: "apps",
+	}}
+	old := *child
+	old.Chart.RepoName = "old-chart"
+	oldSource := old.ChartSource()
+	objects := testutil.MapLister{old.Named(): &old}
+	f := NewFilter(NewSet([]string{"parent.yaml", "old-chart.yaml"}), filterFixture{files: map[manifest.NamedResource]string{
+		parent: "parent.yaml", oldSource: "old-chart.yaml",
+	}, objects: objects}.index(), objects)
+	assert.Equal(t, f.ShouldReconcile(oldSource), true)
+	assert.Equal(t, f.ShouldReconcile(child.Named()), false)
+	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
+
+	added := f.AddEmitted(parent, child)
+
+	assert.Equal(t, len(added), 2)
+	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource()} {
+		assert.Equal(t, f.ShouldReconcile(id), true)
+		assert.Equal(t, slices.Contains(added, id), true)
 	}
+	assert.Equal(t, f.ShouldReconcile(oldSource), true)
+	assert.Equal(t, slices.Contains(added, oldSource), false)
+}
+
+func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
+	t.Parallel()
+	parent := testutil.KustomizationID("apps", "parent")
+	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{
+		RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository, RepoName: "new-chart", RepoNamespace: "apps",
+	}}
+	old := *child
+	old.Chart.RepoName = "old-chart"
+	objects := testutil.MapLister{old.Named(): &old}
+	f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}, objects: objects}.index(), objects)
+	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource(), old.ChartSource()} {
+		assert.Equal(t, f.ShouldReconcile(id), false)
+	}
+	start := make(chan struct{})
+	var ready, joined sync.WaitGroup
+	var results [2][]manifest.NamedResource
+	ready.Add(len(results))
+	for i := range results {
+		joined.Go(func() {
+			ready.Done()
+			<-start
+			results[i] = f.AddEmitted(parent, child)
+		})
+	}
+	ready.Wait()
+	close(start)
+	joined.Wait()
+
+	returned := make(map[manifest.NamedResource]int)
+	for _, ids := range results {
+		for _, id := range ids {
+			returned[id]++
+		}
+	}
+	assert.Diff(t, returned, map[manifest.NamedResource]int{child.Named(): 1, child.ChartSource(): 1})
+	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
+	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), true)
+	assert.Equal(t, f.ShouldReconcile(old.ChartSource()), false)
 }
 
 // TestFilter_KeepByNameDoesNotLeakAcrossNamespaces pins the
@@ -848,12 +941,6 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 	}
 }
 
-// TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD pins the BFS
-// through a chartRef→HelmChart CRD: the HelmChart's own sourceRef
-// must land in keep so changed-only mode doesn't PreGate-skip the
-// backing artifact. Pre-fix, transitiveDeps had no KindHelmChart
-// branch — the HelmChart joined keep but its source artifact did
-// not, and render failed "artifact not found."
 func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	t.Parallel()
 	hr := &manifest.HelmRelease{
@@ -872,14 +959,33 @@ func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	hcID := hc.Named()
 	ociID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "backing-oci"}
 
-	f := NewFilter(NewSet([]string{"hr.yaml"}), filterFixture{files: map[manifest.NamedResource]string{hrID: "hr.yaml"}, root: "", objects: testutil.MapLister{hrID: hr, hcID: hc}}.index(), testutil.MapLister{hrID: hr, hcID: hc})
+	t.Run("initialization", func(t *testing.T) {
+		t.Parallel()
+		f := NewFilter(NewSet([]string{"hr.yaml"}), filterFixture{files: map[manifest.NamedResource]string{hrID: "hr.yaml"}, root: "", objects: testutil.MapLister{hrID: hr, hcID: hc}}.index(), testutil.MapLister{hrID: hr, hcID: hc})
+		for _, id := range []manifest.NamedResource{hrID, hcID, ociID} {
+			if !f.ShouldReconcile(id) {
+				t.Errorf("transitive dependency %s not selected: keep=%v", id, f.KeepNames())
+			}
+		}
+	})
+	t.Run("runtime", func(t *testing.T) {
+		t.Parallel()
+		parent := testutil.KustomizationID("apps", "parent")
+		objects := testutil.MapLister{hcID: hc}
+		f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}, objects: objects}.index(), objects)
+		for _, id := range []manifest.NamedResource{hrID, hcID, ociID} {
+			assert.Equal(t, f.ShouldReconcile(id), false)
+		}
 
-	if !f.ShouldReconcile(hcID) {
-		t.Errorf("chartRef-HelmChart not pulled in by HR; keep=%v", f.KeepNames())
-	}
-	if !f.ShouldReconcile(ociID) {
-		t.Errorf("HelmChart's sourceRef OCIRepository not pulled in; keep=%v", f.KeepNames())
-	}
+		added := f.AddEmitted(parent, hr)
+
+		assert.Equal(t, len(added), 3)
+		for _, id := range []manifest.NamedResource{hrID, hcID, ociID} {
+			if !f.ShouldReconcile(id) || !slices.Contains(added, id) {
+				t.Errorf("transitive dependency %s not selected and returned: added=%v, keep=%v", id, added, f.KeepNames())
+			}
+		}
+	})
 }
 
 // TestFilter_ReverseEdgeCentralizedOCIRepository pins the reverse-edge

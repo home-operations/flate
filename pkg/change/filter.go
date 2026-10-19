@@ -129,15 +129,11 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 // cascading those siblings through the keep set turns a one-file
 // change into a full-tree reconcile.
 //
-// child inherits the emitter's primacy: AddEmitted walks the child's
-// sourceRef / chartRef / valuesFrom edges recursively (issue #260) and
-// marks every newly-added entry primary so their own future emissions
-// cascade correctly. Those edges are read straight off the child
-// manifest (transitiveDepsOf), NOT via a Store lookup — a render-emitted
-// child is kept here BEFORE its Store.AddObject (the ordering contract
-// below), so it isn't yet visible to the Store, and its namespace-
-// stamped chart source (e.g. a shared OCIRepository) would otherwise go
-// unkept and unfetched.
+// child inherits the emitter's primacy. Its content references come from
+// the incoming manifest because admission precedes Store.AddObject, which
+// may still hold a previous child with the same identity. Stored transitive
+// dependencies are traversed recursively; their required producers remain
+// dependency-only.
 //
 // Used by the KS controller when a parent KS in the keep set
 // renders and emits id as a child. Covers the kustomize
@@ -164,13 +160,13 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 	if _, primaryEmitter := f.primary[emitter]; !primaryEmitter {
 		return nil
 	}
-	added := f.addRecursiveLocked(child.Named())
-	// addRecursiveLocked resolves deps via the Store, but a render-emitted
-	// child is kept here BEFORE its Store.AddObject (the ordering contract
-	// above), so the Store can't see it yet. Walk the child's own
-	// chartRef / sourceRef / valuesFrom straight off the manifest so a
-	// shared source with its effective namespace (e.g. an OCIRepository every
-	// HelmRelease chartRefs) still joins keep before the consumer is published.
+	id := child.Named()
+	var added []manifest.NamedResource
+	if _, kept := f.keep[id]; !kept {
+		f.markKept(id)
+		added = append(added, id)
+	}
+	f.primary[id] = struct{}{}
 	for _, dep := range transitiveDepsOf(child) {
 		added = append(added, f.addRecursiveLocked(dep)...)
 		added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)

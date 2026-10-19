@@ -28,13 +28,6 @@ import (
 
 const fullBaseRef plumbing.ReferenceName = "refs/flate/base-full"
 
-type fetched struct {
-	repo    *git.Repository
-	hash    plumbing.Hash
-	backing billy.Filesystem
-	remote  *baseRemote
-}
-
 type baseRemote struct {
 	client       transport.Transport
 	endpoint     *transport.Endpoint
@@ -44,7 +37,7 @@ type baseRemote struct {
 	full         bool
 }
 
-func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (*fetched, error) {
+func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (*resolution, error) {
 	ep, err := transport.NewEndpoint(url)
 	if err != nil {
 		return nil, err
@@ -85,26 +78,26 @@ func fetchBase(ctx context.Context, url, rev string, owner *sourcecache.Cache) (
 		return nil, err
 	}
 	remote.pin = generation.Commit
-	f := &fetched{hash: generation.Commit, backing: generation.Backing, remote: remote}
-	f.repo, err = adopt(f, nil)
-	if err != nil {
+	r := &resolution{Hash: generation.Commit, backing: generation.Backing, remote: remote}
+	if err := r.adopt(nil); err != nil {
 		return nil, err
 	}
-	return f, nil
+	return r, nil
 }
 
-func adopt(f *fetched, lower storage.Storer) (*git.Repository, error) {
-	upper := filesystem.NewStorageWithOptions(f.backing, objectcache.NewObjectLRU(0), filesystem.Options{})
+func (r *resolution) adopt(lower storage.Storer) error {
+	upper := filesystem.NewStorageWithOptions(r.backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 	if _, err := upper.Reference(fullBaseRef); err == nil {
-		f.remote.full = true
+		r.remote.full = true
 	} else if !errors.Is(err, plumbing.ErrReferenceNotFound) {
-		return nil, err
+		return err
 	}
 	var storer storage.Storer = upper
 	if lower != nil {
 		storer = transactional.NewStorage(lower, upper)
 	}
-	return &git.Repository{Storer: storer}, nil
+	r.Repo = &git.Repository{Storer: storer}
+	return nil
 }
 
 func remotePin(refs *packp.AdvRefs, rev string) (plumbing.Hash, error) {
@@ -178,11 +171,11 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 	}
 }
 
-func (r *baseRemote) newRequest(full bool) *packp.UploadPackRequest {
+func (r *baseRemote) newRequest(wantCommit bool) *packp.UploadPackRequest {
 	req := packp.NewUploadPackRequestFromCapabilities(r.capabilities)
 	req.Capabilities.Delete(capability.Sideband64k)
 	req.Capabilities.Delete(capability.Sideband)
-	if full {
+	if wantCommit {
 		req.Wants = []plumbing.Hash{r.pin}
 		if r.capabilities.Supports(capability.Shallow) {
 			req.Depth = packp.DepthCommits(1)

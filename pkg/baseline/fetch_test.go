@@ -25,13 +25,17 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/memory"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
 // TestAutoResolve_ExplicitBaseFetchedFromOrigin pins the fetch fallback:
@@ -76,8 +80,8 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 			if string(got) != "base" {
 				t.Errorf("materialized a.yaml = %q, want %q (origin's main, not the checkout)", got, "base")
 			}
-			if res.Rev != shortRev(mainCommit) {
-				t.Errorf("Rev = %q, want %q", res.Rev, shortRev(mainCommit))
+			if res.BaseInput.Revision != mainCommit.String() {
+				t.Errorf("Revision = %q, want %q", res.BaseInput.Revision, mainCommit.String())
 			}
 			if !strings.Contains(res.Source.Metadata["baseline-selection"], "fetched from origin") {
 				t.Errorf("Source = %q, want it to say the rev was fetched from origin", res.Source.Metadata["baseline-selection"])
@@ -108,8 +112,8 @@ func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
 		t.Fatalf("AutoResolve(--base=main): %v", err)
 	}
 
-	if res.Rev != shortRev(mainCommit) {
-		t.Errorf("Rev = %q, want %q", res.Rev, shortRev(mainCommit))
+	if res.BaseInput.Revision != mainCommit.String() {
+		t.Errorf("Revision = %q, want %q", res.BaseInput.Revision, mainCommit.String())
 	}
 }
 
@@ -122,6 +126,8 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
 	_, err := AutoResolve(t.Context(), dir, "nope", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	if err == nil {
 		t.Fatal("expected error for a rev origin does not have")
 	}
@@ -139,6 +145,9 @@ func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
 	dir := historylessCheckout(t, "", "a.yaml", "pr-tip")
 
 	_, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
 	if err == nil {
 		t.Fatal("expected error without an origin remote")
 	}
@@ -157,6 +166,9 @@ func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
 	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
 	if err == nil {
 		t.Fatal("expected error for an unborn HEAD without --base")
 	}
@@ -413,20 +425,21 @@ func TestAdopt_FetchedStorage(t *testing.T) {
 			if tc.readError {
 				input = &markerReadError{Filesystem: backing, err: readErr}
 			}
-			f := &fetched{hash: pin, backing: input, remote: &baseRemote{pin: pin, full: tc.full}}
+			r := &resolution{Hash: pin, backing: input, remote: &baseRemote{pin: pin, full: tc.full}}
 			var local storage.Storer
 			if tc.layered {
 				local = lower
 			}
-			repo, err := adopt(f, local)
+			err := r.adopt(local)
+			repo := r.Repo
 			if tc.readError {
 				if !errors.Is(err, readErr) || repo != nil {
 					t.Fatalf("marker error: repo=%v err=%v", repo, err)
 				}
 				return
 			}
-			if err != nil || repo == nil || f.remote.full != (tc.full || tc.upperMarker) || f.hash != pin || f.remote.pin != pin {
-				t.Fatalf("adopt: repo=%v err=%v full=%t", repo, err, f.remote.full)
+			if err != nil || repo == nil || r.remote.full != (tc.full || tc.upperMarker) || r.Hash != pin || r.remote.pin != pin {
+				t.Fatalf("adopt: repo=%v err=%v full=%t", repo, err, r.remote.full)
 			}
 			for _, obj := range []struct {
 				hash plumbing.Hash
@@ -486,4 +499,41 @@ func (f *markerReadError) Open(name string) (billy.File, error) {
 		return nil, f.err
 	}
 	return f.Filesystem.Open(name)
+}
+
+func TestResolveExplicit_FetchCancellation(t *testing.T) {
+	const scheme = "baseline-failure"
+	original := client.Protocols[scheme]
+	t.Cleanup(func() { client.InstallProtocol(scheme, original) })
+	for _, tc := range []struct {
+		name  string
+		cause error
+		input bool
+	}{
+		{name: "canceled", cause: context.Canceled},
+		{name: "deadline", cause: context.DeadlineExceeded},
+		{name: "normal fetch failure", cause: transport.ErrAuthenticationRequired, input: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := fmt.Errorf("local transport: %w", tc.cause)
+			client.InstallProtocol(scheme, &failureTransport{err: wrapped})
+			dir := historylessCheckout(t, scheme+"://origin/repo", "a.yaml", "current")
+			location, err := gitrepo.Locate(t.Context(), dir, "")
+			assert.NoError(t, err)
+			_, err = resolveExplicit(t.Context(), location, "main", cachetest.New(t, "", sourcecache.New))
+			assert.Equal(t, errors.Is(err, wrapped), true)
+			assert.Equal(t, errors.Is(err, tc.cause), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.input)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), tc.input)
+		})
+	}
+}
+
+type failureTransport struct {
+	transport.Transport
+	err error
+}
+
+func (f *failureTransport) NewUploadPackSession(*transport.Endpoint, transport.AuthMethod) (transport.UploadPackSession, error) {
+	return nil, f.err
 }

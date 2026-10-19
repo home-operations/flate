@@ -21,6 +21,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -39,14 +40,14 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	if err != nil {
 		return nil, nil, "", err
 	}
-	candidates, dirty, err := s.candidates(ctx, baseTree, entries)
+	candidates, err := s.candidates(ctx, baseTree, entries)
 	if err != nil {
 		return nil, nil, "", err
 	}
 	if err := s.acquireBodies(ctx, entries, candidates); err != nil {
 		return nil, nil, "", err
 	}
-	routing, err := s.compareCandidates(ctx, candidates, dirty, entries)
+	routing, err := s.compareCandidates(ctx, candidates, entries)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -90,80 +91,79 @@ func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]ob
 	return baseTree, entries, nil
 }
 
-func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entries map[string]object.TreeEntry) (map[string]bool, map[string]bool, error) {
+func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entries map[string]object.TreeEntry) (map[string]bool, error) {
 	candidates := make(map[string]bool)
-	dirty := make(map[string]bool)
 	headEntries := map[string]object.TreeEntry{}
 	head, err := s.repo.Head()
 	if err == nil {
 		commit, err := s.repo.CommitObject(head.Hash())
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		headTree, err := commit.Tree()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		headEntries, err = treeEntries(ctx, headTree)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		diff, err := object.DiffTree(baseTree, headTree)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for _, c := range diff {
 			if c.From.Name != "" {
-				candidates[c.From.Name] = true
+				candidates[c.From.Name] = false
 			}
 			if c.To.Name != "" {
-				candidates[c.To.Name] = true
+				candidates[c.To.Name] = false
 			}
 		}
 	} else if errors.Is(err, plumbing.ErrReferenceNotFound) {
 		for name := range entries {
-			candidates[name], dirty[name] = true, true
+			candidates[name] = true
 		}
 	} else {
-		return nil, nil, err
+		return nil, err
 	}
 	worktree, err := s.repo.Worktree()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	status, statusErr := worktree.Status()
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if statusErr != nil {
 		slog.Warn("baseline: Git status unavailable; comparing checkout conservatively", "error", statusErr)
 	}
 	for name, st := range status {
 		if st.Staging != git.Unmodified || st.Worktree != git.Unmodified {
-			candidates[name], dirty[name] = true, true
+			candidates[name] = true
 		}
 	}
 	err = walkCurrent(ctx, s.current, ".", func(name string) {
 		if _, ok := headEntries[name]; !ok {
-			candidates[name], dirty[name] = true, true
+			candidates[name] = true
 		}
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if statusErr != nil {
 		for name := range entries {
-			candidates[name], dirty[name] = true, true
+			candidates[name] = true
 		}
 	}
-	return candidates, dirty, nil
+	return candidates, nil
 }
 
 func (s selection) acquireBodies(ctx context.Context, entries map[string]object.TreeEntry, candidates map[string]bool) error {
 	routed := make(map[plumbing.Hash]bool)
 	missing := false
 	for name, entry := range entries {
-		if !candidates[name] {
+		if _, ok := candidates[name]; !ok {
 			continue
 		}
 		routed[entry.Hash] = true
@@ -232,13 +232,12 @@ func (s selection) acquireBodies(ctx context.Context, entries map[string]object.
 		return err
 	}
 	s.base.backing = generation.Backing
-	s.base.Repo, err = adopt(&fetched{backing: generation.Backing, remote: s.base.remote}, s.repo.Storer)
-	return err
+	return s.base.adopt(s.repo.Storer)
 }
 
-func (s selection) compareCandidates(ctx context.Context, candidates, dirty map[string]bool, entries map[string]object.TreeEntry) ([]string, error) {
+func (s selection) compareCandidates(ctx context.Context, candidates map[string]bool, entries map[string]object.TreeEntry) ([]string, error) {
 	routing := make([]string, 0, len(candidates))
-	for name := range candidates {
+	for name, dirty := range candidates {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -247,7 +246,7 @@ func (s selection) compareCandidates(ctx context.Context, candidates, dirty map[
 			routing = append(routing, name)
 			continue
 		}
-		if !dirty[name] {
+		if !dirty {
 			routing = append(routing, name)
 			continue
 		}
@@ -339,15 +338,18 @@ func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, rout
 func (s selection) acquireBase(ctx context.Context) error {
 	url, ok := originURL(s.current.Location().Config)
 	if !ok {
-		return fmt.Errorf("base %s is missing objects and no origin is configured", s.base.Hash)
+		return fmt.Errorf("%w: base %s is missing objects and no origin is configured", manifest.ErrInput, s.base.Hash)
 	}
-	fetched, err := fetchBase(ctx, url, s.base.Hash.String(), s.owner)
+	r, err := fetchBase(ctx, url, s.base.Hash.String(), s.owner)
 	if err != nil {
 		return err
 	}
-	s.base.remote, s.base.backing = fetched.remote, fetched.backing
-	s.base.Repo, err = adopt(fetched, s.repo.Storer)
-	return err
+	if err := r.adopt(s.repo.Storer); err != nil {
+		return err
+	}
+	r.Source = s.base.Source
+	*s.base = *r
+	return nil
 }
 
 func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.TreeEntry, error) {

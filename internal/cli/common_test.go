@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -293,6 +295,31 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	if _, err := os.Stat(c.baseInput.LocalPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("baseline label materialized: %v", err)
 	}
+}
+
+func TestResolveBaseline_DebugRevision(t *testing.T) {
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "file.yaml", "fixture")
+	pin := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
+	})
+	var output bytes.Buffer
+	logger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(logger) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	c := commonFlags{path: root, base: "HEAD", concurrency: 2}
+	cleanup, err := resolveBaseline(t.Context(), &c, false)
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, cleanup()) })
+	assert.Equal(t, c.baseInput.Revision, pin.String())
+	var record map[string]any
+	assert.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	delete(record, "time")
+	assert.Diff(t, record, map[string]any{
+		"level": "DEBUG", "msg": "baseline", "source": "explicit --base=HEAD",
+		"rev": pin.String()[:7], "path_orig": c.pathOrig,
+	})
 }
 
 func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {

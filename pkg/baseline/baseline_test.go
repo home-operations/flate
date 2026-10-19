@@ -15,12 +15,15 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
@@ -193,8 +196,8 @@ func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
 		t.Fatalf("AutoResolve(--base=main) should fall back to origin/main: %v", err)
 	}
 
-	if got := res.Rev; got != shortRev(mainCommit) {
-		t.Errorf("Rev = %q, want %q", got, shortRev(mainCommit))
+	if got := res.BaseInput.Revision; got != mainCommit.String() {
+		t.Errorf("Revision = %q, want %q", got, mainCommit.String())
 	}
 	if !strings.Contains(res.Source.Metadata["baseline-selection"], "via origin/main") {
 		t.Errorf("Source = %q, want to mention 'via origin/main'", res.Source.Metadata["baseline-selection"])
@@ -214,7 +217,7 @@ func TestAutoResolve_ExplicitBaseRemoteTrackingBranch(t *testing.T) {
 			res, err := AutoResolve(t.Context(), dir, base, cachetest.New(t, "", sourcecache.New))
 			assert.NoError(t, err)
 			assert.Equal(t, res.BaseInput.Revision, commit.String())
-			assert.Equal(t, res.Rev, shortRev(commit))
+			assert.Equal(t, res.BaseInput.Revision, commit.String())
 			got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
 			assert.NoError(t, err)
 			assert.Equal(t, string(got), "base")
@@ -249,6 +252,8 @@ func TestAutoResolve_ExplicitBaseNeitherLocalNorRemote(t *testing.T) {
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
 
 	_, err := AutoResolve(t.Context(), dir, "nonexistent", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	if err == nil {
 		t.Fatal("expected error for unresolvable --base")
 	}
@@ -393,6 +398,8 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	// No upstream, no origin refs → the resolution ladder falls
 	// through; the shallow detection fires last.
 	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
@@ -411,6 +418,8 @@ func TestAutoResolve_NoUpstream(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	if err == nil {
 		t.Fatal("expected no-upstream error")
 	}
@@ -562,6 +571,8 @@ func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
 	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
 
 	_, err := AutoResolve(t.Context(), wtDir, "", cachetest.New(t, "", sourcecache.New))
+	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
@@ -740,4 +751,39 @@ func TestResolvePaths_ReusesRoot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolve_InputErrors(t *testing.T) {
+	t.Parallel()
+	headCause := errors.New("read HEAD")
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{name: "HEAD lookup", cause: headCause},
+		{name: "missing HEAD commit", cause: plumbing.ErrObjectNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var storer storage.Storer = memory.NewStorage()
+			if tc.name == "HEAD lookup" {
+				storer = &headErrorStorage{Storer: storer, err: tc.cause}
+			} else {
+				assert.NoError(t, storer.SetReference(plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("a", 40)))))
+			}
+			_, err := resolve(t.Context(), &gitrepo.Location{Repository: &git.Repository{Storer: storer}}, "", nil)
+			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+			assert.Equal(t, errors.Is(err, tc.cause), true)
+		})
+	}
+}
+
+type headErrorStorage struct {
+	storage.Storer
+	err error
+}
+
+func (s *headErrorStorage) Reference(plumbing.ReferenceName) (*plumbing.Reference, error) {
+	return nil, s.err
 }

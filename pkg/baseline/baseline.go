@@ -31,7 +31,6 @@ type Result struct {
 	ScanPath     string
 	BaseScanPath string
 	Changes      *change.Set
-	Rev          string
 	SelfURLs     []string
 }
 
@@ -90,7 +89,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		Source:    input,
 		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, FS: before},
 		ScanPath:  location.ScanPath, BaseScanPath: filepath.Join(label, rel),
-		Changes: selected, Rev: shortRev(r.Hash), SelfURLs: urls,
+		Changes: selected, SelfURLs: urls,
 	}, nil
 }
 
@@ -143,20 +142,6 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 	return &Result{Source: input, BaseInput: baseInput, ScanPath: after.ScanPath, BaseScanPath: before.ScanPath, SelfURLs: urls}, nil
 }
 
-// resolve picks the baseline commit for the given repo. When base is
-// non-empty it's an explicit rev (passed via --base=<rev>); otherwise
-// the auto-detection ladder runs:
-//
-//  1. @{u} — current branch's configured upstream — merge-base with HEAD
-//  2. origin/HEAD — the default remote's default-branch symref — merge-base with HEAD
-//  3. origin/main / origin/master — merge-base with HEAD
-//
-// Each rung is tried in order; the first that resolves AND has a
-// reachable merge-base wins. Falling off the end is an error (no silent
-// fallback to HEAD — that would silently change "preview my PR" into
-// "preview my dirty edits"). Shallow clones can't compute a merge-base
-// against any of these refs because the necessary commits are absent;
-// detect .git/shallow and emit a CI-friendly error.
 func resolve(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
 	repo := location.Repository
 	if base != "" {
@@ -165,15 +150,13 @@ func resolve(ctx context.Context, location *gitrepo.Location, base string, owner
 	head, err := repo.Head()
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
-			return nil, errors.New(
-				"baseline: HEAD has no commits to merge-base from; " +
-					"pass --base=<rev> to fetch the baseline from origin, or --path-orig=<dir>")
+			return nil, fmt.Errorf("%w: baseline: HEAD has no commits to merge-base from; pass --base=<rev> to fetch the baseline from origin, or --path-orig=<dir>: %w", manifest.ErrInput, err)
 		}
-		return nil, fmt.Errorf("resolve HEAD: %w", err)
+		return nil, fmt.Errorf("%w: resolve HEAD: %w", manifest.ErrInput, err)
 	}
 	headCommit, err := repo.CommitObject(head.Hash())
 	if err != nil {
-		return nil, fmt.Errorf("load HEAD commit: %w", err)
+		return nil, fmt.Errorf("%w: load HEAD commit: %w", manifest.ErrInput, err)
 	}
 
 	// go-git's ResolveRevision does not accept @{u}; read the branch config.
@@ -198,23 +181,21 @@ func resolve(ctx context.Context, location *gitrepo.Location, base string, owner
 		}
 	}
 
-	// Distinguish "shallow clone, can't see the merge-base" from "no
-	// upstream configured at all" — the first is a CI fix (fetch-depth),
-	// the second is a flag fix (--base=<rev>).
 	if isShallow(repo) {
-		return nil, errors.New(
-			"baseline: cannot compute merge-base — repo appears shallow (.git/shallow present); " +
-				"in actions/checkout, set 'fetch-depth: 0', or locally run 'git fetch --unshallow', " +
-				"or pass --base=<ref> / --path-orig=<dir> explicitly")
+		return nil, fmt.Errorf(
+			"%w: baseline: cannot compute merge-base — repo appears shallow (.git/shallow present); "+
+				"in actions/checkout, set 'fetch-depth: 0', or locally run 'git fetch --unshallow', "+
+				"or pass --base=<ref> / --path-orig=<dir> explicitly", manifest.ErrInput)
 	}
-	return nil, errors.New(
-		"baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, " +
-			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
+	return nil, fmt.Errorf(
+		"%w: baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, "+
+			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>", manifest.ErrInput)
 }
 
 func resolveExplicit(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
 	repo := location.Repository
-	if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
+	h, err := repo.ResolveRevision(plumbing.Revision(base))
+	if err == nil {
 		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
 	}
 	remote := git.DefaultRemoteName + "/" + base
@@ -223,13 +204,17 @@ func resolveExplicit(ctx context.Context, location *gitrepo.Location, base strin
 	}
 	url, ok := originURL(location.Config)
 	if !ok {
-		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from", base, base)
+		return nil, fmt.Errorf("%w: could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from: %w", manifest.ErrInput, base, base, err)
 	}
-	f, err := fetchBase(ctx, url, base, owner)
+	r, err := fetchBase(ctx, url, base, owner)
 	if err != nil {
-		return nil, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w", base, base, url, err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w", manifest.ErrInput, base, base, url, err)
 	}
-	return &resolution{Hash: f.hash, Source: "explicit --base=" + base + " (fetched from origin)", Repo: f.repo, backing: f.backing, remote: f.remote}, nil
+	r.Source = "explicit --base=" + base + " (fetched from origin)"
+	return r, nil
 }
 
 // upstreamHash reads the current branch's upstream from the repo
@@ -318,11 +303,4 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 func isShallow(repo *git.Repository) bool {
 	hashes, err := repo.Storer.Shallow()
 	return err == nil && len(hashes) > 0
-}
-
-// shortRev formats a hash as the conventional 7-char prefix used in
-// log lines.
-func shortRev(h plumbing.Hash) string {
-	s := h.String()
-	return s[:min(len(s), 7)]
 }

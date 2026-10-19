@@ -220,9 +220,6 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 				if got := slices.Collect(s.Productions(id, nil)); len(got) != 2 || got[0].Owner != p || got[1].Owner != q {
 					t.Fatalf("reverse position changed production: %v", got)
 				}
-				if views := slices.Collect(s.MetadataViews(id)); len(views) != 2 || views[0] != child.Obj || views[1] != child.Obj {
-					t.Fatal("ownership-label refresh lost original contributor views")
-				}
 			}
 			s.SetArtifact(covered.Obj.Named(), &SourceArtifact{Key: "covered"})
 			s.UpdateStatus(covered.Obj.Named(), StatusReady, "")
@@ -407,9 +404,6 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						if _, ok := s.GetStatus(id); ok {
 							t.Fatal("hidden Ready leaked")
 						}
-						if len(s.GetConditions(id)) != 0 {
-							t.Fatal("hidden conditions leaked")
-						}
 						if obj, conditions := s.Snapshot(id); obj != nil || len(conditions) != 0 {
 							t.Fatal("hidden snapshot leaked")
 						}
@@ -417,8 +411,8 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 							attempt.Finish()
 							t.Fatal("hidden attempt leaked")
 						}
-						if len(slices.Collect(s.MetadataViews(id))) != 0 || len(slices.Collect(s.Productions(id, nil))) != 0 {
-							t.Fatal("hidden metadata leaked")
+						if len(slices.Collect(s.Productions(id, nil))) != 0 {
+							t.Fatal("hidden productions leaked")
 						}
 						if _, ok := s.FailedResources()[id]; ok {
 							t.Fatal("hidden failure leaked")
@@ -476,7 +470,7 @@ func boolInt(b bool) int {
 	return 0
 }
 
-func TestRecordEmitted_MetadataViewsAndContext(t *testing.T) {
+func TestRecordEmitted_ContributionContext(t *testing.T) {
 	t.Parallel()
 
 	s := New()
@@ -503,8 +497,13 @@ func TestRecordEmitted_MetadataViewsAndContext(t *testing.T) {
 	second.source.Name = "second"
 	accept(t, s, p, &Emission{Children: []Child{a}, Manifests: []map[string]any{a.Doc}, Complete: true, binding: first})
 	accept(t, s, q, &Emission{Children: []Child{b}, Manifests: []map[string]any{b.Doc}, Complete: true, binding: second})
-	if views := slices.Collect(s.MetadataViews(a.Obj.Named())); len(views) != 2 || views[0] != a.Obj || views[1] != b.Obj {
-		t.Fatal("equal contribution discarded original metadata view")
+	for _, contribution := range []struct {
+		owner manifest.NamedResource
+		child Child
+	}{{p, a}, {q, b}} {
+		_, inventory := s.GetEmission(contribution.owner)
+		assert.Diff(t, inventory.Children, []Child{contribution.child})
+		inventory.Finish()
 	}
 	changed := childWithLabels("q")
 	changed.Doc["metadata"].(map[string]any)["labels"].(map[string]any)["semantic"] = "different"
@@ -798,9 +797,6 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				if got := s.GetObject(seed.Obj.Named()); got != actual.Obj || len(events) != 1 || events[0] != actual.Obj {
 					t.Fatalf("bootstrap replacement not published: %v, events %v", got, events)
 				}
-				if got := slices.Collect(s.MetadataViews(seed.Obj.Named())); len(got) != 1 || got[0] != actual.Obj {
-					t.Fatalf("retired bootstrap metadata: %v", got)
-				}
 				if got := slices.Collect(s.Productions(seed.Obj.Named(), nil)); len(got) != 1 || got[0].Owner != p {
 					t.Fatalf("retired bootstrap support: %v", got)
 				}
@@ -875,9 +871,6 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 		if s.GetObject(seed.Obj.Named()) != nil {
 			t.Fatal("empty membership exposed hidden static prediction")
 		}
-		if got := slices.Collect(s.MetadataViews(seed.Obj.Named())); len(got) != 0 {
-			t.Fatalf("empty membership exposed hidden static metadata: %v", got)
-		}
 	})
 	t.Run("replayed_bootstrap_seed", func(t *testing.T) {
 		t.Parallel()
@@ -893,9 +886,6 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			seed.Obj.Named(): {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
 		}})
 		s.RecordEmitted(p, next)
-		if len(slices.Collect(s.MetadataViews(seed.Obj.Named()))) != 1 {
-			t.Fatal("equal replay left a bootstrap seed active")
-		}
 		s.RecordEmitted(p, &Emission{Complete: true})
 		if s.GetObject(seed.Obj.Named()) != nil {
 			t.Fatal("equal replay failed to retire the bootstrap seed")
@@ -1139,7 +1129,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
 			t.Fatal("absent producer leaked live object or artifact")
 		}
-		if _, ok := s.GetStatus(id); ok || len(s.GetConditions(id)) != 0 {
+		if _, ok := s.GetStatus(id); ok {
 			t.Fatal("absent producer leaked terminal state")
 		}
 		if obj, conditions := s.Snapshot(id); obj != nil || len(conditions) != 0 {
@@ -1394,38 +1384,6 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 				t.Fatalf("withdrawal retained accepted evidence: %v", got)
 			}
 		})
-	}
-}
-
-func TestStore_FootprintOrder(t *testing.T) {
-	t.Parallel()
-
-	s := New()
-	p := ownerID("p")
-	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	for i := range 16 {
-		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: fmt.Sprintf("%02d", 15-i)}
-		index.Records[id] = manifest.DiscoveryRecord{Productions: []manifest.Production{
-			{Owner: p, Source: manifest.BootstrapSourceID},
-			{Owner: ownerID("q"), Source: manifest.BootstrapSourceID},
-			{Owner: p, Source: manifest.BootstrapSourceID, File: "proof.yaml"},
-		}}
-	}
-	s.SetDiscoveryIndex(index)
-	_, attempt := s.GetEmission(p)
-	defer attempt.Finish()
-	var previous manifest.NamedResource
-	count := 0
-	for id := range attempt.Footprint() {
-		if count > 0 && previous.Compare(id) >= 0 {
-			t.Fatalf("footprint escaped setup map order: %s before %s", previous, id)
-		}
-		previous = id
-		count++
-	}
-	if count != 16 {
-		t.Fatalf("footprint size=%d", count)
 	}
 }
 

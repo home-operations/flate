@@ -464,16 +464,10 @@ func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	return sh.objectLocked(id)
 }
 
-// Snapshot returns the manifest and conditions for id captured under
-// a single RLock acquisition. Use this when a caller needs a
-// consistent view of both — e.g. depwait's CEL projection reads
-// status.conditions AND metadata.labels in one expression, and
-// independent GetObject / GetConditions calls can mix a fresh object
-// snapshot with stale conditions (or vice versa) if a writer
-// interleaves. Returns nil object and nil conditions for unknown ids.
-//
-// Single-shard: both objects[id] and conditions[id] live in the
-// same shard since both are keyed by id.Kind.
+// Snapshot returns the manifest and a copy of its conditions under one shard read lock.
+// The shared lock keeps object metadata and conditions coherent for CEL evaluation.
+// Hidden registrations return nil for both; absent objects may have conditions
+// recorded before admission.
 func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Condition) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()

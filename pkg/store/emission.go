@@ -49,17 +49,6 @@ func (e *Emission) shadows(binding sourceBinding) bool {
 	return e != nil && slices.Contains(e.shadowed, binding)
 }
 
-// Footprint yields the source-qualified discovery evidence bound to this inventory.
-func (e *Emission) Footprint() iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
-	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		for _, f := range e.coverage {
-			if !yield(f.id, f.record) {
-				return
-			}
-		}
-	}
-}
-
 type contributor struct {
 	slot    *producerSlot
 	records []footprint
@@ -150,37 +139,6 @@ func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, E
 		e.Render = prev.Render
 	}
 	return obj, e
-}
-
-// MetadataViews yields all accepted original metadata views for a supported identity.
-func (s *Store) MetadataViews(id manifest.NamedResource) iter.Seq[manifest.BaseManifest] {
-	type view struct {
-		owner manifest.NamedResource
-		obj   manifest.BaseManifest
-	}
-	var views []view
-	sh := s.shardFor(id)
-	sh.mu.RLock()
-	if !sh.hidden[id] {
-		if obj := sh.static[id]; obj != nil && sh.staticActiveLocked(id) {
-			views = append(views, view{obj: obj})
-		}
-		for _, m := range sh.members[id] {
-			if !m.declaration && m.slot.visible.Load() {
-				e := m.slot.current.Load()
-				views = append(views, view{m.slot.id, e.entries[m.position].child.Obj})
-			}
-		}
-	}
-	sh.mu.RUnlock()
-	slices.SortFunc(views, func(a, b view) int { return a.owner.Compare(b.owner) })
-	return func(yield func(manifest.BaseManifest) bool) {
-		for _, v := range views {
-			if !yield(v.obj) {
-				return
-			}
-		}
-	}
 }
 
 // Productions merges immutable discovery evidence with accepted reverse memberships.
@@ -840,9 +798,6 @@ func (s *Store) fireObject(id manifest.NamedResource) {
 	dispatch()
 }
 
-func (sh *shard) staticActiveLocked(id manifest.NamedResource) bool {
-	return sh.static[id] != nil && !sh.hidden[id] && !sh.retired[id]
-}
 func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	if len(sh.members) == 0 && len(sh.hidden) == 0 && len(sh.retired) == 0 {
 		return sh.objects[id]

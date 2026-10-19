@@ -53,32 +53,42 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 	t.Parallel()
 	id := testutil.HelmReleaseID("", "consumer")
 	dep := testutil.HelmReleaseID("", "dep")
+	failure := &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}}
+	empty := &manifest.DependencyFailedError{Parent: id}
 	for _, tc := range []struct {
-		name   string
-		write  func(*Store)
-		status Status
-		failed bool
+		name    string
+		write   func(*Store)
+		status  Status
+		ready   metav1.ConditionStatus
+		reason  string
+		message string
+		failed  bool
 	}{
-		{"primary error", func(st *Store) { st.UpdateFailure(id, manifest.ErrInput) }, StatusFailed, false},
-		{"empty dependency error", func(st *Store) {
-			st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id})
-		}, StatusFailed, false},
-		{"primary status", func(st *Store) { st.UpdateStatus(id, StatusFailed, "primary") }, StatusFailed, false},
-		{"ready", func(st *Store) { st.UpdateStatus(id, StatusReady, "done") }, StatusReady, false},
-		{"pending", func(st *Store) { st.UpdateStatus(id, StatusPending, "retrying") }, StatusPending, false},
+		{"primary error", func(st *Store) { st.UpdateFailure(id, manifest.ErrInput) },
+			StatusFailed, metav1.ConditionFalse, ReasonFailed, manifest.ErrInput.Error(), false},
+		{"empty dependency error", func(st *Store) { st.UpdateFailure(id, empty) },
+			StatusFailed, metav1.ConditionFalse, ReasonFailed, empty.Error(), false},
+		{"primary status", func(st *Store) { st.UpdateStatus(id, StatusFailed, "primary") },
+			StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false},
+		{"ready", func(st *Store) { st.UpdateStatus(id, StatusReady, "done") },
+			StatusReady, metav1.ConditionTrue, ReasonSucceeded, "done", false},
+		{"pending", func(st *Store) { st.UpdateStatus(id, StatusPending, "retrying") },
+			StatusPending, metav1.ConditionUnknown, ReasonReconciling, "retrying", false},
 		{"Ready condition", func(st *Store) {
 			st.SetCondition(id, readyCondition(StatusFailed, "primary"))
-		}, StatusFailed, false},
+		}, StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false},
 		{"Healthy condition", func(st *Store) {
 			st.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue})
-		}, StatusFailed, true},
-		{"refire", func(st *Store) { st.Refire(id) }, StatusPending, false},
+		}, StatusFailed, metav1.ConditionFalse, ReasonFailed, failure.Error(), true},
+		{"refire", func(st *Store) { st.Refire(id) },
+			StatusPending, metav1.ConditionUnknown, ReasonReconciling, MsgRefetching, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := New()
-			st.AddObject(&manifest.HelmRelease{Name: id.Name})
-			st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}})
+			hr := &manifest.HelmRelease{Name: id.Name}
+			st.AddObject(hr)
+			st.UpdateFailure(id, failure)
 			if tc.name == "refire" {
 				st.AddListener(EventObjectAdded, func(eventID manifest.NamedResource, _ any) {
 					info, _ := st.GetStatus(eventID)
@@ -89,7 +99,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			}
 			tc.write(st)
 			info, ok := st.GetStatus(id)
-			if !ok || info.Status != tc.status || info.IsDependencyFailure() != tc.failed {
+			if !ok || info.Status != tc.status || info.Message != tc.message || info.IsDependencyFailure() != tc.failed {
 				t.Fatalf("transition snapshot = %+v, present = %v", info, ok)
 			}
 			if tc.failed {
@@ -100,16 +110,15 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 				t.Fatalf("transition retained blockers: %v", info.BlockedBy())
 			}
 			obj, conds := st.Snapshot(id)
-			if obj == nil || !slices.EqualFunc(conds, st.GetConditions(id), conditionEqual) {
-				t.Fatal("condition snapshot disagrees with GetConditions")
+			if obj != hr {
+				t.Fatalf("snapshot object = %v, want %v", obj, hr)
 			}
-			for _, cond := range conds {
-				if cond.Type == ConditionReady && cond.Message != info.Message {
-					t.Fatal("Ready condition disagrees with status snapshot")
-				}
+			want := []Condition{{Type: ConditionReady, Status: tc.ready, Reason: tc.reason, Message: tc.message}}
+			if tc.name == "Healthy condition" {
+				want = append(want, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue})
 			}
-			if tc.name == "refire" && info.Message != MsgRefetching {
-				t.Fatalf("Refire message = %q", info.Message)
+			if !slices.EqualFunc(conds, want, conditionEqual) {
+				t.Fatalf("conditions = %+v, want %+v", conds, want)
 			}
 		})
 	}

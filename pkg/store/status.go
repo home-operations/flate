@@ -189,10 +189,8 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 }
 
 // UpdateStatus records a Ready-condition transition and dispatches a
-// StatusUpdated event when the StatusInfo rollup changes. Internally
-// the (status, message) pair is stored as a metav1.Condition so future
-// callers (ReadyExpr CEL, SOPS detection, healthChecks) can see the
-// rich state via GetConditions.
+// StatusUpdated event when the StatusInfo rollup changes. Snapshot
+// exposes the full condition state.
 func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message string) {
 	s.SetCondition(id, readyCondition(status, message))
 }
@@ -276,22 +274,6 @@ func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 		return StatusInfo{}, false
 	}
 	return sh.conditions[id].statusInfo()
-}
-
-// GetConditions returns a copy of id's condition list. Empty for
-// unknown ids.
-func (s *Store) GetConditions(id manifest.NamedResource) []Condition {
-	sh := s.shardFor(id)
-	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	if sh.hidden[id] {
-		return nil
-	}
-	conds := sh.conditions[id].conditions
-	if len(conds) == 0 {
-		return nil
-	}
-	return slices.Clone(conds)
 }
 
 // conditionEqual reports whether two conditions carry the same

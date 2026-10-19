@@ -334,11 +334,6 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) {
 
 func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	t.Parallel()
-	// Non-Ready conditions DO fire EventStatusUpdated so CEL-based
-	// ReadyExpr waiters can react to Healthy / per-target health
-	// transitions. The Ready-derived StatusInfo payload doesn't change,
-	// but listeners that need finer granularity (depwait's CEL path)
-	// re-query GetConditions to see the change.
 	s := New()
 	id := testutil.KustomizationID("ns", "k")
 	s.UpdateStatus(id, StatusPending, "starting")
@@ -347,8 +342,9 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 		statusEvents++
 	}, false)
 	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
-	assert.Equal(t, statusEvents, 1) // non-Ready SetCondition still fires
-	if got := len(s.GetConditions(id)); got != 2 {
+	assert.Equal(t, statusEvents, 1)
+	_, conds := s.Snapshot(id)
+	if got := len(conds); got != 2 {
 		t.Fatalf("expected 2 conditions, got %d", got)
 	}
 }
@@ -868,15 +864,6 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 	})
 }
 
-// TestStore_SetConditionLocked_StableSliceLength asserts the in-place
-// rebuild contract for setConditionLocked: mutating the same condition
-// type N times leaves the conditions slice at length 1, not N. The
-// pre-fix implementation rebuilt the slice from scratch on every
-// transition (O(N) allocations across N transitions); the in-place
-// overwrite drops every allocation past the first.
-//
-// Counting GetConditions length is sufficient — the contract is "one
-// entry per unique Type, in-place updates do not grow the slice".
 func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 	t.Parallel()
 	s := New()
@@ -893,50 +880,43 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 		s.UpdateStatus(id, status, fmt.Sprintf("iter-%d", i))
 	}
 
-	assert.Equal(t, len(s.GetConditions(id)), 1) // in-place overwrite, no growth
+	_, conds := s.Snapshot(id)
+	assert.Equal(t, len(conds), 1)
 }
 
-// TestStore_SetConditionLocked_AppendsDistinctTypes pins the
-// fall-through-to-append path for new condition types: a Healthy
-// transition on top of an existing Ready must produce a 2-entry
-// slice, with both entries preserved across subsequent same-type
-// updates. The in-place mutation rule applies per-Type, not globally.
 func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	t.Parallel()
 	s := New()
 	id := newCM("a", "ns").Named()
 
 	s.UpdateStatus(id, StatusReady, "ok")
-	s.SetCondition(id, metav1.Condition{
+	healthy := Condition{
 		Type:    ConditionHealthy,
 		Status:  metav1.ConditionTrue,
 		Reason:  "Healthy",
 		Message: "healthy",
-	})
+	}
+	s.SetCondition(id, healthy)
 
-	conds := s.GetConditions(id)
+	_, conds := s.Snapshot(id)
 	if got := len(conds); got != 2 {
 		t.Fatalf("conditions length = %d, want 2 (Ready + Healthy)", got)
 	}
+	want := []Condition{
+		{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: ReasonSucceeded, Message: "ok"},
+		healthy,
+	}
+	assert.Diff(t, conds, want)
 
-	// Mutating one in place must leave the other alone and keep length stable.
 	s.UpdateStatus(id, StatusFailed, "boom")
-	conds = s.GetConditions(id)
+	assert.Diff(t, conds, want)
+	conds[0].Message = "caller mutation"
+	_, conds = s.Snapshot(id)
 	if got := len(conds); got != 2 {
 		t.Errorf("conditions length = %d after Ready transition, want 2", got)
 	}
-	var sawReady, sawHealthy bool
-	for _, c := range conds {
-		switch c.Type {
-		case ConditionReady:
-			sawReady = true
-		case ConditionHealthy:
-			sawHealthy = true
-		}
-	}
-	if !sawReady || !sawHealthy {
-		t.Errorf("expected both Ready and Healthy; sawReady=%v sawHealthy=%v", sawReady, sawHealthy)
-	}
+	want[0] = Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: ReasonFailed, Message: "boom"}
+	assert.Diff(t, conds, want)
 }
 
 func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
@@ -1007,7 +987,8 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						s.RecordEmitted(parent, &Emission{Complete: true})
 						s.DeleteObject(parent)
 						assert.Equal(t, s.GetObject(removed), nil)
-						assert.Equal(t, len(s.GetConditions(removed)), 0)
+						_, conds := s.Snapshot(removed)
+						assert.Equal(t, len(conds), 0)
 						assert.Equal(t, s.GetArtifact(removed), nil)
 						id := objects[1].Named()
 						assert.Equal(t, s.GetObject(id), objects[1])
@@ -1015,7 +996,8 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						assert.Equal(t, ok, true)
 						assert.Equal(t, status.Message, id.Group)
 						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
-						assert.Diff(t, s.GetConditions(id), []Condition{readyCondition(StatusReady, id.Group)})
+						_, conds = s.Snapshot(id)
+						assert.Diff(t, conds, []Condition{readyCondition(StatusReady, id.Group)})
 						parent = id
 						parent.Name = "parent-" + id.Name
 						s.RecordEmitted(parent, &Emission{Complete: true})

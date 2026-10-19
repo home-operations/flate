@@ -123,7 +123,8 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 			assert.NoError(t, err)
 
 			s := newStream(seed)
-			fm := certFuncs(s)
+			fm := make(map[string]any)
+			certFuncs(s, fm)
 			cfg := tt.cfg
 			var got, want certificate
 			if tt.name == "genSignedCert" {
@@ -143,7 +144,9 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 
 			for _, key := range []string{"not a PEM key", ca.Key} {
 				withKeyStream := newStream(seed)
-				withKey := certFuncs(withKeyStream)[tt.name+"WithKey"]
+				withKeyFuncs := make(map[string]any)
+				certFuncs(withKeyStream, withKeyFuncs)
+				withKey := withKeyFuncs[tt.name+"WithKey"]
 				if tt.name == "genSignedCert" {
 					got, err = withKey.(func(string, []any, []any, int, certificate, string) (certificate, error))(cfg.cn, cfg.ips, cfg.alternateDNS, cfg.days, ca, key)
 				} else {

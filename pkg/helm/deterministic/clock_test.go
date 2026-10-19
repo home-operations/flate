@@ -2,7 +2,10 @@ package deterministic
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 // TestDateInZone_DefaultsToFixedClockAndForcesUTC pins the two determinism
@@ -26,6 +29,94 @@ func TestDateInZone_DefaultsToFixedClockAndForcesUTC(t *testing.T) {
 	local := dateInZone("150405", ts, "Local")
 	if empty != "080910" || local != "080910" {
 		t.Errorf(`empty/Local zone not forced to UTC: ""=%q Local=%q, want 080910`, empty, local)
+	}
+}
+
+func TestClockFuncs_ParsersUseUTC(t *testing.T) {
+	fm := Funcs(SeedFor("rel", "ns"))
+	toDate, ok := fm["toDate"].(func(string, string) time.Time)
+	if !ok {
+		t.Fatalf("toDate override has unexpected type %T", fm["toDate"])
+	}
+	mustToDate, ok := fm["mustToDate"].(func(string, string) (time.Time, error))
+	if !ok {
+		t.Fatalf("mustToDate override has unexpected type %T", fm["mustToDate"])
+	}
+	local := time.Local
+	t.Cleanup(func() { time.Local = local })
+	for _, tc := range []struct {
+		name   string
+		offset int
+	}{
+		{"UTC", 0},
+		{"UTC-6", -21600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			time.Local = time.FixedZone(tc.name, tc.offset)
+			assert.Equal(t, toDate("2006-01-02", "2020-01-01").Unix(), int64(1577836800))
+			parsed, err := mustToDate("2006-01-02", "2020-01-01")
+			assert.NoError(t, err)
+			assert.Equal(t, parsed.Unix(), int64(1577836800))
+			assert.Equal(t, toDate(time.RFC3339, "2019-12-31T18:00:00-06:00").Unix(), int64(1577836800))
+			parsed, err = mustToDate(time.RFC3339, "2019-12-31T18:00:00-06:00")
+			assert.NoError(t, err)
+			assert.Equal(t, parsed.Unix(), int64(1577836800))
+			if got := toDate("2006-01-02", "invalid"); !got.IsZero() {
+				t.Errorf("invalid toDate = %v, want zero time", got)
+			}
+			if _, err := mustToDate("2006-01-02", "invalid"); err == nil {
+				t.Error("invalid mustToDate succeeded")
+			}
+		})
+	}
+}
+
+func TestClockFuncs_DurationRoundFixedClock(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		fm := Funcs(SeedFor("rel", "ns"))
+		now := fm["now"].(func() time.Time)
+		round, ok := fm["durationRound"].(func(any) string)
+		if !ok {
+			t.Fatalf("durationRound override has unexpected type %T", fm["durationRound"])
+		}
+		instant := now()
+		assert.Equal(t, round(instant), "0s")
+		assert.Equal(t, round(instant.Add(-2*time.Hour)), "2h")
+		time.Sleep(3 * time.Hour)
+		assert.Equal(t, now(), instant)
+		assert.Equal(t, round(instant), "0s")
+		assert.Equal(t, round(instant.Add(-2*time.Hour)), "2h")
+	})
+}
+
+func TestClockFuncs_DurationRoundInputs(t *testing.T) {
+	t.Parallel()
+	round, ok := Funcs(SeedFor("rel", "ns"))["durationRound"].(func(any) string)
+	if !ok {
+		t.Fatal("durationRound override has unexpected type")
+	}
+	for _, tc := range []struct {
+		name  string
+		input any
+		want  string
+	}{
+		{"string", "2h", "2h"},
+		{"nanoseconds", int64(2 * time.Hour), "2h"},
+		{"negative nanoseconds", int64(-2 * time.Hour), "2h"},
+		{"past", fixedTime.Add(-2 * time.Hour), "2h"},
+		{"future", fixedTime.Add(2 * time.Hour), "2h"},
+		{"invalid", "invalid", "0s"},
+		{"unsupported", nil, "0s"},
+		{"native int", int(2 * time.Hour), "0s"},
+		{"duration", 2 * time.Hour, "0s"},
+		{"boundary", "1h", "60m"},
+		{"above boundary", "1h1ns", "1h"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, round(tc.input), tc.want)
+		})
 	}
 }
 

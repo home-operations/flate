@@ -17,6 +17,9 @@ func TestTemplate_Deterministic(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
+	testutil.WriteFile(t, dir, "mychart/templates/_helpers.tpl", `{{- define "mychart.deterministic" -}}
+{{- tpl .Values.deterministic . -}}
+{{- end -}}`)
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -38,26 +41,67 @@ data:
   tls.crt: {{ $cert.Cert | b64enc | quote }}
   tls.key: {{ $cert.Key | b64enc | quote }}
   port: {{ get .Values.ports (keys .Values.ports | first) | quote }}
+  parsed-date: {{ toDate "2006-01-02" "2020-01-01" | unixEpoch | quote }}
+  parsed-must-date: {{ mustToDate "2006-01-02" "2020-01-01" | unixEpoch | quote }}
+  rounded-now: {{ now | durationRound | quote }}
+  rounded-past: {{ now | dateModify "-2h" | durationRound | quote }}
+  ordered-values: {{ values (dict "z" "first" "a" "last" "m" "middle") | join "," | quote }}
+  nested: {{ include "mychart.deterministic" . | quote }}
 `)
 
 	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	hr := newHR()
-	values := map[string]any{"ports": map[string]any{"http": 80, "bittorrent": 50413}}
+	values := map[string]any{
+		"ports": map[string]any{"http": 80, "bittorrent": 50413},
+		"deterministic": `{{ toDate "2006-01-02" "2020-01-01" | unixEpoch }}|` +
+			`{{ mustToDate "2006-01-02" "2020-01-01" | unixEpoch }}|` +
+			`{{ now | durationRound }}|{{ now | dateModify "-2h" | durationRound }}|` +
+			`{{ values (dict "z" "first" "a" "last" "m" "middle") | join "," }}`,
+	}
 	first, err := cli.Template(t.Context(), hr, values, Options{})
 	assert.NoError(t, err)
 	second, err := cli.Template(t.Context(), hr, values, Options{})
 	assert.NoError(t, err)
 	assert.Equal(t, second, first)
-	docs, err := manifest.SplitDocs([]byte(first))
-	assert.NoError(t, err)
-	if len(docs) != 1 {
-		t.Fatalf("rendered %d documents, want 1", len(docs))
+	for _, rendered := range []string{first, second} {
+		docs, err := manifest.SplitDocs([]byte(rendered))
+		assert.NoError(t, err)
+		if len(docs) != 1 {
+			t.Fatalf("rendered %d documents, want 1", len(docs))
+		}
+		data := docs[0]["data"].(map[string]any)
+		assert.Equal(t, data["stamp"], any("20200101000000.000000000"))
+		assert.Equal(t, data["port"], any("50413"))
+		assert.Equal(t, data["parsed-date"], any("1577836800"))
+		assert.Equal(t, data["parsed-must-date"], any("1577836800"))
+		assert.Equal(t, data["rounded-now"], any("0s"))
+		assert.Equal(t, data["rounded-past"], any("2h"))
+		assert.Equal(t, data["ordered-values"], any("last,middle,first"))
+		assert.Equal(t, data["nested"], any("1577836800|1577836800|0s|2h|last,middle,first"))
 	}
-	data := docs[0]["data"].(map[string]any)
-	assert.Equal(t, data["stamp"], any("20200101000000.000000000"))
-	assert.Equal(t, data["port"], any("50413"))
+}
+
+func TestTemplate_InvalidMustToDate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm
+data:
+  parsed: {{ mustToDate "2006-01-02" "invalid" | unixEpoch | quote }}
+`)
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	out, err := cli.Template(t.Context(), newHR(), nil, Options{})
+	if err == nil {
+		t.Error("invalid mustToDate rendered successfully")
+	}
+	assert.Equal(t, out, "")
 }
 
 func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {

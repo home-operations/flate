@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// certFuncs returns deterministic overrides for sprig's certificate and
+// certFuncs registers deterministic overrides for sprig's certificate and
 // private-key generators. All generated material is ed25519: ed25519.GenerateKey
 // reads the seeded stream directly (unlike rsa/ecdsa.GenerateKey, which route
 // through crypto/rand's CustomReader and discard a custom reader), and ed25519
@@ -31,24 +31,21 @@ import (
 // cannot make rsa/ecdsa keygen deterministic. The *WithKey variants keep their
 // signatures but ignore the supplied PEM and generate an ed25519 key, so output
 // stays deterministic regardless of the caller's key type.
-func certFuncs(s *stream) template.FuncMap {
-	return template.FuncMap{
-		"genPrivateKey":   func(typ string) string { return genPrivateKey(s, typ) },
-		"buildCustomCert": buildCustomCert,
-		"genCA":           func(cn string, days int) (certificate, error) { return genCA(s, cn, days) },
-		"genCAWithKey":    func(cn string, days int, _ string) (certificate, error) { return genCA(s, cn, days) },
-		"genSelfSignedCert": func(cn string, ips, alternateDNS []any, days int) (certificate, error) {
-			return genSelfSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days})
-		},
-		"genSelfSignedCertWithKey": func(cn string, ips, alternateDNS []any, days int, _ string) (certificate, error) {
-			return genSelfSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days})
-		},
-		"genSignedCert": func(cn string, ips, alternateDNS []any, days int, ca certificate) (certificate, error) {
-			return genSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days}, ca)
-		},
-		"genSignedCertWithKey": func(cn string, ips, alternateDNS []any, days int, ca certificate, _ string) (certificate, error) {
-			return genSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days}, ca)
-		},
+func certFuncs(s *stream, fm template.FuncMap) {
+	fm["genPrivateKey"] = func(typ string) string { return genPrivateKey(s, typ) }
+	fm["genCA"] = func(cn string, days int) (certificate, error) { return genCA(s, cn, days) }
+	fm["genCAWithKey"] = func(cn string, days int, _ string) (certificate, error) { return genCA(s, cn, days) }
+	fm["genSelfSignedCert"] = func(cn string, ips, alternateDNS []any, days int) (certificate, error) {
+		return genSelfSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days})
+	}
+	fm["genSelfSignedCertWithKey"] = func(cn string, ips, alternateDNS []any, days int, _ string) (certificate, error) {
+		return genSelfSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days})
+	}
+	fm["genSignedCert"] = func(cn string, ips, alternateDNS []any, days int, ca certificate) (certificate, error) {
+		return genSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days}, ca)
+	}
+	fm["genSignedCertWithKey"] = func(cn string, ips, alternateDNS []any, days int, ca certificate, _ string) (certificate, error) {
+		return genSignedCert(s, certConfig{cn: cn, ips: ips, alternateDNS: alternateDNS, days: days}, ca)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 func TestFuncs_NowIsFixed(t *testing.T) {
 	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
+	assert.Equal(t, len(fm), len(staticFuncs)+streamFuncCount)
 	raw, ok := fm["now"]
 	if !ok {
 		t.Fatal(`Funcs() missing "now" override`)
@@ -59,6 +60,29 @@ func TestFuncs_KeysAreSorted(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Diff(t, keys(tc.dicts...), tc.want)
+		})
+	}
+}
+
+func TestFuncs_ValuesAreKeySorted(t *testing.T) {
+	t.Parallel()
+	values, ok := Funcs(SeedFor("rel", "ns"))["values"].(func(map[string]any) []any)
+	if !ok {
+		t.Fatal("values override has unexpected type")
+	}
+	for _, tc := range []struct {
+		name string
+		dict map[string]any
+		want []any
+	}{
+		{"lexical keys", map[string]any{"z": "first", "a": "last", "m": "middle"}, []any{"last", "middle", "first"}},
+		{"nils and duplicates", map[string]any{"z": "same", "a": nil, "m": "same"}, []any{nil, "same", "same"}},
+		{"empty", map[string]any{}, []any{}},
+		{"nil", nil, []any{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Diff(t, values(tc.dict), tc.want)
 		})
 	}
 }

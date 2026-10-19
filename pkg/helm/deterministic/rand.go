@@ -27,29 +27,27 @@ var charsASCII = func() string {
 	return string(b)
 }()
 
-// randFuncs returns deterministic overrides for sprig's crypto/rand- and
+// randFuncs registers deterministic overrides for sprig's crypto/rand- and
 // math/rand-backed string/byte/int/uuid functions, all drawing from the
 // per-render stream. Output is not byte-identical to sprig — it only needs to be
 // deterministic and structurally valid (right length, right character class).
-func randFuncs(s *stream) template.FuncMap {
-	return template.FuncMap{
-		"randAlphaNum": func(n int) string { return randString(s, n, charsAlphaNum) },
-		"randAlpha":    func(n int) string { return randString(s, n, charsAlpha) },
-		"randNumeric":  func(n int) string { return randString(s, n, charsNumeric) },
-		"randAscii":    func(n int) string { return randString(s, n, charsASCII) },
-		"randBytes":    func(n int) (string, error) { return randBytes(s, n) },
-		"randInt":      func(minN, maxN int) int { return randInt(s, minN, maxN) },
-		"uuidv4":       func() string { return uuidv4(s) },
-		"shuffle":      func(in string) string { return shuffle(s, in) },
-		"bcrypt":       func(input string) string { return bcrypt(s, input) },
-		"htpasswd": func(username, password string) string {
-			if strings.Contains(username, ":") {
-				return fmt.Sprintf("invalid username: %s", username)
-			}
-			return username + ":" + bcrypt(s, password)
-		},
-		"encryptAES": func(password, plaintext string) (string, error) { return encryptAES(s, password, plaintext) },
+func randFuncs(s *stream, fm template.FuncMap) {
+	fm["randAlphaNum"] = func(n int) string { return randString(s, n, charsAlphaNum) }
+	fm["randAlpha"] = func(n int) string { return randString(s, n, charsAlpha) }
+	fm["randNumeric"] = func(n int) string { return randString(s, n, charsNumeric) }
+	fm["randAscii"] = func(n int) string { return randString(s, n, charsASCII) }
+	fm["randBytes"] = func(n int) (string, error) { return randBytes(s, n) }
+	fm["randInt"] = func(minN, maxN int) int { return randInt(s, minN, maxN) }
+	fm["uuidv4"] = func() string { return uuidv4(s) }
+	fm["shuffle"] = func(in string) string { return shuffle(s, in) }
+	fm["bcrypt"] = func(input string) string { return bcrypt(s, input) }
+	fm["htpasswd"] = func(username, password string) string {
+		if strings.Contains(username, ":") {
+			return fmt.Sprintf("invalid username: %s", username)
+		}
+		return username + ":" + bcrypt(s, password)
 	}
+	fm["encryptAES"] = func(password, plaintext string) (string, error) { return encryptAES(s, password, plaintext) }
 }
 
 // shuffle returns a deterministic permutation of in's runes, drawn from the

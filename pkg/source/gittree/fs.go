@@ -128,6 +128,7 @@ type gitView struct {
 	storers  sync.Pool
 	worktree billy.Filesystem
 	nodes    map[string]*gitNode
+	denied   map[string]bool
 	backing  billy.Filesystem
 	current  fs.FS
 	changes  map[string]bool
@@ -319,6 +320,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 				return nil, err
 			}
 		} else {
+			input.denied = current.denied
 			for name, node := range current.nodes {
 				input.nodes[name] = &gitNode{name: node.name, hash: node.hash, mode: node.mode, children: node.children}
 			}
@@ -364,6 +366,12 @@ func (g *gitView) shape(ctx context.Context, opts ViewOptions, input *FS) error 
 	kept := map[string]bool{".": true}
 	for _, name := range names {
 		node := g.nodes[name]
+		if node.mode&fs.ModeSymlink != 0 && opts.Mode != RemoteBase {
+			if g.denied == nil {
+				g.denied = make(map[string]bool)
+			}
+			g.denied[name] = true
+		}
 		if node.mode.IsDir() || !visible(opts, name, node.mode, matcher) {
 			continue
 		}
@@ -563,6 +571,11 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	}
 	node := g.nodes[name]
 	if node == nil {
+		for parent := name; len(g.denied) > 0 && parent != "."; parent = path.Dir(parent) {
+			if g.denied[parent] {
+				return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
+			}
+		}
 		if g.backing == nil && g.current != nil {
 			if _, err := fs.Lstat(g.current, name); err != nil {
 				return nil, err
@@ -747,6 +760,11 @@ func (g *gitView) OpenRegular(name string) (fs.File, error) { return g.Open(name
 func (g *gitView) ReadLink(name string) (string, error) {
 	if !fs.ValidPath(name) {
 		return "", &fs.PathError{Op: "readlink", Path: name, Err: fs.ErrInvalid}
+	}
+	if g.nodes[name] == nil {
+		if _, err := g.Lstat(name); err != nil {
+			return "", err
+		}
 	}
 	if g.mode != Direct {
 		node := g.nodes[name]

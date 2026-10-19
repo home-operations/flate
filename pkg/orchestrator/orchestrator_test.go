@@ -1810,3 +1810,79 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 		}
 	}
 }
+
+func TestOrchestrator_SourceValuesReadersRenderEmitter(t *testing.T) {
+	t.Parallel()
+	for _, form := range []string{"inline", "chartRef"} {
+		t.Run(form, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
+			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("demo", "flux-system",
+				"  path: ./apps/demo\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			resources := "resources: [hr.yaml, sibling.yaml]\n"
+			spec := `  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+      valuesFiles: [./config/prod.yaml]
+`
+			if form == "chartRef" {
+				resources = "resources: [hr.yaml, sibling.yaml, chart.yaml]\n"
+				spec = "  chartRef: {kind: HelmChart, name: chart, namespace: flux-system}\n"
+				testutil.WriteFile(t, root, "apps/demo/chart.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata: {name: chart, namespace: flux-system}
+spec:
+  chart: charts/demo
+  sourceRef: {kind: GitRepository, name: flux-system}
+  valuesFiles: [./config/prod.yaml]
+`)
+			}
+			testutil.WriteFile(t, root, "apps/demo/kustomization.yaml", resources)
+			testutil.WriteFile(t, root, "apps/demo/hr.yaml",
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec:\n  interval: 10m\n"+spec)
+			testutil.WriteFile(t, root, "apps/demo/sibling.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: sibling, namespace: apps}
+spec:
+  chartRef: {kind: OCIRepository, name: unavailable}
+`)
+			testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+			testutil.WriteFile(t, root, "charts/demo/values.yaml", "greeting: default\n")
+			testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: rendered, namespace: apps}
+data: {greeting: {{ .Values.greeting | quote }}}
+`)
+			testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
+			o, err := New(t.Context(), Config{
+				Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
+				ExternalChanges: change.NewSet([]string{"config/prod.yaml"}),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+			assert.NoError(t, o.Bootstrap(t.Context()))
+			release := testutil.HelmReleaseID("apps", "demo")
+			owner := testutil.KustomizationID("flux-system", "demo")
+			assert.Equal(t, o.store.GetObject(release) == nil, true)
+			assert.Equal(t, o.filter.ShouldReconcile(owner), true)
+			result, err := o.Render(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, len(result.Failed), 0)
+			assert.Equal(t, len(result.Blocked), 0)
+			assert.Equal(t, o.store.GetArtifact(owner) != nil, true)
+			rendered, ok := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "rendered"})
+			if !ok {
+				t.Fatal("selected release did not render")
+			}
+			assert.Equal(t, rendered.Data["greeting"], "production")
+			assert.Equal(t, o.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")), false)
+			assert.Equal(t, o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling")) == nil, true)
+		})
+	}
+}

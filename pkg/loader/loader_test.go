@@ -107,7 +107,7 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 				}
 				st.AddObject(parent)
 			}
-			sourceRoot, _, _ := SourceView(st, parent, root)
+			sourceRoot, _, _ := SourceView(st, parent.SourceID(), root)
 			_, err := l.Load(t.Context(), filepath.Join(sourceRoot, parent.Path))
 			assert.NoError(t, err)
 			l.ApplyNamespaces(root)

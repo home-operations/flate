@@ -26,7 +26,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 	// External sources own decode errors but cannot parent local-tree orphans.
 	prefixes = slices.DeleteFunc(slices.Clone(prefixes), func(claim manifest.KSClaim) bool {
 		ks, _ := o.store.Get[*manifest.Kustomization](claim.ID)
-		_, _, external := loader.SourceView(o.store, ks, o.repoRoot)
+		_, _, external := loader.SourceView(o.store, ks.SourceID(), o.repoRoot)
 		return external
 	})
 	for id, info := range failed {

@@ -36,10 +36,7 @@ func (l *Loader) buildProductions(repoRoot string) {
 	}
 	record := func(v graphVisit) {
 		if v.owner != (manifest.NamedResource{}) && !v.generated {
-			b.idx.Readers[v.coordinate] = appendUniqueProducer(b.idx.Readers[v.coordinate], v.owner)
-			if local := v.localCoordinate(); local != "" {
-				b.idx.Readers[local] = appendUniqueProducer(b.idx.Readers[local], v.owner)
-			}
+			l.recordReader(v.coordinate, v.localCoordinate(), v.owner)
 		}
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
@@ -97,7 +94,7 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 			if !ok {
 				return false
 			}
-			_, pinned, _ := SourceView(l.Store, ks, repoRoot)
+			_, pinned, _ := SourceView(l.Store, ks.SourceID(), repoRoot)
 			return pinned
 		}) {
 			continue
@@ -177,7 +174,7 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 		}
 	}
 	for _, ks := range kss {
-		root, pinned, _ := SourceView(l.Store, ks, repoRoot)
+		root, pinned, _ := SourceView(l.Store, ks.SourceID(), repoRoot)
 		base := l.documents.claimBase(root, ks.Path)
 		delete(roots, filepath.Join(root, base))
 		if pinned {

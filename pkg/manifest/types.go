@@ -112,6 +112,8 @@ type Reference struct {
 	Optional bool
 	// Content selects changed-only content dependents; ordering edges are false.
 	Content bool
+	// Files borrows immutable source-relative input declarations.
+	Files []string
 }
 
 // References yields dependencies in source-field order without deduplication.

@@ -267,6 +267,10 @@ func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 // where spec.chart.spec.valuesFiles enumerates a stack of values
 // layers.
 func BenchmarkMergeChartValuesFiles(b *testing.B) {
+	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
+	if err != nil {
+		b.Fatal(err)
+	}
 	const n = 10
 	files := make([]*chartcommon.File, 0, n)
 	names := make([]string, 0, n)
@@ -284,8 +288,8 @@ func BenchmarkMergeChartValuesFiles(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := mergeChartValuesFilesUncached(ch, names, false); err != nil {
-			b.Fatalf("mergeChartValuesFilesUncached: %v", err)
+		if _, err := cli.mergeChartValuesFiles(b.Context(), chartLoadResult{chart: ch}, names, false); err != nil {
+			b.Fatalf("mergeChartValuesFiles: %v", err)
 		}
 	}
 }

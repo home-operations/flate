@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/tree"
@@ -147,6 +148,65 @@ func TestAcquire_TrailingRecordPadding(t *testing.T) {
 			c := cachetest.New(t, root, New)
 			if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-padding"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {
 				t.Fatalf("root=%q: %v", root, err)
+			}
+		})
+	}
+}
+
+func TestAcquire_ArchiveEntryConflicts(t *testing.T) {
+	t.Parallel()
+	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
+		t.Run(backing.name, func(t *testing.T) {
+			t.Parallel()
+			c := cachetest.New(t, backing.root, New)
+			for _, tc := range []struct {
+				name          string
+				first, second tar.Header
+				want          error
+			}{
+				{"duplicate_regular", tar.Header{Name: "file", Typeflag: tar.TypeReg}, tar.Header{Name: "file", Typeflag: tar.TypeReg}, nil},
+				{"duplicate_link", tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, nil},
+				{"duplicate_hardlink", tar.Header{Name: "file", Typeflag: tar.TypeLink}, tar.Header{Name: "file", Typeflag: tar.TypeLink}, nil},
+				{"file_then_link", tar.Header{Name: "file", Typeflag: tar.TypeReg}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tree.ErrConflict},
+				{"hardlink_then_file", tar.Header{Name: "file", Typeflag: tar.TypeLink}, tar.Header{Name: "file", Typeflag: tar.TypeReg}, tree.ErrConflict},
+				{"directory_then_link", tar.Header{Name: "file", Typeflag: tar.TypeDir}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tree.ErrConflict},
+				{"link_then_directory", tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tar.Header{Name: "file", Typeflag: tar.TypeDir}, tree.ErrConflict},
+				{"link_then_child", tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tar.Header{Name: "file/child", Typeflag: tar.TypeReg}, tree.ErrConflict},
+				{"child_then_link", tar.Header{Name: "file/child", Typeflag: tar.TypeReg}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tree.ErrConflict},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					var data bytes.Buffer
+					w := tar.NewWriter(&data)
+					for i, h := range []tar.Header{tc.first, tc.second} {
+						if h.Typeflag == tar.TypeReg {
+							h.Size = 1
+						} else if h.Typeflag != tar.TypeDir {
+							h.Linkname = fmt.Sprintf("../absent-%d", i)
+						}
+						assert.NoError(t, w.WriteHeader(&h))
+						if h.Typeflag == tar.TypeReg {
+							_, err := fmt.Fprint(w, i)
+							assert.NoError(t, err)
+						}
+					}
+					assert.NoError(t, w.Close())
+					input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: tc.name}, Policy{}, producer(data.Bytes(), ocispec.Descriptor{}))
+					if !errors.Is(err, tc.want) {
+						t.Fatalf("acquire = %v; want %v", err, tc.want)
+					}
+					if tc.want != nil {
+						return
+					}
+					got, err := fs.ReadFile(input, "file")
+					if tc.second.Typeflag == tar.TypeReg {
+						assert.NoError(t, err)
+						assert.Equal(t, string(got), "1")
+					} else {
+						assert.Equal(t, len(got), 0)
+						assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+					}
+				})
 			}
 		})
 	}

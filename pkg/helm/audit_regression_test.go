@@ -44,6 +44,8 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 
 func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 	t.Parallel()
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
 	ch := minimalChart()
 	ch.Files = []*common.File{{Name: "empty.yaml", Data: []byte{}}}
 	archive, err := chartutil.Save(ch, t.TempDir())
@@ -54,7 +56,7 @@ func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, err := mergeChartValuesFilesUncached(loaded, []string{"empty.yaml"}, false)
+	values, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: loaded}, []string{"empty.yaml"}, false)
 	if err != nil {
 		t.Fatalf("empty file treated as missing: %v", err)
 	}

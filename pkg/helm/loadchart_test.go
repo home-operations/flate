@@ -222,6 +222,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		testutil.WriteFile(t, root, dir+"/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
 		testutil.WriteFile(t, root, dir+"/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: chart\n")
 	}
+	testutil.WriteFile(t, root, "config/prod.yaml", "marker: acquired\n")
 	repo := testutil.GitInit(t, root)
 	testutil.GitCommitAll(t, repo, "chart", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
 	owner := cachetest.New(t, "", cache.New)
@@ -263,6 +264,14 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		warm, err := cli.loadChart(t.Context(), other)
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == first.chart, true)
+		assert.Equal(t, backing.opens.Load(), reads)
+		values, err := cli.mergeChartValuesFiles(t.Context(), first, []string{"config/prod.yaml"}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, values["marker"], any("acquired"))
+		reads = backing.opens.Load()
+		values, err = cli.mergeChartValuesFiles(t.Context(), warm, []string{"config/prod.yaml"}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, values["marker"], any("acquired"))
 		assert.Equal(t, backing.opens.Load(), reads)
 		other.Chart.Name = "two"
 		second, err := cli.loadChart(t.Context(), other)

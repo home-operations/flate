@@ -29,6 +29,7 @@ type tarFS struct {
 	identity string
 	digest   digest.Digest
 	nodes    map[string]*tarNode
+	denied   map[string]bool
 }
 type tarNode struct {
 	fs.FileInfo
@@ -80,11 +81,16 @@ func (t *tarFS) identify(content digest.Digest, key ArchiveKey) {
 }
 
 func (t *tarFS) Open(name string) (fs.File, error) {
+	if (t.memory == nil || len(t.denied) != 0) && !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	for parent := name; len(t.denied) > 0 && parent != "."; parent = path.Dir(parent) {
+		if t.denied[parent] {
+			return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
+		}
+	}
 	if t.memory != nil {
 		return t.memory.Open(name)
-	}
-	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
 	node := t.nodes[name]
 	if node == nil {
@@ -162,7 +168,8 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 		}
 		total += h.Size
 		nextHeader = alignNext(pos.offset + h.Size)
-		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
+		link := h.Typeflag == tar.TypeSymlink || h.Typeflag == tar.TypeLink
+		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir && !link {
 			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers every declared entry.
 				return nil, err
 			}
@@ -175,7 +182,7 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 		}
 
 		old := index.nodes[name]
-		if old != nil && old.IsDir() != (h.Typeflag == tar.TypeDir) {
+		if old != nil && (old.IsDir() != (h.Typeflag == tar.TypeDir) || (old.Mode()&fs.ModeSymlink != 0) != link) {
 			return nil, tree.ErrConflict
 		}
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
@@ -185,6 +192,14 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 			if index.nodes[parent] == nil {
 				index.nodes[parent] = &tarNode{FileInfo: (&tar.Header{Name: path.Base(parent), Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo()}
 			}
+		}
+		if link {
+			index.nodes[name] = &tarNode{FileInfo: (&tar.Header{Name: path.Base(name), Typeflag: tar.TypeSymlink}).FileInfo()}
+			if index.denied == nil {
+				index.denied = make(map[string]bool)
+			}
+			index.denied[name] = true
+			continue
 		}
 		copyHeader := *h
 		copyHeader.Name = path.Base(name)
@@ -242,7 +257,7 @@ func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
 	}
 	kept := map[string]bool{".": true}
 	for name, node := range nodes {
-		if node.IsDir() || matcher.Match(filepath.FromSlash(name), false) {
+		if !node.Mode().IsRegular() || matcher.Match(filepath.FromSlash(name), false) {
 			continue
 		}
 		kept[name] = true
@@ -274,7 +289,7 @@ func (t *tarFS) list() {
 		node.children = nil
 	}
 	for name, node := range t.nodes {
-		if name != "." {
+		if name != "." && node.Mode()&fs.ModeSymlink == 0 {
 			parent := t.nodes[path.Dir(name)]
 			parent.children = append(parent.children, node)
 		}

@@ -1055,6 +1055,37 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 	}
 }
 
+func TestFilter_ReverseEdgeHelmChartKeepsEmitter(t *testing.T) {
+	t.Parallel()
+	const ociFile = "repositories/oci/source.yaml"
+	oci := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "source"}
+	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "chart"}
+	sibling := testutil.HelmReleaseID("apps", "other")
+	app := &manifest.Kustomization{Name: "app", Namespace: "flux-system", Path: "apps/app"}
+	meta := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps"}
+	objects := testutil.MapLister{app.Named(): app, meta.Named(): meta}
+	f := NewFilter(NewSet([]string{ociFile}), filterFixture{
+		files: map[manifest.NamedResource]string{
+			oci:          ociFile,
+			chart:        "apps/app/chart.yaml",
+			sibling:      "apps/app/other.yaml",
+			app.Named():  "apps/app.yaml",
+			meta.Named(): "flux-system/apps.yaml",
+		},
+		objects: objects,
+		refs:    map[manifest.NamedResource][]manifest.NamedResource{chart: {oci}},
+	}.index(), objects)
+
+	for _, id := range []manifest.NamedResource{oci, chart, app.Named(), meta.Named()} {
+		if !f.ShouldReconcile(id) {
+			t.Errorf("source, chart and emitting ancestors must be kept: missing %s; keep=%v", id, f.KeepNames())
+		}
+	}
+	assert.Equal(t, f.ShouldReconcile(sibling), false)
+	f.AddEmitted(app.Named(), refObj(sibling))
+	assert.Equal(t, f.ShouldReconcile(sibling), false)
+}
+
 // TestFilter_ReverseEdgeNoCascadeFromChangedConsumer pins the guard on
 // the reverse edge: it fires ONLY for a source whose OWN file changed,
 // never for a source merely referenced by a changed consumer. Two
@@ -1509,4 +1540,34 @@ func TestFilter_LogValue(t *testing.T) {
 	if got := attrs[1].Value.Any().([]string); !slices.Equal(got, f.KeepNames()) {
 		t.Errorf("items = %v, want sorted keep names", got)
 	}
+}
+
+func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
+	t.Parallel()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: "apps"}
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "workloads/demo"}
+	release := testutil.HelmReleaseID("apps", "demo")
+	sibling := testutil.HelmReleaseID("apps", "sibling")
+	objects := testutil.MapLister{parent.Named(): parent, owner.Named(): owner}
+	idx := filterFixture{
+		files: map[manifest.NamedResource]string{
+			parent.Named(): "flux/parent.yaml",
+			owner.Named():  "apps/owner.yaml",
+			release:        "workloads/demo/hr.yaml",
+			sibling:        "workloads/demo/sibling.yaml",
+		},
+		objects: objects,
+	}.index()
+	idx.Readers["config/prod.yaml"] = []manifest.NamedResource{release}
+	f := NewFilter(NewSet([]string{"config/prod.yaml"}), idx, objects)
+	for _, id := range []manifest.NamedResource{release, owner.Named(), parent.Named()} {
+		assert.Equal(t, f.ShouldReconcile(id), true)
+	}
+	assert.Equal(t, f.ShouldReconcile(sibling), false)
+	for _, emitter := range []manifest.NamedResource{owner.Named(), parent.Named()} {
+		assert.Equal(t, len(f.AddEmitted(emitter, refObj(sibling))), 0)
+		assert.Equal(t, f.ShouldReconcile(sibling), false)
+	}
+	child := testutil.HelmReleaseID("apps", "rendered")
+	assert.Diff(t, f.AddEmitted(release, refObj(child)), []manifest.NamedResource{child})
 }

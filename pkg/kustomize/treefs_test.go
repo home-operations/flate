@@ -565,8 +565,8 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 				if err != nil || string(data) != "inside" {
 					t.Fatalf("ordinary read = %q, %v", data, err)
 				}
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("omitted link read = %q, %v", data, err)
+			} else if !errors.Is(err, fs.ErrPermission) {
+				t.Fatalf("denied link read = %q, %v", data, err)
 			}
 		})
 	}

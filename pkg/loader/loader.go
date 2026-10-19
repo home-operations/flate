@@ -469,7 +469,7 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 		if ks.IsFragment() {
 			continue
 		}
-		sourceRoot, _, _ := SourceView(l.Store, ks, l.SourceRoot)
+		sourceRoot, _, _ := SourceView(l.Store, ks.SourceID(), l.SourceRoot)
 		if sourceRoot != root {
 			continue
 		}

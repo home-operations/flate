@@ -22,6 +22,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
@@ -113,7 +115,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					assert.Equal(t, loaded.chart.Metadata.Version, "6.15.0")
 					assert.Equal(t, loaded.chart.Dependencies()[0].Metadata.Version, "1.2.3+child")
 					loaded.oci = &ociChartContent{Digest: identity.Digest, Revision: identity.Revision, DisableTracking: disable}
-					valuesKey := chartValuesCacheKey(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+					valuesKey := chartValuesCacheKey(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, nil)
 					merged, ok := cli.chartValuesCache[valuesKey]
 					if !ok || valuesKey == "" {
 						t.Fatal("render did not cache values under its effective fingerprint")
@@ -262,7 +264,7 @@ data:
 		loaded, err := cli.loadChart(t.Context(), hr)
 		assert.NoError(t, err)
 		loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
-		values, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		values, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, err)
 		key := computeTemplateKey(loaded, values, Options{}, hr)
 		t.Logf("chart fingerprint=%s template key=%s", loaded.fingerprint, key)
@@ -412,7 +414,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+				merged, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -520,7 +522,7 @@ data:
 				cli.SetSourceResolver(NewStoreSourceResolver(st))
 				cli.chartCache[captured.fingerprint()] = loaded
 				loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
-				values, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+				values, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 				assert.NoError(t, err)
 				keys[i] = computeTemplateKey(loaded, values, Options{}, hr)
 				if keys[i] == "" {
@@ -654,8 +656,8 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			tc.edit(a, b)
 			first, second := chartLoadResult{chart: a, fingerprint: manifest.Fingerprint(projectChart(a))}, chartLoadResult{chart: b, fingerprint: manifest.Fingerprint(projectChart(b))}
 			key := computeTemplateKey(first, nil, Options{}, hr)
-			valuesKey := chartValuesCacheKey(first, []string{"values.yaml"}, false)
-			if key == "" || key == computeTemplateKey(second, nil, Options{}, hr) || valuesKey == "" || valuesKey == chartValuesCacheKey(second, []string{"values.yaml"}, false) {
+			valuesKey := chartValuesCacheKey(first, []string{"values.yaml"}, false, nil)
+			if key == "" || key == computeTemplateKey(second, nil, Options{}, hr) || valuesKey == "" || valuesKey == chartValuesCacheKey(second, []string{"values.yaml"}, false, nil) {
 				t.Fatal("distinct chart content shared a cache key")
 			}
 		})
@@ -664,7 +666,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		t.Parallel()
 		first, second := chartLoadResult{}, chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{}))}
 		assert.Equal(t, computeTemplateKey(first, nil, Options{}, hr) == computeTemplateKey(second, nil, Options{}, hr), false)
-		assert.Equal(t, chartValuesCacheKey(first, nil, false) == chartValuesCacheKey(second, nil, false), false)
+		assert.Equal(t, chartValuesCacheKey(first, nil, false, nil) == chartValuesCacheKey(second, nil, false, nil), false)
 	})
 
 	t.Run("Values", func(t *testing.T) {
@@ -992,5 +994,107 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 				t.Errorf("state %d repeated output differs: %q != %q", i, out, first)
 			}
 		}
+	}
+}
+
+func sourceValuesCacheFixture(t *testing.T) (string, *store.Store, *manifest.HelmRelease) {
+	t.Helper()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+	testutil.WriteFile(t, root, "charts/demo/values.yaml", "marker: default\n")
+	testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n")
+	testutil.WriteFile(t, root, "config/prod.yaml", "marker: first\n")
+	location, err := gitrepo.Locate(t.Context(), root, root)
+	assert.NoError(t, err)
+	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	assert.NoError(t, err)
+	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoNamespace: "apps", RepoName: "repo"}, ChartValuesFiles: []string{"config/prod.yaml"}, IgnoreMissingValuesFiles: true}
+	st := store.New()
+	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: admitted.FS})
+	return root, st, hr
+}
+
+func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
+	t.Parallel()
+	root, st, hr := sourceValuesCacheFixture(t)
+	cacheRoot := t.TempDir()
+	owner := cachetest.New(t, cacheRoot, cache.New)
+	cli, err := NewClient(owner)
+	assert.NoError(t, err)
+	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	first, err := cli.Template(t.Context(), hr, nil, Options{})
+	assert.NoError(t, err)
+	if !strings.Contains(first, `marker: "first"`) {
+		t.Fatal(first)
+	}
+	t.Run("persistent reuse", func(t *testing.T) {
+		t.Parallel()
+		if !renderPersistenceEligible(t) {
+			t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
+		}
+		root, st, hr := sourceValuesCacheFixture(t)
+		cacheRoot := t.TempDir()
+		owner := cachetest.New(t, cacheRoot, cache.New)
+		cli, err := NewClient(owner)
+		assert.NoError(t, err)
+		cli.SetSourceResolver(NewStoreSourceResolver(st))
+		first, err := cli.Template(t.Context(), hr, nil, Options{})
+		assert.NoError(t, err)
+		initial, err := cli.loadChart(t.Context(), hr)
+		assert.NoError(t, err)
+		merged, err := cli.mergeChartValuesFiles(t.Context(), initial, hr.ChartValuesFiles, true)
+		assert.NoError(t, err)
+		key := computeTemplateKey(initial, merged, Options{}, hr)
+		if key == "" {
+			t.Fatal("fixture has no completed-output key")
+		}
+		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+		assert.NoError(t, err)
+		data, err := io.ReadAll(r)
+		assert.NoError(t, errors.Join(err, r.Close()))
+		assert.Equal(t, string(data), first)
+		cached := first + "# persistent hit witness\n"
+		r, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{}, func(_ context.Context, w io.Writer) (ocispec.Descriptor, error) {
+			_, err := io.WriteString(w, cached)
+			return ocispec.Descriptor{}, err
+		})
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+		fresh, err := NewClient(cachetest.New(t, cacheRoot, cache.New))
+		assert.NoError(t, err)
+		fresh.SetSourceResolver(NewStoreSourceResolver(st))
+		hit, err := fresh.Template(t.Context(), hr, nil, Options{})
+		assert.NoError(t, err)
+		assert.Equal(t, hit, cached)
+		assertSourceValuesChanges(t, fresh, hr, root)
+	})
+	assertSourceValuesChanges(t, cli, hr, root)
+}
+
+func assertSourceValuesChanges(t *testing.T, cli *Client, hr *manifest.HelmRelease, root string) {
+	t.Helper()
+	initial, err := cli.loadChart(t.Context(), hr)
+	assert.NoError(t, err)
+	for _, marker := range []string{"changed", "", "added"} {
+		if marker == "" {
+			assert.NoError(t, os.Remove(filepath.Join(root, "config/prod.yaml")))
+		} else {
+			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
+		}
+		out, err := cli.Template(t.Context(), hr, nil, Options{})
+		assert.NoError(t, err)
+		want := marker
+		if want == "" {
+			want = "default"
+		}
+		if !strings.Contains(out, `marker: "`+want+`"`) {
+			t.Fatal(out)
+		}
+		repeated, err := cli.Template(t.Context(), hr, nil, Options{})
+		assert.NoError(t, err)
+		assert.Equal(t, repeated, out)
+		loaded, err := cli.loadChart(t.Context(), hr)
+		assert.NoError(t, err)
+		assert.Equal(t, loaded.chart == initial.chart, true)
 	}
 }

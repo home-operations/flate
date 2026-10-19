@@ -94,12 +94,12 @@ func BenchmarkChartValues_Cached(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if _, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false); err != nil {
+	if _, err := cli.mergeChartValuesFiles(b.Context(), loaded, hr.ChartValuesFiles, false); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false); err != nil {
+		if _, err := cli.mergeChartValuesFiles(b.Context(), loaded, hr.ChartValuesFiles, false); err != nil {
 			b.Fatal(err)
 		}
 	}

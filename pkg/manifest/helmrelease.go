@@ -25,6 +25,11 @@ type HelmChart struct {
 	RepoKind      string `json:"repoKind" yaml:"repoKind"`
 }
 
+// UsesSourceValuesFiles reports whether values files are relative to the source artifact root.
+func (h HelmChart) UsesSourceValuesFiles() bool {
+	return h.RepoKind == KindGitRepository || h.RepoKind == KindBucket
+}
+
 // RepoFullName is "<namespace>-<name>" — the canonical id of the source.
 func (h HelmChart) RepoFullName() string {
 	return h.RepoNamespace + "-" + h.RepoName
@@ -139,8 +144,7 @@ type HelmRelease struct {
 	DisableSchemaValidation  bool `json:"-" yaml:"-"`
 	DisableOpenAPIValidation bool `json:"-" yaml:"-"`
 
-	// ChartValuesFiles are values files baked into the chart that
-	// should be merged BEFORE the HR's own Values overrides.
+	// ChartValuesFiles are selected source or chart files merged before release values.
 	ChartValuesFiles         []string `json:"-" yaml:"-"`
 	IgnoreMissingValuesFiles bool     `json:"-" yaml:"-"`
 }
@@ -331,6 +335,11 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 }
 
 func (h *HelmRelease) references(yield func(Reference) bool) {
+	source := Resolve(NamedResource{Group: h.Chart.RepoGroup, Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName}, "", h.Namespace)
+	var files []string
+	if source.Group == SourceDomain && h.Chart.UsesSourceValuesFiles() {
+		files = h.ChartValuesFiles
+	}
 	var authored NamedResource
 	if ref := h.ChartRef; ref != nil {
 		authored = Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
@@ -340,16 +349,18 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 	} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
 		ref := tmpl.Spec.SourceRef
 		authored = Resolve(NamedResource{Group: referenceGroup(cmp.Or(ref.Kind, KindHelmRepository), ref.APIVersion), Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
-		if !yield(Reference{NamedResource: authored, Use: "source", Content: true}) {
+		refFiles := files
+		if authored != source {
+			refFiles = nil
+		}
+		if !yield(Reference{NamedResource: authored, Use: "source", Content: true, Files: refFiles}) {
 			return
 		}
 	}
-	// A resolved HelmChart or synthetic chart supplies its own source identity.
-	source := Resolve(NamedResource{Group: h.Chart.RepoGroup, Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName}, "", h.Namespace)
 	if source.Kind != "" && authored != source {
 		if !yield(Reference{
 			NamedResource: source,
-			Use:           "source", Content: true,
+			Use:           "source", Content: true, Files: files,
 		}) {
 			return
 		}

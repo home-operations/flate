@@ -133,6 +133,10 @@ func (g *localView) ReadDir(name string) ([]fs.DirEntry, error) {
 func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
 	entries, err := os.ReadDir(abs)
 	return slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
+		if g.operation && entry.Type()&fs.ModeSymlink != 0 && entry.Name() != ".git" {
+			name := filepath.Join(abs, entry.Name())
+			g.observations.LoadOrStore(name, &localObservation{err: &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}})
+		}
 		return entry.Name() == ".git" || !entry.Type().IsRegular() && !entry.IsDir()
 	}), err
 }
@@ -202,6 +206,9 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 			info, err = observation.info, observation.err
 		}
 	}
+	if err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrPermission}
+	}
 	if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() && !info.IsDir() {
 		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
 	}
@@ -221,6 +228,10 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 				return cmp.Compare(entry.Name(), base)
 			})
 			if !found {
+				if cached, ok := g.observations.Load(abs); ok {
+					observation := cached.(*localObservation)
+					return observation.info, observation.err
+				}
 				return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
 			}
 			return entries[i].Info()

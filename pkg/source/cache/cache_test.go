@@ -294,20 +294,60 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 					t.Fatal("accepted invalid archive")
 				}
 			}
-			var data bytes.Buffer
-			w := tar.NewWriter(&data)
-			if err := w.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "target"}); err != nil {
-				t.Fatal(err)
-			}
-			if err := w.Close(); err != nil {
-				t.Fatal(err)
-			}
-			input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-link"}, Policy{MaxAge: 0}, producer(data.Bytes(), ocispec.Descriptor{}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := fs.Stat(input, "link"); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("link: %v", err)
+			for _, defaults := range []bool{false, true} {
+				t.Run(fmt.Sprint(defaults), func(t *testing.T) {
+					t.Parallel()
+					var data bytes.Buffer
+					w := tar.NewWriter(&data)
+					for _, h := range []*tar.Header{
+						{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../absent"},
+						{Name: "hardlink", Typeflag: tar.TypeLink, Linkname: "file"},
+						{Name: "dir/link", Typeflag: tar.TypeSymlink, Linkname: "../../absent"},
+						{Name: "file", Typeflag: tar.TypeReg, Size: 7},
+						{Name: "ignored", Typeflag: tar.TypeReg, Size: 7},
+					} {
+						assert.NoError(t, w.WriteHeader(h))
+						if h.Typeflag == tar.TypeReg {
+							_, err := io.WriteString(w, "content")
+							assert.NoError(t, err)
+						}
+					}
+					assert.NoError(t, w.Close())
+					key := ArchiveKey{Content: fmt.Sprintf("source-test-link-%t", defaults), Ignore: "ignored\n", WithDefaults: defaults}
+					input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, producer(data.Bytes(), ocispec.Descriptor{}))
+					assert.NoError(t, err)
+					readers := []fs.FS{input}
+					if disk {
+						fresh := cachetest.New(t, root, New)
+						replayed, _, _, err := fresh.Acquire(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, io.Writer) (ocispec.Descriptor, error) {
+							t.Error("fresh owner refetched cached archive")
+							return ocispec.Descriptor{}, errors.New("unexpected fetch")
+						})
+						assert.NoError(t, err)
+						readers = append(readers, replayed)
+					}
+					for _, reader := range readers {
+						entries, err := fs.ReadDir(reader, ".")
+						assert.NoError(t, err)
+						if len(entries) != 1 || entries[0].Name() != "file" {
+							t.Fatalf("archive entries = %v", entries)
+						}
+						for _, name := range []string{"link", "link/child", "hardlink", "hardlink/child", "dir/link", "dir/link/nested/child"} {
+							data, err := fs.ReadFile(reader, name)
+							assert.Equal(t, len(data), 0)
+							assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+							_, err = fs.Stat(reader, name)
+							assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+						}
+						for _, name := range []string{"absent", "ignored"} {
+							_, err := fs.ReadFile(reader, name)
+							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+						}
+						data, err := fs.ReadFile(reader, "file")
+						assert.NoError(t, err)
+						assert.Equal(t, string(data), "content")
+					}
+				})
 			}
 		})
 	}

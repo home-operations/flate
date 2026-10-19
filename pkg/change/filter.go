@@ -464,31 +464,10 @@ func (f *Filter) resolve() {
 				enqueueAncestor(producer)
 			}
 		}
-		// Also walk the structural-parent chain of any Flux
-		// Kustomization in the keep set. A leaf change pulls in its
-		// owner KS (above); that KS's own source file might live under
-		// a parent KS's spec.path (the home-ops cross-tree pattern —
-		// see #103). Without the parent reconciling, namespace-scoped
-		// sources it emits (e.g. components/namespace producing one
-		// OCIRepository per tenant ns) never land in the store, and
-		// the leaf can't resolve its chart ref.
-		if !queue[head].KindInfo().Structural {
-			continue
-		}
 		src := record.File
-		if src == "" {
+		if src == "" || !queue[head].KindInfo().Parent {
 			continue
 		}
-		// Pull in whichever KS owns this KS's *source file* — i.e. the
-		// structural parent in the home-ops cross-tree pattern where a
-		// leaf KS in apps/base/ is registered by a parent KS rendering
-		// apps/main/. Use ownersOf so the parent (longest-prefix match
-		// for the source file) gets included; also append ancestorsOf
-		// so deeper chains of meta-Kustomizations get pulled in too.
-		// queue[head] itself owns its OWN spec.path, not its source
-		// file, so the parent never collides with the KS we're walking.
-		// Structural parents are ancestor-only (their unrelated children
-		// shouldn't cascade into keep — same rationale as ancestorsOf).
 		enqueueAncestorChain(src, queue[head])
 	}
 	f.keep = keep

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"sync"
@@ -37,20 +38,7 @@ type Client struct {
 	chartCache     map[string]chartLoadResult
 	chartLoadLocks *keylock.KeyMap[string]
 
-	// chartValuesCache memoizes mergeChartValuesFiles output keyed by
-	// (loaded fingerprint, ordered valuesFiles, missing-file policy). Multiple HRs
-	// sharing a base chart and the same spec.chart.spec.valuesFiles
-	// stack (common: bjw-s app-template with a fixed set of layered
-	// values-*.yaml files) re-yaml.Unmarshal'd the same bytes once per
-	// HR. The cache holds the canonical merged map; callers receive
-	// a deep clone so callers cannot mutate the canonical merged map.
-	//
-	// Guarded by chartMu — same lock as chartCache. The two caches
-	// share a lifecycle (both live for the duration of the Client)
-	// and a relatively low write rate (one entry per unique
-	// chart+valuesFiles tuple per orchestrator run); a separate
-	// mutex would just add coordination overhead with no contention
-	// reduction.
+	// Cached values MUST remain immutable; chartMu guards lookup and publication.
 	chartValuesCache map[string]map[string]any
 
 	// valuesCache memoizes parsed-YAML output of ExpandValueReferences
@@ -108,6 +96,8 @@ type chartLoadResult struct {
 	fingerprint string
 	oci         *ociChartContent
 	artifact    store.SourceArtifact
+	valuesFS    fs.FS
+	valuesPin   string
 }
 
 // loadChart returns the canonical immutable chart after releasing its load lock.
@@ -209,6 +199,9 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 		}
 	}
 	loaded.artifact = *art
+	if hr.Chart.UsesSourceValuesFiles() {
+		loaded.valuesFS, loaded.valuesPin = input, pin
+	}
 	return loaded, nil
 }
 

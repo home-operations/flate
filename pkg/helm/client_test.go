@@ -63,53 +63,63 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if chartValuesCacheKey(loaded, hr.ChartValuesFiles, false) == "" || chartValuesCacheKey(loaded, hr.ChartValuesFiles, false) == previous {
+		if chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, nil) == "" || chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, nil) == previous {
 			t.Fatal("different chart content shared a fingerprint")
 		}
-		merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)
+		merged, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, false)
 		if err != nil {
 			t.Fatal(err)
 		}
 		assert.Equal(t, merged["marker"], any([]string{"original", "second"}[i]))
-		previous = chartValuesCacheKey(loaded, hr.ChartValuesFiles, false)
+		previous = chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, nil)
 	}
 }
 
 func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	t.Parallel()
-	st, hr, dir := ociRenderFixture(t)
-	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	withoutFiles := hr.Clone()
-	withoutFiles.ChartValuesFiles = nil
-	loaded, err := cli.loadChart(t.Context(), withoutFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assert.Equal(t, loaded.fingerprint == "", false)
-	var results [2]chartLoadResult
-	var failures [2]error
-	var wg sync.WaitGroup
-	for i := range results {
-		wg.Go(func() {
-			results[i], failures[i] = cli.loadChart(t.Context(), hr)
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			st, hr, dir := ociRenderFixture(t)
+			hr = hr.Clone()
+			hr.Chart.RepoKind = kind
+			if kind == manifest.KindGitRepository {
+				hr.ChartRef = nil
+			}
+			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
+			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			withoutFiles := hr.Clone()
+			withoutFiles.ChartValuesFiles = nil
+			loaded, err := cli.loadChart(t.Context(), withoutFiles)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, loaded.fingerprint == "", false)
+			var results [2]chartLoadResult
+			var failures [2]error
+			var wg sync.WaitGroup
+			for i := range results {
+				wg.Go(func() {
+					results[i], failures[i] = cli.loadChart(t.Context(), hr)
+				})
+			}
+			wg.Wait()
+			for i, result := range results {
+				if failures[i] != nil {
+					t.Fatal(failures[i])
+				}
+				assert.Equal(t, chartValuesCacheKey(result, hr.ChartValuesFiles, false, nil), chartValuesCacheKey(loaded, hr.ChartValuesFiles, false, nil))
+			}
+			loaded = results[0]
+			merged, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Equal(t, merged["marker"], any("original"))
 		})
 	}
-	wg.Wait()
-	for i, result := range results {
-		if failures[i] != nil {
-			t.Fatal(failures[i])
-		}
-		assert.Equal(t, chartValuesCacheKey(result, hr.ChartValuesFiles, false), chartValuesCacheKey(loaded, hr.ChartValuesFiles, false))
-	}
-	loaded = results[0]
-	merged, err := cli.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assert.Equal(t, merged["marker"], any("original"))
 }

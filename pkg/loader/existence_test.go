@@ -367,7 +367,7 @@ func TestPromote_SourceView(t *testing.T) {
 			st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: dir, FS: fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte(fmt.Sprintf(doc, "foreign"))}}})
 			for _, version := range []string{"", manifest.SourceDomain + "/v1", "v1", "foreign.example/v1", "missing.example/v1"} {
 				ks := &manifest.Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: version, Kind: manifest.KindGitRepository, Name: source.Name}}
-				root, pinned, external := SourceView(st, ks, repoRoot)
+				root, pinned, external := SourceView(st, ks.SourceID(), repoRoot)
 				admitted := version == "" || version == manifest.SourceDomain+"/v1"
 				wantRoot := repoRoot
 				if admitted {

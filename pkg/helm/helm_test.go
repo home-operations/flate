@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -100,11 +101,27 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 		"image": map[string]any{"tag": "v1", "repository": "nginx"},
 		"env":   []any{map[string]any{"name": "A", "value": "1"}},
 	}
+	hr.ChartValuesFiles = []string{"mychart/values.yaml"}
 	snapshot := manifest.DeepCopyMap(vals)
-
-	if _, err := cli.Template(context.Background(), hr, vals, Options{}); err != nil {
-		t.Fatalf("Template: %v", err)
+	canonical, err := cli.loadChart(t.Context(), hr)
+	assert.NoError(t, err)
+	chartSnapshot := manifest.DeepCopyMap(canonical.chart.Values)
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(2)
+	for range 2 {
+		done.Go(func() {
+			ready.Done()
+			<-start
+			if _, err := cli.Template(t.Context(), hr, vals, Options{}); err != nil {
+				t.Error(err)
+			}
+		})
 	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	assert.Diff(t, canonical.chart.Values, chartSnapshot)
 	if !reflect.DeepEqual(vals, snapshot) {
 		t.Errorf("render mutated the input values map (helm no longer copies on entry?)\n before=%#v\n after =%#v", snapshot, vals)
 	}
@@ -454,6 +471,8 @@ metadata:
 
 func TestMergeChartValuesFiles(t *testing.T) {
 	t.Parallel()
+	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
 	chartWith := func(files map[string]string) *chart.Chart {
 		c := &chart.Chart{}
 		for name, body := range files {
@@ -468,7 +487,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			"first.yaml":  "a: first-only\nb: from-first\n",
 			"second.yaml": "b: from-second\nc: second-only\n",
 		})
-		got, err := mergeChartValuesFilesUncached(c, []string{"first.yaml", "second.yaml"}, false)
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"first.yaml", "second.yaml"}, false)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -480,7 +499,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("MissingFileIgnored", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := mergeChartValuesFilesUncached(c, []string{"a.yaml", "missing.yaml"}, true)
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"a.yaml", "missing.yaml"}, true)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -492,7 +511,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		_, err := mergeChartValuesFilesUncached(c, []string{"missing.yaml"}, false)
+		_, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"missing.yaml"}, false)
 		if err == nil {
 			t.Fatal("expected error for missing file when ignoreMissing=false")
 		}
@@ -504,7 +523,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("InvalidYAMLErrors", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
-		_, err := mergeChartValuesFilesUncached(c, []string{"bad.yaml"}, false)
+		_, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"bad.yaml"}, false)
 		if err == nil {
 			t.Fatal("expected error for invalid YAML")
 		}
@@ -516,7 +535,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := mergeChartValuesFilesUncached(c, nil, false)
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, nil, false)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}

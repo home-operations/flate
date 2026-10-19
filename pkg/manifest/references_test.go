@@ -144,7 +144,8 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	}
 	hr = hr.WithNamespace("effective").(*HelmRelease)
 	hr.Chart = HelmChart{RepoGroup: SourceDomain, RepoKind: KindGitRepository, RepoName: "resolved"}
-	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true}})
+	hr.ChartValuesFiles = []string{"./config/prod.yaml"}
+	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true, Files: hr.ChartValuesFiles}})
 	assert.Equal(t, r.InputsFrom[0].Kind, "Unsupported")
 }
 
@@ -223,10 +224,10 @@ func TestReferences_NoAllocations(t *testing.T) {
 	assert.Equal(t, KindOf(&Kustomization{}), kindTable[kindKustomization].KindInfo)
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		assert.Equal(t, unsafe.Sizeof(DependencyRef{}), uintptr(80))
-		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(112))
+		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(136))
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
-	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{ValuesFrom: []ValuesReference{{Name: "values"}}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
+	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindGitRepository, RepoName: "source"}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf(obj) }), float64(0))
 			count := 0
@@ -239,6 +240,70 @@ func TestReferences_NoAllocations(t *testing.T) {
 			References(obj)(func(Reference) bool { stops++; return false })
 			assert.Equal(t, stops, 1)
 			assert.Equal(t, count > 0, true)
+		})
+	}
+}
+
+func TestReferences_SourceValuesFiles(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kind, group string
+		files       bool
+	}{
+		{KindGitRepository, SourceDomain, true},
+		{KindBucket, SourceDomain, true},
+		{KindHelmRepository, SourceDomain, false},
+		{KindOCIRepository, SourceDomain, false},
+		{KindExternalArtifact, SourceDomain, false},
+		{KindGitRepository, "foreign.example", false},
+	} {
+		t.Run(tc.group+"/"+tc.kind, func(t *testing.T) {
+			t.Parallel()
+			for _, form := range []string{"inline", "resolved", "standalone"} {
+				t.Run(form, func(t *testing.T) {
+					t.Parallel()
+					files := []string{"./config/prod.yaml", "config/extra.yaml"}
+					chart := &HelmChartSource{Namespace: "authored", Name: "chart",
+						SourceRef:   sourcev1.LocalHelmChartSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "source"},
+						ValuesFiles: files}
+					var obj BaseManifest
+					switch form {
+					case "inline":
+						hr := &HelmRelease{Namespace: "authored", Chart: helmChartFromSource(chart), ChartValuesFiles: files}
+						hr.Chart.RepoNamespace = ""
+						hr.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
+							SourceRef: helmv2.CrossNamespaceObjectReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "source"},
+						}}
+						obj = hr.WithNamespace("effective")
+					case "resolved":
+						hr := &HelmRelease{Namespace: "effective", Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindHelmChart, RepoName: "chart"}}
+						hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: KindHelmChart, Name: "chart"}
+						assert.NoError(t, hr.ResolveChartRef(func(ns, name string) *HelmChartSource {
+							assert.Equal(t, ns, "effective")
+							assert.Equal(t, name, "chart")
+							return chart.WithNamespace(ns).(*HelmChartSource)
+						}))
+						obj = hr
+					case "standalone":
+						obj = chart.WithNamespace("effective")
+					}
+					refs := slices.Collect(References(obj))
+					source := Reference{Group: tc.group, Kind: tc.kind, Namespace: "effective", Name: "source", Use: "source", Content: true}
+					if tc.files {
+						source.Files = files
+					}
+					want := []Reference{source}
+					if form == "resolved" {
+						want = append([]Reference{{Group: SourceDomain, Kind: KindHelmChart, Namespace: "effective", Name: "chart", Use: "chart", Content: true}}, want...)
+					}
+					assert.Diff(t, refs, want)
+					if tc.files && len(refs[len(refs)-1].Files) != 0 {
+						got := refs[len(refs)-1].Files
+						assert.Equal(t, &got[0] == &files[0], true)
+					}
+					assert.Equal(t, chart.Namespace, "authored")
+				})
+			}
 		})
 	}
 }

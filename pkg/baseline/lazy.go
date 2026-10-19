@@ -251,7 +251,7 @@ func (s selection) compareCandidates(ctx context.Context, candidates map[string]
 			continue
 		}
 		info, err := s.current.Lstat(name)
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 			routing = append(routing, name)
 			continue
 		}

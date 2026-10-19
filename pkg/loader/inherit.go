@@ -51,7 +51,7 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 	for {
 		kss := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
 		for _, ks := range kss {
-			root, _, external := SourceView(l.Store, ks, repoRoot)
+			root, _, external := SourceView(l.Store, ks.SourceID(), repoRoot)
 			target := filepath.Clean(filepath.Join(root, ks.Path))
 			if !external {
 				if _, scanned := l.scopes.scanned[target]; scanned {
@@ -73,7 +73,7 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 					continue
 				}
 			}
-			root, pinned, external := SourceView(l.Store, ks, repoRoot)
+			root, pinned, external := SourceView(l.Store, ks.SourceID(), repoRoot)
 			if external || ks.IsFragment() {
 				continue
 			}

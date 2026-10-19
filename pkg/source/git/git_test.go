@@ -113,16 +113,16 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"alias", "dirlink", "dirlink/cm.yaml", ".sourceignore"} {
-		if file, err := art.FS.Open(name); !errors.Is(err, fs.ErrNotExist) {
+		if file, err := art.FS.Open(name); !errors.Is(err, fs.ErrPermission) {
 			if file != nil {
 				_ = file.Close()
 			}
 			t.Errorf("Open(%s): %v", name, err)
 		}
-		if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+		if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrPermission) {
 			t.Errorf("Stat(%s): %v", name, err)
 		}
-		if _, err := fs.ReadDir(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
+		if _, err := fs.ReadDir(art.FS, name); !errors.Is(err, fs.ErrPermission) {
 			t.Errorf("ReadDir(%s): %v", name, err)
 		}
 	}

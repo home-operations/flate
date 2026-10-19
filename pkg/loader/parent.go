@@ -29,7 +29,7 @@ func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
 
 func localKustomizations(s *store.Store, repoRoot string) []*manifest.Kustomization {
 	return slices.DeleteFunc(s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization), func(ks *manifest.Kustomization) bool {
-		_, _, external := SourceView(s, ks, repoRoot)
+		_, _, external := SourceView(s, ks.SourceID(), repoRoot)
 		return external
 	})
 }
@@ -38,7 +38,7 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 	var qualified []*manifest.Kustomization
 	var components map[manifest.NamedResource][]string
 	for i, ks := range kss {
-		root, _, external := SourceView(s, ks, repoRoot)
+		root, _, external := SourceView(s, ks.SourceID(), repoRoot)
 		if external {
 			continue
 		}
@@ -71,7 +71,7 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 	}
 	claims := manifest.BuildKSClaims(kss, components)
 	for _, ks := range qualified {
-		root, _, _ := SourceView(s, ks, repoRoot)
+		root, _, _ := SourceView(s, ks.SourceID(), repoRoot)
 		base, err := filepath.Rel(repoRoot, root)
 		if err != nil {
 			continue
@@ -115,11 +115,10 @@ func (r documentReader) Readlink(file string) (string, error) {
 	return fs.ReadLink(input, name)
 }
 
-// SourceView classifies a Kustomization's admitted source coordinate, committed
+// SourceView classifies an admitted source coordinate, committed
 // pin and external ownership. Mutable aliases retain empty Key. Unavailable
 // sources MUST NOT borrow bootstrap bytes or claim unrelated working-tree files.
-func SourceView(s *store.Store, ks *manifest.Kustomization, repoRoot string) (root string, pinned, external bool) {
-	ref := ks.SourceID()
+func SourceView(s *store.Store, ref manifest.NamedResource, repoRoot string) (root string, pinned, external bool) {
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
 		return repoRoot, false, false
 	}

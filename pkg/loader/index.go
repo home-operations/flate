@@ -44,7 +44,7 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 		}
 		if id.KindInfo().Structural {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](id); ok {
-				_, r.Pinned, _ = SourceView(l.Store, ks, repoRoot)
+				_, r.Pinned, _ = SourceView(l.Store, ks.SourceID(), repoRoot)
 			}
 			if r.Path != "" {
 				dir := filepath.Dir(r.Path)
@@ -70,7 +70,7 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 	}
 	// Graph traversal supplies readers before file-backed data ownership is frozen.
 	l.buildProductions(repoRoot)
-	l.fillProductions()
+	l.finalizeRecords(repoRoot)
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes = nil
 	for _, file := range slices.Sorted(maps.Keys(l.Index.Errors)) {
@@ -90,14 +90,5 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 	}
 	for _, ids := range l.Index.Readers {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
-	}
-}
-
-func (l *Loader) fillProductions() {
-	for id, r := range l.Index.Files() {
-		if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
-			r.Productions = []manifest.Production{{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}}
-			l.Index.Records[id] = r
-		}
 	}
 }

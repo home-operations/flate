@@ -203,7 +203,7 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, ks *manifes
 	if (root.Name != "" && id.Name != root.Name) || (root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace) {
 		return
 	}
-	if _, _, external := loader.SourceView(s.run.store, ks, s.run.repoRoot); !external {
+	if _, _, external := loader.SourceView(s.run.store, ks.SourceID(), s.run.repoRoot); !external {
 		return
 	}
 	info, _ := s.run.store.GetStatus(id)

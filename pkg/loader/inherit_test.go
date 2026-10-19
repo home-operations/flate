@@ -307,7 +307,7 @@ spec:
 			t.Fatal("parent missing")
 		}
 		l.ApplyNamespaces(root)
-		if _, _, external := SourceView(st, owner, root); !external {
+		if _, _, external := SourceView(st, owner.SourceID(), root); !external {
 			t.Fatal("unavailable source borrowed bootstrap coordinates")
 		}
 		for _, id := range []manifest.NamedResource{
@@ -326,7 +326,7 @@ spec:
 		st.AddObject(source)
 		mount := filepath.Join(filepath.Dir(root), ".flate-sources", "subtree", "flux-system", "source")
 		st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalRoot: filepath.Join(root, "kubernetes"), LocalPath: mount, InputAlias: true, FS: view})
-		if got, _, external := SourceView(st, owner, root); external || got != mount {
+		if got, _, external := SourceView(st, owner.SourceID(), root); external || got != mount {
 			t.Fatalf("available source = %s, external=%t", got, external)
 		}
 		if _, err := l.Load(t.Context(), filepath.Join(mount, "apps")); err != nil {

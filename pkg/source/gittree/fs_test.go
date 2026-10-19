@@ -127,7 +127,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		testutil.WriteFile(t, root, "regular.txt", "content")
 		testutil.WriteFile(t, root, "nested/deeper/regular.txt", "nested content")
 		testutil.WriteFile(t, parent, "outside", "outside")
-		for name, target := range map[string]string{"file-link": "regular.txt", "dir-link": ".", "dangling": "missing", "escape": "../outside"} {
+		for name, target := range map[string]string{"file-link": "regular.txt", "dir-link": ".", "dangling": "missing", "escape": "../outside", "broken-escape": "../absent"} {
 			assert.Equal(t, os.Symlink(target, filepath.Join(root, name)), nil)
 		}
 		socket, err := net.Listen("unix", filepath.Join(root, "socket"))
@@ -162,13 +162,16 @@ func TestNew_EntryPolicy(t *testing.T) {
 				if err != nil || len(entries) != 2 || entries[0].Name() != "nested" || entries[1].Name() != "regular.txt" {
 					t.Fatalf("admitted entries = %v, %v", entries, err)
 				}
-				for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "socket"} {
+				for _, name := range []string{"regular.txt", "file-link", "dir-link/regular.txt", "dangling", "escape", "escape/child", "broken-escape", "broken-escape/child", "socket", "absent"} {
 					t.Run(name, func(t *testing.T) {
 						t.Parallel()
 						var want error
 						content := "content"
 						if name != "regular.txt" {
-							want, content = fs.ErrNotExist, ""
+							want, content = fs.ErrPermission, ""
+							if name == "socket" || name == "absent" {
+								want = fs.ErrNotExist
+							}
 						}
 						data, err := fs.ReadFile(reader.fs, name)
 						if !errors.Is(err, want) || string(data) != content {
@@ -359,7 +362,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		assert.Equal(t, os.RemoveAll(filepath.Join(root, "dir")), nil)
 		assert.Equal(t, os.Symlink(".", filepath.Join(root, "dir")), nil)
 		for _, name := range []string{"dir", "dir/arrived"} {
-			if _, err := fs.Stat(input, name); !errors.Is(err, fs.ErrNotExist) {
+			if _, err := fs.Stat(input, name); !errors.Is(err, fs.ErrPermission) {
 				t.Fatalf("fresh lookup through directory link: %s: %v", name, err)
 			}
 		}
@@ -412,6 +415,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		testutil.WriteFile(t, root, "dir/a", "a")
 		testutil.WriteFile(t, root, "dir/child", "content")
 		testutil.WriteFile(t, root, "dir/nested/file", "nested")
+		assert.NoError(t, os.Symlink("../../absent", filepath.Join(root, "dir/link")))
 		want, err := os.Lstat(filepath.Join(root, "dir/child"))
 		assert.NoError(t, err)
 		artifact, err := admitLocal(t, root)
@@ -454,6 +458,8 @@ func TestNew_EntryPolicy(t *testing.T) {
 				assert.Equal(t, info.Mode(), want.Mode())
 				assert.Equal(t, info.Size(), want.Size())
 				assert.Equal(t, info.ModTime().Equal(want.ModTime()), true)
+				_, err = fs.ReadFile(view, "dir/link/child")
+				assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
 			})
 		}
 		ready.Wait()
@@ -966,15 +972,85 @@ func TestNew_EntryPolicy(t *testing.T) {
 					omitted = append(omitted, "alias", ".hidden/link")
 				}
 				for _, name := range omitted {
+					want := fs.ErrNotExist
+					if tc.opts.Mode != RemoteBase {
+						want = fs.ErrPermission
+					}
 					_, err := fs.Stat(input, name)
-					if !errors.Is(err, fs.ErrNotExist) {
-						t.Fatalf("omitted %s: %v", name, err)
+					if !errors.Is(err, want) {
+						t.Fatalf("omitted %s: %v; want %v", name, err, want)
 					}
 				}
 				if tc.opts.Mode == RemoteBase {
 					data, err := fs.ReadFile(input, "alias")
 					assert.NoError(t, err)
 					assert.Equal(t, string(data), "target")
+				}
+			})
+		}
+	})
+	t.Run("rejected links", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		repo := testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "regular", "content")
+		testutil.WriteFile(t, root, "ignored", "ignored")
+		testutil.WriteFile(t, root, ".sourceignore", "ignored\n")
+		assert.NoError(t, os.Symlink("../absent", filepath.Join(root, "link")))
+		commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+		backing := repo.Storer.(*filesystem.Storage).Filesystem()
+		local, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		for _, mode := range []ViewMode{Direct, Source} {
+			t.Run(fmt.Sprint(mode), func(t *testing.T) {
+				t.Parallel()
+				committed, _, err := New(t.Context(), backing, commit, ViewOptions{Mode: mode})
+				assert.NoError(t, err)
+				mutable, _, err := New(t.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: mode, Worktree: osfs.New(root)})
+				assert.NoError(t, err)
+				mounted, _, err := operation(t, local.FS, mode)
+				assert.NoError(t, err)
+				for _, input := range []struct {
+					name string
+					fs   *FS
+				}{{"committed", committed}, {"mutable", mutable}, {"mounted", mounted}} {
+					refreshed, _, err := operation(t, input.fs, Source)
+					assert.NoError(t, err)
+					for _, view := range []struct {
+						name string
+						fs   *FS
+					}{{"initial", input.fs}, {"refreshed", refreshed}} {
+						reader := view.fs
+						entries, err := fs.ReadDir(reader, ".")
+						assert.NoError(t, err)
+						for _, entry := range entries {
+							if entry.Name() == "link" {
+								t.Fatal("listing exposes rejected link")
+							}
+						}
+						for _, name := range []string{"link", "link/child", "link/nested/child"} {
+							t.Run(input.name+"/"+view.name+"/"+name, func(t *testing.T) {
+								t.Parallel()
+								data, err := fs.ReadFile(reader, name)
+								assert.Equal(t, len(data), 0)
+								assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+								_, err = fs.Stat(reader, name)
+								assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+								target, err := fs.ReadLink(reader, name)
+								assert.Equal(t, target, "")
+								assert.Equal(t, errors.Is(err, fs.ErrPermission), true)
+							})
+						}
+						_, err = fs.ReadFile(reader, "absent")
+						assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+						if reader == refreshed || mode == Source {
+							_, err = fs.ReadFile(reader, "ignored")
+							assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+						}
+						data, err := fs.ReadFile(reader, "regular")
+						assert.NoError(t, err)
+						assert.Equal(t, string(data), "content")
+					}
 				}
 			})
 		}

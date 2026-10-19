@@ -1082,3 +1082,117 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 		})
 	}
 }
+
+func TestRun_SourceValuesReaders(t *testing.T) {
+	t.Parallel()
+	for _, form := range []string{"inline", "chartRef"} {
+		t.Run(form, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [parent.yaml]\n")
+			testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "flux-system",
+				"  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [owner.yaml]\n")
+			testutil.WriteFile(t, root, "apps/owner.yaml", testutil.KustomizationYAML("owner", "flux-system",
+				"  path: ./workloads/demo\n  targetNamespace: apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			spec := `  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: cluster}
+      valuesFiles: [./config/prod.yaml, ./config/prod.yaml]
+      ignoreMissingValuesFiles: true
+`
+			chart := `apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata: {name: chart}
+spec:
+  chart: charts/demo
+  sourceRef: {kind: GitRepository, name: cluster}
+  valuesFiles: [./config/prod.yaml, ./config/prod.yaml]
+  ignoreMissingValuesFiles: true
+`
+			resources := "resources: [hr.yaml, sibling.yaml]\nnamespace: apps\n"
+			if form == "chartRef" {
+				resources = "resources: [hr.yaml, sibling.yaml, chart.yaml]\nnamespace: apps\n"
+				spec = "  chartRef: {kind: HelmChart, name: chart}\n"
+				testutil.WriteFile(t, root, "workloads/demo/chart.yaml", chart)
+			}
+			testutil.WriteFile(t, root, "workloads/demo/kustomization.yaml", resources)
+			hr := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: authored}\nspec:\n" + spec
+			testutil.WriteFile(t, root, "workloads/demo/hr.yaml", hr)
+			testutil.WriteFile(t, root, "workloads/demo/sibling.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: sibling}
+spec:
+  chartRef: {kind: OCIRepository, name: unrelated}
+`)
+			demo := testutil.HelmReleaseID("apps", "demo")
+			sibling := testutil.HelmReleaseID("apps", "sibling")
+			parent := testutil.KustomizationID("flux-system", "parent")
+			owner := testutil.KustomizationID("flux-system", "owner")
+			discover := func(scan string) (*discovery.Result, *store.Store) {
+				t.Helper()
+				st := store.New()
+				st.AddObject(&manifest.GitRepository{Name: "cluster", Namespace: "apps", URL: "https://example.invalid/self.git"})
+				result, err := discovery.Run(t.Context(), discovery.Config{
+					Path: filepath.Join(root, scan), RepoRoot: root, Store: st,
+					SelfURLs: []string{"https://example.invalid/self.git"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result, st
+			}
+			var previous map[string][]manifest.NamedResource
+			for _, state := range []string{"absent", "present", "deleted"} {
+				if state == "present" {
+					testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
+				}
+				if state == "deleted" {
+					assert.NoError(t, os.Remove(filepath.Join(root, "config/prod.yaml")))
+				}
+				for range 2 {
+					result, st := discover("flux")
+					want := []manifest.NamedResource{demo}
+					if form == "chartRef" {
+						want = append(want, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"})
+					}
+					slices.SortFunc(want, manifest.NamedResource.Compare)
+					assert.Diff(t, result.Index.Readers["config/prod.yaml"], want)
+					record, ok := result.Index.Lookup(demo)
+					assert.Equal(t, ok, true)
+					assert.Equal(t, record.Parent, owner)
+					assert.Equal(t, st.GetObject(demo) == nil, true)
+					filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), result.Index, st)
+					for _, id := range []manifest.NamedResource{demo, owner, parent} {
+						assert.Equal(t, filter.ShouldReconcile(id), true)
+					}
+					assert.Equal(t, filter.ShouldReconcile(sibling), false)
+					assert.Equal(t, len(filter.AddEmitted(owner, &manifest.HelmRelease{Name: "sibling", Namespace: "apps"})), 0)
+					assert.Equal(t, filter.ShouldReconcile(sibling), false)
+					assert.Equal(t, len(result.Index.Claims["config/"]), 0)
+					if previous != nil {
+						assert.Diff(t, result.Index.Readers, previous)
+					}
+					previous = result.Index.Readers
+				}
+			}
+			if form == "inline" {
+				testutil.WriteFile(t, root, "workloads/demo/hr.yaml", strings.ReplaceAll(hr, "./config/prod.yaml", "./config/next.yaml"))
+			} else {
+				testutil.WriteFile(t, root, "workloads/demo/chart.yaml", strings.ReplaceAll(chart, "./config/prod.yaml", "./config/next.yaml"))
+			}
+			next, _ := discover("flux")
+			assert.Equal(t, slices.Contains(next.Index.Readers["config/next.yaml"], demo), true)
+			assert.Equal(t, slices.Contains(next.Index.Readers["config/prod.yaml"], demo), false)
+			assert.Equal(t, slices.Contains(previous["config/prod.yaml"], demo), true)
+			testutil.WriteFile(t, root, "standalone/kustomization.yaml", "resources: [hr.yaml, chart.yaml]\nnamespace: apps\n")
+			testutil.WriteFile(t, root, "standalone/hr.yaml", strings.Replace(hr, "name: demo", "name: standalone", 1))
+			testutil.WriteFile(t, root, "standalone/chart.yaml", chart)
+			result, st := discover("standalone")
+			standalone := testutil.HelmReleaseID("apps", "standalone")
+			assert.Equal(t, slices.Contains(result.Index.Readers["config/prod.yaml"], standalone), true)
+			assert.Equal(t, st.GetObject(standalone) != nil, true)
+		})
+	}
+}

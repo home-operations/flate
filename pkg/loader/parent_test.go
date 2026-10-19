@@ -88,7 +88,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			assert.Diff(t, testutil.ProductionOwners(l.Index.Records[data]), []manifest.NamedResource{ks.Named()})
 			assert.Diff(t, testutil.Owners(l.Store.Productions(data, l.Index)), []manifest.NamedResource{ks.Named()})
 			assert.Diff(t, testutil.ProductionOwners(l.Index.Records[generated]), []manifest.NamedResource{ks.Named()})
-			sourceRoot, _, _ := SourceView(st, ks, root)
+			sourceRoot, _, _ := SourceView(st, ks.SourceID(), root)
 			assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(sourceRoot, tc.base)), tc.base != "")
 			if tc.pinned {
 				assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(root, tc.base)), false)
@@ -254,7 +254,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 		t.Run("absent/"+tc.group+"/"+tc.kind, func(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "entry"}}
-			root, pinned, external := SourceView(store.New(), ks, "/repo")
+			root, pinned, external := SourceView(store.New(), ks.SourceID(), "/repo")
 			if root != "/repo" || pinned || external != tc.external {
 				t.Fatalf("absent source: %q, %t, %t", root, pinned, external)
 			}
@@ -287,7 +287,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 				artifact.FS = nil
 			}
 			st.SetArtifact(repo.Named(), artifact)
-			_, _, external := SourceView(st, ks, tc.repoRoot)
+			_, _, external := SourceView(st, ks.SourceID(), tc.repoRoot)
 			if external != tc.external {
 				t.Fatalf("external = %v, want %v", external, tc.external)
 			}

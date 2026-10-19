@@ -31,12 +31,12 @@ type DiscoveryRecord struct {
 	Pinned      bool            // The Kustomization reads a committed local source artifact.
 }
 
-// DiscoveryIndex owns immutable discovery records, canonical claims and graph readers.
+// DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
 	Records map[NamedResource]DiscoveryRecord // Authored and projected identities.
 	Claims  map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
-	Readers map[string][]NamedResource        // Graph readers by resource file or missing directory.
+	Readers map[string][]NamedResource        // Graph and declared source-input readers by file or missing directory.
 	Errors  map[string]error                  // File decode failures deferred until final source ownership is known.
 }
 
@@ -64,7 +64,7 @@ func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 	}
 }
 
-// OwnersOfFile returns deepest claimants plus graph readers, and strict ancestors.
+// OwnersOfFile returns deepest claimants plus file readers, and strict ancestors.
 // Missing resource directories retain ownership of deleted descendant files.
 func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedResource) {
 	if i == nil || file == "" {
@@ -103,7 +103,7 @@ func (i *DiscoveryIndex) matchingPrefixes(file string) iter.Seq[[]NamedResource]
 	}
 }
 
-// ReadersOfFile yields graph readers of a file or any missing ancestor directory.
+// ReadersOfFile yields readers of a file or any missing ancestor directory.
 // Callers deduplicate identities when combining them with other ownership relations.
 func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[NamedResource] {
 	return func(yield func(NamedResource) bool) {

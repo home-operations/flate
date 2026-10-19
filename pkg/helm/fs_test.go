@@ -127,6 +127,34 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 			t.Fatalf("loaded %s, want %s", loaded.chart.Name(), name)
 		}
 	}
+	t.Run("shared chart source values", func(t *testing.T) {
+		t.Parallel()
+		var canonical *chart.Chart
+		for _, marker := range []string{"first", "second", "first"} {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+			testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n")
+			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
+			location, err := gitrepo.Locate(t.Context(), root, root)
+			assert.NoError(t, err)
+			admitted, err := gittree.AdmitDirectory(t.Context(), location)
+			assert.NoError(t, err)
+			hr := &manifest.HelmRelease{Name: "demo", Namespace: "test", Chart: manifest.HelmChart{Name: "charts/demo", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo", RepoNamespace: "test"}, ChartValuesFiles: []string{"config/prod.yaml"}}
+			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: admitted.FS})
+			loaded, err := cli.loadChart(t.Context(), hr)
+			assert.NoError(t, err)
+			if canonical == nil {
+				canonical = loaded.chart
+			}
+			assert.Equal(t, loaded.chart == canonical, true)
+			out, err := cli.Template(t.Context(), hr, nil, Options{})
+			assert.NoError(t, err)
+			if !strings.Contains(out, `marker: "`+marker+`"`) {
+				t.Fatal(out)
+			}
+		}
+	})
+
 }
 
 func BenchmarkLoadChart_FSWarm(b *testing.B) {

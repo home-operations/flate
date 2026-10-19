@@ -180,7 +180,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if ks.IsFragment() {
 				continue
 			}
-			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks, repoRoot)
+			sourceRoot, _, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
 			if external && d.cfg.Store.GetObject(ks.SourceID()) == nil {
 				next = append(next, key)
 				continue
@@ -190,7 +190,13 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 				continue
 			}
 			if err := d.loadAt(ctx, target, &total); err != nil {
-				return err
+				if !errors.Is(err, fs.ErrPermission) || key.source == nil || key.source.FS == nil {
+					return err
+				}
+				name, _ := filepath.Rel(sourceRoot, target)
+				if _, statErr := fs.Stat(key.source.FS, filepath.ToSlash(name)); !errors.Is(statErr, fs.ErrPermission) {
+					return err
+				}
 			}
 			added++
 		}
@@ -220,7 +226,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedKS := make(map[manifest.NamedResource]struct{})
 	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 		ref := ks.SourceID()
-		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks, repoRoot); pinned {
+		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}
 			pinnedKS[ks.Named()] = struct{}{}
 		}
@@ -271,7 +277,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	}
 }
 
-// The Loader deduplicates unchanged source views; missing followed paths are deferred.
+// The Loader deduplicates unchanged views; unavailable followed paths fail during reconciliation.
 func (d *discoverer) loadAt(ctx context.Context, dir string, total *int) error {
 	n, err := d.loader.Load(ctx, dir)
 	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {

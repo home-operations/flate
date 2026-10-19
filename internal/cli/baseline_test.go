@@ -76,7 +76,7 @@ func TestRun_BaseLinkExclusion(t *testing.T) {
 			assert.NoError(t, os.Symlink("target-B", filepath.Join(root, "apps", "link.yaml")))
 			stdout, stderr, code := runCLI(t, args...)
 			if route == "referenced link" {
-				if code != 1 || !strings.Contains(stderr, "apps/link.yaml") || !strings.Contains(stderr, "file does not exist") || strings.Contains(stdout, "name: decoy") {
+				if code != 1 || !strings.Contains(stderr, "apps/link.yaml") || !strings.Contains(stderr, "permission denied") || strings.Contains(stdout, "name: decoy") {
 					t.Fatalf("omitted reference: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
 			} else if code != 0 || stdout != "" {
@@ -108,6 +108,15 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 		strings.Contains(stdout, "greeting:") || strings.Contains(stdout, "name: hello") ||
 		!strings.Contains(stdout, "-  value: before") || !strings.Contains(stdout, "+  value: after") {
 		t.Fatalf("failed producer lost isolation: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+}
+
+func TestRun_EntryIgnoreDenial(t *testing.T) {
+	root := writeFixture(t)
+	assert.NoError(t, os.Symlink("apps/cm.yaml", filepath.Join(root, ".krmignore")))
+	stdout, stderr, code := runCLI(t, "build", "ks", "--path", root, "--concurrency", "2")
+	if code != 1 || !strings.Contains(stderr, "permission denied") {
+		t.Fatalf("entry denial: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -64,7 +66,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	// HR values must override the chart's named valuesFiles, matching helm-controller.
 	finalValues := hrValues
 	if len(hr.ChartValuesFiles) > 0 {
-		base, err := c.mergeChartValuesFiles(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		base, err := c.mergeChartValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		if err != nil {
 			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
@@ -248,27 +250,111 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	return inst, disableHooks
 }
 
-// mergeChartValuesFiles caches by loaded content and ordered filenames. Returned
-// maps MUST be cloned because downstream values layering mutates them. The
-// missing-file policy separates requests that skip files from those that fail.
-func (c *Client) mergeChartValuesFiles(loaded chartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
-	key := chartValuesCacheKey(loaded, names, ignoreMissing)
-	if key == "" {
-		return mergeChartValuesFilesUncached(loaded.chart, names, ignoreMissing)
+type chartValuesFile struct {
+	Data     []byte
+	Defaults map[string]any
+	Missing  bool
+}
+
+func (l chartLoadResult) readValuesFile(ctx context.Context, name string) (chartValuesFile, error) {
+	clean := path.Clean(name)
+	if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
+		return chartValuesFile{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, fs.ErrInvalid)
 	}
-	c.chartMu.RLock()
-	cached, ok := c.chartValuesCache[key]
-	c.chartMu.RUnlock()
-	if ok {
-		return manifest.DeepCopyMap(cached), nil
+	if err := ctx.Err(); err != nil {
+		return chartValuesFile{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, err)
 	}
-	merged, err := mergeChartValuesFilesUncached(loaded.chart, names, ignoreMissing)
+	var data []byte
+	var err error
+	var missing bool
+	if l.valuesFS != nil {
+		var f fs.File
+		f, err = l.valuesFS.Open(clean)
+		missing = errors.Is(err, fs.ErrNotExist)
+		if err == nil {
+			info, statErr := f.Stat()
+			if statErr == nil && !info.Mode().IsRegular() {
+				statErr = fs.ErrInvalid
+			}
+			if statErr == nil {
+				data, err = io.ReadAll(f)
+			} else {
+				err = statErr
+			}
+			err = errors.Join(err, f.Close())
+		}
+	} else if clean == "values.yaml" {
+		return chartValuesFile{Defaults: l.chart.Values}, nil
+	} else {
+		err, missing = fs.ErrNotExist, true
+		for _, file := range l.chart.Files {
+			if file != nil && file.Name == clean {
+				data, err, missing = file.Data, nil, false
+				break
+			}
+		}
+	}
 	if err != nil {
-		return nil, err
+		return chartValuesFile{Missing: missing}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, err)
+	}
+	return chartValuesFile{Data: data}, nil
+}
+
+func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
+	read := func(name string) (chartValuesFile, error) {
+		file, err := loaded.readValuesFile(ctx, name)
+		if file.Missing && ignoreMissing {
+			err = nil
+		}
+		return file, err
+	}
+	var inputs []chartValuesFile
+	if loaded.valuesFS != nil && loaded.valuesPin == "" {
+		inputs = make([]chartValuesFile, len(names))
+		for i, name := range names {
+			var err error
+			inputs[i], err = read(name)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	key := chartValuesCacheKey(loaded, names, ignoreMissing, inputs)
+	if key != "" {
+		c.chartMu.RLock()
+		cached, ok := c.chartValuesCache[key]
+		c.chartMu.RUnlock()
+		if ok {
+			return manifest.DeepCopyMap(cached), nil
+		}
+	}
+	merged := map[string]any{}
+	for i, name := range names {
+		var file chartValuesFile
+		if inputs != nil {
+			file = inputs[i]
+		} else {
+			var err error
+			file, err = read(name)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if file.Missing {
+			continue
+		}
+		m := manifest.DeepCopyMap(file.Defaults)
+		if file.Defaults == nil {
+			if err := yaml.Unmarshal(file.Data, &m); err != nil {
+				return nil, fmt.Errorf("%w: parse values file %q: %w", manifest.ErrInput, name, err)
+			}
+		}
+		merged = values.DeepMergeInto(merged, m)
+	}
+	if key == "" {
+		return merged, nil
 	}
 	c.chartMu.Lock()
-	// Re-check under the write lock: a sibling goroutine may have
-	// populated the same key between RUnlock and Lock.
 	if existing, ok := c.chartValuesCache[key]; ok {
 		c.chartMu.Unlock()
 		return manifest.DeepCopyMap(existing), nil
@@ -278,8 +364,7 @@ func (c *Client) mergeChartValuesFiles(loaded chartLoadResult, names []string, i
 	return manifest.DeepCopyMap(merged), nil
 }
 
-// chartValuesCacheKey separates ordered filenames and the missing-file policy.
-func chartValuesCacheKey(loaded chartLoadResult, names []string, ignoreMissing bool) string {
+func chartValuesCacheKey(loaded chartLoadResult, names []string, ignoreMissing bool, inputs []chartValuesFile) string {
 	if loaded.fingerprint == "" {
 		return ""
 	}
@@ -288,45 +373,10 @@ func chartValuesCacheKey(loaded chartLoadResult, names []string, ignoreMissing b
 		OCI           *ociChartContent
 		Names         []string
 		IgnoreMissing bool
-	}{loaded.fingerprint, loaded.oci, names, ignoreMissing})
-}
-
-// mergeChartValuesFilesUncached merges the named values files (relative
-// paths inside the chart archive) in the supplied order. Missing files
-// are skipped when ignoreMissing is true; otherwise the first missing
-// file is an error. Mirrors helm-controller's chartutil layering: each
-// file is merged on top of the previous one.
-func mergeChartValuesFilesUncached(c *chart.Chart, names []string, ignoreMissing bool) (map[string]any, error) {
-	out := map[string]any{}
-	for _, name := range names {
-		var data []byte
-		for _, f := range c.Files {
-			if f != nil && f.Name == name {
-				data = f.Data
-				break
-			}
-		}
-		if data == nil {
-			if ignoreMissing {
-				continue
-			}
-			return nil, fmt.Errorf("values file %q not found in chart", name)
-		}
-		var m map[string]any
-		if err := yaml.Unmarshal(data, &m); err != nil {
-			return nil, fmt.Errorf("parse values file %q: %w", name, err)
-		}
-		// out is freshly built and wholly owned by this call (each m is
-		// unmarshaled here and discarded after merge), so merge in place
-		// rather than reallocating a new top-level map per file. Same
-		// merge semantics as Helm — override sub-maps are inserted
-		// by reference, collisions recurse — but without the growing
-		// maps.Copy of the accumulator on every iteration. The caller
-		// (mergeChartValuesFiles) hands out a DeepCopyMap clone, so the
-		// in-place mutation never escapes.
-		out = values.DeepMergeInto(out, m)
-	}
-	return out, nil
+		Source        bool              `json:",omitempty"`
+		Pin           string            `json:",omitempty"`
+		Inputs        []chartValuesFile `json:",omitempty"`
+	}{loaded.fingerprint, loaded.oci, names, ignoreMissing, loaded.valuesFS != nil, loaded.valuesPin, inputs})
 }
 
 // ApplyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}

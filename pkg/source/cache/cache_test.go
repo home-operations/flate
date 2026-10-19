@@ -648,6 +648,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		c := cachetest.New(t, root, New)
+		assertBlobRoots(t, c)
 		assert.NoError(t, c.Close())
 		for _, algorithm := range blobAlgorithms {
 			if _, err := os.Stat(filepath.Join(root, blobDir(), algorithm.String())); !errors.Is(err, fs.ErrNotExist) {
@@ -658,23 +659,58 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	t.Run("partial-initialization", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		collision := filepath.Join(blobDir(), digest.SHA384.String())
-		testutil.WriteFile(t, root, collision, "not a directory")
 		c := cachetest.New(t, root, New)
-		key := BlobKey{Content: "partial-initialization"}
-		write := producer([]byte("payload"), ocispec.Descriptor{})
-		r, _, _, firstErr := c.Blob(t.Context(), key, Policy{}, write)
-		if r != nil || !errors.Is(firstErr, manifest.ErrFlux) {
-			t.Fatalf("partial initialization: reader=%v, error=%v", r, firstErr)
+		sha256Key := BlobKey{Content: "partial-sha256"}
+		key := BlobKey{Content: "partial-sha384"}
+		payload := []byte("payload")
+		var id string
+		for _, key := range []BlobKey{sha256Key, key} {
+			r, _, storedID, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.NoError(t, r.Close())
+			id = storedID
 		}
-		parent := c.blobRoots[digest.SHA256]
-		if parent.Root == nil {
+		stored, err := c.store.Resolve(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored.Digest = digest.SHA384.FromBytes(payload)
+		assert.NoError(t, c.store.Push(t.Context(), stored, bytes.NewReader(payload)))
+		assert.NoError(t, c.store.Tag(t.Context(), stored, id))
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		r, _, _, err := c.Blob(t.Context(), sha256Key, Policy{MaxAge: Forever}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.NoError(t, r.Close())
+		parent := c.blobRoots[0].Root
+		if parent == nil {
 			t.Fatal("partial initialization did not open the first root")
 		}
-		assert.NoError(t, os.Remove(filepath.Join(root, collision)))
-		if r, _, _, err := c.Blob(t.Context(), key, Policy{}, write); r != nil || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, c.blobErr) {
+		collision := filepath.Join(blobDir(), digest.SHA384.String())
+		assert.NoError(t, c.root.Rename(collision, collision+"-held"))
+		testutil.WriteFile(t, root, collision, "not a directory")
+		r, _, _, firstErr := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		if r != nil || !errors.Is(firstErr, manifest.ErrFlux) || c.blobRoots[1].err == nil || !errors.Is(firstErr, c.blobRoots[1].err) {
+			t.Fatalf("partial initialization: reader=%v, error=%v", r, firstErr)
+		}
+		assert.NoError(t, c.root.Remove(collision))
+		assert.NoError(t, c.root.Rename(collision+"-held", collision))
+		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, c.blobRoots[1].err) {
 			t.Fatalf("repaired filesystem changed initialization result: reader=%v, error=%v", r, err)
 		}
+		r, _, _, err = c.Blob(t.Context(), sha256Key, Policy{MaxAge: Forever}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Diff(t, data, payload)
+		assert.NoError(t, r.Close())
+		assertBlobRoots(t, c, digest.SHA256)
 		assert.NoError(t, c.Close())
 		if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
 			t.Fatalf("last Close retained partial blob parent: %v", err)
@@ -686,12 +722,20 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 			t.Fatalf("last Close retained partial owner lock: acquired=%v, err=%v", acquired, err)
 		}
 		c = cachetest.New(t, root, New)
-		r, _, _, err = c.Blob(t.Context(), key, Policy{}, write)
+		r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		data, err = io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Diff(t, data, payload)
 		assert.NoError(t, r.Close())
-		for _, parent := range c.blobRoots {
+		assertBlobRoots(t, c, digest.SHA384)
+		for i := range c.blobRoots {
+			parent := &c.blobRoots[i]
+			if parent.Root == nil {
+				continue
+			}
 			if _, err := parent.Stat("."); err != nil {
 				t.Fatalf("reopened parent: %v", err)
 			}
@@ -719,7 +763,12 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if _, err := disk.Stat("."); err != nil {
 		t.Fatalf("first Close closed shared root: %v", err)
 	}
-	for _, parent := range c.blobRoots {
+	assertBlobRoots(t, c, digest.SHA256)
+	for i := range c.blobRoots {
+		parent := &c.blobRoots[i]
+		if parent.Root == nil {
+			continue
+		}
 		if _, err := parent.Stat("."); err != nil {
 			t.Fatalf("first Close closed shared blob parent: %v", err)
 		}
@@ -746,7 +795,12 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if _, err := disk.Stat("."); err == nil {
 		t.Fatal("last Close retained root")
 	}
-	for _, parent := range c.blobRoots {
+	assertBlobRoots(t, c, digest.SHA256)
+	for i := range c.blobRoots {
+		parent := &c.blobRoots[i]
+		if parent.Root == nil {
+			continue
+		}
 		if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
 			t.Fatalf("last Close retained blob parent: %v", err)
 		}

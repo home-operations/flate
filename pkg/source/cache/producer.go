@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
@@ -154,11 +156,19 @@ func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload) (*
 }
 
 func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
-	c.blobOnce.Do(func() { c.blobErr = c.openBlobRoots() })
-	if c.blobErr != nil {
-		return c.blobErr
+	algorithm := stored.Digest.Algorithm()
+	root := &c.blobRoots[slices.Index(blobAlgorithms[:], algorithm)]
+	root.once.Do(func() {
+		root.path = filepath.Join(blobDir(), algorithm.String())
+		root.Root, root.err = c.root.OpenRoot(root.path)
+		if root.err == nil {
+			root.info, root.err = root.Stat(".")
+		}
+	})
+	if root.err != nil {
+		return root.err
 	}
-	root, name := c.blobRoots[stored.Digest.Algorithm()], stored.Digest.Encoded()
+	name := stored.Digest.Encoded()
 	e.fs = fileFS{name: "content", identity: stored.Digest.String(), size: stored.Size, open: func() (io.ReadCloser, error) {
 		info, err := c.root.Stat(root.path)
 		if err != nil {

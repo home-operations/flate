@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
@@ -22,8 +24,119 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
+func assertBlobRoots(t *testing.T, c *Cache, algorithms ...digest.Algorithm) {
+	t.Helper()
+	for i, algorithm := range blobAlgorithms {
+		if (c.blobRoots[i].Root != nil) != slices.Contains(algorithms, algorithm) {
+			t.Fatalf("opened %s root=%v, want algorithms %v", algorithm, c.blobRoots[i].Root != nil, algorithms)
+		}
+	}
+}
+
 func TestBlob_LookupAndReplacement(t *testing.T) {
 	t.Parallel()
+	t.Run("sha256-only", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		checkUnused := func() {
+			t.Helper()
+			for _, algorithm := range []digest.Algorithm{digest.SHA384, digest.SHA512} {
+				if _, err := c.root.Stat(filepath.Join(blobDir(), algorithm.String())); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("SHA256-only owner created unused %s directory: %v", algorithm, err)
+				}
+				if c.blobRoots[slices.Index(blobAlgorithms[:], algorithm)].Root != nil {
+					t.Fatalf("SHA256-only owner opened unused %s root", algorithm)
+				}
+			}
+		}
+		checkUnused()
+		assertBlobRoots(t, c)
+		key := BlobKey{Content: "sha256-only"}
+		payload := []byte("SHA256 payload")
+		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.NoError(t, r.Close())
+		checkUnused()
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		checkUnused()
+		assertBlobRoots(t, c)
+		r, _, restoredID, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Diff(t, data, payload)
+		assert.Equal(t, restoredID, id)
+		assert.Equal(t, AcquisitionIdentity(FileFS("payload", r)), manifest.Fingerprint([2]string{digest.FromBytes(payload).String(), "payload"}))
+		assert.NoError(t, r.Close())
+		checkUnused()
+		if c.blobRoots[0].Root == nil {
+			t.Fatal("SHA256 read did not open its root")
+		}
+	})
+	t.Run("unused-invalid-path", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, filepath.Join(blobDir(), digest.SHA384.String()), "not a directory")
+		c := cachetest.New(t, root, New)
+		key := BlobKey{Content: "unused-invalid-path"}
+		r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), ocispec.Descriptor{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.NoError(t, r.Close())
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "payload")
+		assert.NoError(t, r.Close())
+		assertBlobRoots(t, c, digest.SHA256)
+	})
+	t.Run("root-reuse", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		keys := []BlobKey{{Content: "reuse-first"}, {Content: "reuse-second"}}
+		for _, key := range keys {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), ocispec.Descriptor{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.NoError(t, r.Close())
+		}
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		var retained *os.Root
+		for _, key := range keys {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(r)
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), key.Content.(string))
+			assert.NoError(t, r.Close())
+			assertBlobRoots(t, c, digest.SHA256)
+			if retained != nil && c.blobRoots[0].Root != retained {
+				t.Fatal("distinct warm keys reopened the SHA256 root")
+			}
+			retained = c.blobRoots[0].Root
+		}
+		assert.NoError(t, c.Close())
+		if _, err := retained.Stat("."); !errors.Is(err, fs.ErrClosed) {
+			t.Fatalf("last Close retained reused blob root: %v", err)
+		}
+	})
 	t.Run("concurrent-first-read", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -63,10 +176,70 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		ready.Wait()
 		close(start)
 		joined.Wait()
+		assertBlobRoots(t, c, digest.SHA256)
 		assert.NoError(t, c.Close())
-		for _, parent := range c.blobRoots {
+		for i := range c.blobRoots {
+			parent := &c.blobRoots[i]
+			if parent.Root == nil {
+				continue
+			}
 			if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
 				t.Fatalf("last Close retained blob parent: %v", err)
+			}
+		}
+	})
+	t.Run("mixed-algorithm-first-read", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		for _, algorithm := range blobAlgorithms {
+			key := BlobKey{Content: algorithm.String()}
+			payload := []byte(algorithm.String())
+			r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.NoError(t, r.Close())
+			stored, err := c.store.Resolve(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored.Digest = algorithm.FromBytes(payload)
+			if err := c.store.Push(t.Context(), stored, bytes.NewReader(payload)); err != nil && !errors.Is(err, errdef.ErrAlreadyExists) {
+				t.Fatal(err)
+			}
+			assert.NoError(t, c.store.Tag(t.Context(), stored, id))
+		}
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		assertBlobRoots(t, c)
+		start := make(chan struct{})
+		var ready, joined sync.WaitGroup
+		ready.Add(len(blobAlgorithms))
+		for _, algorithm := range blobAlgorithms {
+			joined.Go(func() {
+				ready.Done()
+				<-start
+				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: algorithm.String()}, Policy{MaxAge: Forever}, nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				data, err := io.ReadAll(r)
+				closeErr := r.Close()
+				if err != nil || closeErr != nil || string(data) != algorithm.String() {
+					t.Errorf("%s first read=%q, read=%v, close=%v", algorithm, data, err, closeErr)
+				}
+			})
+		}
+		ready.Wait()
+		close(start)
+		joined.Wait()
+		assertBlobRoots(t, c, blobAlgorithms[:]...)
+		assert.NoError(t, c.Close())
+		for i := range c.blobRoots {
+			if _, err := c.blobRoots[i].Stat("."); !errors.Is(err, fs.ErrClosed) {
+				t.Fatalf("last Close retained %s root: %v", blobAlgorithms[i], err)
 			}
 		}
 	})
@@ -116,8 +289,25 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			assert.NoError(t, c.store.Tag(t.Context(), stored, id))
+			warmKey := BlobKey{Content: "independent-sha256"}
+			r, _, _, err = c.Blob(t.Context(), warmKey, Policy{}, producer([]byte("warm SHA256"), ocispec.Descriptor{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.NoError(t, r.Close())
 			assert.NoError(t, c.Close())
 			c = cachetest.New(t, root, New)
+			for range 2 {
+				r, _, _, err := c.Blob(t.Context(), warmKey, Policy{MaxAge: Forever}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := io.ReadAll(r)
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), "warm SHA256")
+				assert.NoError(t, r.Close())
+			}
+			assertBlobRoots(t, c, digest.SHA256)
 			var view fs.FS
 			for range 2 {
 				r, desc, restoredID, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
@@ -130,6 +320,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				assert.Equal(t, AcquisitionIdentity(view), manifest.Fingerprint([2]string{stored.Digest.String(), "payload"}))
 				assert.NoError(t, r.Close())
 			}
+			assertBlobRoots(t, c, digest.SHA256, algorithm)
 			var readers [2]fs.File
 			for i := range readers {
 				reader, err := view.Open("payload")
@@ -361,11 +552,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				if backing == "memory" {
 					data, err = fs.ReadFile(view, "chart.tgz")
 				}
-				// The copied view retains its generation after the original cursor closes.
 				if backing == "memory" && (err != nil || string(data) != payload) {
 					t.Fatalf("closed cursor invalidated view: %q, %v", data, err)
 				}
-				// The same key must remain usable while a returned reader is retained.
 				var wg sync.WaitGroup
 				wg.Go(func() {
 					other, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)

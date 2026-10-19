@@ -195,7 +195,6 @@ func scanTree(ctx context.Context, input, opposite *store.SourceArtifact) (map[s
 }
 
 type hashBuffer struct {
-	io.Reader
 	hash  hash.Hash
 	bytes [32 * 1024]byte
 	sum   [sha256.Size]byte
@@ -205,23 +204,33 @@ var hashBuffers = sync.Pool{New: func() any {
 	return &hashBuffer{hash: sha256.New()}
 }}
 
-func hashFile(_ context.Context, input fs.FS, name string) ([sha256.Size]byte, error) {
+func hashFile(ctx context.Context, input fs.FS, name string) ([sha256.Size]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return [sha256.Size]byte{}, err
+	}
 	f, err := input.Open(name)
 	if err != nil {
 		return [sha256.Size]byte{}, err
 	}
 	defer func() { _ = f.Close() }()
 	buf := hashBuffers.Get().(*hashBuffer)
-	buf.Reader = f
-	defer func() {
-		buf.Reader = nil
-		hashBuffers.Put(buf)
-	}()
+	defer hashBuffers.Put(buf)
 	h := buf.hash
 	h.Reset()
-	// Hide File.WriteTo so CopyBuffer uses the pooled buffer.
-	if _, err := io.CopyBuffer(h, buf, buf.bytes[:]); err != nil {
-		return [sha256.Size]byte{}, err
+	for {
+		if err := ctx.Err(); err != nil {
+			return [sha256.Size]byte{}, err
+		}
+		n, err := f.Read(buf.bytes[:])
+		if n > 0 {
+			_, _ = h.Write(buf.bytes[:n])
+		}
+		if err == io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
+			break
+		}
+		if err != nil {
+			return [sha256.Size]byte{}, err
+		}
 	}
 	h.Sum(buf.sum[:0])
 	return buf.sum, nil

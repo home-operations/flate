@@ -2,12 +2,15 @@ package change
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -143,27 +146,29 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 
 func TestHashFile(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "a", "hello")
-	testutil.WriteFile(t, dir, "b", "hello")
-	testutil.WriteFile(t, dir, "c", "different")
-	ha, err := hashFile(t.Context(), os.DirFS(dir), "a")
-	if err != nil {
-		t.Fatalf("hashFile a: %v", err)
-	}
-	hb, err := hashFile(t.Context(), os.DirFS(dir), "b")
-	if err != nil {
-		t.Fatalf("hashFile b: %v", err)
-	}
-	hc, err := hashFile(t.Context(), os.DirFS(dir), "c")
-	if err != nil {
-		t.Fatalf("hashFile c: %v", err)
-	}
-	if ha != hb {
-		t.Errorf("identical content should hash equal: %x vs %x", ha, hb)
-	}
-	if ha == hc {
-		t.Errorf("different content should hash differently: %x vs %x", ha, hc)
+	prefix := strings.Repeat("x", 32*1024)
+	for _, tc := range []struct {
+		name, same, different string
+		dataEOF               bool
+	}{
+		{name: "small", same: "hello", different: "different"},
+		{name: "data_eof", same: "hello", different: "different", dataEOF: true},
+		{name: "multi_chunk", same: prefix + "first", different: prefix + "other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, content := range []string{tc.same, tc.same, tc.different} {
+				data := []byte(content)
+				input := &cancellingInput{FS: fstest.MapFS{"file.yaml": {Data: data}}, dataEOF: tc.dataEOF}
+				got, err := hashFile(t.Context(), input, "file.yaml")
+				if err != nil {
+					t.Fatalf("hashFile: %v", err)
+				}
+				if want := sha256.Sum256(data); got != want {
+					t.Errorf("hash = %x, want %x", got, want)
+				}
+			}
+		})
 	}
 }
 
@@ -189,20 +194,39 @@ func TestDetect_LastBodyCancellation(t *testing.T) {
 	for _, side := range []string{"before", "after"} {
 		t.Run(side, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			input := fstest.MapFS{"file.yaml": {Data: []byte("same")}}
-			before := &store.SourceArtifact{FS: input}
-			after := &store.SourceArtifact{FS: input}
-			cancelled := &cancellingInput{FS: input, cancel: cancel}
-			if side == "before" {
-				before.FS = cancelled
-			} else {
-				after.FS = cancelled
-			}
-			set, err := Detect(ctx, before, after)
-			if !errors.Is(err, context.Canceled) || set != nil {
-				t.Fatalf("cancelled last body=%v,%v", set, err)
+			for _, shape := range []string{"data_eof", "multi_chunk"} {
+				t.Run(shape, func(t *testing.T) {
+					t.Parallel()
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					data := "same"
+					if shape == "multi_chunk" {
+						data = strings.Repeat(data, 16*1024)
+					}
+					input := fstest.MapFS{"file.yaml": {Data: []byte(data)}}
+					cancelled := func() bool { return ctx.Err() != nil }
+					before := &cancellingInput{FS: input, cancelled: cancelled, dataEOF: shape == "data_eof"}
+					after := &cancellingInput{FS: input, cancelled: cancelled, dataEOF: shape == "data_eof"}
+					if side == "before" {
+						before.cancel = cancel
+					} else {
+						after.cancel = cancel
+					}
+					set, err := Detect(ctx, &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+					t.Logf("before: opened=%d closed=%d reads after cancel=%d; after: opened=%d closed=%d reads after cancel=%d", before.opened.Load(), before.closed.Load(), before.postCancel.Load(), after.opened.Load(), after.closed.Load(), after.postCancel.Load())
+					if !errors.Is(err, context.Canceled) || set != nil {
+						t.Errorf("cancelled last body=%v,%v", set, err)
+					}
+					if before.postCancel.Load() != 0 || after.postCancel.Load() != 0 {
+						t.Error("content read started after cancellation")
+					}
+					if side == "before" && after.opened.Load() != 0 {
+						t.Error("after-side hash opened after cancellation")
+					}
+					if before.opened.Load() != before.closed.Load() || after.opened.Load() != after.closed.Load() {
+						t.Error("hash files not closed")
+					}
+				})
 			}
 		})
 	}
@@ -210,7 +234,10 @@ func TestDetect_LastBodyCancellation(t *testing.T) {
 
 type cancellingInput struct {
 	fs.FS
-	cancel context.CancelFunc
+	cancel                     context.CancelFunc
+	cancelled                  func() bool
+	dataEOF                    bool
+	opened, closed, postCancel atomic.Int32
 }
 
 func (c *cancellingInput) Open(name string) (fs.File, error) {
@@ -218,20 +245,34 @@ func (c *cancellingInput) Open(name string) (fs.File, error) {
 	if err != nil || name != "file.yaml" {
 		return f, err
 	}
-	return &cancellingFile{File: f, cancel: c.cancel}, nil
+	c.opened.Add(1)
+	return &cancellingFile{File: f, input: c}, nil
 }
 
 type cancellingFile struct {
 	fs.File
-	cancel context.CancelFunc
+	input *cancellingInput
 }
 
 func (c *cancellingFile) Read(p []byte) (int, error) {
+	if c.input.cancelled != nil && c.input.cancelled() {
+		c.input.postCancel.Add(1)
+	}
 	n, err := c.File.Read(p)
 	if n > 0 {
-		c.cancel()
+		if c.input.cancel != nil {
+			c.input.cancel()
+		}
+		if c.input.dataEOF {
+			err = io.EOF
+		}
 	}
 	return n, err
+}
+
+func (c *cancellingFile) Close() error {
+	c.input.closed.Add(1)
+	return c.File.Close()
 }
 
 func TestDetect_HashLimit(t *testing.T) {
@@ -242,7 +283,7 @@ func TestDetect_HashLimit(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				reads := &hashReads{release: make(chan struct{})}
+				reads := &hashReads{release: make(chan struct{}), cancelled: func() bool { return ctx.Err() != nil }}
 				released := false
 				defer func() {
 					if !released {
@@ -271,8 +312,8 @@ func TestDetect_HashLimit(t *testing.T) {
 					done <- result{set, err}
 				}()
 				synctest.Wait()
-				if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 {
-					t.Fatalf("blocked jobs: active=%d peak=%d before=%d, want eight overlapping jobs", reads.active.Load(), reads.maximum.Load(), reads.before.Load())
+				if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 || reads.started.Load() != 8 {
+					t.Fatalf("blocked jobs: active=%d peak=%d before=%d reads=%d, want eight overlapping jobs", reads.active.Load(), reads.maximum.Load(), reads.before.Load(), reads.started.Load())
 				}
 				switch scenario {
 				case "canceled":
@@ -292,6 +333,12 @@ func TestDetect_HashLimit(t *testing.T) {
 				close(reads.release)
 				released = true
 				got := <-done
+				if scenario == "canceled" {
+					t.Logf("read starts=%d reads after cancel=%d before opens=%d after opens=%d closes=%d", reads.started.Load(), reads.postCancel.Load(), reads.before.Load(), reads.opened.Load()-reads.before.Load(), reads.closed.Load())
+					if reads.postCancel.Load() != 0 || reads.opened.Load() != reads.before.Load() {
+						t.Error("hash work started after cancellation")
+					}
+				}
 				if reads.active.Load() != 0 || reads.opened.Load() != reads.closed.Load() || reads.maximum.Load() > 8 {
 					t.Fatalf("readers not drained: active=%d opened=%d closed=%d peak=%d", reads.active.Load(), reads.opened.Load(), reads.closed.Load(), reads.maximum.Load())
 				}
@@ -315,9 +362,11 @@ func TestDetect_HashLimit(t *testing.T) {
 
 type hashReads struct {
 	release                                 chan struct{}
+	cancelled                               func() bool
 	err                                     error
 	failed                                  atomic.Bool
 	active, maximum, opened, closed, before atomic.Int32
+	started, postCancel                     atomic.Int32
 }
 
 type hashInput struct {
@@ -352,6 +401,10 @@ type hashReadFile struct {
 }
 
 func (f *hashReadFile) Read(p []byte) (int, error) {
+	f.reads.started.Add(1)
+	if f.reads.cancelled() {
+		f.reads.postCancel.Add(1)
+	}
 	if !f.started {
 		f.started = true
 		if f.block {

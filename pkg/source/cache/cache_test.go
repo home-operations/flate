@@ -28,6 +28,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/gofrs/flock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -642,6 +643,60 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 }
 
 func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
+	t.Parallel()
+	t.Run("unused-owner", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		assert.NoError(t, c.Close())
+		for _, algorithm := range blobAlgorithms {
+			if _, err := os.Stat(filepath.Join(root, blobDir(), algorithm.String())); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("unused owner created %s root: %v", algorithm, err)
+			}
+		}
+	})
+	t.Run("partial-initialization", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		collision := filepath.Join(blobDir(), digest.SHA384.String())
+		testutil.WriteFile(t, root, collision, "not a directory")
+		c := cachetest.New(t, root, New)
+		key := BlobKey{Content: "partial-initialization"}
+		write := producer([]byte("payload"), ocispec.Descriptor{})
+		r, _, _, firstErr := c.Blob(t.Context(), key, Policy{}, write)
+		if r != nil || !errors.Is(firstErr, manifest.ErrFlux) {
+			t.Fatalf("partial initialization: reader=%v, error=%v", r, firstErr)
+		}
+		parent := c.blobRoots[digest.SHA256]
+		if parent.Root == nil {
+			t.Fatal("partial initialization did not open the first root")
+		}
+		assert.NoError(t, os.Remove(filepath.Join(root, collision)))
+		if r, _, _, err := c.Blob(t.Context(), key, Policy{}, write); r != nil || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, c.blobErr) {
+			t.Fatalf("repaired filesystem changed initialization result: reader=%v, error=%v", r, err)
+		}
+		assert.NoError(t, c.Close())
+		if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
+			t.Fatalf("last Close retained partial blob parent: %v", err)
+		}
+		lock := flock.New(filepath.Join(root, ociLock))
+		acquired, err := lock.TryLock()
+		assert.NoError(t, lock.Close())
+		if err != nil || !acquired {
+			t.Fatalf("last Close retained partial owner lock: acquired=%v, err=%v", acquired, err)
+		}
+		c = cachetest.New(t, root, New)
+		r, _, _, err = c.Blob(t.Context(), key, Policy{}, write)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.NoError(t, r.Close())
+		for _, parent := range c.blobRoots {
+			if _, err := parent.Stat("."); err != nil {
+				t.Fatalf("reopened parent: %v", err)
+			}
+		}
+	})
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
 	alias := filepath.Join(t.TempDir(), "alias")
@@ -656,13 +711,18 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = reader.Close() }()
+	t.Cleanup(func() { _ = reader.Close() })
 	disk := c.root
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := disk.Stat("."); err != nil {
 		t.Fatalf("first Close closed shared root: %v", err)
+	}
+	for _, parent := range c.blobRoots {
+		if _, err := parent.Stat("."); err != nil {
+			t.Fatalf("first Close closed shared blob parent: %v", err)
+		}
 	}
 	if data, err := io.ReadAll(reader); err != nil || string(data) != "held" {
 		t.Fatalf("reader after first Close: %q, %v", data, err)
@@ -686,11 +746,16 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if _, err := disk.Stat("."); err == nil {
 		t.Fatal("last Close retained root")
 	}
+	for _, parent := range c.blobRoots {
+		if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
+			t.Fatalf("last Close retained blob parent: %v", err)
+		}
+	}
 	if acquired, err := lock.TryLock(); err != nil || !acquired {
 		t.Fatalf("last Close retained lock: acquired=%v, err=%v", acquired, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
+	t.Cleanup(cancel)
 	if _, err := New(ctx, root); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("lock wait: %v", err)
 	}

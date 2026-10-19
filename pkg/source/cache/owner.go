@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/keylock"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
 )
@@ -83,18 +84,60 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	if err == nil {
 		store, err = openStore(ctx, disk)
 	}
+	c := &Cache{root: disk, store: store, locks: keylock.New[string](), persistBlob: processIdentity != ""}
+	if err != nil {
+		err = errors.Join(err, c.closeRoots(), o.lock.Close())
+	}
 	owners.Lock()
 	if err != nil {
-		err = errors.Join(err, disk.Close())
 		o.err = &CacheError{err}
 		delete(owners.stores, root)
-		_ = o.lock.Close()
 	} else {
-		o.cache = &Cache{root: disk, store: store, locks: keylock.New[string](), persistBlob: processIdentity != ""}
+		o.cache = c
 	}
 	close(o.ready)
 	owners.Unlock()
 	return o.cache, o.err
+}
+
+var blobAlgorithms = [...]digest.Algorithm{digest.SHA256, digest.SHA384, digest.SHA512}
+
+func (c *Cache) openBlobRoots() error {
+	parent, err := c.root.OpenRoot(blobDir())
+	if err != nil {
+		return err
+	}
+	c.blobRoots = make(map[digest.Algorithm]blobRoot)
+	for _, algorithm := range blobAlgorithms {
+		var root *os.Root
+		root, err = parent.OpenRoot(algorithm.String())
+		if errors.Is(err, os.ErrNotExist) {
+			if err = parent.MkdirAll(algorithm.String(), 0o750); err != nil {
+				break
+			}
+			root, err = parent.OpenRoot(algorithm.String())
+		}
+		if err != nil {
+			break
+		}
+		info, statErr := root.Stat(".")
+		if statErr != nil {
+			err = errors.Join(statErr, root.Close())
+			break
+		}
+		c.blobRoots[algorithm] = blobRoot{Root: root, path: filepath.Join(blobDir(), algorithm.String()), info: info}
+	}
+	return errors.Join(err, parent.Close())
+}
+
+func (c *Cache) closeRoots() error {
+	var err error
+	for _, algorithm := range blobAlgorithms {
+		if root := c.blobRoots[algorithm]; root.Root != nil {
+			err = errors.Join(err, root.Close())
+		}
+	}
+	return errors.Join(err, c.root.Close())
 }
 
 func openStore(ctx context.Context, root *os.Root) (*oci.Store, error) {
@@ -131,7 +174,7 @@ func (c *Cache) Close() error {
 	}
 	delete(owners.stores, c.root.Name())
 	c.entries.Clear()
-	if err := errors.Join(o.lock.Close(), c.root.Close()); err != nil {
+	if err := errors.Join(o.lock.Close(), c.closeRoots()); err != nil {
 		return &CacheError{err}
 	}
 	return nil

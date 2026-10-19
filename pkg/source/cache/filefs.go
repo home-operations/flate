@@ -45,8 +45,8 @@ func (f fileFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
-	node := &tarNode{FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}
 	if name == "." {
+		node := &tarNode{FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}
 		root := &tarNode{FileInfo: (&tar.Header{Name: ".", Mode: 0o750, Typeflag: tar.TypeDir}).FileInfo(), children: []fs.DirEntry{node}}
 		return &tarFile{tarNode: root, Reader: bytes.NewReader(nil)}, nil
 	}
@@ -57,15 +57,15 @@ func (f fileFS) Open(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &blobFile{ReadCloser: r, tarNode: node}, nil
+	return &blobFile{ReadCloser: r, FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}, nil
 }
 
 type blobFile struct {
 	io.ReadCloser
-	*tarNode
+	fs.FileInfo
 }
 
-func (f *blobFile) Stat() (fs.FileInfo, error) { return f.tarNode, nil }
+func (f *blobFile) Stat() (fs.FileInfo, error) { return f.FileInfo, nil }
 
 // AcquisitionIdentity reports the held generation and shaping of cache-owned readers.
 // Anonymous filesystems and wrappers have no acquisition authority.

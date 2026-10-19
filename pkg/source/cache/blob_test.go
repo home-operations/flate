@@ -17,12 +17,162 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
 )
 
 func TestBlob_LookupAndReplacement(t *testing.T) {
 	t.Parallel()
+	t.Run("concurrent-first-read", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		keys := []BlobKey{{Content: "first"}, {Content: "second"}}
+		upstream := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"revision": "v1"}}
+		for _, key := range keys {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), upstream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.NoError(t, r.Close())
+		}
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		start := make(chan struct{})
+		var ready sync.WaitGroup
+		var joined sync.WaitGroup
+		ready.Add(len(keys))
+		for _, key := range keys {
+			joined.Go(func() {
+				ready.Done()
+				<-start
+				r, desc, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				assert.Diff(t, desc, upstream)
+				data, err := io.ReadAll(r)
+				closeErr := r.Close()
+				if err != nil || closeErr != nil || string(data) != key.Content.(string) {
+					t.Errorf("first read=%q, read=%v, close=%v", data, err, closeErr)
+				}
+			})
+		}
+		ready.Wait()
+		close(start)
+		joined.Wait()
+		assert.NoError(t, c.Close())
+		for _, parent := range c.blobRoots {
+			if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
+				t.Fatalf("last Close retained blob parent: %v", err)
+			}
+		}
+	})
+	t.Run("recreated-parent", func(t *testing.T) {
+		t.Parallel()
+		c := cachetest.New(t, t.TempDir(), New)
+		key := BlobKey{Content: "recreated-parent"}
+		r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), ocispec.Descriptor{}))
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+		assert.NoError(t, os.RemoveAll(filepath.Join(c.root.Name(), blobDir())))
+		r, _, _, err = c.Blob(t.Context(), key, Policy{}, producer([]byte("second"), ocispec.Descriptor{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "second")
+		view := FileFS("payload", r)
+		assert.NoError(t, r.Close())
+		data, err = fs.ReadFile(view, "payload")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "second")
+	})
+	for _, algorithm := range []digest.Algorithm{digest.SHA256, digest.SHA384, digest.SHA512} {
+		t.Run(algorithm.String(), func(t *testing.T) {
+			t.Parallel()
+			if !algorithm.Available() {
+				t.Skip("digest algorithm is not linked")
+			}
+			root := t.TempDir()
+			c := cachetest.New(t, root, New)
+			key := BlobKey{Content: "indexed-digest"}
+			payload := []byte("independent readers")
+			upstream := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"revision": "v1"}}
+			r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, upstream))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.NoError(t, r.Close())
+			stored, err := c.store.Resolve(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored.Digest = algorithm.FromBytes(payload)
+			if err := c.store.Push(t.Context(), stored, bytes.NewReader(payload)); err != nil && !errors.Is(err, errdef.ErrAlreadyExists) {
+				t.Fatal(err)
+			}
+			assert.NoError(t, c.store.Tag(t.Context(), stored, id))
+			assert.NoError(t, c.Close())
+			c = cachetest.New(t, root, New)
+			var view fs.FS
+			for range 2 {
+				r, desc, restoredID, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assert.Diff(t, desc, upstream)
+				assert.Equal(t, restoredID, id)
+				view = FileFS("payload", r)
+				assert.Equal(t, AcquisitionIdentity(view), manifest.Fingerprint([2]string{stored.Digest.String(), "payload"}))
+				assert.NoError(t, r.Close())
+			}
+			var readers [2]fs.File
+			for i := range readers {
+				reader, err := view.Open("payload")
+				if err != nil {
+					t.Fatal(err)
+				}
+				readers[i] = reader
+				t.Cleanup(func() { _ = reader.Close() })
+				first := make([]byte, 1)
+				if _, err := io.ReadFull(reader, first); err != nil || first[0] != payload[0] {
+					t.Fatalf("independent first byte=%q: %v", first, err)
+				}
+			}
+			start := make(chan struct{})
+			var joined sync.WaitGroup
+			for _, reader := range readers {
+				joined.Go(func() {
+					<-start
+					data, err := io.ReadAll(reader)
+					closeErr := reader.Close()
+					if err != nil || closeErr != nil || !bytes.Equal(data, payload[1:]) {
+						t.Errorf("held reader=%q, read=%v, close=%v", data, err, closeErr)
+					}
+				})
+			}
+			close(start)
+			joined.Wait()
+			parent := filepath.Dir(blobPath(stored.Digest))
+			assert.NoError(t, c.root.Rename(parent, parent+"-held"))
+			assert.NoError(t, c.root.Mkdir(parent, 0o750))
+			if reader, err := view.Open("payload"); reader != nil || !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("held view ignored the replacement directory: reader=%v, error=%v", reader, err)
+			}
+			assert.NoError(t, c.root.Remove(parent))
+			assert.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, parent)))
+			if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("coalesced acquisition accepted a replaced parent: reader=%v, error=%v", r, err)
+			}
+			if reader, err := view.Open("payload"); reader != nil || err == nil {
+				t.Fatalf("held view accepted a replaced parent: reader=%v, error=%v", reader, err)
+			}
+		})
+	}
 	t.Run("outcomes", func(t *testing.T) {
 		t.Parallel()
 		for _, maxAge := range []time.Duration{0, time.Hour, Forever, -2} {

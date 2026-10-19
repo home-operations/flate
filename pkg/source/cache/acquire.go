@@ -52,9 +52,18 @@ type BlobKey struct {
 	Required []string
 }
 
+type blobRoot struct {
+	*os.Root
+	path string
+	info fs.FileInfo
+}
+
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
 type Cache struct {
 	root        *os.Root
+	blobRoots   map[digest.Algorithm]blobRoot
+	blobOnce    sync.Once
+	blobErr     error
 	store       *oci.Store
 	locks       *keylock.KeyMap[string]
 	entries     sync.Map

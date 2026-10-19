@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
@@ -153,8 +154,25 @@ func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload) (*
 }
 
 func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
+	c.blobOnce.Do(func() { c.blobErr = c.openBlobRoots() })
+	if c.blobErr != nil {
+		return c.blobErr
+	}
+	root, name := c.blobRoots[stored.Digest.Algorithm()], stored.Digest.Encoded()
 	e.fs = fileFS{name: "content", identity: stored.Digest.String(), size: stored.Size, open: func() (io.ReadCloser, error) {
-		return c.root.Open(blobPath(stored.Digest))
+		info, err := c.root.Stat(root.path)
+		if err != nil {
+			return nil, err
+		}
+		if os.SameFile(info, root.info) {
+			return root.Open(name)
+		}
+		current, err := c.root.OpenRoot(root.path)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = current.Close() }()
+		return current.Open(name)
 	}}
 	return nil
 }

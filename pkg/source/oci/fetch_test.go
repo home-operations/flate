@@ -26,6 +26,7 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -834,7 +835,8 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			if name == "digest selectors" {
 				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: art.manifestDigest}
 			}
-			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+			root := t.TempDir()
+			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 			got, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
 			if name == "unmatched" {
 				if err == nil {
@@ -852,6 +854,14 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 				}
 				return
 			}
+			for _, name := range []string{".git/config", "image.png"} {
+				if _, err := fs.Stat(got.FS, name); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("default ignore retained %s: %v", name, err)
+				}
+			}
+			if got := mustReadFile(t, got.FS, "file.yaml"); got != "x" {
+				t.Fatalf("content=%q", got)
+			}
 			if name == "digest selectors" {
 				copyRepo := *repo
 				copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
@@ -865,14 +875,22 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 				if copied.Key == got.Key {
 					t.Fatalf("different layer selectors reused cache key %q", got.Key)
 				}
-			}
-			for _, name := range []string{".git/config", "image.png"} {
-				if _, err := fs.Stat(got.FS, name); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatalf("default ignore retained %s: %v", name, err)
+				if err := f.Cache.Close(); err != nil {
+					t.Fatal(err)
 				}
-			}
-			if got := mustReadFile(t, got.FS, "file.yaml"); got != "x" {
-				t.Fatalf("content=%q", got)
+				f.Cache = cachetest.New(t, root, sourcecache.New)
+				for range 2 {
+					warm, err := f.Fetch(t.Context(), &copyRepo, sourcecache.RetryConfig{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if data, err := fs.ReadFile(warm.FS, "layer.tar.gz"); err != nil || !bytes.Equal(data, art.layer) {
+						t.Fatalf("warm copy changed layer bytes: %v", err)
+					}
+					before, after := *copied, *warm
+					before.FS, after.FS = nil, nil
+					assert.Diff(t, after, before)
+				}
 			}
 		})
 	}

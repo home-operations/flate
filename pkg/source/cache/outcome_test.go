@@ -677,6 +677,7 @@ func TestOutcome_WriteBounds(t *testing.T) {
 			if encodedSize() != size {
 				t.Fatalf("fixture size = %d, want %d", encodedSize(), size)
 			}
+			before := sweepSnapshot(t, filepath.Join(c.root.Name(), blobDir()))
 			desc, err := c.publishOutcome(t.Context(), "bounded", o, connReset())
 			if err != nil {
 				t.Fatal(err)
@@ -689,12 +690,8 @@ func TestOutcome_WriteBounds(t *testing.T) {
 				if desc.Digest != "" {
 					t.Fatal("oversize config published")
 				}
-				entries, err := fs.ReadDir(c.root.FS(), "oci/blobs")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(entries) != 0 {
-					t.Fatal("partial outcome written before bounds checked")
+				if diff := cmp.Diff(before, sweepSnapshot(t, filepath.Join(c.root.Name(), blobDir()))); diff != "" {
+					t.Fatalf("partial outcome written before bounds checked (-want +got):\n%s", diff)
 				}
 			}
 		})

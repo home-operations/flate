@@ -14,8 +14,10 @@ const (
 
 func indexPath() string { return filepath.Join(ociDir, ocispec.ImageIndexFile) }
 
+func blobDir() string { return ociDir + string(filepath.Separator) + ocispec.ImageBlobsDir }
+
 func blobPath(d digest.Digest) string {
-	return filepath.Join(ociDir, "blobs", d.Algorithm().String(), d.Encoded())
+	return filepath.Join(blobDir(), d.Algorithm().String(), d.Encoded())
 }
 
 func acquirePath(id string) string       { return filepath.Join(ociDir, "acquire-"+id) }

@@ -212,26 +212,14 @@ func resolve(ctx context.Context, location *gitrepo.Location, base string, owner
 			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
 }
 
-// resolveExplicit resolves --base=<rev>: locally first, then as
-// origin/<rev>, and finally by acquiring it from origin in private backing. The fetch is what makes a checkout without the
-// baseline's history work: a fetch-depth=1 clone of another branch, or
-// a tree written straight to disk over `git init` with only a remote.
 func resolveExplicit(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
 	repo := location.Repository
 	if h, err := repo.ResolveRevision(plumbing.Revision(base)); err == nil {
 		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
 	}
-	// CI checkouts (actions/checkout with default fetch-depth=1)
-	// land the PR's branch but not local branch refs for sibling
-	// branches — only remote-tracking ones. Retry as origin/<base>
-	// so `--base main` works without forcing CI users to type
-	// `--base origin/main`. Skip the fallback when base already
-	// looks remote-qualified to keep the error close to intent.
-	if !strings.ContainsRune(base, '/') {
-		remote := git.DefaultRemoteName + "/" + base
-		if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
-			return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
-		}
+	remote := git.DefaultRemoteName + "/" + base
+	if h, err := repo.ResolveRevision(plumbing.Revision(remote)); err == nil {
+		return &resolution{Hash: *h, Source: "explicit --base=" + base + " (via " + remote + ")", Repo: repo}, nil
 	}
 	url, ok := originURL(location.Config)
 	if !ok {

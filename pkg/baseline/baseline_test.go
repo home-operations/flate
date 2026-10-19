@@ -201,6 +201,44 @@ func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
 	}
 }
 
+func TestAutoResolve_ExplicitBaseRemoteTrackingBranch(t *testing.T) {
+	t.Parallel()
+	for _, base := range []string{"release/v1", "origin/release/v1"} {
+		t.Run(base, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			commit := initRepoWithFile(t, dir, "a.yaml", "base")
+			repo := openHelper(t, dir)
+			setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "release/v1"), commit)
+
+			res, err := AutoResolve(t.Context(), dir, base, cachetest.New(t, "", sourcecache.New))
+			assert.NoError(t, err)
+			assert.Equal(t, res.BaseInput.Revision, commit.String())
+			assert.Equal(t, res.Rev, shortRev(commit))
+			got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
+			assert.NoError(t, err)
+			assert.Equal(t, string(got), "base")
+		})
+	}
+}
+
+func TestAutoResolve_ExplicitBaseLocalBranchPrecedesOrigin(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	older := initRepoWithFile(t, dir, "a.yaml", "older")
+	newer := writeAndCommit(t, dir, "a.yaml", "newer")
+	repo := openHelper(t, dir)
+	setRef(t, repo, plumbing.NewBranchReferenceName("release/v1"), older)
+	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "release/v1"), newer)
+
+	res, err := AutoResolve(t.Context(), dir, "release/v1", cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	assert.Equal(t, res.BaseInput.Revision, older.String())
+	got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
+	assert.NoError(t, err)
+	assert.Equal(t, string(got), "older")
+}
+
 // TestAutoResolve_ExplicitBaseNeitherLocalNorRemote: when --base
 // resolves neither locally nor as origin/<base>, the error names
 // both lookup attempts so the user knows what to fix.

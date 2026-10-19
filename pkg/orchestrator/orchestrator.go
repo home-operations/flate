@@ -172,7 +172,8 @@ type Orchestrator struct {
 	filter *change.Filter
 	cache  *sourcecache.Cache
 	// Accepted identities are immutable after bootstrap, including for late consumers.
-	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
+	substitutionSources     map[manifest.NamedResource]manifest.BaseManifest
+	dependencySubstitutions values.DependencySubstitutions
 
 	// repoRoot anchors fresh claims for post-render orphan reporting, including
 	// Kustomizations admitted after static discovery is published.
@@ -541,6 +542,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
+	o.dependencySubstitutions = res.DependencySubstitutions
 
 	o.freezeSubstitutions()
 	o.failDependsOnCycles()

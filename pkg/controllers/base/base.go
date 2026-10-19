@@ -26,6 +26,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Controller owns shared reconciliation lifecycle, dependency gates and publication.
@@ -59,9 +60,10 @@ type Controller struct {
 	unsubMu sync.Mutex
 	unsub   []store.Unsubscribe
 
-	existence        depwait.ExistenceLookup
-	allowMissingCRDs bool
-	preflight        func(manifest.NamedResource) (string, bool)
+	dependencySubstitutions values.DependencySubstitutions
+	existence               depwait.ExistenceLookup
+	allowMissingCRDs        bool
+	preflight               func(manifest.NamedResource) (string, bool)
 }
 
 // New constructs a controller with its stable identity for reconciliation logs.
@@ -95,6 +97,8 @@ func (c *Controller) requireNotStarted(method string) {
 // concrete controller embeds Options in its own option struct and forwards it
 // to Configure, then assigns its controller-specific fields.
 type Options struct {
+	// DependencySubstitutions is the frozen discovered lookup used before child publication.
+	DependencySubstitutions values.DependencySubstitutions
 	// Filter narrows reconciliation to changed resources in changed-only mode.
 	Filter *change.Filter
 	// Index contains immutable source-qualified discovery evidence.
@@ -115,6 +119,7 @@ type Options struct {
 // Configure installs immutable setup before dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
+	c.dependencySubstitutions = opts.DependencySubstitutions
 	c.filter = opts.Filter
 	c.existence = opts.Existence
 	c.preflight = opts.PreflightFailure

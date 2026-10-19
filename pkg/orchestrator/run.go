@@ -119,11 +119,12 @@ func (o *Orchestrator) configureControllers() {
 	// The reconcile-shaping config common to all three render controllers,
 	// built once; each Configure adds its controller-specific fields.
 	common := base.Options{
-		Filter:           o.filter,
-		Index:            o.index,
-		Existence:        existence,
-		PreflightFailure: o.preflightFailure,
-		AllowMissingCRDs: o.cfg.AllowMissingCRDs,
+		DependencySubstitutions: o.dependencySubstitutions,
+		Filter:                  o.filter,
+		Index:                   o.index,
+		Existence:               existence,
+		PreflightFailure:        o.preflightFailure,
+		AllowMissingCRDs:        o.cfg.AllowMissingCRDs,
 	}
 	o.ksc.Configure(kustomization.Options{
 		Options:        common,

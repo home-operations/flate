@@ -259,6 +259,35 @@ func TestParseHelmChartSource_DefaultsAndReconcileStrategy(t *testing.T) {
 	}
 }
 
+func TestParseDoc_EmptyEnvsubstDefaults(t *testing.T) {
+	t.Parallel()
+	for _, operator := range []string{"-", "="} {
+		t.Run(operator, func(t *testing.T) {
+			t.Parallel()
+			doc := mustYAML(t, fmt.Sprintf(`
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ks, namespace: ns}
+spec:
+  path: '${PREFIX:%s}apps'
+  sourceRef:
+    kind: GitRepository
+    name: '${PREFIX:%s}repo'
+  interval: 5m
+`, operator, operator))
+			obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
+			assert.NoError(t, err)
+			k, ok := obj.(*Kustomization)
+			if !ok {
+				t.Fatalf("ParseDoc returned %T, want *Kustomization", obj)
+			}
+			assert.Equal(t, k.Path, "apps")
+			assert.Equal(t, k.SourceRef.Kind, KindGitRepository)
+			assert.Equal(t, k.SourceRef.Name, "repo")
+		})
+	}
+}
+
 // TestParseKustomization_SourceRefMissingNameRejected locks the
 // truncated-YAML guard: a Kustomization with sourceRef.kind set but
 // sourceRef.name empty (common shape for files that end mid-mapping)

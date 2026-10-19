@@ -1,6 +1,10 @@
 package manifest
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/fluxcd/pkg/envsubst"
+)
 
 func TestHasEnvsubstReference(t *testing.T) {
 	t.Parallel()
@@ -32,10 +36,51 @@ func TestHasEnvsubstReference(t *testing.T) {
 func TestResolveEnvsubstDefaults(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name        string
+		in          string
+		want        string
+		compareFlux bool
 	}{
+		{
+			name:        "colon-dash empty default",
+			in:          "${VAR:-}",
+			want:        "",
+			compareFlux: true,
+		},
+		{
+			name:        "colon-equals empty default",
+			in:          "${VAR:=}",
+			want:        "",
+			compareFlux: true,
+		},
+		{
+			name:        "colon-dash empty prefix",
+			in:          "${PREFIX:-}apps",
+			want:        "apps",
+			compareFlux: true,
+		},
+		{
+			name:        "colon-equals empty prefix",
+			in:          "${PREFIX:=}apps",
+			want:        "apps",
+			compareFlux: true,
+		},
+		{
+			name:        "empty default between literals",
+			in:          "pre${VAR:-}post",
+			want:        "prepost",
+			compareFlux: true,
+		},
+		{
+			name: "bare reference with colon-dash empty default",
+			in:   "${NS}/${PREFIX:-}apps",
+			want: "${NS}/apps",
+		},
+		{
+			name: "bare reference with colon-equals empty default",
+			in:   "${NS}/${PREFIX:=}apps",
+			want: "${NS}/apps",
+		},
 		{
 			name: "colon-equals default → applied",
 			in:   "./apps/${CLUSTER_NAME:=biohazard}",
@@ -95,8 +140,18 @@ func TestResolveEnvsubstDefaults(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := resolveEnvsubstDefaults(tc.in); got != tc.want {
+			got := resolveEnvsubstDefaults(tc.in)
+			if got != tc.want {
 				t.Errorf("resolveEnvsubstDefaults(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if tc.compareFlux {
+				upstream, err := envsubst.Eval(tc.in, func(string) (string, bool) { return "", false })
+				if err != nil {
+					t.Fatalf("envsubst.Eval(%q): %v", tc.in, err)
+				}
+				if got != upstream {
+					t.Errorf("resolveEnvsubstDefaults(%q) = %q, Flux = %q", tc.in, got, upstream)
+				}
 			}
 		})
 	}

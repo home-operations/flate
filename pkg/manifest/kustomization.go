@@ -122,15 +122,10 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	if err := decodeCR(doc, &cr, "Kustomization", FluxKustomizeDomain); err != nil {
 		return nil, err
 	}
-	// Pre-resolve envsubst defaults so flate's path / dep resolution
-	// matches what real Flux's postBuild.substitute would produce.
-	// Bare ${VAR} (no default) is left for the postBuild step to
-	// fill — only ${VAR:=default} and ${VAR:-default} collapse here.
 	cr.Spec.Path = resolveEnvsubstDefaults(cr.Spec.Path)
 	cr.Spec.SourceRef.Name = resolveEnvsubstDefaults(cr.Spec.SourceRef.Name)
 	cr.Spec.SourceRef.Namespace = resolveEnvsubstDefaults(cr.Spec.SourceRef.Namespace)
 	for i := range cr.Spec.DependsOn {
-		cr.Spec.DependsOn[i].Name = resolveEnvsubstDefaults(cr.Spec.DependsOn[i].Name)
 		cr.Spec.DependsOn[i].Namespace = resolveEnvsubstDefaults(cr.Spec.DependsOn[i].Namespace)
 	}
 	// sourceRef validation catches the truncated-YAML case where
@@ -176,6 +171,29 @@ func (k *Kustomization) SourceID() NamedResource {
 
 // IsFragment identifies patch fragments without a render path or source name.
 func (k *Kustomization) IsFragment() bool { return k.Path == "" && k.SourceRef.Name == "" }
+
+func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kustomization {
+	var out *Kustomization
+	for i, dep := range k.DependsOn {
+		resolvedName := name(dep.Name)
+		resolvedNamespace := dep.Namespace
+		if namespace != nil {
+			resolvedNamespace = namespace(dep.Namespace)
+		}
+		if resolvedName == dep.Name && resolvedNamespace == dep.Namespace {
+			continue
+		}
+		if out == nil {
+			out = k.Clone()
+		}
+		out.DependsOn[i].Name = resolvedName
+		out.DependsOn[i].Namespace = resolvedNamespace
+	}
+	if out == nil {
+		return k
+	}
+	return out
+}
 
 func (k *Kustomization) references(yield func(Reference) bool) {
 	if k.SourceRef.Kind != "" || k.SourceRef.Name != "" {

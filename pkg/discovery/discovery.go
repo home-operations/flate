@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Result summarizes what discovery hydrated into the store.
@@ -31,6 +32,8 @@ type Result struct {
 	// DisableChartDigestTracking reflects inline instance patches in file-parsed
 	// HelmReleases, including releases deferred until render emission or exact promotion.
 	DisableChartDigestTracking bool
+	// DependencySubstitutions is frozen after complete discovery and before rendering.
+	DependencySubstitutions values.DependencySubstitutions
 }
 
 // Config is the input contract for Run. Store is mandatory.
@@ -85,13 +88,13 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	d.loader.ApplyNamespaces(repoRoot)
-	// Resolve bare ${VAR} in Kustomization dependsOn against the
-	// cluster's postBuild substitute values, now that the full KS set is
-	// discovered (so the substitute union is complete and its conflict
-	// check is sound). Without this a child KS's
-	// `dependsOn: 0-${CLUSTER_NAME}-config` never matches the real
-	// 0-biohazard-config the parent's render would have substituted.
-	loader.ResolveDependsOnSubstitutions(d.cfg.Store)
+	kustomizations := cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	substitutions := values.NewDependencySubstitutions(kustomizations)
+	for _, ks := range kustomizations {
+		if resolved := manifest.MapDependsOn(ks, substitutions.Resolve, substitutions.Resolve); resolved != ks {
+			cfg.Store.AddObject(resolved)
+		}
+	}
 	var standaloneSecrets []manifest.NamedResource
 	if cfg.WipeSecrets {
 		for id := range l.Index.Files() {
@@ -104,6 +107,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(standaloneSecrets)
 	return &Result{
+		DependencySubstitutions:    substitutions,
 		RepoRoot:                   repoRoot,
 		Index:                      l.Index,
 		WipeSecrets:                cfg.WipeSecrets,

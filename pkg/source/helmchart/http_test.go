@@ -183,12 +183,17 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 		name, state string
 		cert        bool
 		missing     bool
+		input       bool
 	}{
 		{name: "auth unwired", state: "unwired", missing: true},
 		{name: "auth absent", state: "absent", missing: true},
 		{name: "auth wiped", state: "wiped", missing: true},
 		{name: "auth partial", state: "partial", missing: true},
-		{name: "auth malformed", state: "malformed", missing: true},
+		{name: "auth malformed", state: "malformed", input: true},
+		{name: "auth malformed password", state: "malformed password", input: true},
+		{name: "auth nonscalar", state: "nonscalar", input: true},
+		{name: "auth wiped username malformed password", state: "wiped malformed", input: true},
+		{name: "auth malformed username wiped password", state: "malformed wiped", input: true},
 		{name: "cert unwired", state: "unwired", cert: true},
 		{name: "cert absent", state: "absent", cert: true, missing: true},
 	} {
@@ -213,11 +218,38 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 			case "partial":
 				secret = &manifest.Secret{StringData: map[string]any{"username": "alice"}}
 			case "malformed":
-				secret = &manifest.Secret{Data: map[string]any{"username": "invalid base64", "password": "invalid base64"}}
+				secret = &manifest.Secret{Data: map[string]any{"username": "credential-payload!"}, StringData: map[string]any{"password": "first"}}
+			case "malformed password":
+				secret = &manifest.Secret{Data: map[string]any{"password": "credential-payload!"}, StringData: map[string]any{"username": "alice"}}
+			case "nonscalar":
+				secret = &manifest.Secret{StringData: map[string]any{"username": []any{"credential-payload"}, "password": "first"}}
+			case "wiped malformed":
+				secret = &manifest.Secret{StringData: map[string]any{"username": "..PLACEHOLDER_username.."}, Data: map[string]any{"password": "credential-payload!"}}
+			case "malformed wiped":
+				secret = &manifest.Secret{Data: map[string]any{"username": "credential-payload!"}, StringData: map[string]any{"password": "..PLACEHOLDER_password.."}}
 			}
-			_, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
-			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing {
-				t.Fatalf("missing=%t, error=%v", tc.missing, err)
+			// Secret failures must precede index or chart acquisition.
+			f.cache = nil
+			artifact, err := f.Fetch(t.Context(), helmChart("repo", "app-template", "1.0.0"), sourcecache.RetryConfig{})
+			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || artifact != nil {
+				t.Fatalf("missing=%t, artifact=%v, error=%v", tc.missing, artifact, err)
+			}
+			if tc.input {
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("expected hard input error, got %v", err)
+				}
+				if !strings.Contains(err.Error(), "HelmRepository flux-system/repo") || !strings.Contains(err.Error(), "secret flux-system/creds") {
+					t.Errorf("input error lost source or Secret identity: %v", err)
+				}
+				if strings.Contains(err.Error(), "credential-payload") {
+					t.Error("input error exposed credential payload")
+				}
+			}
+			if tc.missing && tc.state != "unwired" && !tc.cert {
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" || missing.Secret.Namespace != r.Namespace {
+					t.Errorf("missing error lost source or Secret identity: %v", err)
+				}
 			}
 		})
 	}

@@ -2,11 +2,13 @@ package git
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -31,36 +33,61 @@ func (f *Fetcher) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret
 		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, gitID(repo), err)
 	}
 	if endpoint.Protocol == "ssh" {
-		identity, _, _ := sec.Value("identity")
+		identity, _, err := sec.Value("identity")
+		if err != nil {
+			return nil, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+		}
+		password, _, err := sec.Value("password")
+		if err != nil {
+			return nil, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+		}
+		kh, _, err := sec.Value("known_hosts")
+		if err != nil {
+			return nil, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+		}
+		var auth *gitssh.PublicKeys
+		if identity != "" && !manifest.HasValuePlaceholder(identity) {
+			user := cmp.Or(endpoint.User, "git")
+			if manifest.HasValuePlaceholder(password) {
+				signer, parseErr := ssh.ParsePrivateKey([]byte(identity))
+				if _, needsPassword := errors.AsType[*ssh.PassphraseMissingError](parseErr); needsPassword {
+					parseErr = nil
+				}
+				auth, err = &gitssh.PublicKeys{User: user, Signer: signer}, parseErr
+			} else {
+				auth, err = gitssh.NewPublicKeys(user, []byte(identity), password)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse SSH identity: invalid private key", manifest.ErrInput, gitID(repo), repo.Namespace, repo.SecretRef.Name)
+			}
+		}
+		var cb ssh.HostKeyCallback = insecureIgnoreHostKey
+		if kh != "" && !manifest.HasValuePlaceholder(kh) {
+			cb, err = knownHostsCallback([]byte(kh))
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse known_hosts: invalid host data", manifest.ErrInput, gitID(repo), repo.Namespace, repo.SecretRef.Name)
+			}
+		}
 		if identity == "" || manifest.HasValuePlaceholder(identity) {
-			// Empty covers both missing-key and PLACEHOLDER-wiped values
-			// (the ExternalSecret case). Same sentinel so
-			// --allow-missing-secrets covers both shapes.
 			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing 'identity' for SSH auth")
 		}
-		password, _, _ := sec.Value("password")
-		auth, err := gitssh.NewPublicKeys(cmp.Or(endpoint.User, "git"), []byte(identity), password)
-		if err != nil {
-			return nil, fmt.Errorf("%s: parse SSH identity: %w", gitID(repo), err)
+		if manifest.HasValuePlaceholder(password) {
+			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "SSH password unavailable")
 		}
-		// Flate has no central known_hosts. If the secret carries one,
-		// enforce strict host-key checking; otherwise skip (offline
-		// renders against ephemeral worktrees are the norm). Users who
-		// need strict checks provide `known_hosts` in the Secret.
-		if kh, _, _ := sec.Value("known_hosts"); kh != "" && !manifest.HasValuePlaceholder(kh) {
-			cb, herr := knownHostsCallback([]byte(kh))
-			if herr != nil {
-				return nil, fmt.Errorf("%s: parse known_hosts: %w", gitID(repo), herr)
-			}
-			auth.HostKeyCallback = cb
-		} else {
-			auth.HostKeyCallback = insecureIgnoreHostKey
+		if manifest.HasValuePlaceholder(kh) {
+			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "known_hosts unavailable")
 		}
+		auth.HostKeyCallback = cb
 		return auth, nil
 	}
-	// HTTPS / HTTP: bearerToken takes precedence over basic auth, mirroring
-	// source-controller's docs.
-	if token, _, _ := sec.Value("bearerToken"); token != "" && !manifest.HasValuePlaceholder(token) {
+	token, _, err := sec.Value("bearerToken")
+	if err != nil {
+		return nil, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+	}
+	if manifest.HasValuePlaceholder(token) {
+		return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "bearerToken unavailable")
+	}
+	if token != "" {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
 	username, password, err := source.BasicAuthFromSecret(sec, repo.Named(), repo.SecretRef.Name)

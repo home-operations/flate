@@ -32,10 +32,13 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
@@ -453,42 +456,155 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	crt, key := testutil.SelfSignedClientCert(t)
-	for _, tc := range []struct {
-		name, url, secret, wantCA, wantCRT, wantKey, wantError string
-		data                                                   map[string]any
-	}{
-		{name: "anonymous"},
-		{name: "ssh", url: "ssh://git@example.com/x.git", secret: "tls", data: map[string]any{"ca.crt": "invalid"}},
+	type tlsCase struct {
+		name, url, secret, wantCA, wantCRT, wantKey, errorKey string
+		data, encodedData                                     map[string]any
+		wantInput, wantMissing                                bool
+	}
+	cases := []tlsCase{
+		{name: "anonymous", encodedData: map[string]any{"ca.crt": "%%%fixture"}},
+		{name: "ssh", url: "ssh://git@example.com/x.git", secret: "tls", encodedData: map[string]any{"ca.crt": "%%%fixture"}},
 		{name: "scp", url: "git@example.com:x.git", secret: "tls", data: map[string]any{"ca.crt": "invalid"}},
 		{name: "git-at-path", url: "git://h/x@y", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "auth-only", secret: "tls", data: map[string]any{"username": "alice", "password": "p"}},
+		{name: "empty TLS", secret: "tls", data: map[string]any{"tls.crt": "", "tls.key": "", "ca.crt": "", "caFile": ""}},
 		{name: "ca.crt", secret: "tls", data: map[string]any{"ca.crt": ca}, wantCA: ca},
 		{name: "caFile", secret: "tls", data: map[string]any{"caFile": ca}, wantCA: ca},
 		{name: "ca.crt-precedence", secret: "tls", data: map[string]any{"ca.crt": ca, "caFile": "invalid"}, wantCA: ca},
+		{name: "ca.crt over wiped caFile", secret: "tls", data: map[string]any{"ca.crt": ca, "caFile": "..PLACEHOLDER_caFile.."}, wantCA: ca},
 		{name: "mtls", secret: "tls", data: map[string]any{"ca.crt": ca, "tls.crt": crt, "tls.key": key}, wantCA: ca, wantCRT: crt, wantKey: key},
-		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": crt}, wantError: "tls.crt and tls.key"},
-		{name: "invalid-ca", secret: "tls", data: map[string]any{"ca.crt": "invalid"}, wantError: "did not parse as PEM"},
-		{name: "invalid-client", secret: "tls", data: map[string]any{"tls.crt": "invalid", "tls.key": "invalid"}, wantError: "parse tls.crt/tls.key"},
-	} {
+		{name: "unpaired", secret: "tls", data: map[string]any{"tls.crt": crt}, wantInput: true},
+		{name: "invalid-ca", secret: "tls", data: map[string]any{"ca.crt": "invalid"}, wantInput: true},
+		{name: "invalid-client", secret: "tls", data: map[string]any{"tls.crt": "invalid", "tls.key": "invalid"}, wantInput: true},
+		{name: "wiped client invalid CA", secret: "tls", data: map[string]any{"tls.crt": "..PLACEHOLDER_crt..", "ca.crt": "invalid"}, wantInput: true, errorKey: "ca.crt"},
+		{name: "invalid client wiped key", secret: "tls", data: map[string]any{"tls.crt": "invalid", "tls.key": "..PLACEHOLDER_key.."}, wantInput: true, errorKey: "tls.crt"},
+		{name: "valid client wiped key", secret: "tls", data: map[string]any{"tls.crt": crt, "tls.key": "..PLACEHOLDER_key.."}, wantMissing: true},
+		{name: "wiped crt malformed key", secret: "tls", data: map[string]any{"tls.crt": "..PLACEHOLDER_crt.."}, encodedData: map[string]any{"tls.key": "%%%fixture"}, wantInput: true, errorKey: "tls.key"},
+		{name: "wiped key malformed ca", secret: "tls", data: map[string]any{"tls.key": "..PLACEHOLDER_key.."}, encodedData: map[string]any{"ca.crt": "%%%fixture"}, wantInput: true, errorKey: "ca.crt"},
+		{name: "wiped ca malformed caFile", secret: "tls", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.."}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
+		{name: "caFile decoding despite valid ca", secret: "tls", data: map[string]any{"ca.crt": ca}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
+		{name: "first decoding error wins", secret: "tls", encodedData: map[string]any{"tls.crt": "%%%fixture", "tls.key": "%%%fixture", "ca.crt": "%%%fixture", "caFile": "%%%fixture"}, wantInput: true, errorKey: "tls.crt"},
+	}
+	for _, field := range []string{"tls.crt", "tls.key", "ca.crt", "caFile"} {
+		cases = append(cases, tlsCase{name: field + "/wiped", secret: "tls", data: map[string]any{field: "..PLACEHOLDER_" + field + ".."}, wantMissing: true})
+		for _, malformed := range []struct {
+			name  string
+			value any
+		}{
+			{"encoding", "%%%fixture"}, {"nonscalar", map[string]any{"credential-fixture": "payload"}},
+		} {
+			cases = append(cases, tlsCase{name: field + "/" + malformed.name, secret: "tls", encodedData: map[string]any{field: malformed.value}, wantInput: true, errorKey: field})
+		}
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: tc.data} }}
+			sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
+			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
 			url := tc.url
 			if url == "" {
 				url = "https://example.com/x.git"
 			}
-			opts, err := f.resolveTLS(gitRepoWithSecret("g", url, tc.secret), f.Secrets("ns", tc.secret))
-			if tc.wantError != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
-					t.Fatalf("material validation: %v", err)
+			repo := gitRepoWithSecret("g", url, tc.secret)
+			opts, err := f.resolveTLS(repo, sec)
+			if tc.wantInput || tc.wantMissing {
+				assert.Diff(t, opts, git.CloneOptions{})
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.wantInput)
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.wantMissing)
+				if tc.wantMissing {
+					missing, ok := errors.AsType[*source.MissingSecretError](err)
+					if !ok {
+						t.Fatalf("expected MissingSecretError; got %v", err)
+					}
+					assert.Equal(t, missing.Owner, repo.Named())
+					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
+				} else {
+					if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/tls") || !strings.Contains(err.Error(), gitID(repo)) {
+						t.Fatalf("missing input context: %v", err)
+					}
+					if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
+						t.Fatal("TLS credential payload leaked")
+					}
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
+			assert.NoError(t, err)
+			assert.Equal(t, string(opts.CABundle), tc.wantCA)
+			assert.Equal(t, string(opts.ClientCert), tc.wantCRT)
+			assert.Equal(t, string(opts.ClientKey), tc.wantKey)
+		})
+	}
+}
+
+func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
+	t.Parallel()
+	ca := testutil.SelfSignedCA(t)
+	for _, tc := range []struct {
+		name, errorKey                     string
+		data, encodedData                  map[string]any
+		wantInput, wantMissing, wantBearer bool
+	}{
+		{name: "hard auth before hard TLS", encodedData: map[string]any{"bearerToken": "%%%fixture", "caFile": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
+		{name: "hard auth before missing TLS", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.."}, encodedData: map[string]any{"bearerToken": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
+		{name: "missing auth before absent TLS", data: map[string]any{"username": "u"}, wantMissing: true, errorKey: "username/password"},
+		{name: "missing auth before missing TLS", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "..PLACEHOLDER_ca.."}, wantMissing: true, errorKey: "bearerToken"},
+		{name: "hard TLS before missing auth", data: map[string]any{"username": "u"}, encodedData: map[string]any{"ca.crt": "%%%fixture"}, wantInput: true, errorKey: "ca.crt"},
+		{name: "real TLS before wiped auth", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "invalid"}, wantInput: true, errorKey: "ca.crt"},
+		{name: "valid auth hard TLS", data: map[string]any{"username": "u", "password": "p"}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
+		{name: "valid auth missing TLS", data: map[string]any{"username": "u", "password": "p", "ca.crt": "..PLACEHOLDER_ca.."}, wantMissing: true, errorKey: "TLS material"},
+		{name: "empty bearer uses malformed basic", data: map[string]any{"bearerToken": ""}, encodedData: map[string]any{"username": "%%%fixture"}, wantInput: true, errorKey: "username"},
+		{name: "valid basic", data: map[string]any{"username": "u", "password": "p", "ca.crt": ca}},
+		{name: "valid bearer ignores malformed basic", data: map[string]any{"bearerToken": "fixture-token", "ca.crt": ca}, encodedData: map[string]any{"username": "%%%fixture", "password": map[string]any{"credential-fixture": "payload"}}, wantBearer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
+			lookups := 0
+			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { lookups++; return sec }}
+			repo := gitRepoWithSecret("g", "https://host/repo", "creds")
+			request, err := f.resolveTransport(repo)
+			assert.Equal(t, lookups, 1)
+			if tc.wantInput || tc.wantMissing {
+				assert.Equal(t, request.spec == nil, true)
+				assert.Equal(t, request.material == nil, true)
+				assert.Diff(t, request.options, git.CloneOptions{})
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.wantInput)
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.wantMissing)
+				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/creds") || !strings.Contains(err.Error(), gitID(repo)) {
+					t.Fatalf("wrong selected error context: %v", err)
+				}
+				if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
+					t.Fatal("credential payload leaked")
+				}
+				if tc.wantMissing {
+					missing, ok := errors.AsType[*source.MissingSecretError](err)
+					if !ok {
+						t.Fatalf("expected MissingSecretError; got %v", err)
+					}
+					assert.Equal(t, missing.Owner, repo.Named())
+					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"})
+				}
+				return
 			}
-			if string(opts.CABundle) != tc.wantCA || string(opts.ClientCert) != tc.wantCRT || string(opts.ClientKey) != tc.wantKey {
-				t.Fatal("TLS material was not preserved")
+			assert.NoError(t, err)
+			assert.Equal(t, request.spec, repo)
+			assert.Equal(t, string(request.options.CABundle), ca)
+			assert.Equal(t, request.material != nil, true)
+			if tc.wantBearer {
+				auth, ok := request.options.Auth.(*githttp.TokenAuth)
+				if !ok {
+					t.Fatalf("expected token auth; got %T", request.options.Auth)
+				}
+				assert.Equal(t, auth.Token, "fixture-token")
+			} else {
+				auth, ok := request.options.Auth.(*githttp.BasicAuth)
+				if !ok {
+					t.Fatalf("expected basic auth; got %T", request.options.Auth)
+				}
+				assert.Equal(t, auth.Username, "u")
+				assert.Equal(t, auth.Password, "p")
 			}
 		})
 	}

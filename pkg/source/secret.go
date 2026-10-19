@@ -65,11 +65,17 @@ func resolveSecretRef(secrets SecretGetter, owner manifest.NamedResource, field 
 	return sec, nil
 }
 
-// BasicAuthFromSecret reports absent, undecodable or wiped credentials through
-// MissingSecretError. Placeholder tokens must never become credentials.
+// BasicAuthFromSecret rejects malformed credentials and reports absent or wiped
+// credentials through MissingSecretError.
 func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.NamedResource, secretRef string) (username, password string, err error) {
-	username, _, _ = sec.Value("username")
-	password, _, _ = sec.Value("password")
+	username, _, err = sec.Value("username")
+	if err != nil {
+		return "", "", fmt.Errorf("%s: secret %s/%s: %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, secretRef, err)
+	}
+	password, _, err = sec.Value("password")
+	if err != nil {
+		return "", "", fmt.Errorf("%s: secret %s/%s: %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, secretRef, err)
+	}
 	if username == "" || password == "" || manifest.HasValuePlaceholder(username) || manifest.HasValuePlaceholder(password) {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
 	}

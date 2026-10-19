@@ -1,10 +1,16 @@
 package source
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/mldsa"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -25,10 +31,7 @@ func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *
 	for i, key := range []string{"tls.crt", "tls.key", "ca.crt"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, fmt.Errorf("cert secret %s/%s: %w", owner.Namespace, ref.Name, err)
-		}
-		if manifest.HasValuePlaceholder(value) {
-			return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+			return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w", owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
 		}
 		material[i] = value
 	}
@@ -36,6 +39,9 @@ func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *
 		return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
 	}
 	cfg, err := BuildTLSConfig(material[0], material[1], material[2])
+	if errors.Is(err, manifest.ErrMissingSecret) {
+		return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w",
 			owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
@@ -43,41 +49,83 @@ func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *
 	return cfg, nil
 }
 
-// BuildTLSConfig assembles a *tls.Config from PEM-armored secret
-// material. Any subset of (client cert + key) and (CA) is acceptable;
-// crt/key must appear together if either is present. Returns an error
-// when all inputs are empty so callers can distinguish "no TLS
-// configured" from "malformed config".
-//
-// MinVersion is pinned to TLS 1.2 to match source-controller's
-// defaults. Callers that need TLS 1.3-only behavior can adjust the
-// returned config.
-//
-// Common Flux Secret keys feeding this helper:
-//
-//	tls.crt / tls.key  → client certificate (mTLS)
-//	ca.crt             → trust roots for the server
+// BuildTLSConfig builds TLS from a client pair, a CA bundle, or both.
+// Independently malformed real material returns manifest.ErrInput before placeholders
+// return manifest.ErrMissingSecret; omitted client components must appear together.
 func BuildTLSConfig(crt, key, ca string) (*tls.Config, error) {
 	if crt == "" && key == "" && ca == "" {
-		return nil, errors.New("no TLS material (tls.crt, tls.key, ca.crt) provided")
+		return nil, fmt.Errorf("%w: no TLS material (tls.crt, tls.key, ca.crt) provided", manifest.ErrInput)
 	}
-	if (crt == "") != (key == "") {
-		return nil, errors.New("must provide both tls.crt and tls.key together")
+	if (crt == "" && key != "" && !manifest.HasValuePlaceholder(key)) ||
+		(key == "" && crt != "" && !manifest.HasValuePlaceholder(crt)) {
+		return nil, fmt.Errorf("%w: must provide both tls.crt and tls.key together", manifest.ErrInput)
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if crt != "" {
-		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
-		if err != nil {
-			return nil, fmt.Errorf("parse tls.crt/tls.key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	if ca != "" {
+	if ca != "" && !manifest.HasValuePlaceholder(ca) {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM([]byte(ca)) {
-			return nil, errors.New("ca.crt did not parse as PEM")
+			return nil, fmt.Errorf("%w: ca.crt did not parse as PEM", manifest.ErrInput)
 		}
 		cfg.RootCAs = pool
+	}
+	if crt != "" && key != "" && !manifest.HasValuePlaceholder(crt) && !manifest.HasValuePlaceholder(key) {
+		cert, err := tls.X509KeyPair([]byte(crt), []byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("%w: parse tls.crt/tls.key: invalid client pair", manifest.ErrInput)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	} else {
+		for i, material := range []string{crt, key} {
+			if material == "" || manifest.HasValuePlaceholder(material) {
+				continue
+			}
+			var block *pem.Block
+			for remaining := []byte(material); len(remaining) > 0; {
+				block, remaining = pem.Decode(remaining)
+				if block == nil {
+					break
+				}
+				if (i == 0 && block.Type == "CERTIFICATE") ||
+					(i == 1 && (block.Type == "PRIVATE KEY" || strings.HasSuffix(block.Type, " PRIVATE KEY"))) {
+					break
+				}
+				block = nil
+			}
+			if block == nil {
+				return nil, fmt.Errorf("%w: parse tls.crt/tls.key: no matching PEM block", manifest.ErrInput)
+			}
+			if i == 0 {
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					return nil, fmt.Errorf("%w: parse tls.crt: invalid certificate", manifest.ErrInput)
+				}
+				switch cert.PublicKey.(type) {
+				case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
+				default:
+					return nil, fmt.Errorf("%w: tls.crt: unsupported public key algorithm", manifest.ErrInput)
+				}
+			} else {
+				// crypto/tls.parsePrivateKey is unexported; keep its DER forms and key types.
+				privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+				if err != nil {
+					privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+				}
+				if err != nil {
+					privateKey, err = x509.ParseECPrivateKey(block.Bytes)
+				}
+				if err != nil {
+					return nil, fmt.Errorf("%w: parse tls.key: invalid private key", manifest.ErrInput)
+				}
+				switch privateKey.(type) {
+				case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey, *mldsa.PrivateKey:
+				default:
+					return nil, fmt.Errorf("%w: tls.key: unsupported private key type", manifest.ErrInput)
+				}
+			}
+		}
+	}
+	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
+		return nil, manifest.ErrMissingSecret
 	}
 	return cfg, nil
 }

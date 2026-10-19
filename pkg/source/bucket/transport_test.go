@@ -83,8 +83,9 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, ref, secret, wantError string
-		data                         map[string]any
+		data, rawData                map[string]any
 		unwired, encoded, missing    bool
+		field                        string
 	}{
 		{name: "auth unwired", ref: "auth", secret: "creds", unwired: true, wantError: "SecretGetter"},
 		{name: "auth missing key", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "k"}, missing: true, wantError: "missing accesskey/secretkey"},
@@ -93,6 +94,15 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		{name: "secretkey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": "..PLACEHOLDER_secretkey.."}, missing: true},
 		{name: "secretkey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": "..PLACEHOLDER_secretkey.."}, encoded: true, missing: true},
 		{name: "auth absent", ref: "auth", secret: "creds", missing: true, wantError: "secret ns/creds not found"},
+		{name: "auth empty", ref: "auth", secret: "creds", data: map[string]any{}, missing: true},
+		{name: "malformed accesskey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!"}, data: map[string]any{"secretkey": "secret"}, field: "accesskey"},
+		{name: "malformed secretkey", ref: "auth", secret: "creds", rawData: map[string]any{"secretkey": "credential-payload!"}, data: map[string]any{"accesskey": "access"}, field: "secretkey"},
+		{name: "nonscalar accesskey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": []any{"credential-payload"}, "secretkey": "secret"}, field: "accesskey"},
+		{name: "nonscalar secretkey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": map[string]any{"secret": "credential-payload"}}, field: "secretkey"},
+		{name: "missing accesskey malformed secretkey", ref: "auth", secret: "creds", rawData: map[string]any{"secretkey": "credential-payload!"}, field: "secretkey"},
+		{name: "wiped accesskey malformed secretkey", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "..PLACEHOLDER_accesskey.."}, rawData: map[string]any{"secretkey": "credential-payload!"}, field: "secretkey"},
+		{name: "malformed accesskey wiped secretkey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!"}, data: map[string]any{"secretkey": "..PLACEHOLDER_secretkey.."}, field: "accesskey"},
+		{name: "both malformed choose accesskey", ref: "auth", secret: "creds", rawData: map[string]any{"accesskey": "credential-payload!", "secretkey": "credential-payload!"}, field: "accesskey"},
 		{name: "cert partial pair", ref: "cert", secret: "tls", data: map[string]any{"tls.crt": "-only-cert-"}, wantError: "must provide both"},
 		{name: "cert empty", ref: "cert", secret: "tls", data: map[string]any{"unrelated": "x"}, missing: true},
 		{name: "cert absent", ref: "cert", secret: "missing", missing: true},
@@ -104,10 +114,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			f := &Fetcher{}
 			if !tc.unwired {
 				f.Secrets = func(_, _ string) *manifest.Secret {
-					if tc.data == nil {
+					if tc.data == nil && tc.rawData == nil {
 						return nil
 					}
-					sec := &manifest.Secret{StringData: tc.data}
+					sec := &manifest.Secret{Name: "metadata-secret", Namespace: "elsewhere", StringData: tc.data, Data: tc.rawData}
 					if tc.encoded {
 						sec.StringData, sec.Data = nil, map[string]any{}
 						for k, v := range tc.data {
@@ -123,7 +133,15 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			switch tc.ref {
 			case "auth":
 				b.SecretRef = ref
-				_, err = f.Fetch(t.Context(), b, cache.RetryConfig{})
+				creds, credentialErr := f.resolveCredentials(b)
+				if creds != nil || credentialErr == nil {
+					t.Fatal("credential failure returned credentials or no error")
+				}
+				artifact, fetchErr := f.Fetch(t.Context(), b, cache.RetryConfig{})
+				if artifact != nil {
+					t.Fatal("credential failure returned an acquired artifact")
+				}
+				err = fetchErr
 			case "cert":
 				b.CertSecretRef = ref
 				_, err = f.resolveTransport(b)
@@ -133,6 +151,19 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
+			}
+			if tc.field != "" {
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("expected hard input error, got %v", err)
+				}
+				for _, context := range []string{"Bucket ns/b", "secret ns/creds", "[" + tc.field + "]"} {
+					if !strings.Contains(err.Error(), context) {
+						t.Errorf("input error missing context %q: %v", context, err)
+					}
+				}
+				if strings.Contains(err.Error(), "credential-payload") {
+					t.Error("input error exposed credential payload")
+				}
 			}
 			if tc.missing {
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
@@ -151,6 +182,41 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			}
 		})
 	}
+	t.Run("successful credentials", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name string
+			auth bool
+		}{
+			{"anonymous", false},
+			{"valid", true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				b := &manifest.Bucket{Name: "b", Namespace: "ns"}
+				if tc.auth {
+					b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
+				}
+				f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+					if !tc.auth {
+						t.Error("anonymous credentials consulted a Secret")
+					}
+					return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": "secret"}}
+				}}
+				creds, err := f.resolveCredentials(b)
+				assert.NoError(t, err)
+				value, err := creds.GetWithContext(nil)
+				assert.NoError(t, err)
+				access, secret := "", ""
+				if tc.auth {
+					access, secret = "access", "secret"
+				}
+				if value.AccessKeyID != access || value.SecretAccessKey != secret {
+					t.Error("credential values were not preserved")
+				}
+			})
+		}
+	})
 }
 
 func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {

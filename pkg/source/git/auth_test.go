@@ -23,41 +23,77 @@ import (
 
 func TestFetcher_SecretReferences(t *testing.T) {
 	t.Parallel()
-	_, key, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	public, key, err := ed25519.GenerateKey(nil)
+	assert.NoError(t, err)
 	block, err := ssh.MarshalPrivateKey(key, "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
+	identity := string(pem.EncodeToMemory(block))
+	badPEM := string(pem.EncodeToMemory(&pem.Block{Type: "credential-fixture", Bytes: []byte("fixture")}))
+	encryptedBlock, err := ssh.MarshalPrivateKeyWithPassphrase(key, "fixture", []byte("fixture-password"))
+	assert.NoError(t, err)
+	encryptedIdentity := string(pem.EncodeToMemory(encryptedBlock))
+	hostKey, err := ssh.NewPublicKey(public)
+	assert.NoError(t, err)
 	type secretCase struct {
-		name, field             string
-		data                    map[string]any
-		encoded, proxy, unwired bool
-		wantMissing             bool
-		wantError               string
+		name, field, wantKey, wantError                      string
+		data, encodedData                                    map[string]any
+		encoded, ssh, proxy, unwired, wantMissing, wantInput bool
 	}
 	cases := []secretCase{
 		{name: "missing proxy", proxy: true, wantMissing: true},
-		{name: "incomplete basic", data: map[string]any{"username": "alice"}, wantError: "missing username/password"},
+		{name: "missing auth", wantMissing: true},
+		{name: "incomplete basic", data: map[string]any{"username": "alice"}, wantMissing: true},
 		{name: "unwired getter", unwired: true, wantError: "SecretGetter"},
+		{name: "empty bearer uses basic", data: map[string]any{"bearerToken": "", "username": "u", "password": "p"}},
+		{name: "empty optional SSH", ssh: true, data: map[string]any{"identity": identity, "password": "", "known_hosts": ""}},
+		{name: "valid known hosts", ssh: true, data: map[string]any{"identity": identity, "known_hosts": "host " + string(ssh.MarshalAuthorizedKey(hostKey))}},
+		{name: "invalid identity", ssh: true, data: map[string]any{"identity": "invalid-private-fixture"}, wantInput: true, wantKey: "identity"},
+		{name: "invalid known hosts", ssh: true, data: map[string]any{"identity": identity, "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "wiped identity malformed password", ssh: true, data: map[string]any{"identity": "..PLACEHOLDER_identity.."}, encodedData: map[string]any{"password": "%%%fixture"}, wantInput: true, wantKey: "password"},
+		{name: "missing identity malformed known hosts", ssh: true, encodedData: map[string]any{"known_hosts": "%%%fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "wiped password malformed known hosts", ssh: true, data: map[string]any{"identity": identity, "password": "..PLACEHOLDER_password.."}, encodedData: map[string]any{"known_hosts": "%%%fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "malformed identity wiped password", ssh: true, data: map[string]any{"password": "..PLACEHOLDER_password.."}, encodedData: map[string]any{"identity": "%%%fixture"}, wantInput: true, wantKey: "identity"},
+		{name: "identity PEM label sanitized", ssh: true, data: map[string]any{"identity": badPEM, "known_hosts": "..PLACEHOLDER_known_hosts.."}, wantInput: true, wantKey: "identity"},
+		{name: "host marker sanitized", ssh: true, data: map[string]any{"identity": "..PLACEHOLDER_identity..", "known_hosts": "@credential-fixture host ignored"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "invalid identity wiped hosts", ssh: true, data: map[string]any{"identity": "invalid-private-fixture", "known_hosts": "..PLACEHOLDER_known_hosts.."}, wantInput: true, wantKey: "identity"},
+		{name: "invalid identity wiped password", ssh: true, data: map[string]any{"identity": "invalid-private-fixture", "password": "..PLACEHOLDER_password.."}, wantInput: true, wantKey: "identity"},
+		{name: "encrypted identity wiped password", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "..PLACEHOLDER_password.."}, wantMissing: true},
+		{name: "encrypted identity correct password", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "fixture-password"}},
+		{name: "encrypted identity wrong password", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "wrong-password"}, wantInput: true, wantKey: "identity"},
+		{name: "absent identity invalid hosts", ssh: true, data: map[string]any{"known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "wiped identity invalid hosts", ssh: true, data: map[string]any{"identity": "..PLACEHOLDER_identity..", "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "encrypted identity wiped password invalid hosts", ssh: true, data: map[string]any{"identity": encryptedIdentity, "password": "..PLACEHOLDER_password..", "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "plain identity wiped password invalid hosts", ssh: true, data: map[string]any{"identity": identity, "password": "..PLACEHOLDER_password..", "known_hosts": "invalid-known-hosts-fixture"}, wantInput: true, wantKey: "known_hosts"},
+		{name: "raw data placeholder is malformed", encodedData: map[string]any{"bearerToken": "..PLACEHOLDER_bearerToken.."}, wantInput: true, wantKey: "bearerToken"},
 	}
-	for _, field := range []string{"tls.crt", "identity", "known_hosts", "bearerToken"} {
+	for _, field := range []string{"tls.crt", "identity", "known_hosts", "password", "bearerToken"} {
+		isSSH := field == "identity" || field == "known_hosts" || field == "password"
 		for _, encoded := range []bool{false, true} {
 			cases = append(cases, secretCase{
-				name: fmt.Sprintf("%s/encoded=%t", field, encoded), field: field, encoded: encoded,
-				data:        map[string]any{"identity": string(pem.EncodeToMemory(block)), "username": "u", "password": "p", field: "..PLACEHOLDER_" + field + ".."},
-				wantMissing: field == "tls.crt" || field == "identity",
+				name: fmt.Sprintf("%s/encoded=%t", field, encoded), field: field, encoded: encoded, ssh: isSSH,
+				data: map[string]any{"identity": identity, "username": "u", "password": "p", field: "..PLACEHOLDER_" + field + ".."}, wantMissing: true,
 			})
+		}
+		if field == "tls.crt" {
+			continue
+		}
+		for _, malformed := range []struct {
+			name  string
+			value any
+		}{
+			{"encoding", "%%%fixture"}, {"nonscalar", map[string]any{"credential-fixture": "payload"}},
+		} {
+			data := map[string]any{"identity": identity, "username": "u", "password": "p"}
+			delete(data, field)
+			cases = append(cases, secretCase{name: field + "/" + malformed.name, ssh: isSSH, data: data, encodedData: map[string]any{field: malformed.value}, wantInput: true, wantKey: field})
 		}
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var sec *manifest.Secret
-			if tc.data != nil {
-				sec = &manifest.Secret{StringData: tc.data}
+			if tc.data != nil || tc.encodedData != nil {
+				sec = &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
 				if tc.encoded {
 					sec.StringData, sec.Data = nil, map[string]any{}
 					for k, v := range tc.data {
@@ -69,46 +105,55 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			if !tc.unwired {
 				f.Secrets = func(_, _ string) *manifest.Secret { return sec }
 			}
-			repo := &manifest.GitRepository{Name: "g", Namespace: "ns", URL: "https://host/repo", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-			if tc.field == "identity" || tc.field == "known_hosts" {
+			repo := gitRepoWithSecret("g", "https://host/repo", "creds")
+			if tc.ssh {
 				repo.URL = "ssh://git@host/repo"
 			}
+			var auth transport.AuthMethod
 			var err error
+			owner, secretName := repo.Named(), "creds"
 			if tc.proxy {
 				repo.Name, repo.SecretRef = "repo", nil
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
 				_, err = f.resolveTransport(repo)
-				missing, ok := errors.AsType[*source.MissingSecretError](err)
-				if !ok {
-					t.Fatalf("expected MissingSecretError; got %T", err)
-				}
-				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "ns/repo"})
-				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-				assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": GitRepository ns/ns/repo: secret ns/missing not found")
+				owner.Name, secretName = "ns/repo", "missing"
 			} else if tc.field == "tls.crt" {
-				_, err = f.resolveTLS(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
+				_, err = f.resolveTLS(repo, sec)
 			} else {
-				var auth transport.AuthMethod
-				if f.Secrets != nil {
-					sec = f.Secrets(repo.Namespace, repo.SecretRef.Name)
-				}
 				auth, err = f.resolveAuth(repo, sec)
-				if tc.field == "bearerToken" {
-					if _, ok := auth.(*githttp.BasicAuth); !ok {
-						t.Fatalf("got %T, want basic auth", auth)
+			}
+			if err != nil {
+				assert.Equal(t, auth == nil, true)
+			}
+			if tc.wantInput {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
+				if err == nil || !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "secret ns/creds") || !strings.Contains(err.Error(), gitID(repo)) {
+					t.Fatalf("missing input key/source context: %v", err)
+				}
+				for _, payload := range []string{"%%%fixture", "credential-fixture", "invalid-private-fixture", "invalid-known-hosts-fixture"} {
+					if strings.Contains(err.Error(), payload) {
+						t.Fatal("credential payload leaked")
 					}
 				}
-			}
-			if tc.wantMissing {
-				if !errors.Is(err, manifest.ErrMissingSecret) {
-					t.Fatalf("expected missing-secret error: %v", err)
+			} else if tc.wantMissing {
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok {
+					t.Fatalf("expected MissingSecretError; got %v", err)
 				}
+				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
+				assert.Equal(t, missing.Owner, owner)
+				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: secretName})
 			} else if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("expected %q error; got %v", tc.wantError, err)
 				}
-			} else if err != nil {
-				t.Fatal(err)
+			} else {
+				assert.NoError(t, err)
+				if auth == nil {
+					t.Fatal("valid credentials did not produce auth")
+				}
 			}
 		})
 	}

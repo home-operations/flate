@@ -47,12 +47,21 @@ func ResolveProxy(secrets SecretGetter, owner manifest.NamedResource, ref *manif
 	for i, key := range []string{"address", "username", "password"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, fmt.Errorf("proxy secret %s/%s: %w", owner.Namespace, ref.Name, err)
+			return nil, fmt.Errorf("%s %s: proxySecretRef %s/%s: %w", owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
 		}
+		material[i] = value
+	}
+	proxy := &ProxyConfig{Address: material[0], Username: material[1], Password: material[2]}
+	if proxy.Address != "" && !manifest.HasValuePlaceholder(proxy.Address) {
+		if _, err := proxy.URL(); err != nil {
+			return nil, fmt.Errorf("%w: %s %s: proxySecretRef %s/%s: invalid proxy address",
+				manifest.ErrInput, owner.Kind, owner.Name, owner.Namespace, ref.Name)
+		}
+	}
+	for _, value := range material {
 		if manifest.HasValuePlaceholder(value) {
 			return nil, MissingSecretErr(owner, ref.Name, "proxy material unavailable")
 		}
-		material[i] = value
 	}
 	if material[0] == "" {
 		if material[1] != "" || material[2] != "" {
@@ -60,5 +69,5 @@ func ResolveProxy(secrets SecretGetter, owner manifest.NamedResource, ref *manif
 		}
 		return nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
 	}
-	return &ProxyConfig{Address: material[0], Username: material[1], Password: material[2]}, nil
+	return proxy, nil
 }

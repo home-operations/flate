@@ -61,11 +61,14 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (gitAcquisition
 	if repo.SecretRef != nil && f.Secrets != nil {
 		sec = f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	}
-	auth, err := f.resolveAuth(repo, sec)
-	if err != nil {
-		return gitAcquisition{}, err
+	auth, authErr := f.resolveAuth(repo, sec)
+	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
+		return gitAcquisition{}, authErr
 	}
 	opts, err := f.resolveTLS(repo, sec)
+	if authErr != nil && (err == nil || errors.Is(err, manifest.ErrMissingSecret)) {
+		return gitAcquisition{}, authErr
+	}
 	if err != nil {
 		return gitAcquisition{}, err
 	}
@@ -87,10 +90,6 @@ func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (gitAcquisition
 	opts.URL, opts.NoCheckout, opts.Auth = repo.URL, true, auth
 	opts.Depth = effectiveDepth(f.Depth, repo.Reference)
 	if proxy != nil {
-		if _, err := proxy.URL(); err != nil {
-			return gitAcquisition{}, fmt.Errorf("%w: %s: proxySecretRef %s/%s: invalid proxy address",
-				manifest.ErrInput, gitID(repo), repo.Namespace, repo.ProxySecretRef.Name)
-		}
 		opts.ProxyOptions = transport.ProxyOptions{URL: proxy.Address, Username: proxy.Username, Password: proxy.Password}
 	} else if target, err := url.Parse(repo.URL); err == nil && (target.Scheme == "http" || target.Scheme == "https") {
 		selected, err := httpproxy.FromEnvironment().ProxyFunc()(target)

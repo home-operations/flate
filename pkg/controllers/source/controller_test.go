@@ -324,6 +324,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 		allowMissing bool
 		producer     bool
 		plain        bool
+		malformed    bool
 		secret       string
 		wantSkip     bool
 	}{
@@ -337,6 +338,8 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 		{name: "plain missing strict", plain: true, secret: "ghcr-creds"},
 		{name: "missing auth producer backed", secret: "ghcr-creds", producer: true, wantSkip: true},
 		{name: "missing auth no producer", secret: "ghcr-creds"},
+		{name: "malformed allowed", secret: "auth", present: true, malformed: true, allowMissing: true},
+		{name: "malformed producer backed", secret: "auth", present: true, malformed: true, producer: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -349,6 +352,10 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			fetchErr := src.MissingSecretErr(repo.Named(), secret.Name, detail)
 			if tt.plain {
 				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
+			}
+			if tt.malformed {
+				detail = "invalid credential encoding"
+				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrInput, secret.Name, detail)
 			}
 			f := &fakeFetcher{err: fetchErr}
 			var producers *manifest.ProducerIndex
@@ -366,7 +373,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			}
 			st.AddObject(repo)
 			var info store.StatusInfo
-			if tt.plain {
+			if tt.plain || tt.malformed {
 				info = controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
 			} else {
 				if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, manifest.DrainNone) {
@@ -390,8 +397,8 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if info.Status != wantStatus || store.IsSkipped(info) != tt.wantSkip || !strings.Contains(info.Message, detail) || !strings.Contains(info.Message, secret.Name) {
 				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
 			}
-			if tt.wantSkip && st.GetArtifact(repo.Named()) != nil {
-				t.Fatal("skipped source must not produce an artifact")
+			if st.GetArtifact(repo.Named()) != nil {
+				t.Fatal("unavailable or malformed source must not produce an artifact")
 			}
 		})
 	}

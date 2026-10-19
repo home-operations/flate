@@ -2,6 +2,7 @@ package git
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 
 	"github.com/go-git/go-git/v5"
@@ -24,27 +25,33 @@ func (f *Fetcher) resolveTLS(repo *manifest.GitRepository, sec *manifest.Secret)
 	if endpoint.Protocol == "ssh" {
 		return opts, nil
 	}
-	if f.Secrets == nil {
-		// resolveAuth already errored if SecretRef && !Secrets, but
-		// guard anyway so this method is safe to call standalone.
+	if f.Secrets == nil || sec == nil {
 		return opts, nil
 	}
-	if sec == nil {
-		// resolveAuth reports the missing-secret error first.
-		return opts, nil
+	crt, _, err := sec.Value("tls.crt")
+	if err != nil {
+		return opts, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
 	}
-	crt, _, _ := sec.Value("tls.crt")
-	key, _, _ := sec.Value("tls.key")
-	ca, _, _ := sec.Value("ca.crt")
-	caFile, _, _ := sec.Value("caFile")
+	key, _, err := sec.Value("tls.key")
+	if err != nil {
+		return opts, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+	}
+	ca, _, err := sec.Value("ca.crt")
+	if err != nil {
+		return opts, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+	}
+	caFile, _, err := sec.Value("caFile")
+	if err != nil {
+		return opts, fmt.Errorf("%s: secret %s/%s: %w", gitID(repo), repo.Namespace, repo.SecretRef.Name, err)
+	}
 	ca = cmp.Or(ca, caFile)
-	if manifest.HasValuePlaceholder(crt) || manifest.HasValuePlaceholder(key) || manifest.HasValuePlaceholder(ca) {
-		return opts, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "TLS material unavailable")
-	}
 	if crt == "" && key == "" && ca == "" {
 		return opts, nil
 	}
 	_, err = source.BuildTLSConfig(crt, key, ca)
+	if errors.Is(err, manifest.ErrMissingSecret) {
+		return opts, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "TLS material unavailable")
+	}
 	if err != nil {
 		return opts, fmt.Errorf("%s: secretRef %s/%s: %w",
 			gitID(repo), repo.Namespace, repo.SecretRef.Name, err)

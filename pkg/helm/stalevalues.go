@@ -70,16 +70,14 @@ func unreferencedValuePaths(src string, values map[string]any, allow map[string]
 	return out
 }
 
-// knownTopLevelKeys are release top-level keys always treated as used,
-// regardless of the parent chart's templates: Helm's shared "global" key,
-// every declared dependency's name/alias (values addressed to a subchart nest
-// under these and are consumed by the subchart, not the parent), and every key
-// gating a dependency (see addDependencyGateKeys).
+// Nested conditions resolve under their parent dependency's name; tags share
+// the root values table at every depth.
 func knownTopLevelKeys(ch *chart.Chart) map[string]struct{} {
 	allow := map[string]struct{}{"global": {}}
 	if ch == nil {
 		return allow
 	}
+	var hasTags bool
 	if ch.Metadata != nil {
 		for _, d := range ch.Metadata.Dependencies {
 			if d == nil {
@@ -91,46 +89,24 @@ func knownTopLevelKeys(ch *chart.Chart) map[string]struct{} {
 			if d.Alias != "" {
 				allow[d.Alias] = struct{}{}
 			}
+			for cond := range strings.SplitSeq(d.Condition, ",") {
+				if top, _, _ := strings.Cut(strings.TrimSpace(cond), "."); top != "" {
+					allow[top] = struct{}{}
+				}
+			}
+			hasTags = hasTags || len(d.Tags) > 0
 		}
 	}
 	for _, sub := range ch.Dependencies() {
 		if n := sub.Name(); n != "" {
 			allow[n] = struct{}{}
 		}
+		hasTags = hasTags || anyDependencyTags(sub)
 	}
-	addDependencyGateKeys(ch, allow)
-	return allow
-}
-
-// addDependencyGateKeys allowlists the keys Helm's dependency evaluation
-// consumes from the release's top-level values: the top-level segment of each
-// root-chart dependencies[].condition path (a comma-separated list of dotted
-// paths), and the shared "tags" block when any dependency in the tree declares
-// tags (#930). Only the root chart's conditions are harvested — Helm prefixes a
-// nested chart's condition with its parent path, so those resolve under the
-// dependency's name, which is already allowlisted; flattening them here would
-// suppress a valid warning for an unrelated root key of the same name. Tag
-// evaluation reads the unprefixed top-level "tags" table at every depth, so the
-// whole tree is walked for tags.
-func addDependencyGateKeys(ch *chart.Chart, allow map[string]struct{}) {
-	if ch == nil {
-		return
-	}
-	if ch.Metadata != nil {
-		for _, d := range ch.Metadata.Dependencies {
-			if d == nil {
-				continue
-			}
-			for cond := range strings.SplitSeq(d.Condition, ",") {
-				if top, _, _ := strings.Cut(strings.TrimSpace(cond), "."); top != "" {
-					allow[top] = struct{}{}
-				}
-			}
-		}
-	}
-	if anyDependencyTags(ch) {
+	if hasTags {
 		allow["tags"] = struct{}{}
 	}
+	return allow
 }
 
 // anyDependencyTags reports whether any dependency in ch's tree declares tags.

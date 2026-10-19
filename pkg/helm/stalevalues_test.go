@@ -193,13 +193,33 @@ func TestKnownTopLevelKeys(t *testing.T) {
 			},
 		},
 	})
+	tagsOnlyNested.AddDependency(&chart.Chart{Metadata: &chart.Metadata{Name: "later"}})
+	deep := &chart.Chart{Metadata: &chart.Metadata{
+		Name:         "child",
+		Dependencies: []*chart.Dependency{{Condition: "innerCrds.enabled"}},
+	}}
+	deep.AddDependency(&chart.Chart{Metadata: &chart.Metadata{
+		Name:         "deeper",
+		Dependencies: []*chart.Dependency{{Name: "grand", Condition: "deep.enabled", Tags: []string{"group"}}},
+	}})
+	missingMetadata := &chart.Chart{}
+	missingMetadata.AddDependency(deep, &chart.Chart{})
+	noTags := &chart.Chart{Metadata: &chart.Metadata{
+		Name: "parent",
+		Dependencies: []*chart.Dependency{
+			{Name: "database", Alias: "db", Condition: " , crds.enabled, , .ignored, metricsEnabled, extra.enabled, "},
+			{},
+			nil,
+		},
+	}}
+	noTags.AddDependency(sub)
 	ch := &chart.Chart{
 		Metadata: &chart.Metadata{
 			Name: "parent",
 			Dependencies: []*chart.Dependency{
-				{Name: "alloy-crd", Condition: "crds.deployAlloyCRD"},
+				{Name: "alloy-crd", Condition: "crds.deployAlloyCRD", Tags: []string{"observability"}},
 				{Name: "podlogs-crd", Alias: "podlogs", Condition: "crds.deployPodLogsCRD, extra.enabled"},
-				{Name: "metrics", Condition: "metricsEnabled", Tags: []string{"observability"}},
+				{Name: "metrics", Condition: "metricsEnabled"},
 				nil,
 			},
 		},
@@ -231,7 +251,17 @@ func TestKnownTopLevelKeys(t *testing.T) {
 		{
 			name: "tags on a nested dependency still allowlist the shared tags block",
 			ch:   tagsOnlyNested,
+			want: []string{"child", "global", "later", "tags"},
+		},
+		{
+			name: "missing root metadata with deep tags",
+			ch:   missingMetadata,
 			want: []string{"child", "global", "tags"},
+		},
+		{
+			name: "no tags with empty condition segments",
+			ch:   noTags,
+			want: []string{"crds", "database", "db", "extra", "global", "metricsEnabled", "operator"},
 		},
 	}
 	for _, tc := range cases {

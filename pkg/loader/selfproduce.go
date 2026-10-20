@@ -20,12 +20,12 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (l *Loader) buildProductions(repoRoot string) {
+func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]manifest.NamedResource) {
 	if repoRoot == "" {
 		return
 	}
 	b := &selfProduceBuilder{idx: l.Index,
-		emittedFiles: map[string][]manifest.NamedResource{},
+		emittedFiles: emittedFiles,
 		store:        l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}}
 	var generators []generatorRecord
@@ -71,14 +71,6 @@ func (l *Loader) buildProductions(repoRoot string) {
 	l.addGenerated(generators)
 	for _, id := range slices.SortedFunc(maps.Keys(b.secrets), manifest.NamedResource.Compare) {
 		l.Store.AddObject(b.secrets[id])
-	}
-	for id, r := range l.Index.Files() {
-		if id.KindInfo().Structural && r.Parent == (manifest.NamedResource{}) {
-			if parents := b.emittedFiles[r.File]; len(parents) == 1 && parents[0] != id {
-				r.Parent = parents[0]
-				l.Index.Records[id] = r
-			}
-		}
 	}
 }
 

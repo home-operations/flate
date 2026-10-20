@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -16,7 +17,7 @@ func (l *Loader) recordReader(file, local string, id manifest.NamedResource) {
 	}
 }
 
-func (l *Loader) finalizeRecords(repoRoot string) {
+func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]manifest.NamedResource) {
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	object := func(id manifest.NamedResource) manifest.BaseManifest {
 		if obj := l.Store.GetObject(id); obj != nil {
@@ -78,14 +79,20 @@ func (l *Loader) finalizeRecords(repoRoot string) {
 			}
 		}
 	}
-	for id, r := range l.Index.Files() {
-		if len(r.Refs) != 0 && repoRoot != "" {
-			clear(visited)
-			collect(id, id)
+	for id, r := range l.Index.Records {
+		if r.File != "" {
+			if len(r.Refs) != 0 && repoRoot != "" {
+				clear(visited)
+				collect(id, id)
+			}
+			if parents := emittedFiles[r.File]; id.KindInfo().Structural && r.Parent == (manifest.NamedResource{}) && len(parents) == 1 && parents[0] != id {
+				r.Parent = parents[0]
+			}
+			if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
+				r.Productions = []manifest.Production{{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}}
+			}
 		}
-		if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
-			r.Productions = []manifest.Production{{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}}
-			l.Index.Records[id] = r
-		}
+		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
+		l.Index.Records[id] = r
 	}
 }

@@ -41,42 +41,47 @@ spec:
       valuesFiles: %s
       ignoreMissingValuesFiles: true
 `, group, files))
-			st := store.New()
-			l := New(st)
-			l.SourceRoot = root
-			admitForTest(st, root)
-			source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
-			input := &missingResourceFS{FS: fstest.MapFS{"config/prod.yaml": &fstest.MapFile{Data: []byte("invalid: [")}}, missing: "config/prod.yaml"}
-			art := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input}
-			want := []string{"config/prod.yaml", "config/missing.yaml"}
-			switch mode {
-			case "alias-subtree":
-				art.LocalPath = filepath.Join(root, ".artifacts", "alias")
-				art.LocalRoot = filepath.Join(root, "subtree")
-				art.InputAlias, art.Key = true, "derived"
-				want = []string{".artifacts/alias/config/prod.yaml", ".artifacts/alias/config/missing.yaml", "subtree/config/prod.yaml", "subtree/config/missing.yaml"}
-			case "committed":
-				art.LocalPath, art.Key = filepath.Join(root, ".artifacts", "commit"), "committed"
-				want = []string{".artifacts/commit/config/prod.yaml", ".artifacts/commit/config/missing.yaml"}
-			case "external":
-				art.LocalPath, art.LocalRoot = filepath.Join(root, ".artifacts", "remote"), t.TempDir()
-				want = nil
-			case "unavailable":
-				art.FS = nil
-				want = nil
-			case "missing", "foreign":
-				want = nil
+			newLoader := func() (*Loader, *missingResourceFS, []string) {
+				t.Helper()
+				st := store.New()
+				l := New(st)
+				l.SourceRoot = root
+				admitForTest(st, root)
+				source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+				input := &missingResourceFS{FS: fstest.MapFS{"config/prod.yaml": &fstest.MapFile{Data: []byte("invalid: [")}}, missing: "config/prod.yaml"}
+				art := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input}
+				want := []string{"config/prod.yaml", "config/missing.yaml"}
+				switch mode {
+				case "alias-subtree":
+					art.LocalPath = filepath.Join(root, ".artifacts", "alias")
+					art.LocalRoot = filepath.Join(root, "subtree")
+					art.InputAlias, art.Key = true, "derived"
+					want = []string{".artifacts/alias/config/prod.yaml", ".artifacts/alias/config/missing.yaml", "subtree/config/prod.yaml", "subtree/config/missing.yaml"}
+				case "committed":
+					art.LocalPath, art.Key = filepath.Join(root, ".artifacts", "commit"), "committed"
+					want = []string{".artifacts/commit/config/prod.yaml", ".artifacts/commit/config/missing.yaml"}
+				case "external":
+					art.LocalPath, art.LocalRoot = filepath.Join(root, ".artifacts", "remote"), t.TempDir()
+					want = nil
+				case "unavailable":
+					art.FS = nil
+					want = nil
+				case "missing", "foreign":
+					want = nil
+				}
+				if mode != "missing" {
+					st.AddObject(source)
+					st.SetArtifact(source.Named(), art)
+				}
+				if mode == "working" {
+					input.FS = os.DirFS(root)
+					st.SetArtifact(manifest.BootstrapSourceID, art)
+				}
+				_, err := l.Load(t.Context(), filepath.Join(root, "manifests"))
+				assert.NoError(t, err)
+				return l, input, want
 			}
-			if mode != "missing" {
-				st.AddObject(source)
-				st.SetArtifact(source.Named(), art)
-			}
-			if mode == "working" {
-				input.FS = os.DirFS(root)
-				st.SetArtifact(manifest.BootstrapSourceID, art)
-			}
-			_, err = l.Load(t.Context(), filepath.Join(root, "manifests"))
-			assert.NoError(t, err)
+			l, input, want := newLoader()
 			l.FinalizeIndex(root)
 			id := testutil.HelmReleaseID("apps", "demo")
 			var got []string
@@ -94,8 +99,16 @@ spec:
 			assert.Equal(t, len(l.Index.Records), 1)
 			record, _ := l.Index.Lookup(id)
 			assert.Equal(t, len(record.Productions), 1)
-			filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), l.Index, st)
+			filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), l.Index, l.Store)
 			assert.Equal(t, filter.ShouldReconcile(id), mode == "working")
+			snapshot := snapshotIndexForTest(l.Index)
+			l.FinalizeIndex(root)
+			assert.Diff(t, *l.Index, snapshot)
+			assert.Equal(t, input.opens, 0)
+			fresh, freshInput, _ := newLoader()
+			fresh.FinalizeIndex(root)
+			assert.Diff(t, *fresh.Index, snapshot)
+			assert.Equal(t, freshInput.opens, 0)
 		})
 	}
 }

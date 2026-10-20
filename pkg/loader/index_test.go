@@ -2,10 +2,13 @@ package loader
 
 import (
 	"io/fs"
+	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -79,6 +82,26 @@ func emissionParentForTest(index *manifest.DiscoveryIndex, file string) (manifes
 	return manifest.NamedResource{}, false
 }
 
+func snapshotIndexForTest(index *manifest.DiscoveryIndex) manifest.DiscoveryIndex {
+	snapshot := *index
+	snapshot.Records = maps.Clone(index.Records)
+	for id, r := range snapshot.Records {
+		r.Refs = slices.Clone(r.Refs)
+		r.Productions = slices.Clone(r.Productions)
+		snapshot.Records[id] = r
+	}
+	snapshot.Claims = maps.Clone(index.Claims)
+	for file, ids := range snapshot.Claims {
+		snapshot.Claims[file] = slices.Clone(ids)
+	}
+	snapshot.Readers = maps.Clone(index.Readers)
+	for file, ids := range snapshot.Readers {
+		snapshot.Readers[file] = slices.Clone(ids)
+	}
+	snapshot.Errors = maps.Clone(index.Errors)
+	return snapshot
+}
+
 func TestFinalizeIndex_Productions(t *testing.T) {
 	t.Parallel()
 
@@ -99,15 +122,17 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			testutil.WriteFile(t, root, "raw/kustomization.yaml", "namespace: raw\nresources: [input.yaml]\n")
 			testutil.WriteFile(t, root, "overlay/kustomization.yaml", "namespace: apps\nresources: [../raw]\n")
 			testutil.WriteFile(t, root, "raw/input.yaml", "apiVersion: v1\nkind: "+tc.kind+"\nmetadata: {name: input, namespace: '"+tc.namespace+"'}\ndata: {value: fixture}\n")
-			st := store.New()
-			raw := &manifest.Kustomization{Name: "raw", Namespace: "flux-system", Path: "./raw"}
-			overlay := &manifest.Kustomization{Name: "overlay", Namespace: "flux-system", Path: "./overlay"}
-			st.AddObject(raw)
-			st.AddObject(overlay)
 			id := manifest.NamedResource{Kind: tc.kind, Name: "input", Namespace: tc.namespace}
-			l := loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
+			overlay := &manifest.Kustomization{Name: "overlay", Namespace: "flux-system", Path: "./overlay"}
+			newLoader := func() *Loader {
+				st := store.New()
+				st.AddObject(&manifest.Kustomization{Name: "raw", Namespace: "flux-system", Path: "./raw"})
+				st.AddObject(overlay.Clone())
+				return loaderFixture(st, map[manifest.NamedResource]string{id: "raw/input.yaml"})
+			}
+			l := newLoader()
 			rendererFixture(t, l, root)
-			if st.GetObject(id) != nil {
+			if l.Store.GetObject(id) != nil {
 				t.Fatal("indexed data must remain absent from the store")
 			}
 			projected := id
@@ -117,10 +142,62 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			if got := testutil.ProductionOwners(r); !slices.Equal(got, want) {
 				t.Fatalf("projected materializers: %v", got)
 			}
-			if len(r.Productions) == 0 || r.Productions[0].Authored != id || r.Productions[0].Path == "" {
-				t.Fatalf("missing authored-file proof: %+v", r)
-			}
+			assert.Diff(t, r.Productions, []manifest.Production{{Owner: overlay.Named(), Authored: id,
+				Path: filepath.Join(root, "raw/input.yaml"), File: "raw/input.yaml", Source: manifest.BootstrapSourceID}})
+			snapshot := snapshotIndexForTest(l.Index)
+			l.FinalizeIndex(root)
+			assert.Diff(t, *l.Index, snapshot)
+			fresh := newLoader()
+			rendererFixture(t, fresh, root)
+			assert.Diff(t, *fresh.Index, snapshot)
+		})
+	}
+}
 
+func TestFinalizeIndex_RecordCompletion(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input", Namespace: "apps"}
+	first := testutil.KustomizationID("flux-system", "a")
+	last := testutil.KustomizationID("flux-system", "z")
+	source := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "source"}
+	a := manifest.Production{Owner: first, Declaration: id, Authored: id, Path: "declared.yaml", File: "declared.yaml", Source: source}
+	z := manifest.Production{Owner: last, Declaration: id, Authored: id, Path: "declared.yaml", File: "declared.yaml", Source: source}
+	for _, tc := range []struct {
+		name         string
+		record, want manifest.DiscoveryRecord
+	}{
+		{name: "authored fallback", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml"},
+			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Productions: []manifest.Production{{Authored: id, Path: "raw.yaml", File: "raw.yaml", Source: manifest.BootstrapSourceID}}}},
+		{name: "empty path is file backed", record: manifest.DiscoveryRecord{Authored: id, File: "generator.yaml"},
+			want: manifest.DiscoveryRecord{Authored: id, File: "generator.yaml", Productions: []manifest.Production{{Authored: id, File: "generator.yaml", Source: manifest.BootstrapSourceID}}}},
+		{name: "no authored identity", record: manifest.DiscoveryRecord{Path: "raw.yaml", File: "raw.yaml"},
+			want: manifest.DiscoveryRecord{Path: "raw.yaml", File: "raw.yaml"}},
+		{name: "non file authored record", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml"},
+			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml"}},
+		{name: "existing file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Excluded: true, Productions: []manifest.Production{z, a}},
+			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Excluded: true, Productions: []manifest.Production{a, z}}},
+		{name: "existing non file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{z, a}},
+			want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a, z}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			newLoader := func() *Loader {
+				l := New(store.New())
+				r := tc.record
+				r.Productions = slices.Clone(r.Productions)
+				r.Refs = slices.Clone(r.Refs)
+				l.Index.Records[id] = r
+				return l
+			}
+			l := newLoader()
+			l.FinalizeIndex("")
+			assert.Diff(t, l.Index.Records[id], tc.want)
+			snapshot := snapshotIndexForTest(l.Index)
+			l.FinalizeIndex("")
+			assert.Diff(t, *l.Index, snapshot)
+			fresh := newLoader()
+			fresh.FinalizeIndex("")
+			assert.Diff(t, *fresh.Index, snapshot)
 		})
 	}
 }

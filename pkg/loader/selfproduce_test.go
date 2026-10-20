@@ -400,49 +400,101 @@ func TestFinalizeIndex_OwnersOfFileDanglingDirectory(t *testing.T) {
 	}
 }
 
-// EmissionParentByFile records a base ks.yaml reached cross-tree through EXACTLY
-// one parent's render subtree (apps/base/app-a/ks.yaml pulled in via
-// apps/test/app-a -> ../../base/app-a, applied by cluster-apps) — the #777 gate
-// signal. A base shared by two distinct parents is ambiguous and omitted.
 func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-
-	// app-a: pulled by exactly one parent (cluster-apps). ${VAR} path so the
-	// walk records only cluster-apps (no literal self-include).
-	testutil.WriteFile(t, dir, "apps/test/kustomization.yaml", "resources:\n  - ./app-a\n  - ./shared\n")
-	testutil.WriteFile(t, dir, "apps/test/app-a/kustomization.yaml", "resources:\n  - ../../base/app-a\n")
-	testutil.WriteFile(t, dir, "apps/base/app-a/kustomization.yaml", "resources:\n  - ks.yaml\n")
-	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml",
-		testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n"))
-	// shared: pulled by BOTH cluster-apps (./apps/test -> ./shared) and
-	// cluster-apps2 (./apps/test2) — two distinct parents, ambiguous.
-	testutil.WriteFile(t, dir, "apps/test/shared/kustomization.yaml", "resources:\n  - ../../base/shared\n")
-	testutil.WriteFile(t, dir, "apps/test2/kustomization.yaml", "resources:\n  - ../base/shared\n")
-	testutil.WriteFile(t, dir, "apps/base/shared/kustomization.yaml", "resources:\n  - ks.yaml\n")
-	testutil.WriteFile(t, dir, "apps/base/shared/ks.yaml",
-		testutil.KustomizationYAML("shared", "flux-system", "  path: ./apps/${CLUSTER_ENV}/shared\n"))
-
-	s := store.New()
-	s.AddObject(&manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system",
-		Path: "./apps/test"})
-	s.AddObject(&manifest.Kustomization{Name: "cluster-apps2", Namespace: "flux-system",
-		Path: "./apps/test2"})
-
-	l := loaderFixture(s, nil)
-	for _, name := range []string{"app-a", "shared"} {
-		id := testutil.KustomizationID("flux-system", name)
-		l.Index.Records[id] = manifest.DiscoveryRecord{File: "apps/base/" + name + "/ks.yaml"}
-	}
-	rendererFixture(t, l, dir)
-	idx := l.Index
-
-	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
-	if got, ok := emissionParentForTest(idx, "apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
-		t.Errorf("EmissionParentByFile(app-a) = (%v, %v), want (cluster-apps, true)", got, ok)
-	}
-	if got, ok := emissionParentForTest(idx, "apps/base/shared/ks.yaml"); ok {
-		t.Errorf("EmissionParentByFile(shared) = (%v, true), want absent (two distinct parents are ambiguous)", got)
+	child := testutil.KustomizationID("flux-system", "child")
+	parent := testutil.KustomizationID("flux-system", "parent")
+	other := testutil.KustomizationID("flux-system", "other")
+	for _, tc := range []struct {
+		name                         string
+		emitters                     []manifest.NamedResource
+		wantParent                   manifest.NamedResource
+		strict, repeated, graphAdded bool
+		nonStructural                bool
+	}{
+		{name: "unique owner", emitters: []manifest.NamedResource{parent}, wantParent: parent},
+		{name: "non structural record", emitters: []manifest.NamedResource{parent}, nonStructural: true},
+		{name: "missing owner"},
+		{name: "ambiguous owners", emitters: []manifest.NamedResource{other, parent}},
+		{name: "self owner", emitters: []manifest.NamedResource{child}},
+		{name: "self and another owner are ambiguous", emitters: []manifest.NamedResource{child, parent}},
+		{name: "strict parent wins", emitters: []manifest.NamedResource{parent}, wantParent: other, strict: true},
+		{name: "repeated owner", emitters: []manifest.NamedResource{parent}, wantParent: parent, repeated: true},
+		{name: "graph added record", emitters: []manifest.NamedResource{parent}, wantParent: parent, graphAdded: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			file := "objects/ks.yaml"
+			path := filepath.Join(root, file)
+			body := testutil.KustomizationYAML("child", "flux-system", "  path: ./apps/${ENV}/child\n")
+			id := child
+			if tc.nonStructural {
+				id = cmID("flux-system")
+				body += "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: cluster-settings, namespace: flux-system}\n"
+			}
+			if tc.repeated {
+				body += "---\n" + testutil.KustomizationYAML("peer", "flux-system", "  path: ./apps/${ENV}/peer\n")
+			}
+			testutil.WriteFile(t, root, file, body)
+			testutil.WriteFile(t, root, "render/kustomization.yaml", "resources: [../objects]\n")
+			testutil.WriteFile(t, root, "objects/kustomization.yaml", "resources: [ks.yaml]\n")
+			if tc.strict {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+			}
+			newLoader := func() *Loader {
+				t.Helper()
+				st := store.New()
+				for _, owner := range tc.emitters {
+					st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace, Path: "./render"})
+				}
+				if tc.strict {
+					st.AddObject(&manifest.Kustomization{Name: other.Name, Namespace: other.Namespace, Path: "."})
+				}
+				l := New(st)
+				admitForTest(st, root)
+				l.mountSources()
+				_, err := l.documents.parseFile(path, manifest.ParseDocOptions{})
+				assert.NoError(t, err)
+				if !tc.graphAdded {
+					l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: path, File: file}
+				}
+				return l
+			}
+			l := newLoader()
+			_, exists := l.Index.Lookup(id)
+			assert.Equal(t, exists, !tc.graphAdded)
+			l.FinalizeIndex(root)
+			want := manifest.DiscoveryRecord{Authored: id, Path: path, File: file, Parent: tc.wantParent}
+			for _, owner := range tc.emitters {
+				want.Productions = append(want.Productions, manifest.Production{Owner: owner, Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID})
+			}
+			if len(want.Productions) == 0 {
+				want.Productions = []manifest.Production{{Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID}}
+			}
+			assert.Diff(t, l.Index.Records[id], want)
+			if tc.repeated {
+				peer := testutil.KustomizationID("flux-system", "peer")
+				assert.Equal(t, l.Index.Records[peer].Parent, parent)
+			}
+			wantOwners := tc.emitters
+			if tc.strict {
+				wantOwners = []manifest.NamedResource{other, parent}
+			}
+			owners, ancestors := l.Index.OwnersOfFile(file)
+			assert.Diff(t, owners, wantOwners)
+			assert.Equal(t, len(ancestors), 0)
+			snapshot := snapshotIndexForTest(l.Index)
+			l.FinalizeIndex(root)
+			assert.Diff(t, l.Index.Records, snapshot.Records)
+			assert.Diff(t, l.Index.Readers, snapshot.Readers)
+			owners, ancestors = l.Index.OwnersOfFile(file)
+			assert.Diff(t, owners, wantOwners)
+			assert.Equal(t, len(ancestors), 0)
+			fresh := newLoader()
+			fresh.FinalizeIndex(root)
+			assert.Diff(t, *fresh.Index, snapshot)
+		})
 	}
 }
 

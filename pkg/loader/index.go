@@ -69,9 +69,9 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 		}
 		l.Index.Records[id] = r
 	}
-	// Graph traversal supplies readers before file-backed data ownership is frozen.
-	l.buildProductions(repoRoot)
-	l.finalizeRecords(repoRoot)
+	emittedFiles := map[string][]manifest.NamedResource{}
+	l.buildProductions(repoRoot, emittedFiles)
+	l.finalizeRecords(repoRoot, emittedFiles)
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes = nil
 	for _, file := range slices.Sorted(maps.Keys(l.Index.Errors)) {
@@ -81,10 +81,6 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 			l.Index.Errors[origin] = l.Index.Errors[file]
 			delete(l.Index.Errors, file)
 		}
-	}
-	for id, r := range l.Index.Records {
-		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
-		l.Index.Records[id] = r
 	}
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)

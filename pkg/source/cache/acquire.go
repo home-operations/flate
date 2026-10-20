@@ -338,7 +338,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry) (resu
 	staged := payload{key: key, previous: previous}
 	staged.writer = &staged.memory
 	var tmp *os.File
-	var tmpName string
+	var tmpName, repairName string
 	defer func() {
 		var cleanup error
 		if staged.discard != nil {
@@ -347,8 +347,10 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry) (resu
 		if tmp != nil {
 			cleanup = errors.Join(cleanup, tmp.Close())
 		}
-		if tmpName != "" {
-			cleanup = errors.Join(cleanup, c.root.Remove(tmpName))
+		for _, name := range [2]string{tmpName, repairName} {
+			if name != "" {
+				cleanup = errors.Join(cleanup, c.root.Remove(name))
+			}
 		}
 		if cleanup != nil {
 			result = nil
@@ -381,7 +383,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry) (resu
 	if staged.unchanged {
 		stored = e.storedDescriptor(e.stored.Digest, e.stored.Size)
 	} else {
-		stored, err = c.publish(ctx, tmp, staged.hash.Digest(), e)
+		stored, repairName, err = c.publish(ctx, tmp, staged.hash.Digest(), e)
 		if err != nil {
 			return nil, err
 		}
@@ -405,45 +407,45 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry) (resu
 	return e, nil
 }
 
-func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest, e *entry) (ocispec.Descriptor, error) {
+func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest, e *entry) (ocispec.Descriptor, string, error) {
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return ocispec.Descriptor{}, err
+		return ocispec.Descriptor{}, "", err
 	}
 	info, err := tmp.Stat()
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return ocispec.Descriptor{}, "", err
 	}
 	stored := e.storedDescriptor(payload, info.Size())
 	if err := c.store.Push(ctx, stored, tmp); err != nil {
 		if !errors.Is(err, errdef.ErrAlreadyExists) {
-			return stored, err
+			return stored, "", err
 		}
 		info, err := os.Stat(filepath.Join(c.root.Name(), blobPath(stored.Digest)))
 		if err != nil {
-			return stored, err
+			return stored, "", err
 		}
 		if info.Size() != stored.Size {
 			name, err := filepath.Rel(c.root.Name(), tmp.Name())
 			if err != nil {
-				return stored, err
+				return stored, "", err
 			}
 			name, err = safepath.ArchiveName(name)
 			if err != nil {
-				return stored, err
+				return stored, "", err
 			}
 			if err := tmp.Chmod(0o444); err != nil {
-				return stored, err
+				return stored, "", err
 			}
 			repair := acquirePath(uuid.NewString())
 			if err := c.root.Link(name, repair); err != nil {
-				return stored, err
+				return stored, "", err
 			}
 			if err := c.root.Rename(repair, blobPath(stored.Digest)); err != nil {
-				return stored, err
+				return stored, repair, err
 			}
 		}
 	}
-	return stored, nil
+	return stored, "", nil
 }
 
 func (e *entry) storedDescriptor(payload digest.Digest, size int64) ocispec.Descriptor {

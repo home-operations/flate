@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -969,6 +970,118 @@ func TestBlob_Revalidation(t *testing.T) {
 			info, err := c.root.Stat(path)
 			assert.NoError(t, err)
 			assert.Equal(t, info.Mode().Perm(), fs.FileMode(0o444))
+			entries, err := os.ReadDir(filepath.Join(root, ociDir))
+			assert.NoError(t, err)
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), "acquire-") {
+					t.Errorf("successful repair left acquisition name %q", entry.Name())
+				}
+			}
+		})
+	}
+}
+
+func TestBlob_RepairFailureCleanup(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []bool{false, true} {
+		name := "cleanup-success"
+		if failure {
+			name = "cleanup-failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			c, err := New(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := c.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+					t.Error(err)
+				}
+			})
+			payload := []byte("repair payload")
+			path := blobPath(digest.FromBytes(payload))
+			assert.NoError(t, c.root.MkdirAll(path, 0o750))
+			before, err := c.root.Stat(path)
+			assert.NoError(t, err)
+			if before.Size() == int64(len(payload)) {
+				t.Fatal("destination directory must have a different size from the payload")
+			}
+			var names []string
+			r, _, id, err := c.Blob(t.Context(), BlobKey{Content: "repair-failure"}, Policy{}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+				w.payload.discard = func() error {
+					entries, err := os.ReadDir(filepath.Join(root, ociDir))
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, entry := range entries {
+						if strings.HasPrefix(entry.Name(), "acquire-") {
+							names = append(names, filepath.Join(ociDir, entry.Name()))
+						}
+					}
+					if len(names) != 2 {
+						t.Fatalf("acquisition names before cleanup=%v, want two hard links", names)
+					}
+					first, err := c.root.Stat(names[0])
+					assert.NoError(t, err)
+					second, err := c.root.Stat(names[1])
+					assert.NoError(t, err)
+					if !os.SameFile(first, second) || first.Size() != int64(len(payload)) {
+						t.Fatal("acquisition names must hard-link the staged payload")
+					}
+					if failure {
+						return c.root.Close()
+					}
+					return nil
+				}
+				_, err := w.Write(payload)
+				return ProducerResult{}, err
+			})
+			rename, ok := errors.AsType[*os.LinkError](err)
+			if !ok || rename.Op != "renameat" || rename.New != path || !slices.Contains(names, rename.Old) {
+				t.Fatalf("missing repair rename error: %v", err)
+			}
+			if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || r != nil || id != "" {
+				t.Fatalf("failed repair reader=%v, identity=%q, error=%v", r, id, err)
+			}
+			if failure {
+				removals := make(map[string]int)
+				pending := []error{err}
+				for len(pending) != 0 {
+					cause := pending[0]
+					pending = pending[1:]
+					switch cause := cause.(type) { //nolint:errorlint // count each concrete removal node once while walking the joined tree
+					case *os.PathError:
+						if cause.Op == "removeat" {
+							if !errors.Is(cause, os.ErrClosed) {
+								t.Errorf("removal lost closed-root cause: %v", cause)
+							}
+							removals[cause.Path]++
+						}
+					case interface{ Unwrap() []error }:
+						pending = append(pending, cause.Unwrap()...)
+					case interface{ Unwrap() error }:
+						pending = append(pending, cause.Unwrap())
+					}
+				}
+				for _, name := range names {
+					if removals[name] != 1 {
+						t.Errorf("removal errors for %q=%d, want one: %v", name, removals[name], err)
+					}
+				}
+				return
+			}
+			for _, name := range names {
+				if _, err := c.root.Stat(name); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("repair left acquisition name %q: %v", name, err)
+				}
+			}
+			after, err := c.root.Stat(path)
+			assert.NoError(t, err)
+			if !after.IsDir() || !os.SameFile(before, after) {
+				t.Fatal("failed repair replaced the destination directory")
+			}
 		})
 	}
 }

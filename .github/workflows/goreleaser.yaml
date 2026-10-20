@@ -127,3 +127,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
+
+      # Consumers pin later releases to the workflow file that signed the
+      # first one, so moving this step out of goreleaser.yaml makes every
+      # existing packslip consumer refuse the next release until approved.
+      - name: Publish packslip
+        uses: jdx/packslip@2187c31f8317b8548833baf60cfe93db1f42431d # v1.9.0
+        with:
+          artifacts: dist/*.tar.gz dist/*.zip
+          bin: flate
+          resources: |
+            completion/bash,zsh,fish=exec:flate completion {shell}

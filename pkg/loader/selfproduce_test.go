@@ -12,6 +12,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -861,8 +862,33 @@ func TestLoader_DotDotPaths(t *testing.T) {
 			if tc.accepted {
 				wantRef = tc.path
 			}
-			if got, ok := resolveRef(".", tc.path); ok != tc.accepted || got != wantRef {
-				t.Errorf("resolveRef = (%q, %v), want (%q, %v)", got, ok, wantRef, tc.accepted)
+			if got, ok := kustpath.Resolve(".", tc.path, kustpath.Transformer); ok != tc.accepted || got != wantRef {
+				t.Errorf("kustpath.Resolve = (%q, %v), want (%q, %v)", got, ok, wantRef, tc.accepted)
+			}
+		})
+	}
+}
+
+func TestGraphWalker_RootCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, dir := range []string{"", ".", "./apps/..", "apps//child/../app", "/app", "https://example.com/app"} {
+		t.Run(dir, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, filepath.Join(root, dir), "kustomization.yaml", "resources: []\n")
+			w := graphWalker{documents: readerForTest(root), visited: map[graphContext]struct{}{}}
+			context := graphContext{root: root, dir: dir}
+			count := 0
+			if !w.walk(graphVisit{graphContext: context}, func(v graphVisit) bool {
+				assert.Equal(t, v.graphContext, context)
+				count++
+				return true
+			}) {
+				t.Fatal("walk stopped before completing")
+			}
+			assert.Equal(t, count, 1)
+			if _, ok := w.visited[context]; !ok {
+				t.Fatal("original graph context was not visited")
 			}
 		})
 	}

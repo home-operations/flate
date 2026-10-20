@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -17,16 +18,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// TestResolveDataPath covers generator-file path resolution. Rows:
-//   - in-tree relative path resolves to its absolute equivalent;
-//   - traversal-escaping rels are rejected — defense-in-depth from the
-//     round-4 audit: a kustomization.yaml declaring `files:
-//     ["../../../etc/passwd"]` must NOT escape the kustomization dir;
-//   - absolute paths pass through verbatim (after Clean) — kustomize
-//     accepts them and downstream "under --path?" checks still apply;
-//   - empty rel is rejected, matching kustomize.
-func TestResolveDataPath(t *testing.T) {
+func TestResolve_File(t *testing.T) {
 	t.Parallel()
+	tmp := t.TempDir()
+	base, absolute := filepath.Join(tmp, "cluster/apps/foo"), filepath.Join(tmp, "etc/values.yaml")
+	root := filepath.VolumeName(tmp) + string(filepath.Separator)
 	cases := []struct {
 		name    string
 		base    string
@@ -34,33 +30,44 @@ func TestResolveDataPath(t *testing.T) {
 		wantAbs string
 		wantOK  bool
 	}{
-		{"relative under base", "/tmp/cluster/apps/foo", "data/values.yaml", "/tmp/cluster/apps/foo/data/values.yaml", true},
-		{"traversal parent", "/tmp/cluster/apps/foo", "../escape.yaml", "", false},
-		{"traversal deep", "/tmp/cluster/apps/foo", "../../etc/passwd", "", false},
-		{"traversal mixed", "/tmp/cluster/apps/foo", "sub/../../escape", "", false},
-		{"absolute passes through", "/tmp/cluster/apps", "/etc/values.yaml", "/etc/values.yaml", true},
-		{"empty rejected", "/tmp/cluster/apps", "", "", false},
+		{"relative under base", base, "data/values.yaml", filepath.Join(base, "data/values.yaml"), true},
+		{"traversal parent", base, "../escape.yaml", "", false},
+		{"traversal deep", base, "../../etc/passwd", "", false},
+		{"traversal mixed", base, "sub/../../escape", "", false},
+		{"sibling prefix escape", base, "../foobar/values.yaml", "", false},
+		{"absolute passes through", base, absolute, absolute, true},
+		{"absolute cleaned", base, filepath.Dir(absolute) + string(filepath.Separator) + "sub/../values.yaml", absolute, true},
+		{"empty rejected", base, "", "", false},
+		{"dot", base, ".", base, true},
+		{"dot prefix", base, "..foo", filepath.Join(base, "..foo"), true},
+		{"url lexical", base, "https://example.com/x", filepath.Join(base, "https:/example.com/x"), true},
+		{"relative base", "apps", "child/file", filepath.FromSlash("apps/child/file"), true},
+		{"dot base child", ".", "child", "", false},
+		{"empty base child", "", "child", "", false},
+		{"dot base itself", ".", ".", ".", true},
+		{"empty base itself", "", ".", ".", true},
+		{"root base child", root, "child", "", false},
+		{"root base itself", root, ".", root, true},
+		{"root base absolute", root, absolute, absolute, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			abs, ok := resolveDataPath(tc.base, tc.rel)
+			abs, ok := kustpath.Resolve(tc.base, tc.rel, kustpath.File)
 			if ok != tc.wantOK {
-				t.Fatalf("resolveDataPath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
+				t.Fatalf("kustpath.Resolve(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
 			}
 			if ok && abs != tc.wantAbs {
-				t.Errorf("resolveDataPath(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+				t.Errorf("kustpath.Resolve(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
 			}
 		})
 	}
 }
 
-// TestResolveResourcePath covers directory `resources:` path
-// resolution. Unlike resolveDataPath, a parent-escaping relative dir
-// RESOLVES — overlays reference ../base and the dir is only descended
-// into, never opened. Absolute paths and URLs are still rejected.
-func TestResolveResourcePath(t *testing.T) {
+func TestResolve_Directory(t *testing.T) {
 	t.Parallel()
+	tmp := t.TempDir()
+	base := filepath.Join(tmp, "cluster/apps/foo")
 	cases := []struct {
 		name    string
 		base    string
@@ -68,22 +75,24 @@ func TestResolveResourcePath(t *testing.T) {
 		wantAbs string
 		wantOK  bool
 	}{
-		{"relative under base", "/tmp/cluster/apps/foo", "sub/dir", "/tmp/cluster/apps/foo/sub/dir", true},
-		{"traversal parent resolves", "/tmp/cluster/apps/foo", "../bar", "/tmp/cluster/apps/bar", true},
-		{"traversal deep resolves", "/tmp/cluster/apps/foo", "../../../deploy/x", "/tmp/deploy/x", true},
-		{"absolute rejected", "/tmp/cluster/apps", "/etc/x", "", false},
-		{"url rejected", "/tmp/cluster/apps", "https://example.com/x", "", false},
-		{"empty rejected", "/tmp/cluster/apps", "", "", false},
+		{"relative under base", base, "sub/dir", filepath.Join(base, "sub/dir"), true},
+		{"traversal parent resolves", base, "../bar", filepath.Join(base, "../bar"), true},
+		{"traversal deep resolves", base, "../../../deploy/x", filepath.Join(tmp, "deploy/x"), true},
+		{"absolute rejected", base, filepath.Join(tmp, "etc/x"), "", false},
+		{"url rejected", base, "https://example.com/x", "", false},
+		{"empty rejected", base, "", "", false},
+		{"dot", base, ".", base, true},
+		{"dot prefix", base, "..foo", filepath.Join(base, "..foo"), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			abs, ok := resolvePath(tc.base, tc.rel)
+			abs, ok := kustpath.Resolve(tc.base, tc.rel, kustpath.Directory)
 			if ok != tc.wantOK {
-				t.Fatalf("resolvePath(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
+				t.Fatalf("kustpath.Resolve(%q, %q) ok = %v, want %v", tc.base, tc.rel, ok, tc.wantOK)
 			}
 			if ok && abs != tc.wantAbs {
-				t.Errorf("resolvePath(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
+				t.Errorf("kustpath.Resolve(%q, %q) = %q, want %q", tc.base, tc.rel, abs, tc.wantAbs)
 			}
 		})
 	}

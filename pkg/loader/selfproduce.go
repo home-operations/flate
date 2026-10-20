@@ -14,6 +14,7 @@ import (
 
 	"sigs.k8s.io/kustomize/api/types"
 
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
@@ -193,7 +194,7 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 		}
 		for _, refs := range [][]string{doc.body.Resources, doc.body.Components} {
 			for _, ref := range refs {
-				if child, ok := resolvePath(dir, ref); ok {
+				if child, ok := kustpath.Resolve(dir, ref, kustpath.Directory); ok {
 					delete(roots, child)
 				}
 			}
@@ -210,12 +211,6 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 	return dirs
 }
 
-// Kustomize graph and transformer references use slash separators on every OS.
-func escapedSlashPath(rel string) bool {
-	rel = path.Clean(rel)
-	return rel == ".." || strings.HasPrefix(rel, "../")
-}
-
 type graphWalker struct {
 	documents documentReader
 	visited   map[graphContext]struct{}
@@ -223,7 +218,7 @@ type graphWalker struct {
 
 // An outer namespace stays locked across nested bases and components.
 func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
-	if escapedSlashPath(v.dir) {
+	if _, ok := kustpath.Resolve("", v.dir, kustpath.Root); !ok {
 		return true
 	}
 	d, file := w.documents.read(filepath.Join(v.root, v.dir))
@@ -263,7 +258,7 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 	}
 	for _, refs := range [][]string{d.Resources, d.Components} {
 		for _, ref := range refs {
-			resolved, ok := resolvePath(v.dir, ref)
+			resolved, ok := kustpath.Resolve(v.dir, ref, kustpath.Directory)
 			if !ok {
 				continue
 			}
@@ -289,7 +284,7 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 			child.coordinate = path.Join(v.prefix, filepath.ToSlash(resolved))
 			child.readable = readable
 			if child.readable {
-				_, child.readable = resolveDataPath(filepath.Join(v.root, v.dir), ref)
+				_, child.readable = kustpath.Resolve(filepath.Join(v.root, v.dir), ref, kustpath.File)
 			}
 			if !yield(child) {
 				return false

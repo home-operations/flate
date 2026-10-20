@@ -35,6 +35,7 @@ import (
 
 	"sigs.k8s.io/kustomize/api/types"
 
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -274,12 +275,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 		if cerr := ctx.Err(); cerr != nil {
 			return count, cerr
 		}
-		// Resolve with the escape-permitting resolver so directory
-		// includes that point outside the package (overlays' ../base,
-		// Flux repos' ../../../deploy/...) are followed — kustomize
-		// follows them too. The file branch below re-imposes
-		// resolveDataPath's stricter opened-path policy.
-		abs, ok := resolvePath(dir, r)
+		abs, ok := kustpath.Resolve(dir, r, kustpath.Directory)
 		if !ok {
 			// URLs, absolute paths, malformed entries — kustomize
 			// handles these at render time; the loader's job is to
@@ -302,9 +298,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 			count += n
 			continue
 		}
-		// File resource: re-impose the in-base constraint, since a
-		// file gets opened (resolvePath only guards descent).
-		if _, ok := resolveDataPath(dir, r); !ok {
+		if _, ok := kustpath.Resolve(dir, r, kustpath.File); !ok {
 			continue
 		}
 		if !isManifestFile(abs) {
@@ -330,7 +324,7 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 		if cerr := ctx.Err(); cerr != nil {
 			return count, cerr
 		}
-		abs, ok := resolvePath(dir, comp)
+		abs, ok := kustpath.Resolve(dir, comp, kustpath.Directory)
 		if !ok {
 			continue
 		}
@@ -375,7 +369,7 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath s
 	}
 	seen := map[string]struct{}{kpath: {}}
 	for _, r := range k.Resources {
-		if abs, ok := resolveDataPath(dir, r); ok {
+		if abs, ok := kustpath.Resolve(dir, r, kustpath.File); ok {
 			seen[abs] = struct{}{}
 		}
 	}
@@ -482,7 +476,7 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *types.Kus
 		if cerr := ctx.Err(); cerr != nil {
 			return 0, cerr
 		}
-		abs, ok := resolveDataPath(dir, r)
+		abs, ok := kustpath.Resolve(dir, r, kustpath.File)
 		if !ok || w.ignoreMatches(abs, false) || !isManifestFile(abs) {
 			continue
 		}
@@ -505,7 +499,7 @@ func (w *walker) walkComponentData(ctx context.Context, dir string, k *types.Kus
 		if cerr := ctx.Err(); cerr != nil {
 			return 0, cerr
 		}
-		abs, ok := resolvePath(dir, comp)
+		abs, ok := kustpath.Resolve(dir, comp, kustpath.Directory)
 		if !ok {
 			continue
 		}

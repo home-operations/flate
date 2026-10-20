@@ -178,38 +178,3 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 func isKustomizeComponent(k *types.Kustomization) bool {
 	return k != nil && k.Kind == types.ComponentKind && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
 }
-
-// resolveDataPath joins rel against base for file resources. An empty rel is
-// rejected (kustomize would reject it too). Absolute paths pass
-// through verbatim — kustomize doesn't forbid them and some generated
-// manifests use them. Relative paths that escape base via `..` are
-// rejected: a path that gets opened would otherwise hand a TOCTOU +
-// path-traversal surface for free. Directory `resources:` and
-// `components:` are merely descended into, never opened, so they use
-// the escape-permitting resolvePath.
-func resolveDataPath(base, rel string) (string, bool) {
-	if rel == "" {
-		return "", false
-	}
-	if filepath.IsAbs(rel) {
-		return filepath.Clean(rel), true
-	}
-	cleanBase := filepath.Clean(base)
-	abs := filepath.Clean(filepath.Join(base, rel))
-	if abs != cleanBase && !strings.HasPrefix(abs+string(filepath.Separator), cleanBase+string(filepath.Separator)) {
-		return "", false
-	}
-	return abs, true
-}
-
-// resolvePath joins rel under base, rejecting empty, absolute, and URL
-// refs (flate's loader only follows local relative paths). It permits
-// parent-directory escaping — both `components:` and directory
-// `resources:` legitimately reference `../...` and kustomize follows
-// them.
-func resolvePath(base, rel string) (string, bool) {
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "://") {
-		return "", false
-	}
-	return filepath.Clean(filepath.Join(base, rel)), true
-}

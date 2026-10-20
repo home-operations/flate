@@ -9,13 +9,13 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/kustomize/api/filters/namespace"
 	"sigs.k8s.io/kustomize/api/types"
 	sigsyaml "sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -98,7 +98,7 @@ func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir s
 		return nsResolution{}
 	}
 	for _, ref := range d.Transformers {
-		transformerDir, ok := resolveRef(overlayDir, ref)
+		transformerDir, ok := kustpath.Resolve(overlayDir, ref, kustpath.Transformer)
 		if !ok {
 			continue
 		}
@@ -155,7 +155,7 @@ func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string
 	// A ref is either a file (the transformer manifest itself) or a
 	// directory with its own kustomization.yaml — try both.
 	return slices.ContainsFunc(slices.Concat(d.Resources, d.Transformers), func(ref string) bool {
-		target, ok := resolveRef(dir, ref)
+		target, ok := kustpath.Resolve(dir, ref, kustpath.Transformer)
 		if !ok {
 			return false
 		}
@@ -223,21 +223,6 @@ func (d namespaceTransformerDoc) injectsKustomizationTargetNamespace() bool {
 	})
 }
 
-// resolveRef cleans a kustomize resource/transformer reference relative
-// to baseDir, rejecting remote (scheme://) and absolute refs and any
-// path that escapes above the repo (".." or a "../" prefix). The boolean reports
-// whether the ref is a usable in-repo relative path.
-func resolveRef(baseDir, ref string) (string, bool) {
-	if ref == "" || strings.Contains(ref, "://") || filepath.IsAbs(ref) {
-		return "", false
-	}
-	resolved := path.Join(baseDir, filepath.ToSlash(ref))
-	if resolved == "." || escapedSlashPath(resolved) {
-		return "", false
-	}
-	return resolved, true
-}
-
 func replacementInjectsTargetNamespace(r types.ReplacementField, reader documentReader, repoRoot, overlayDir string) bool {
 	if r.Path == "" {
 		return copiesNamespaceNameToTargetNamespace(r.Replacement)
@@ -245,7 +230,7 @@ func replacementInjectsTargetNamespace(r types.ReplacementField, reader document
 	if r.Source != nil || len(r.Targets) != 0 || r.SourceValue != nil {
 		return false
 	}
-	ref, ok := resolveRef(overlayDir, r.Path)
+	ref, ok := kustpath.Resolve(overlayDir, r.Path, kustpath.Transformer)
 	if !ok {
 		return false
 	}

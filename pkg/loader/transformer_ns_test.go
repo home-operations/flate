@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -446,9 +447,7 @@ func TestStampTransformerTargetNamespaces_NoEnclosingOverlay(t *testing.T) {
 	}
 }
 
-// TestResolveRef_Rejections locks the strict in-repo guard: remote, absolute,
-// repo-escaping, and empty refs are rejected; a normal relative ref resolves.
-func TestResolveRef_Rejections(t *testing.T) {
+func TestResolve_TransformerRejections(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, base, ref string }{
 		{"empty", "apps/x", ""},
@@ -458,13 +457,13 @@ func TestResolveRef_Rejections(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got, ok := resolveRef(tc.base, tc.ref); ok {
-				t.Errorf("resolveRef(%q,%q)=(%q,true), want rejected", tc.base, tc.ref, got)
+			if got, ok := kustpath.Resolve(tc.base, tc.ref, kustpath.Transformer); ok {
+				t.Errorf("kustpath.Resolve(%q,%q)=(%q,true), want rejected", tc.base, tc.ref, got)
 			}
 		})
 	}
-	if got, ok := resolveRef("apps/x", "../shared"); !ok || got != "apps/shared" {
-		t.Errorf("resolveRef(apps/x,../shared)=(%q,%v), want (apps/shared,true)", got, ok)
+	if got, ok := kustpath.Resolve("apps/x", "../shared", kustpath.Transformer); !ok || got != "apps/shared" {
+		t.Errorf("kustpath.Resolve(apps/x,../shared)=(%q,%v), want (apps/shared,true)", got, ok)
 	}
 }
 

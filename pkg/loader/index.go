@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -53,7 +54,7 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 					if k, _ := l.documents.read(dir); k != nil {
 						listed = make(map[string]struct{}, len(k.Resources))
 						for _, ref := range k.Resources {
-							if resolved, ok := resolvePath(dir, ref); ok {
+							if resolved, ok := kustpath.Resolve(dir, ref, kustpath.Directory); ok {
 								listed[resolved] = struct{}{}
 							}
 						}

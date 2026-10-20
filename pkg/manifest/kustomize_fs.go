@@ -1,10 +1,11 @@
 package manifest
 
 import (
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/home-operations/flate/internal/kustpath"
 )
 
 // KSClaim pairs a Flux Kustomization id with one of its slash-terminated,
@@ -22,11 +23,8 @@ type KSClaim struct {
 func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) []KSClaim {
 	claims := make([]KSClaim, 0, len(kss))
 	add := func(id NamedResource, base, ref string) {
-		if ref == "" || strings.Contains(ref, "://") || path.IsAbs(ref) {
-			return
-		}
-		resolved := path.Clean(path.Join(base, ref))
-		if resolved == "." || resolved == ".." || strings.HasPrefix(resolved, "../") {
+		resolved, ok := kustpath.Resolve(base, ref, kustpath.Claim)
+		if !ok {
 			return
 		}
 		claims = append(claims, KSClaim{ID: id, Prefix: resolved + "/"})

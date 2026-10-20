@@ -227,7 +227,7 @@ resources:
 
 // TestLoader_EscapingFileResourceStillRejected guards the asymmetry at
 // the heart of the fix: directory resources may escape (descend-only),
-// but a parent-escaping FILE resource gets opened, so resolveDataPath's
+// but a parent-escaping FILE resource gets opened, so the file policy's
 // TOCTOU/path-traversal rejection must still apply.
 func TestLoader_EscapingFileResourceStillRejected(t *testing.T) {
 	t.Parallel()
@@ -702,9 +702,6 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 func TestLoader_DiscoveryRecordsNestedComponentData(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	// Outer Component points at inner via `components:`. The path is
-	// relative to the outer Component's directory; resolveComponentPath
-	// allows the `..` escape that resolveDataPath forbids.
 	testutil.WriteFile(t, dir, "components/outer/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 components:

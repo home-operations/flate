@@ -196,7 +196,7 @@ func (t *treeFS) probe(name, rel string) {
 		return
 	}
 	info, err := fs.Stat(t.lower, rel)
-	t.rec.recordNode(recorded, diskKind(err == nil, err == nil && info.IsDir()))
+	t.rec.recordNode(recorded, observedKind(err == nil, err == nil && info.IsDir()))
 }
 
 func (t *treeFS) Exists(name string) bool {

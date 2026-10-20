@@ -22,7 +22,7 @@ const (
 	kindDir
 )
 
-func diskKind(exists, isDir bool) nodeKind {
+func observedKind(exists, isDir bool) nodeKind {
 	switch {
 	case !exists:
 		return kindAbsent
@@ -164,7 +164,6 @@ type readSetSnapshot struct {
 	Remotes []remoteEntry `json:"remotes,omitempty"`
 }
 
-// snapshot freezes the recorder into its deterministic serialized form.
 func (rs *readSet) snapshot() readSetSnapshot {
 	var remotes []remoteEntry
 	for input, observation := range rs.remotes {
@@ -177,7 +176,6 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	}
 	slices.SortFunc(remotes, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
 	rs.mu.Lock()
-	defer rs.mu.Unlock()
 	snap := readSetSnapshot{
 		Remotes: remotes,
 		Files:   make([]fileEntry, 0, len(rs.files)),
@@ -201,19 +199,20 @@ func (rs *readSet) snapshot() readSetSnapshot {
 		}
 		snap.Nodes = append(snap.Nodes, nodeEntry{Path: p, Kind: k})
 	}
+	rs.mu.Unlock()
 	slices.SortFunc(snap.Files, func(a, b fileEntry) int { return cmp.Compare(a.Path, b.Path) })
 	slices.SortFunc(snap.Dirs, func(a, b fileEntry) int { return cmp.Compare(a.Path, b.Path) })
 	slices.SortFunc(snap.Nodes, func(a, b nodeEntry) int { return cmp.Compare(a.Path, b.Path) })
 	return snap
 }
 
-func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, input *treeFS, immutable bool) (bool, error) {
+func (rs readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, input *treeFS, immutable bool) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if !immutable {
 		lower := input.lower
-		for _, f := range snap.Files {
+		for _, f := range rs.Files {
 			b, err := fs.ReadFile(lower, f.Path)
 			if (err != nil) != (f.Hash == "") {
 				return false, ctx.Err()
@@ -222,7 +221,7 @@ func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, in
 				return false, ctx.Err()
 			}
 		}
-		for _, d := range snap.Dirs {
+		for _, d := range rs.Dirs {
 			entries, err := fs.ReadDir(lower, d.Path)
 			if err != nil {
 				return false, ctx.Err()
@@ -231,31 +230,31 @@ func (snap readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, in
 				return false, ctx.Err()
 			}
 		}
-		for _, n := range snap.Nodes {
+		for _, n := range rs.Nodes {
 			info, err := fs.Stat(lower, n.Path)
-			if diskKind(err == nil, err == nil && info.IsDir()) != n.Kind {
+			if observedKind(err == nil, err == nil && info.IsDir()) != n.Kind {
 				return false, ctx.Err()
 			}
 		}
 	}
-	return snap.validateRemotes(ctx, cache, input)
+	return rs.validateRemotes(ctx, cache, input)
 }
 
-func (snap readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {
-	if len(snap.Remotes) == 0 {
+func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {
+	if len(rs.Remotes) == 0 {
 		return ctx.Err() == nil, ctx.Err()
 	}
-	indices := make(map[remoteInput]int, len(snap.Remotes))
-	for index, entry := range snap.Remotes {
+	indices := make(map[remoteInput]int, len(rs.Remotes))
+	for index, entry := range rs.Remotes {
 		if _, duplicate := indices[entry.Input]; duplicate {
 			return false, ctx.Err()
 		}
 		indices[entry.Input] = index
 	}
-	pending := make([]int, len(snap.Remotes))
-	children := make([][]int, len(snap.Remotes))
+	pending := make([]int, len(rs.Remotes))
+	children := make([][]int, len(rs.Remotes))
 	var ready []int
-	for index, entry := range snap.Remotes {
+	for index, entry := range rs.Remotes {
 		pending[index] = len(entry.Parents)
 		if pending[index] == 0 {
 			ready = append(ready, index)
@@ -284,13 +283,13 @@ func (snap readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCach
 		}
 		ready = next
 	}
-	if visited != len(snap.Remotes) {
+	if visited != len(rs.Remotes) {
 		return false, ctx.Err()
 	}
 	results := make([]struct {
 		done  chan struct{}
 		valid bool
-	}, len(snap.Remotes))
+	}, len(rs.Remotes))
 	validationInput := *input
 	validationInput.slot = cache.tasks
 	valid := true
@@ -307,7 +306,7 @@ func (snap readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCach
 					if ctx.Err() != nil {
 						return
 					}
-					remote := snap.Remotes[index]
+					remote := rs.Remotes[index]
 					_, identity, err := remote.Input.acquire(ctx, cache, &validationInput)
 					results[index].valid = err == nil && identity == remote.Identity
 				})

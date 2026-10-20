@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -41,9 +43,124 @@ func recordAgainst(root string, lower fs.FS, read reads) readSetSnapshot {
 	for _, rel := range read.probed {
 		abs := filepath.Join(root, rel)
 		info, err := fs.Stat(lower, rel)
-		rs.recordNode(abs, diskKind(err == nil, err == nil && info.IsDir()))
+		rs.recordNode(abs, observedKind(err == nil, err == nil && info.IsDir()))
 	}
 	return rs.snapshot()
+}
+
+func TestReadSet_Snapshot(t *testing.T) {
+	t.Parallel()
+	const root = "/src"
+	record := func(names []string) *readSet {
+		rs := newReadSet(root)
+		for _, name := range names {
+			rs.recordFile(filepath.Join(root, name+".yaml"), []byte(name), nil)
+			rs.recordDir(filepath.Join(root, name+"-dir"), []string{"child"})
+			rs.recordNode(filepath.Join(root, name+"-node"), kindAbsent)
+			rs.recordNode(filepath.Join(root, name+".yaml"), kindFile)
+			rs.recordNode(filepath.Join(root, name+"-dir"), kindDir)
+		}
+		return rs
+	}
+	rs := record([]string{"z", "a"})
+	snap := rs.snapshot()
+	want := readSetSnapshot{
+		Files: []fileEntry{
+			{Path: "a.yaml", Hash: manifest.SHA256Hex([]byte("a"))},
+			{Path: "z.yaml", Hash: manifest.SHA256Hex([]byte("z"))},
+		},
+		Dirs: []fileEntry{
+			{Path: "a-dir", Hash: hashEntries([]string{"child"})},
+			{Path: "z-dir", Hash: hashEntries([]string{"child"})},
+		},
+		Nodes: []nodeEntry{{Path: "a-node", Kind: kindAbsent}, {Path: "z-node", Kind: kindAbsent}},
+	}
+	if diff := cmp.Diff(want, snap); diff != "" {
+		t.Fatalf("snapshot (-want +got):\n%s", diff)
+	}
+	frame := testRenderFrame(t, snap, []byte("output"))
+	reversed := record([]string{"a", "z"})
+	if !bytes.Equal(frame, testRenderFrame(t, reversed.snapshot(), []byte("output"))) {
+		t.Fatal("snapshot frame depends on observation order")
+	}
+	rs.recordFile(filepath.Join(root, "a.yaml"), []byte("changed"), nil)
+	rs.recordDir(filepath.Join(root, "a-dir"), []string{"new-child"})
+	rs.recordNode(filepath.Join(root, "a-node"), kindFile)
+	rs.recordNode(filepath.Join(root, "new-node"), kindDir)
+	if diff := cmp.Diff(want, snap); diff != "" {
+		t.Fatalf("frozen snapshot mutated (-want +got):\n%s", diff)
+	}
+	if !bytes.Equal(frame, testRenderFrame(t, snap, []byte("output"))) {
+		t.Fatal("frozen snapshot frame changed after recording")
+	}
+	empty := readSetSnapshot{Files: []fileEntry{}, Dirs: []fileEntry{}, Nodes: []nodeEntry{}}
+	if diff := cmp.Diff(empty, newReadSet(root).snapshot()); diff != "" {
+		t.Fatalf("empty snapshot (-want +got):\n%s", diff)
+	}
+}
+
+func TestReadSet_SnapshotConcurrentRecording(t *testing.T) {
+	t.Parallel()
+	const root = "/src"
+	rs := newReadSet(root)
+	for _, name := range []string{"z", "a"} {
+		rs.recordFile(filepath.Join(root, name+".yaml"), []byte(name), nil)
+		rs.recordDir(filepath.Join(root, name+"-dir"), []string{"child"})
+		rs.recordNode(filepath.Join(root, name+"-node"), kindAbsent)
+	}
+	start := make(chan struct{})
+	written := make(chan struct{})
+	read := make(chan readSetSnapshot)
+	go func() {
+		defer close(written)
+		<-start
+		rs.recordFile(filepath.Join(root, "b.yaml"), []byte("b"), nil)
+		rs.recordDir(filepath.Join(root, "b-dir"), []string{"child"})
+		rs.recordNode(filepath.Join(root, "b.yaml"), kindFile)
+		rs.recordNode(filepath.Join(root, "b-dir"), kindDir)
+		rs.recordNode(filepath.Join(root, "b-node"), kindAbsent)
+	}()
+	go func() {
+		<-start
+		read <- rs.snapshot()
+	}()
+	close(start)
+	snap := <-read
+	<-written
+	for _, entries := range [][]fileEntry{snap.Files, snap.Dirs} {
+		if !slices.IsSortedFunc(entries, func(a, b fileEntry) int { return strings.Compare(a.Path, b.Path) }) {
+			t.Fatalf("unsorted snapshot entries: %+v", entries)
+		}
+	}
+	if !slices.IsSortedFunc(snap.Nodes, func(a, b nodeEntry) int { return strings.Compare(a.Path, b.Path) }) {
+		t.Fatalf("unsorted snapshot nodes: %+v", snap.Nodes)
+	}
+	for _, node := range snap.Nodes {
+		matches := func(entry fileEntry) bool { return entry.Path == node.Path }
+		if slices.ContainsFunc(snap.Files, matches) || slices.ContainsFunc(snap.Dirs, matches) {
+			t.Errorf("redundant node in snapshot: %+v", node)
+		}
+	}
+	want := readSetSnapshot{
+		Files: []fileEntry{
+			{Path: "a.yaml", Hash: manifest.SHA256Hex([]byte("a"))},
+			{Path: "b.yaml", Hash: manifest.SHA256Hex([]byte("b"))},
+			{Path: "z.yaml", Hash: manifest.SHA256Hex([]byte("z"))},
+		},
+		Dirs: []fileEntry{
+			{Path: "a-dir", Hash: hashEntries([]string{"child"})},
+			{Path: "b-dir", Hash: hashEntries([]string{"child"})},
+			{Path: "z-dir", Hash: hashEntries([]string{"child"})},
+		},
+		Nodes: []nodeEntry{
+			{Path: "a-node", Kind: kindAbsent},
+			{Path: "b-node", Kind: kindAbsent},
+			{Path: "z-node", Kind: kindAbsent},
+		},
+	}
+	if diff := cmp.Diff(want, rs.snapshot()); diff != "" {
+		t.Fatalf("completed writes (-want +got):\n%s", diff)
+	}
 }
 
 func TestReadSet_HitAndInvalidation(t *testing.T) {

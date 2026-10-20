@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	gitlib "github.com/go-git/go-git/v5"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -19,8 +20,8 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	commit := mustSetRefToHEAD(t, root, "refs/heads/other")
 	c := cachetest.New(t, "", sourcecache.New)
 	f := &Fetcher{Cache: c}
-	base := &manifest.GitRepository{URL: "file://" + root, Reference: &manifest.GitRepositoryRef{Commit: commit}}
-	first, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
+	base := &manifest.GitRepository{URL: "file://" + root, Reference: &sourcev1.GitRepositoryRef{Commit: commit}}
+	first, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 		{"sparse", func(r *manifest.GitRepository, _ *Fetcher) { r.SparseCheckout = []string{"hello.txt"} }, false},
 		{"submodules", func(r *manifest.GitRepository, _ *Fetcher) { r.RecurseSubmodules = true }, false},
 		{"ref", func(r *manifest.GitRepository, _ *Fetcher) {
-			r.Reference = &manifest.GitRepositoryRef{Commit: commit, Branch: "other"}
+			r.Reference = &sourcev1.GitRepositoryRef{Commit: commit, Branch: "other"}
 		}, false},
 		{"URL", func(r *manifest.GitRepository, _ *Fetcher) { r.URL += "/." }, false},
 		{"depth", func(_ *manifest.GitRepository, f *Fetcher) { f.Depth = 1 }, false},
@@ -56,7 +57,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 			r := *base
 			fetcher := &Fetcher{Cache: c}
 			tc.change(&r, fetcher)
-			art, err := fetcher.fetch(t.Context(), gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
+			art, err := fetcher.fetch(t.Context(), gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,7 +68,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 				if _, err := fs.Stat(art.FS, "docs.tmp"); !os.IsNotExist(err) {
 					t.Fatalf("ignored checkout retained docs.tmp: %v", err)
 				}
-				plain, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.RetryConfig{})
+				plain, err := f.fetch(t.Context(), gitAcquisition{spec: base, options: gitlib.CloneOptions{URL: base.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
 				if err != nil {
 					t.Fatal(err)
 				}

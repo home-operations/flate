@@ -33,7 +33,7 @@ type Fetcher struct {
 }
 
 // Fetch implements source.TypedFetcher[*manifest.Bucket].
-func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, policy cache.Policy) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, source.ErrUnsupportedProvider(b.Named(), b.Provider, sourcev1.BucketProviderGeneric,
 			"S3-compatible")
@@ -50,12 +50,12 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 		ignore = *b.Ignore
 	}
 	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(endpoint, secure), material}, Ignore: ignore, Required: []string{"revision", "object-count"}}
-	input, desc, id, err := f.Cache.Acquire(ctx, key, cache.Policy{MaxAge: b.Interval.Duration, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	input, desc, id, err := f.Cache.Acquire(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		desc, err := walkBucket(ctx, client, b, w)
 		return cache.ProducerResult{Descriptor: desc}, err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", bucketID(b), err)
+		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), err)
 	}
 
 	return &store.SourceArtifact{
@@ -111,13 +111,7 @@ func (f *Fetcher) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error)
 		Transport:  tr,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: minio client: %w", bucketID(b), err)
+		return nil, nil, fmt.Errorf("%s: minio client: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), err)
 	}
 	return client, material, nil
-}
-
-// bucketID is the "Bucket <namespace>/<name>" error prefix, via the shared
-// source.QualifiedName so every fetcher formats kind/ns/name identically.
-func bucketID(b *manifest.Bucket) string {
-	return source.QualifiedName("Bucket", b.Namespace, b.Name)
 }

@@ -16,7 +16,7 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 		return credentials.NewStaticV4("", "", ""), nil
 	}
 	if f.Secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", bucketID(b))
+		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name))
 	}
 	sec := f.Secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
@@ -24,11 +24,11 @@ func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentia
 	}
 	access, _, err := sec.Value("accesskey")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", bucketID(b), b.Namespace, b.SecretRef.Name, err)
+		return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), b.Namespace, b.SecretRef.Name, err)
 	}
 	secret, _, err := sec.Value("secretkey")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", bucketID(b), b.Namespace, b.SecretRef.Name, err)
+		return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), b.Namespace, b.SecretRef.Name, err)
 	}
 	if access == "" || secret == "" || manifest.HasValuePlaceholder(access) || manifest.HasValuePlaceholder(secret) {
 		return nil, source.MissingSecretErr(b.Named(), b.SecretRef.Name, "missing accesskey/secretkey")

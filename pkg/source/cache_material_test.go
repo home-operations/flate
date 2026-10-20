@@ -116,7 +116,7 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 						return nil
 					}
 				}}
-				artifact, err := f.Fetch(t.Context(), b, cache.RetryConfig{})
+				artifact, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval()})
 				assert.NoError(t, err)
 				if artifact.Key == "" || artifact.Revision == "" {
 					t.Fatal("fetch returned an empty key or revision")

@@ -61,32 +61,23 @@ func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Conf
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It
 // resolves the backing HelmRepository, then pulls the chart: OCI repos via
 // the OCI fetcher (a synthesized OCIRepository), HTTP repos by streaming chart tarballs.
-func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, retry cache.RetryConfig) (*store.SourceArtifact, error) {
-	// Only HelmRepository-backed charts need a dedicated chart fetch. A
-	// HelmChart whose sourceRef is a GitRepository/Bucket is resolved by the
-	// consuming HelmRelease directly from that source's on-disk artifact
-	// (ResolveChartRef repoints the chart there), so it's existence-only
-	// here — mark Ready without an artifact. The synthetic HelmCharts the HR
-	// controller emits are always HelmRepository-backed, so they take the
-	// real path below.
-	if k := hc.SourceRef.Kind; k != "" && k != manifest.KindHelmRepository {
-		return nil, nil
-	}
+func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
 	r := f.repos(hc.Namespace, hc.SourceRef.Name)
 	if r == nil {
 		return nil, fmt.Errorf("%w: %s backing HelmChart %s", manifest.ErrObjectNotFound,
 			source.QualifiedName("HelmRepository", hc.Namespace, hc.SourceRef.Name), hc.Named().String())
 	}
-	if isOCIHelmRepo(r) {
+	policy.MaxAge = r.SourceInterval()
+	if f.disableChartDigestTracking && hc.ExactVersion() {
+		policy.MaxAge = cache.Forever
+	}
+	if r.IsOCI() {
 		// Delegate to the OCI fetcher via a synthesized OCIRepository. The
 		// artifact is re-stamped KindHelmChart so the Store entry matches
 		// the synthetic HelmChart's identity.
-		syn := synthesizeOCIRepository(r, hc.Chart, hc.Version)
+		syn := synthesizeOCIRepository(r, hc)
 		syn.Interval = r.Interval
-		if f.disableChartDigestTracking && isExactSemver(hc.Version) {
-			syn.Interval.Duration = cache.Forever
-		}
-		art, err := f.oci.Fetch(ctx, syn, retry)
+		art, err := f.oci.Fetch(ctx, syn, policy)
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
 			retry := missing.RetryWithRegistryConfig
 			wrapped := *missing
@@ -111,13 +102,7 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, retry
 	if err != nil {
 		return nil, err
 	}
-	return f.fetchHTTPChart(ctx, prepared, hc, retry)
-}
-
-// helmID is the "HelmRepository <namespace>/<name>" error prefix, via the
-// shared source.QualifiedName so every fetcher formats kind/ns/name identically.
-func helmID(r *manifest.HelmRepository) string {
-	return source.QualifiedName("HelmRepository", r.Namespace, r.Name)
+	return f.fetchHTTPChart(ctx, prepared, hc, policy)
 }
 
 // Synthesize builds an in-memory HelmChart for a single chart served by a
@@ -143,15 +128,8 @@ func normalizeChartURL(url, chartName string) string {
 	return strings.TrimSuffix(url, "/") + "/" + chartName
 }
 
-// isOCIHelmRepo reports whether a HelmRepository serves charts from an OCI
-// registry (spec.type: oci, or an oci:// URL) rather than a classic HTTP
-// index.yaml.
-func isOCIHelmRepo(r *manifest.HelmRepository) bool {
-	return r.Type == sourcev1.HelmRepositoryTypeOCI || strings.HasPrefix(r.URL, "oci://")
-}
-
 // synthesizeOCIRepository builds an in-memory OCIRepository for a single
-// chart served by a type=oci HelmRepository (precondition: isOCIHelmRepo(r)).
+// chart served by a type=oci HelmRepository (precondition: r.IsOCI()).
 // A HelmRepository(oci) is only a registry base; the chart name and version
 // live on the consuming HelmRelease, so there is no standalone OCIRepository
 // CR. The OCI branch of Fetch builds one on the fly and hands it to the OCI
@@ -164,14 +142,14 @@ func isOCIHelmRepo(r *manifest.HelmRepository) bool {
 // tag, and a semver constraint becomes a SemVer ref so the OCI fetcher
 // resolves it to the highest matching published tag — matching the
 // OCIRepository path.
-func synthesizeOCIRepository(r *manifest.HelmRepository, chartName, version string) *manifest.OCIRepository {
-	chartURL := normalizeChartURL(r.URL, chartName)
+func synthesizeOCIRepository(r *manifest.HelmRepository, hc *manifest.HelmChartSource) *manifest.OCIRepository {
+	chartURL := normalizeChartURL(r.URL, hc.Chart)
 	syn := &manifest.OCIRepository{Namespace: r.Namespace}
-	syn.Name = syntheticChartName(r.Name, chartName, chartURL, version)
+	syn.Name = syntheticChartName(r.Name, hc.Chart, chartURL, hc.Version)
 	syn.URL = chartURL
 	syn.Provider = r.Provider
-	if version != "" {
-		syn.Reference = versionToOCIRef(version)
+	if hc.Version != "" {
+		syn.Reference = versionToOCIRef(hc)
 	}
 	syn.SecretRef = r.SecretRef
 	syn.CertSecretRef = r.CertSecretRef
@@ -187,17 +165,18 @@ func synthesizeOCIRepository(r *manifest.HelmRepository, chartName, version stri
 // selects the highest matching published tag; anything else is a non-semver
 // literal tag (e.g. "latest").
 //
-// The isExactSemver-before-isSemverConstraint ordering is load-bearing:
+// The exact-version-before-constraint ordering is load-bearing:
 // semver.NewConstraint("1.20.0") succeeds as "=1.20.0", so testing the
 // constraint first would misroute exact pins and bare partials (1.20, 1) to
 // SemVer. Peeling concrete versions off first is what separates a pin from a
 // constraint.
-func versionToOCIRef(version string) *manifest.OCIRepositoryRef {
-	ref := &manifest.OCIRepositoryRef{}
+func versionToOCIRef(hc *manifest.HelmChartSource) *sourcev1.OCIRepositoryRef {
+	version := hc.Version
+	ref := &sourcev1.OCIRepositoryRef{}
 	switch {
 	case strings.Contains(version, ":"):
 		ref.Digest = version
-	case isExactSemver(version):
+	case hc.ExactVersion():
 		ref.Tag = version
 	case isSemverConstraint(version):
 		ref.SemVer = version
@@ -205,13 +184,6 @@ func versionToOCIRef(version string) *manifest.OCIRepositoryRef {
 		ref.Tag = version
 	}
 	return ref
-}
-
-// isExactSemver reports whether version parses as a single concrete semver
-// version (an exact pin), including coerced partials such as "1.20" and "1".
-func isExactSemver(version string) bool {
-	_, err := semver.NewVersion(version)
-	return err == nil
 }
 
 // isSemverConstraint reports whether version parses as a semver constraint

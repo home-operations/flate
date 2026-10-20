@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io/fs"
 
-	"github.com/Masterminds/semver/v3"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -36,17 +37,18 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 		hash plumbing.Hash
 		err  error
 	}
-	resolved := make(map[manifest.GitRepositoryRef]resolution)
+	resolved := make(map[sourcev1.GitRepositoryRef]resolution)
 	artifacts := make(map[manifest.NamedResource]*store.SourceArtifact, len(repositories))
 	for _, repository := range repositories {
 		if repository == nil {
 			return nil, fmt.Errorf("%w: local GitRepository is nil", manifest.ErrInput)
 		}
-		ref := effectiveRef(repository.Reference)
-		if manifest.GitRefString(ref) == "" {
+		selected := (*manifest.GitRepositoryRef)(repository.Reference)
+		ref := selected.Normalized()
+		if selected.String() == "" {
 			continue
 		}
-		if err := validateEffectiveRef(ref); err != nil {
+		if err := selected.Validate(); err != nil {
 			return nil, localError(repository, err)
 		}
 		if err := ctx.Err(); err != nil {
@@ -78,7 +80,7 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 		}
 		r, ok := resolved[ref]
 		if !ok {
-			r.hash, r.err = resolveRefHash(repo, &ref)
+			r.hash, r.err = resolveRefHash(repo, &ref, false)
 			resolved[ref] = r
 		}
 		if errors.Is(r.err, errRefUnavailable) {
@@ -119,48 +121,6 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 	return artifacts, nil
 }
 
-func effectiveRef(ref *manifest.GitRepositoryRef) manifest.GitRepositoryRef {
-	if ref == nil {
-		return manifest.GitRepositoryRef{}
-	}
-	switch {
-	case ref.Commit != "":
-		return manifest.GitRepositoryRef{Commit: ref.Commit, Branch: ref.Branch}
-	case ref.Name != "":
-		return manifest.GitRepositoryRef{Name: ref.Name}
-	case ref.SemVer != "":
-		return manifest.GitRepositoryRef{SemVer: ref.SemVer}
-	case ref.Tag != "":
-		return manifest.GitRepositoryRef{Tag: ref.Tag}
-	default:
-		return manifest.GitRepositoryRef{Branch: ref.Branch}
-	}
-}
-
-func validateEffectiveRef(ref manifest.GitRepositoryRef) error {
-	if ref.Commit != "" && !plumbing.IsHash(ref.Commit) {
-		return fmt.Errorf("invalid full commit hash %q", ref.Commit)
-	}
-	var name plumbing.ReferenceName
-	switch {
-	case ref.Name != "":
-		name = plumbing.ReferenceName(ref.Name)
-	case ref.SemVer != "":
-		_, err := semver.NewConstraint(ref.SemVer)
-		return err
-	case ref.Tag != "":
-		name = plumbing.NewTagReferenceName(ref.Tag)
-	case ref.Branch != "":
-		name = plumbing.NewBranchReferenceName(ref.Branch)
-	default:
-		return nil
-	}
-	if err := name.Validate(); err != nil {
-		return fmt.Errorf("invalid reference %q: %w", name, err)
-	}
-	return nil
-}
-
 func localError(repo *manifest.GitRepository, err error) error {
-	return fmt.Errorf("%w: resolve local %s: %w", manifest.ErrInput, gitID(repo), err)
+	return fmt.Errorf("%w: resolve local %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
 }

@@ -140,7 +140,8 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		}
 		alias, descriptor := behavior.BootstrapAlias(bootstrap.LocalPath)
 		candidate := entryResolution{object: obj, input: bootstrap, git: descriptor, subtree: ".", synthetic: synthetic}
-		candidate.pinned = !synthetic && id != manifest.BootstrapSourceID && descriptor != nil && descriptor.Reference != nil && manifest.GitRefString(*descriptor.Reference) != ""
+		candidate.pinned = !synthetic && id != manifest.BootstrapSourceID &&
+			descriptor != nil && (*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
 		if id != manifest.BootstrapSourceID {
 			if !synthetic {
 				if descriptor == nil {
@@ -194,7 +195,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			if artifact == nil {
 				d.resolvedSources[id] = candidate
 				slog.Warn("discovery: declared source ref cannot be satisfied locally; using normal source fetch",
-					"id", id.String(), "ref", manifest.GitRefString(*candidate.git.Reference),
+					"id", id.String(), "ref", (*manifest.GitRepositoryRef)(candidate.git.Reference).String(),
 					"reason", "ref unavailable in this tree's repository or checkout options require fetching")
 				continue
 			}

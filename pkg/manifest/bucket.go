@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -63,6 +64,12 @@ func (b *Bucket) WithNamespace(namespace string) BaseManifest {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (b *Bucket) Suspended() bool { return b.Suspend }
+
+// ExistenceOnly reports whether readiness requires no artifact acquisition.
+func (b *Bucket) ExistenceOnly() bool { return false }
+
+// SourceInterval returns the authored source refresh interval.
+func (b *Bucket) SourceInterval() time.Duration { return b.Interval.Duration }
 
 // parseBucket decodes a Bucket CR via the source-controller typed
 // schema.

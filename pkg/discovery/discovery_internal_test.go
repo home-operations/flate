@@ -9,6 +9,7 @@ import (
 	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
@@ -31,7 +32,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			st := store.New()
 			repository := &manifest.GitRepository{
 				Name: "cluster", Namespace: "flux-system", URL: "git://fixture.invalid/cluster",
-				Reference: &manifest.GitRepositoryRef{Tag: "pinned"},
+				Reference: &sourcev1.GitRepositoryRef{Tag: "pinned"},
 			}
 			other := &manifest.GitRepository{Name: "other", Namespace: "flux-system"}
 			ks := &manifest.Kustomization{

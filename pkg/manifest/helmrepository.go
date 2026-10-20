@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"cmp"
+	"strings"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
@@ -23,6 +25,12 @@ func (h *HelmRepository) Named() NamedResource {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (h *HelmRepository) Suspended() bool { return h.Suspend }
+
+// ExistenceOnly reports whether readiness requires no artifact acquisition.
+func (h *HelmRepository) ExistenceOnly() bool { return true }
+
+// SourceInterval returns the authored source refresh interval.
+func (h *HelmRepository) SourceInterval() time.Duration { return h.Interval.Duration }
 
 // Content returns the repository inputs that define HTTP acquisitions.
 func (h *HelmRepository) Content() any {
@@ -75,3 +83,8 @@ func (h *HelmRepository) references(yield func(Reference) bool) {
 }
 
 func (h *HelmRepository) kind() KindInfo { return kindTable[kindHelmRepository].KindInfo }
+
+// IsOCI reports whether the repository serves charts through OCI.
+func (h *HelmRepository) IsOCI() bool {
+	return h.Type == sourcev1.HelmRepositoryTypeOCI || strings.HasPrefix(h.URL, "oci://")
+}

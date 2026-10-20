@@ -2,31 +2,10 @@ package manifest
 
 import (
 	"cmp"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
-
-// GitRepositoryRef is the Flux GitRepositoryRef from source-controller.
-type GitRepositoryRef = sourcev1.GitRepositoryRef
-
-// GitRefString returns "branch:main", "tag:v1.2.3", etc., or empty when
-// the ref is empty. Precedence matches Flux source-controller:
-// commit > name > semver > tag > branch.
-func GitRefString(r GitRepositoryRef) string {
-	switch {
-	case r.Commit != "":
-		return "commit:" + r.Commit
-	case r.Name != "":
-		return "name:" + r.Name
-	case r.SemVer != "":
-		return "semver:" + r.SemVer
-	case r.Tag != "":
-		return "tag:" + r.Tag
-	case r.Branch != "":
-		return "branch:" + r.Branch
-	}
-	return ""
-}
 
 // GitRepository is the Flux GitRepository CRD. The embedded
 // sourcev1.GitRepositorySpec promotes URL, Reference, Verification,
@@ -53,7 +32,7 @@ func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 }
 
 // Content returns the source inputs that define the selected Git content.
-func (g *GitRepository) Content(ref GitRepositoryRef) any {
+func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 	var auth []NamedResource
 	for _, ref := range []*LocalObjectReference{g.SecretRef, g.ProxySecretRef} {
 		if ref != nil && ref.Name != "" {
@@ -66,7 +45,7 @@ func (g *GitRepository) Content(ref GitRepositoryRef) any {
 	}
 	return struct {
 		URL               string
-		Ref               GitRepositoryRef
+		Ref               sourcev1.GitRepositoryRef
 		Auth              []NamedResource
 		Ignore            string
 		SparseCheckout    []string `json:",omitempty"`
@@ -83,6 +62,12 @@ func (g *GitRepository) WithNamespace(namespace string) BaseManifest {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (g *GitRepository) Suspended() bool { return g.Suspend }
+
+// ExistenceOnly reports whether readiness requires no artifact acquisition.
+func (g *GitRepository) ExistenceOnly() bool { return false }
+
+// SourceInterval returns the authored source refresh interval.
+func (g *GitRepository) SourceInterval() time.Duration { return g.Interval.Duration }
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
 func validateSecretReference(id NamedResource, err *error) func(Reference) bool {
@@ -128,8 +113,11 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	return out, nil
 }
 
-// OCIRepositoryRef is the Flux OCIRepositoryRef from source-controller.
-type OCIRepositoryRef = sourcev1.OCIRepositoryRef
+// OCIRepositoryRef holds the Flux OCI reference and its cache-retention fact.
+type OCIRepositoryRef sourcev1.OCIRepositoryRef
+
+// Pinned reports whether a digest fixes the selected content.
+func (r *OCIRepositoryRef) Pinned() bool { return r != nil && r.Digest != "" }
 
 // OCIRepository is the Flux OCIRepository CRD. The embedded
 // sourcev1.OCIRepositorySpec promotes URL, Reference, LayerSelector,
@@ -140,6 +128,16 @@ type OCIRepository struct {
 	Namespace string `json:"namespace" yaml:"namespace"`
 
 	sourcev1.OCIRepositorySpec `json:",inline" yaml:",inline"`
+}
+
+// LayerOperation returns the Flux layer operation, defaulting to extraction.
+func (o *OCIRepository) LayerOperation() string {
+	return (&sourcev1.OCIRepository{Spec: o.OCIRepositorySpec}).GetLayerOperation()
+}
+
+// LayerMediaType returns the authored layer media type selector.
+func (o *OCIRepository) LayerMediaType() string {
+	return (&sourcev1.OCIRepository{Spec: o.OCIRepositorySpec}).GetLayerMediaType()
 }
 
 // OCILayerSelector is the Flux OCILayerSelector from source-controller.
@@ -161,7 +159,7 @@ func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 }
 
 // Content returns the source inputs that define the selected OCI content.
-func (o *OCIRepository) Content(ref OCIRepositoryRef) any {
+func (o *OCIRepository) Content(ref sourcev1.OCIRepositoryRef) any {
 	var auth []NamedResource
 	for _, ref := range []*LocalObjectReference{o.SecretRef, o.CertSecretRef, o.ProxySecretRef} {
 		if ref != nil && ref.Name != "" {
@@ -174,7 +172,7 @@ func (o *OCIRepository) Content(ref OCIRepositoryRef) any {
 	}
 	return struct {
 		URL           string
-		Ref           OCIRepositoryRef
+		Ref           sourcev1.OCIRepositoryRef
 		Auth          []NamedResource
 		Insecure      bool
 		LayerSelector *OCILayerSelector
@@ -191,6 +189,12 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }
+
+// ExistenceOnly reports whether readiness requires no artifact acquisition.
+func (o *OCIRepository) ExistenceOnly() bool { return false }
+
+// SourceInterval returns the authored source refresh interval.
+func (o *OCIRepository) SourceInterval() time.Duration { return o.Interval.Duration }
 
 // ChartVersion returns the digest, semver constraint or tag declared by the source.
 func (o *OCIRepository) ChartVersion() string {
@@ -271,6 +275,12 @@ func (e *ExternalArtifact) WithNamespace(namespace string) BaseManifest {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (e *ExternalArtifact) Suspended() bool { return false }
+
+// ExistenceOnly reports whether readiness requires no artifact acquisition.
+func (e *ExternalArtifact) ExistenceOnly() bool { return false }
+
+// SourceInterval returns the authored source refresh interval.
+func (e *ExternalArtifact) SourceInterval() time.Duration { return 0 }
 
 // parseExternalArtifact decodes an ExternalArtifact CR via the
 // source-controller typed schema.

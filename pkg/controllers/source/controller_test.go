@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -25,14 +26,14 @@ import (
 
 type fakeFetcher struct {
 	calls    int
-	retry    sourcecache.RetryConfig
+	retry    sourcecache.Policy
 	artifact *store.SourceArtifact
 	err      error
 }
 
-func (f *fakeFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *fakeFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.calls++
-	f.retry = retry
+	f.retry = policy
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -66,7 +67,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 		FS: fstest.MapFS{"source.txt": {Data: []byte(content)}},
 	}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
-	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
+	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git", Interval: metav1.Duration{Duration: time.Hour}}
 	st.AddObject(repo)
 
 	for _, phase := range []string{"initial", "revised", "digested", "reacquired"} {
@@ -91,7 +92,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
-			if f.retry.Attempts != 3 {
+			if f.retry != (sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}) {
 				t.Fatalf("configured policy=%+v", f.retry)
 			}
 			art, ok := st.GetArtifact(repo.Named()).(*store.SourceArtifact)
@@ -130,39 +131,32 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 	for _, suspended := range []bool{false, true} {
 		t.Run(fmt.Sprintf("suspend=%t", suspended), func(t *testing.T) {
 			t.Parallel()
-			objects := []manifest.BaseManifest{
-				&manifest.GitRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/repo.git", Suspend: suspended},
-				&manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/charts", Suspend: suspended},
-				&manifest.HelmChartSource{Name: "chart", Namespace: "ns", Chart: "app", Suspend: suspended},
-			}
-			st := store.New()
-			ts := task.NewBounded(2)
-			c := New(st, ts)
-			t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
-			for _, obj := range objects {
-				c.Fetchers[obj.Named().Kind] = &fakeFetcher{}
-				st.AddObject(obj)
-			}
-			c.StartLifecycle()
-			for _, obj := range objects {
-				ts.Go(t.Context(), obj.Named().String(), func(ctx context.Context) {
-					if deps := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone); len(deps) != 0 {
-						t.Errorf("blocked source %s: %v", obj.Named(), deps)
-					}
-				})
-			}
-			ts.BlockTillDone()
-			for _, obj := range objects {
-				t.Run(obj.Named().Kind, func(t *testing.T) {
+			for _, tc := range []struct {
+				name  string
+				obj   manifest.BaseManifest
+				calls int
+			}{
+				{"git", &manifest.GitRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/repo.git", Suspend: suspended}, 1},
+				{"repository", &manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://invalid.example/charts", Suspend: suspended}, 0},
+				{"default chart", &manifest.HelmChartSource{Name: "chart", Namespace: "ns", Chart: "app", Suspend: suspended}, 1},
+				{"repository chart", &manifest.HelmChartSource{Name: "chart", Namespace: "ns", Chart: "app", Suspend: suspended, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository}}, 1},
+				{"source chart", &manifest.HelmChartSource{Name: "chart", Namespace: "ns", Chart: "app", Suspend: suspended, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository}}, 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
 					t.Parallel()
-					info, _ := st.GetStatus(obj.Named())
-					message, calls := "", 1
+					f := &fakeFetcher{}
+					c, st := newController(t, map[string]src.Fetcher{tc.obj.Named().Kind: f})
+					st.AddObject(tc.obj)
+					info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: tc.obj.Named(), ReconcileNode: c.ReconcileNode})
+					message, calls := "", tc.calls
 					if suspended {
 						message, calls = store.MsgSuspended, 0
 					}
-					f := c.Fetchers[obj.Named().Kind].(*fakeFetcher)
 					if info.Status != store.StatusReady || info.Message != message || f.calls != calls {
 						t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
+					}
+					if st.GetArtifact(tc.obj.Named()) != nil {
+						t.Fatal("no-content reconciliation fabricated an artifact")
 					}
 				})
 			}
@@ -349,7 +343,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.present {
 				detail = "missing username/password"
 			}
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 			fetchErr := src.MissingSecretErr(repo.Named(), secret.Name, detail)
 			if tt.plain {
 				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
@@ -408,13 +402,13 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 type fallbackFetcher struct {
 	rendered      bool
 	fallbackCalls int
-	retry         sourcecache.RetryConfig
-	fallbackRetry sourcecache.RetryConfig
+	retry         sourcecache.Policy
+	fallbackRetry sourcecache.Policy
 	fallbackErr   error
 }
 
-func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-	f.retry = retry
+func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+	f.retry = policy
 	if f.rendered {
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
@@ -422,7 +416,7 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, retr
 	missing.RegistryConfig = "/registry/config.json"
 	missing.RetryWithRegistryConfig = func(_ context.Context, configPath string) (*store.SourceArtifact, error) {
 		f.fallbackCalls++
-		f.fallbackRetry = retry
+		f.fallbackRetry = policy
 		if configPath != missing.RegistryConfig {
 			return nil, fmt.Errorf("unexpected registry config %q", configPath)
 		}
@@ -449,7 +443,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			t.Parallel()
 			f := &fallbackFetcher{}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 			st.AddObject(repo)
 
 			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
@@ -474,7 +468,8 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			if st.GetArtifact(repo.Named()) == nil {
 				t.Error("fetch must store its artifact")
 			}
-			if f.retry.Attempts != 3 || tt.wantFallback > 0 && f.fallbackRetry.Attempts != 3 {
+			wantPolicy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}
+			if f.retry != wantPolicy || tt.wantFallback > 0 && f.fallbackRetry != wantPolicy {
 				t.Fatalf("normal/fallback policies=%+v/%+v", f.retry, f.fallbackRetry)
 			}
 			if f.fallbackCalls != tt.wantFallback {
@@ -493,7 +488,7 @@ func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{})
 	st.SetDiscoveryIndex(index)
-	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
+	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 	st.AddObject(repo)
 
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || !store.IsSkipped(info) {
@@ -512,7 +507,7 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 	f := &fallbackFetcher{fallbackErr: fmt.Errorf("%w: registry authentication failed", manifest.ErrInput)}
 	c, st := newConfiguredController(t,
 		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{AllowMissingSecrets: true})
-	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img"}
+	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 	st.AddObject(repo)
 
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || !store.IsSkipped(info) {
@@ -526,17 +521,7 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 	}
 }
 
-// TestController_ExistenceFetcher_NoTransientPendingOnReemit hardens the
-// source path against the #657-class race. HelmRepository is the lone
-// ExistenceFetcher (Fetch returns (nil,nil)), so it never sets an artifact
-// and the reconcile's artifact short-circuit never catches its re-runs.
-// Without the wasReady guard, a re-emitted HelmRepository flips
-// Ready→Pending→Ready, and a consumer's quiescence-bound chart-source wait
-// (helmrelease.awaitChartSource, which waits on the DECLARED HelmRepository
-// before materializing a synthetic HelmChart) could re-read that transient
-// Pending at a transient pool drain and drop the release. The source must
-// stay Ready across a no-op re-run.
-func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
+func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 	t.Parallel()
 
 	f := &fakeFetcher{}
@@ -572,14 +557,14 @@ func TestController_ExistenceFetcher_NoTransientPendingOnReemit(t *testing.T) {
 	}
 	st.AddObject(reemit)
 	controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0)
-	if f.calls != 2 {
-		t.Errorf("changed interval acquisitions = %d, want 2", f.calls)
+	if f.calls != 0 {
+		t.Errorf("presence-only acquisitions = %d, want 0", f.calls)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if sawPending {
-		t.Error("ExistenceFetcher source transiently downgraded Ready→Pending on a no-op re-run (the quiescence-race window)")
+		t.Error("presence-only source transiently downgraded Ready to Pending on a no-op re-run (the quiescence-race window)")
 	}
 	if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady {
 		t.Errorf("source not Ready after no-op re-run: %+v", info)

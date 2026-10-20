@@ -27,12 +27,12 @@ import (
 // the typed-dispatch path.
 type stubTypedFetcher struct {
 	called *manifest.GitRepository
-	retry  sourcecache.RetryConfig
+	policy sourcecache.Policy
 }
 
-func (s *stubTypedFetcher) Fetch(_ context.Context, obj *manifest.GitRepository, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (s *stubTypedFetcher) Fetch(_ context.Context, obj *manifest.GitRepository, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	s.called = obj
-	s.retry = retry
+	s.policy = policy
 	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
 }
 
@@ -46,10 +46,10 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
 	repo.URL = "https://example.com/repo.git"
 
-	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}
-	art, err := f.Fetch(context.Background(), repo, retry)
-	if inner.retry != retry {
-		t.Fatalf("policy=%+v, want %+v", inner.retry, retry)
+	policy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}}
+	art, err := f.Fetch(context.Background(), repo, policy)
+	if inner.policy != policy {
+		t.Fatalf("policy=%+v, want %+v", inner.policy, policy)
 	}
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
@@ -75,7 +75,7 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 	// An OCIRepository payload going through a Git-typed wrapper.
 	wrong := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
 
-	_, err := f.Fetch(context.Background(), wrong, sourcecache.RetryConfig{})
+	_, err := f.Fetch(context.Background(), wrong, sourcecache.Policy{})
 	if err == nil {
 		t.Fatal("expected ErrInput on mismatched payload")
 	}

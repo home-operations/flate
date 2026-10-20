@@ -121,7 +121,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				if creds != nil || credentialErr == nil {
 					t.Fatal("credential failure returned credentials or no error")
 				}
-				artifact, fetchErr := f.Fetch(t.Context(), b, cache.RetryConfig{})
+				artifact, fetchErr := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval()})
 				if artifact != nil {
 					t.Fatal("credential failure returned an acquired artifact")
 				}
@@ -223,7 +223,7 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, "", cache.New)
 		start := time.Now()
-		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, cache.RetryConfig{Attempts: 3, MinWait: time.Hour})
+		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before || time.Since(start) > minio.DefaultRetryUnit {
 			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls.Load(), time.Since(start))
@@ -295,7 +295,7 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca}}
 			}}
 			before := requests.Load()
-			art, err := f.Fetch(t.Context(), b, cache.RetryConfig{Attempts: 3})
+			art, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,13 +304,13 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = requests.Load()
-			if _, err := f.Fetch(t.Context(), b, cache.RetryConfig{}); err != nil || requests.Load() != before {
+			if _, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval()}); err != nil || requests.Load() != before {
 				t.Fatalf("warm snapshot missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *b
 			failed.Interval.Duration = 0
-			_, err = f.Fetch(t.Context(), &failed, cache.RetryConfig{})
+			_, err = f.Fetch(t.Context(), &failed, cache.Policy{MaxAge: failed.SourceInterval()})
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)

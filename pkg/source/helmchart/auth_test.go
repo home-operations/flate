@@ -244,7 +244,7 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 	f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: cachetest.New(t, "", sourcecache.New), Network: network})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := f.Fetch(ctx, helmChart("repo", "app", "1.0.0"), sourcecache.RetryConfig{})
+	_, err := f.Fetch(ctx, helmChart("repo", "app", "1.0.0"), sourcecache.Policy{})
 	if err == nil {
 		t.Fatal("malformed index unexpectedly succeeded")
 	}

@@ -26,7 +26,7 @@ type secretChartFetcher struct {
 	chart string
 }
 
-func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	repo := obj.(*manifest.OCIRepository)
 	secret, ok := f.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name})
 	if !ok {

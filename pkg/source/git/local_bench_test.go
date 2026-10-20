@@ -3,6 +3,7 @@ package git
 import (
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -16,7 +17,7 @@ func BenchmarkResolveLocal(b *testing.B) {
 			if name == "HEAD" {
 				tag = "v2.0.0"
 			}
-			repositories := []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: tag})}
+			repositories := []*manifest.GitRepository{localSource(sourcev1.GitRepositoryRef{Tag: tag})}
 			if _, err := ResolveLocal(b.Context(), location, repositories, ""); err != nil {
 				b.Fatal(err)
 			}

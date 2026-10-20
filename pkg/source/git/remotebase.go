@@ -4,10 +4,10 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"time"
 
 	"errors"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -20,15 +20,14 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// RemoteBaseRequest carries a public base's identity and caller freshness bound.
+// RemoteBaseRequest carries a public base's identity.
 type RemoteBaseRequest struct {
-	URL    string
-	Ref    string
-	MaxAge time.Duration
+	URL string
+	Ref string
 }
 
 // FetchRemoteBase returns an immutable lazy view of the whole public repository.
-func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	if f.Cache == nil {
 		return nil, fmt.Errorf("%w: remote git base requires cache", manifest.ErrInput)
 	}
@@ -38,43 +37,53 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		return nil, err
 	}
 	if request.Ref != "" {
-		repo.Reference = &manifest.GitRepositoryRef{Name: request.Ref}
+		repo.Reference = &sourcev1.GitRepositoryRef{Name: request.Ref}
 		if plumbing.IsHash(request.Ref) {
-			repo.Reference = &manifest.GitRepositoryRef{Commit: request.Ref}
-			request.MaxAge = sourcecache.Forever
+			repo.Reference = &sourcev1.GitRepositoryRef{Commit: request.Ref}
 		}
+	}
+	pinned := (*manifest.GitRepositoryRef)(repo.Reference).Pinned()
+	if pinned {
+		policy.MaxAge = sourcecache.Forever
 	}
 	content := struct{ URL, Ref string }{request.URL, request.Ref}
 	key := sourcecache.GitKey{Content: content, Ref: cmp.Or(request.Ref, "HEAD")}
 	var input *gittree.FS
-	generation, id, err := f.Cache.Git(ctx, key, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry}, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
+	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		// Opaque base refs require upstream rev-parse over all advertised heads and tags.
 		acquisition := *repo
-		if !plumbing.IsHash(request.Ref) {
+		if !pinned {
 			acquisition.Reference = nil
 		}
 		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{spec: &acquisition, options: git.CloneOptions{URL: request.URL, NoCheckout: true}})
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		if !plumbing.IsHash(request.Ref) {
+		if !pinned {
 			err := cloned.FetchContext(ctx, &git.FetchOptions{RefSpecs: []config.RefSpec{"+refs/*:refs/*"}, Tags: git.NoTags})
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return plumbing.ZeroHash, err
 			}
 		}
-		hash, err := resolveRefHash(cloned, repo.Reference)
+		hash, err := resolveRefHash(cloned, repo.Reference, true)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		input, _, err = generationView(ctx, &sourcecache.GitGeneration{Backing: storer.(*filesystem.Storage).Filesystem(), Commit: hash}, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase}, nil)
-		return hash, err
+		input, _, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase, Worktree: worktree})
+		if err != nil {
+			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
+		}
+		return hash, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	input, _, err = generationView(ctx, generation, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase}, input)
+	if input == nil {
+		input, _, err = gittree.New(ctx, generation.Backing, generation.Commit, gittree.ViewOptions{
+			Content: content, Mode: gittree.RemoteBase, Worktree: generation.Worktree,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
 	}

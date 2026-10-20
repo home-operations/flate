@@ -25,6 +25,11 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+type sourceFacts interface {
+	ExistenceOnly() bool
+	SourceInterval() time.Duration
+}
+
 // Controller watches the Store for source-kind objects, fetches each
 // into an on-disk artifact via the matching Fetcher, and updates the
 // Store with the result.
@@ -99,6 +104,10 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 // retry; any other error yields Failed.
 func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
+	facts := obj.(sourceFacts)
+	if facts.ExistenceOnly() {
+		return nil
+	}
 	// Dispatcher ownership guarantees a fetcher for this kind.
 	fetcher := c.Fetchers[id.Kind]
 	// Available content survives idempotent re-emission. Released pins must
@@ -110,14 +119,6 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 		c.Store.UpdateStatus(id, store.StatusPending, "acquiring source content")
 	}
 
-	// SetPendingUnlessReady, not a raw UpdateStatus: the artifact gate above
-	// protects artifact-backed kinds from re-downgrading on a re-run, but a
-	// no-artifact ExistenceFetcher (HelmRepository) never sets one, so without
-	// this a re-emitted HelmRepository flips Ready→Pending→Ready and a
-	// consumer's quiescence-bound chart-source wait could re-read the transient
-	// Pending at a transient pool drain and drop the release. The fetch below
-	// still runs (idempotent), so keeping Ready across a no-op re-run is
-	// correct. See base.SetPendingUnlessReady (#658).
 	c.SetPendingUnlessReady(id, "fetching")
 	started := time.Now()
 
@@ -125,7 +126,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 	var artifact *store.SourceArtifact
 	var fetchErr error
 	c.Tasks.YieldSlot(func() {
-		artifact, fetchErr = fetcher.Fetch(ctx, obj, c.retry)
+		artifact, fetchErr = fetcher.Fetch(ctx, obj, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
 	})
 	// A Kustomization may still emit or patch this Secret. Wait for the
 	// rendered contents; only fall back, fail or skip for a missing Secret
@@ -159,11 +160,6 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 		return fetchErr
 	}
 	c.Logger().Debug("fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
-	// An ExistenceFetcher returns (nil, nil) — the kind doesn't produce
-	// an on-disk artifact (HelmRepository; OCIRepository when fetching
-	// is disabled). RunWithStatusOutcome will still mark Ready so dependsOn
-	// watchers unblock; chart resolution falls through to whichever
-	// mechanism actually serves the chart.
 	if artifact != nil {
 		c.Store.SetArtifact(id, artifact)
 	}

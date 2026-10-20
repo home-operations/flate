@@ -361,12 +361,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 		manifest.KindExternalArtifact, &external.Fetcher{})
 	// Nil entries reserve default fetchers until discovery fixes their policy.
 	srcCtrl.Fetchers[manifest.KindBucket] = nil
-	// HelmRepository: existence-only — the controller just needs the
-	// resource in Ready so HelmRelease deps unblock. The chart itself is
-	// fetched per (chart, version) through a synthesized HelmChart (see
-	// materializeHelmChartSource), so every chart kind routes through the
-	// source controller uniformly.
-	srcCtrl.Fetchers[manifest.KindHelmRepository] = source.ExistenceFetcher{}
+	srcCtrl.Fetchers[manifest.KindHelmRepository] = nil
 	srcCtrl.Fetchers[manifest.KindOCIRepository] = nil
 	srcCtrl.Fetchers[manifest.KindHelmChart] = nil
 	o := &Orchestrator{
@@ -571,7 +566,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
 	}
 	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest(request), retry)
+		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
 	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
 	chartFetcher := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{

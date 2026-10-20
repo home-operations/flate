@@ -26,15 +26,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *manifest.HelmChartSource, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
 	chartName, version := hc.Chart, hc.Version
 	key := cache.BlobKey{Content: struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material}, Required: []string{"chart-version", "chart-url"}}
-	maxAge := r.Interval.Duration
-	if f.disableChartDigestTracking && isExactSemver(version) {
-		maxAge = cache.Forever
-	}
-	reader, desc, id, err := f.cache.Blob(ctx, key, cache.Policy{MaxAge: maxAge, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		idx, err := f.fetchIndex(ctx, r, retry)
+	reader, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+		idx, err := f.fetchIndex(ctx, r, policy.Retry)
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
@@ -61,7 +57,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		return cache.ProducerResult{Descriptor: desc}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", helmID(r.HelmRepository), err)
+		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name), err)
 	}
 	input := cache.FileFS(source.HelmChartArchiveFilename, reader)
 	if err := reader.Close(); err != nil {

@@ -38,7 +38,7 @@ func TestFetcher_FileURL(t *testing.T) {
 				Name: "ea", Namespace: "apps", ArtifactURL: "file://" + label,
 				Revision: "v1@sha256:abc", Digest: "sha256:abc",
 			}
-			art, err := f.Fetch(t.Context(), ea, sourcecache.RetryConfig{})
+			art, err := f.Fetch(t.Context(), ea, sourcecache.Policy{})
 			if err != nil {
 				t.Fatalf("Fetch: %v", err)
 			}
@@ -85,7 +85,7 @@ func TestFetcher_NoArtifact(t *testing.T) {
 	t.Parallel()
 	f := &external.Fetcher{}
 	ea := &manifest.ExternalArtifact{Name: "ea", Namespace: "apps"}
-	_, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
+	_, err := f.Fetch(context.Background(), ea, sourcecache.Policy{})
 	if err == nil {
 		t.Fatalf("expected error when ArtifactURL is empty")
 	}
@@ -101,7 +101,7 @@ func TestFetcher_NonFileURL(t *testing.T) {
 		Name: "ea", Namespace: "apps",
 		ArtifactURL: "http://source-controller.flux-system.svc/x.tar.gz",
 	}
-	_, err := f.Fetch(context.Background(), ea, sourcecache.RetryConfig{})
+	_, err := f.Fetch(context.Background(), ea, sourcecache.Policy{})
 	if err == nil {
 		t.Fatalf("expected error for non-file:// URL")
 	}

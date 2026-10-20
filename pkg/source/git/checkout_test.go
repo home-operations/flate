@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -124,8 +125,8 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 			t.Cleanup(func() { client.InstallProtocol("pin", nil) })
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
-				Name: "pin", URL: "pin://" + parent, Reference: &manifest.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
-			}, sourcecache.RetryConfig{})
+				Name: "pin", URL: "pin://" + parent, Reference: &sourcev1.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
+			}, sourcecache.Policy{})
 			if len(counter.requests) != tc.calls {
 				t.Fatalf("parent requests=%d, want %d; %v", len(counter.requests), tc.calls, err)
 			}

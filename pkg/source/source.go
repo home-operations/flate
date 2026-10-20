@@ -38,18 +38,12 @@ const (
 // dispatches via this untyped interface. Concrete implementations
 // satisfy it through Wrap[T] — see TypedFetcher.
 type Fetcher interface {
-	Fetch(ctx context.Context, obj manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error)
 }
 
-// TypedFetcher is the kind-specific Fetcher each concrete source kind
-// implements (e.g. TypedFetcher[*manifest.GitRepository] for git).
-// The typed signature removes the per-implementation
-// `obj, ok := obj.(*manifest.X)` boilerplate every fetcher
-// previously opened with — a missing assertion would have panicked.
-// Wrap[T] turns a TypedFetcher into the untyped Fetcher the
-// source controller's map needs.
+// TypedFetcher acquires artifacts of one manifest type with explicit freshness and retries.
 type TypedFetcher[T manifest.BaseManifest] interface {
-	Fetch(ctx context.Context, obj T, retry sourcecache.RetryConfig) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj T, policy sourcecache.Policy) (*store.SourceArtifact, error)
 }
 
 // Wrap converts a TypedFetcher into the untyped Fetcher interface
@@ -66,28 +60,12 @@ type typedAdapter[T manifest.BaseManifest] struct {
 	inner TypedFetcher[T]
 }
 
-func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	typed, ok := obj.(T)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s fetcher: unexpected payload %T", manifest.ErrInput, a.label, obj)
 	}
-	return a.inner.Fetch(ctx, typed, retry)
-}
-
-// ExistenceFetcher is the no-op Fetcher registered for kinds whose
-// existence alone is enough to satisfy downstream waits — used today
-// for HelmRepository (a registry/index base whose per-chart pull is a
-// synthesized HelmChart). Returning nil artifact + nil error lands the
-// resource in Ready without recording a SourceArtifact, so a HelmRelease
-// that dependsOn a HelmRepository unblocks instantly without flate having
-// to mirror the controllers' "did fetch succeed?" logic from outside
-// the controller package. Embedders can also wire it for any kind they
-// want present-but-not-fetched (e.g. OCIRepository in an offline embed).
-type ExistenceFetcher struct{}
-
-// Fetch implements source.Fetcher as a no-op — see ExistenceFetcher.
-func (ExistenceFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-	return nil, nil
+	return a.inner.Fetch(ctx, typed, policy)
 }
 
 // ErrUnsupportedProvider is the canonical "we only support X" error
@@ -103,12 +81,8 @@ func ErrUnsupportedProvider(owner manifest.NamedResource, got, want, hint string
 		QualifiedName(owner.Kind, owner.Namespace, owner.Name), got, want, hint)
 }
 
-// QualifiedName is the canonical "<Kind> <namespace>/<name>" identifier the
-// per-kind fetchers prefix their error messages with — one helper so the
-// "Kind ns/name" shape can't drift across fetchers (git, oci, bucket, and
-// helmchart each wrap it as gitID/ociID/…). This is the slash form for
-// human-readable errors, distinct from the "ns-name" identifiers used for
-// cache slots and auth scopes.
+// QualifiedName returns the canonical "<Kind> <namespace>/<name>" error identity.
+// Cache slots and auth scopes use a distinct namespace-name representation.
 func QualifiedName(kind, namespace, name string) string {
 	return kind + " " + namespace + "/" + name
 }

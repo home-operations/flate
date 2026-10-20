@@ -25,15 +25,15 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
-		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, ociID(repo))
+		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}
 	client, material, err := f.newRepoClient(ctx, repo, credStore)
 	if err != nil {
 		return nil, err
 	}
-	return f.fetch(ctx, repo, registryAcquisition{client, material}, retry)
+	return f.fetch(ctx, repo, registryAcquisition{client, material}, policy)
 }
 
 type registryAcquisition struct {
@@ -41,10 +41,10 @@ type registryAcquisition struct {
 	material any
 }
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
-		ref = *repo.Reference
+		ref = manifest.OCIRepositoryRef(*repo.Reference)
 	}
 	ignore := ""
 	if repo.Ignore != nil {
@@ -53,11 +53,10 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, reque
 	content := struct {
 		Source, Transport any
 		RegistryConfig    string
-	}{repo.Content(ref), request.material, f.RegistryConfig}
+	}{repo.Content(sourcev1.OCIRepositoryRef(ref)), request.material, f.RegistryConfig}
 	var id string
-	maxAge := repo.Interval.Duration
-	if ref.Digest != "" {
-		maxAge = cache.Forever
+	if ref.Pinned() {
+		policy.MaxAge = cache.Forever
 	}
 	var input fs.FS
 	var descriptor ocispec.Descriptor
@@ -67,27 +66,27 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, reque
 			return cache.ProducerResult{}, err
 		}
 		selectedRepo := *repo
-		selectedRepo.Reference = &selected
+		selectedRepo.Reference = (*sourcev1.OCIRepositoryRef)(&selected)
 		return produceLayer(ctx, request.client, &selectedRepo, w)
 	}
-	switch effectiveLayerOperation(repo.LayerSelector) {
+	switch repo.LayerOperation() {
 	case sourcev1.OCILayerCopy:
-		r, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
+		r, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", ociID(repo), err)
+			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 		}
 		input, descriptor, id = cache.FileFS(source.OCICopiedLayerFilename, r), desc, key
 		if err := r.Close(); err != nil {
-			return nil, fmt.Errorf("%s %w", ociID(repo), err)
+			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 		}
 	case sourcev1.OCILayerExtract:
 		var err error
-		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, WithDefaults: true, Required: []string{"upstream-digest", "revision"}}, cache.Policy{MaxAge: maxAge, Retry: retry}, produce)
+		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, WithDefaults: true, Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", ociID(repo), err)
+			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 		}
 	default:
-		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, effectiveLayerOperation(repo.LayerSelector))
+		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, repo.LayerOperation())
 	}
 	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input,
 		Key: id, Revision: descriptor.Annotations["flate.revision"],
@@ -98,7 +97,7 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 	if ref.Digest != "" || ref.SemVer == "" {
 		return ref, nil
 	}
-	tag, err := resolveOCISemver(ctx, client, ref, layerMediaType(repo.LayerSelector))
+	tag, err := resolveOCISemver(ctx, client, ref, repo.LayerMediaType())
 	if err != nil {
 		return ref, fmt.Errorf("semver: %w", err)
 	}
@@ -106,7 +105,8 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 }
 
 func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w cache.ProducerInput) (cache.ProducerResult, error) {
-	ref, selector := *repo.Reference, repo.LayerSelector
+	ref := manifest.OCIRepositoryRef(*repo.Reference)
+	mediaType := repo.LayerMediaType()
 	tag := cmp.Or(versionTag(ref), latestTag)
 	desc, err := client.Resolve(ctx, tag)
 	if err != nil {
@@ -139,12 +139,12 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 		return cache.ProducerResult{Descriptor: desc, Unchanged: true}, nil
 	}
 	result := cache.ProducerResult{Descriptor: desc}
-	layer, ok := pickLayer(m.Layers, selector)
+	layer, ok := pickLayer(m.Layers, mediaType)
 	if !ok {
 		if len(m.Layers) == 0 {
 			return result, nil
 		}
-		return result, fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))", layerMediaType(selector), len(m.Layers))
+		return result, fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))", mediaType, len(m.Layers))
 	}
 	r, err := client.Fetch(ctx, layer)
 	if err != nil {
@@ -152,7 +152,7 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	}
 	defer func() { _ = r.Close() }()
 	verified := content.NewVerifyReader(r, layer)
-	if effectiveLayerOperation(selector) == sourcev1.OCILayerExtract {
+	if repo.LayerOperation() == sourcev1.OCILayerExtract {
 		gz, err := gzip.NewReader(verified)
 		if err != nil {
 			return result, fmt.Errorf("gzip: %w", orasError(err))

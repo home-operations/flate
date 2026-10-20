@@ -32,7 +32,7 @@ type Fetcher struct {
 
 // Fetch implements source.TypedFetcher[*manifest.OCIRepository].
 // Credentials, TLS and proxy policy are resolved before acquisition.
-func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, retry cache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GenericOCIProvider,
 			"SecretRef or --registry-config credentials")
@@ -47,16 +47,9 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, retry
 		}
 	}
 
-	credStore, err := prepared.resolveRegistryConfig(ctx, repo, retry)
+	credStore, err := prepared.resolveRegistryConfig(ctx, repo, policy)
 	if err != nil {
 		return nil, err
 	}
-	return prepared.fetchWithCredentials(ctx, repo, credStore, retry)
-}
-
-// ociID is the "OCIRepository <namespace>/<name>" prefix shared by this
-// package's error messages — wraps source.QualifiedName so every fetcher
-// formats its kind/ns/name identically.
-func ociID(repo *manifest.OCIRepository) string {
-	return source.QualifiedName("OCIRepository", repo.Namespace, repo.Name)
+	return prepared.fetchWithCredentials(ctx, repo, credStore, policy)
 }

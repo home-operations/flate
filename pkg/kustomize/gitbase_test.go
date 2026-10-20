@@ -443,7 +443,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				if request.URL == childURL {
 					dir = child
 				}
-				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, MaxAge: request.MaxAge}, retry)
+				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
 			})
 			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
 			render := func(interval string) ([]byte, error) {

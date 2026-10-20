@@ -69,27 +69,27 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 // config and Docker defaults retain their upstream stores. Global credentials
 // MUST wait for the source controller to exhaust rendered Secrets; eligible
 // retries are carried by MissingSecretError.
-func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, retry cache.RetryConfig) (credentials.Store, error) {
+func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (credentials.Store, error) {
 	if repo.SecretRef == nil {
 		return loadCredentials(f.RegistryConfig)
 	}
 	if f.Secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", ociID(repo))
+		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}
 	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found"), retry)
+		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found"), policy)
 	}
 	configJSON, _, err := sec.Value(dockerConfigJSONKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, ociID(repo), err)
+		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), retry)
+		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), policy)
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s parse .dockerconfigjson: %w", manifest.ErrInput, ociID(repo), err)
+		return nil, fmt.Errorf("%w: %s parse .dockerconfigjson: %w", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 	}
 	// ORAS normalizes Docker Hub's credential key while its callback expects the
 	// canonical Docker server address. Reconcile these in the same memory store.
@@ -102,7 +102,7 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 // registryFallback preserves the missing Secret until renders are exhausted.
 // A pull retry requires a credential for this registry; unrelated credentials
 // MUST leave producer-backed sources skippable.
-func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, retry cache.RetryConfig) (credentials.Store, error) {
+func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (credentials.Store, error) {
 	parsed, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
@@ -132,12 +132,12 @@ func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIReposi
 	mse.RegistryConfig = f.RegistryConfig
 	mse.RetryWithRegistryConfig = func(ctx context.Context, configPath string) (*store.SourceArtifact, error) {
 		slog.Debug("oci: secretRef unresolvable, using registry config",
-			"id", ociID(repo), "registry", ref.Registry)
+			"id", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), "registry", ref.Registry)
 		credStore, err := loadCredentials(configPath)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
-		return f.fetchWithCredentials(ctx, repo, credStore, retry)
+		return f.fetchWithCredentials(ctx, repo, credStore, policy)
 	}
 	return nil, mse
 }

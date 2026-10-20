@@ -1,7 +1,9 @@
 package git
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -16,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func newRemoteBaseFetcher(t *testing.T) *Fetcher {
@@ -33,7 +36,6 @@ func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {
 	if string(got) != wantContent {
 		t.Errorf("%s = %q, want %q", file, got, wantContent)
 	}
-	// gittree.Materialize produces a clean worktree — no .git.
 	if _, err := fs.Stat(input, ".git"); !os.IsNotExist(err) {
 		t.Errorf("materialized base must not contain .git (stat err = %v)", err)
 	}
@@ -46,11 +48,14 @@ func TestFetchRemoteBase_References(t *testing.T) {
 	first := mustTagHEAD(t, src, "v0.2.2")
 	mustSetRefToHash(t, src, "refs/heads/feature", first)
 	head := mustCommitFile(t, src, "kustomization.yaml", "v2")
+	mustSetRefToHash(t, src, "refs/heads/pinned", first)
+	mustSetRefToHash(t, src, "refs/remotes/origin/pinned", head)
 	for _, tc := range []struct {
 		name, url, ref, revision, content string
 	}{
 		{"tag", "file://" + src, "v0.2.2", first, "v1"},
 		{"branch", "file://" + src, "feature", first, "v1"},
+		{"divergent named ref", "file://" + src, "refs/heads/pinned", first, "v1"},
 		{"commit", "file://" + src, first, first, "v1"},
 		{"HEAD file URL", "file://" + src, "", head, "v2"},
 		{"HEAD local path", src, "", head, "v2"},
@@ -58,7 +63,7 @@ func TestFetchRemoteBase_References(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newRemoteBaseFetcher(t)
-			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: tc.url, Ref: tc.ref, MaxAge: time.Hour}, sourcecache.RetryConfig{})
+			art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: tc.url, Ref: tc.ref}, sourcecache.Policy{MaxAge: time.Hour})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,8 +117,8 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 			t.Cleanup(srv.Close)
 			root := t.TempDir()
 			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
-			request := RemoteBaseRequest{URL: srv.URL, Ref: ref, MaxAge: tc.age}
-			first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
+			request := RemoteBaseRequest{URL: srv.URL, Ref: ref}
+			first, err := f.FetchRemoteBase(t.Context(), request, sourcecache.Policy{MaxAge: tc.age})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,7 +142,7 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 				t.Fatal(err)
 			}
 			f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
-			second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.RetryConfig{})
+			second, err := f.FetchRemoteBase(t.Context(), request, sourcecache.Policy{MaxAge: tc.age})
 			if err != nil {
 				t.Fatalf("offline cache hit: %v", err)
 			}
@@ -163,7 +168,7 @@ func TestFetchRemoteBase_Freshness(t *testing.T) {
 func TestFetchRemoteBase_RequiresCache(t *testing.T) {
 	t.Parallel()
 	f := &Fetcher{}
-	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
+	_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "file:///nope", Ref: "v1"}, sourcecache.Policy{MaxAge: time.Hour})
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("want ErrInput without cache, got %v", err)
 	}
@@ -176,7 +181,7 @@ func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
 			t.Parallel()
 			// The uninitialized cache panics if acquisition precedes validation.
 			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
-			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1", MaxAge: time.Hour}, sourcecache.RetryConfig{})
+			_, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: "v1"}, sourcecache.Policy{MaxAge: time.Hour})
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("want ErrInput before acquisition, got %v", err)
 			}
@@ -201,12 +206,48 @@ func TestFetchRemoteBase_TransientRecovery(t *testing.T) {
 	}))
 	defer srv.Close()
 	f := newRemoteBaseFetcher(t)
-	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: srv.URL, MaxAge: time.Hour}, sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond})
+	art, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: srv.URL}, sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
 	if err != nil {
 		t.Fatalf("original caller: %v; requests=%d", err, hits.Load())
 	}
 	assertWorktree(t, art.FS, "kustomization.yaml", "content")
 	if hits.Load() < 3 {
 		t.Fatalf("requests=%d, want failed advertisement plus clone requests", hits.Load())
+	}
+}
+
+func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
+	t.Parallel()
+	for _, disk := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disk=%t", disk), func(t *testing.T) {
+			t.Parallel()
+			src := malformedViewRepo(t)
+			root := ""
+			if disk {
+				root = t.TempDir()
+			}
+			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+			request := RemoteBaseRequest{URL: "file://" + src}
+			policy := sourcecache.Policy{MaxAge: time.Hour}
+			artifact, err := f.FetchRemoteBase(t.Context(), request, policy)
+			if artifact != nil || !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("cold invalid view = %v, %v", artifact, err)
+			}
+			if err := os.RemoveAll(src); err != nil {
+				t.Fatal(err)
+			}
+			mustInitRepo(t, src)
+			artifact, err = f.FetchRemoteBase(t.Context(), request, policy)
+			if err != nil || artifact == nil {
+				t.Fatalf("repaired generation = %v, %v", artifact, err)
+			}
+			assertWorktree(t, artifact.FS, "hello.txt", "hi")
+			t.Run("waiter and hit", func(t *testing.T) {
+				t.Parallel()
+				testGenerationWaiter(t, disk, func(ctx context.Context, f *Fetcher, url string) (*store.SourceArtifact, error) {
+					return f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: url}, policy)
+				}, []string{".sourceignore", "apps/drop.tmp", "apps/keep.yaml", "other/keep.yaml"})
+			})
+		})
 	}
 }

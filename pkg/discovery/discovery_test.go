@@ -17,6 +17,7 @@ import (
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -613,7 +614,7 @@ spec:
 	for _, reverse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reverse_%t", reverse), func(t *testing.T) {
 			st := store.New()
-			pinned := &manifest.GitRepository{Name: "committed", Namespace: "flux-system", URL: "https://github.com/example/home-ops.git", Reference: &manifest.GitRepositoryRef{Commit: committed.String()}}
+			pinned := &manifest.GitRepository{Name: "committed", Namespace: "flux-system", URL: "https://github.com/example/home-ops.git", Reference: &sourcev1.GitRepositoryRef{Commit: committed.String()}}
 			st.AddObject(pinned)
 			var objects []manifest.BaseManifest
 			want := []string{(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}).String()}

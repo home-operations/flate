@@ -129,7 +129,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
-				if err == nil || !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "secret ns/creds") || !strings.Contains(err.Error(), gitID(repo)) {
+				if err == nil || !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "secret ns/creds") || !strings.Contains(err.Error(), source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)) {
 					t.Fatalf("missing input key/source context: %v", err)
 				}
 				for _, payload := range []string{"%%%fixture", "credential-fixture", "invalid-private-fixture", "invalid-known-hosts-fixture"} {
@@ -167,7 +167,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 		URL:      "https://github.com/x/y.git",
 		Provider: sourcev1.GitProviderGitHub,
 	}
-	_, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
+	_, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -305,7 +305,7 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), repo, sourcecache.RetryConfig{})
+	_, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}

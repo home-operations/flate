@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -20,8 +24,10 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
@@ -43,35 +49,35 @@ func TestResolveLocal_References(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		ref  manifest.GitRepositoryRef
+		ref  sourcev1.GitRepositoryRef
 		want plumbing.Hash
 		fail bool
 	}{
-		{"tag", manifest.GitRepositoryRef{Tag: "v1.0.0"}, a, false},
-		{"annotated", manifest.GitRepositoryRef{Tag: "annotated"}, a, false},
-		{"commit", manifest.GitRepositoryRef{Commit: a.String()}, a, false},
-		{"name", manifest.GitRepositoryRef{Name: "refs/pull/1/head"}, a, false},
-		{"branch-local-first", manifest.GitRepositoryRef{Branch: "pinned"}, a, false},
-		{"branch-origin", manifest.GitRepositoryRef{Branch: "tracking"}, a, false},
-		{"name-origin", manifest.GitRepositoryRef{Name: "refs/heads/tracking"}, a, false},
-		{"semver", manifest.GitRepositoryRef{SemVer: "<2.0.0"}, a, false},
-		{"commit-over-name", manifest.GitRepositoryRef{Commit: a.String(), Name: "bad name", SemVer: "invalid", Tag: "v2.0.0"}, a, false},
-		{"name-over-semver", manifest.GitRepositoryRef{Name: "refs/pull/1/head", SemVer: "invalid", Tag: "v2.0.0", Branch: "bad branch"}, a, false},
-		{"semver-over-tag", manifest.GitRepositoryRef{SemVer: "<2.0.0", Tag: "bad tag", Branch: "bad branch"}, a, false},
-		{"tag-over-branch", manifest.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}, a, false},
-		{"head", manifest.GitRepositoryRef{Tag: "v2.0.0"}, b, false},
-		{"commit-branch-reachable", manifest.GitRepositoryRef{Commit: a.String(), Branch: "master"}, a, false},
-		{"commit-branch-unreachable", manifest.GitRepositoryRef{Commit: b.String(), Branch: "pinned"}, plumbing.ZeroHash, true},
-		{"commit-branch-missing", manifest.GitRepositoryRef{Commit: a.String(), Branch: "missing"}, plumbing.ZeroHash, false},
-		{"missing-tag", manifest.GitRepositoryRef{Tag: "missing"}, plumbing.ZeroHash, false},
-		{"missing-name", manifest.GitRepositoryRef{Name: "refs/heads/missing"}, plumbing.ZeroHash, false},
-		{"missing-branch", manifest.GitRepositoryRef{Branch: "missing"}, plumbing.ZeroHash, false},
-		{"unmatched-semver", manifest.GitRepositoryRef{SemVer: ">3.0.0"}, plumbing.ZeroHash, false},
-		{"invalid-semver", manifest.GitRepositoryRef{SemVer: "invalid"}, plumbing.ZeroHash, true},
-		{"short-commit", manifest.GitRepositoryRef{Commit: a.String()[:12]}, plumbing.ZeroHash, true},
-		{"nonhex-commit", manifest.GitRepositoryRef{Commit: strings.Repeat("g", 40)}, plumbing.ZeroHash, true},
-		{"missing-commit", manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, plumbing.ZeroHash, false},
-		{"missing-commit-branch", manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, plumbing.ZeroHash, false},
+		{"tag", sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, a, false},
+		{"annotated", sourcev1.GitRepositoryRef{Tag: "annotated"}, a, false},
+		{"commit", sourcev1.GitRepositoryRef{Commit: a.String()}, a, false},
+		{"name", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head"}, a, false},
+		{"branch-local-first", sourcev1.GitRepositoryRef{Branch: "pinned"}, a, false},
+		{"branch-origin", sourcev1.GitRepositoryRef{Branch: "tracking"}, a, false},
+		{"name-origin", sourcev1.GitRepositoryRef{Name: "refs/heads/tracking"}, a, false},
+		{"semver", sourcev1.GitRepositoryRef{SemVer: "<2.0.0"}, a, false},
+		{"commit-over-name", sourcev1.GitRepositoryRef{Commit: a.String(), Name: "bad name", SemVer: "invalid", Tag: "v2.0.0"}, a, false},
+		{"name-over-semver", sourcev1.GitRepositoryRef{Name: "refs/pull/1/head", SemVer: "invalid", Tag: "v2.0.0", Branch: "bad branch"}, a, false},
+		{"semver-over-tag", sourcev1.GitRepositoryRef{SemVer: "<2.0.0", Tag: "bad tag", Branch: "bad branch"}, a, false},
+		{"tag-over-branch", sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}, a, false},
+		{"head", sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, b, false},
+		{"commit-branch-reachable", sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"}, a, false},
+		{"commit-branch-unreachable", sourcev1.GitRepositoryRef{Commit: b.String(), Branch: "pinned"}, plumbing.ZeroHash, true},
+		{"commit-branch-missing", sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "missing"}, plumbing.ZeroHash, false},
+		{"missing-tag", sourcev1.GitRepositoryRef{Tag: "missing"}, plumbing.ZeroHash, false},
+		{"missing-name", sourcev1.GitRepositoryRef{Name: "refs/heads/missing"}, plumbing.ZeroHash, false},
+		{"missing-branch", sourcev1.GitRepositoryRef{Branch: "missing"}, plumbing.ZeroHash, false},
+		{"unmatched-semver", sourcev1.GitRepositoryRef{SemVer: ">3.0.0"}, plumbing.ZeroHash, false},
+		{"invalid-semver", sourcev1.GitRepositoryRef{SemVer: "invalid"}, plumbing.ZeroHash, true},
+		{"short-commit", sourcev1.GitRepositoryRef{Commit: a.String()[:12]}, plumbing.ZeroHash, true},
+		{"nonhex-commit", sourcev1.GitRepositoryRef{Commit: strings.Repeat("g", 40)}, plumbing.ZeroHash, true},
+		{"missing-commit", sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, plumbing.ZeroHash, false},
+		{"missing-commit-branch", sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, plumbing.ZeroHash, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -133,9 +139,9 @@ func TestResolveLocal_References(t *testing.T) {
 			testutil.WriteFile(t, root, "nested/.git", "gitdir: absent\n")
 			location := localLocation(t, root)
 			assert.Equal(t, os.Remove(filepath.Join(metadataRoot, "config")), nil)
-			artifacts, err := ResolveLocal(t.Context(), location, []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})}, "")
+			artifacts, err := ResolveLocal(t.Context(), location, []*manifest.GitRepository{localSource(sourcev1.GitRepositoryRef{Tag: "v2.0.0"})}, "")
 			assert.Equal(t, err, nil)
-			artifact := artifacts[localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"}).Named()]
+			artifact := artifacts[localSource(sourcev1.GitRepositoryRef{Tag: "v2.0.0"}).Named()]
 			if artifact == nil || artifact.Revision != head.String() {
 				t.Fatal("retained repository did not resolve HEAD")
 			}
@@ -165,12 +171,34 @@ func TestResolveLocal_References(t *testing.T) {
 
 }
 
-func TestValidateCommitBranch_UnavailableCommit(t *testing.T) {
+func TestResolveRefHash_ObjectClassification(t *testing.T) {
 	t.Parallel()
-	_, repo, _, _ := localFixture(t)
+	_, repo, hash, _ := localFixture(t)
 	missing := plumbing.NewHash(strings.Repeat("f", 40))
-	if err := validateCommitBranch(repo, missing, "master"); !errors.Is(err, errRefUnavailable) {
-		t.Fatalf("missing commit did not become unavailable: %v", err)
+	commit, err := repo.CommitObject(hash)
+	assert.NoError(t, err)
+	tree := commit.TreeHash
+	commit.TreeHash = missing
+	encoded := repo.Storer.NewEncodedObject()
+	assert.NoError(t, commit.Encode(encoded))
+	broken, err := repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	for _, tc := range []struct {
+		name        string
+		hash        plumbing.Hash
+		unavailable bool
+	}{
+		{"absent commit", missing, true},
+		{"wrong object type", tree, false},
+		{"missing tree", broken, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := resolveRefHash(repo, &sourcev1.GitRepositoryRef{Commit: tc.hash.String()}, false)
+			if err == nil || errors.Is(err, errRefUnavailable) != tc.unavailable {
+				t.Fatalf("resolution error = %v, want unavailable=%t", err, tc.unavailable)
+			}
+		})
 	}
 }
 
@@ -193,10 +221,10 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 	if err := repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("master"), hash)); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateCommitBranch(repo, a, "master"); !errors.Is(err, errRefUnavailable) {
+	if _, err := resolveRefHash(repo, &sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"}, false); !errors.Is(err, errRefUnavailable) {
 		t.Errorf("incomplete history did not become unavailable: %v", err)
 	}
-	repository := localSource(manifest.GitRepositoryRef{Commit: a.String(), Branch: "master"})
+	repository := localSource(sourcev1.GitRepositoryRef{Commit: a.String(), Branch: "master"})
 	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("incomplete history did not fall back: %v, %v", got, err)
@@ -205,10 +233,10 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 
 func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	t.Parallel()
-	for _, ref := range []manifest.GitRepositoryRef{
+	for _, ref := range []sourcev1.GitRepositoryRef{
 		{Commit: "abc"}, {Name: "bad name"}, {Tag: "bad tag"}, {Branch: "bad branch"}, {SemVer: "invalid"},
 	} {
-		t.Run(manifest.GitRefString(ref), func(t *testing.T) {
+		t.Run((*manifest.GitRepositoryRef)(&ref).String(), func(t *testing.T) {
 			t.Parallel()
 			if _, err := ResolveLocal(t.Context(), localLocation(t, t.TempDir()), []*manifest.GitRepository{localSource(ref)}, ""); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected invalid spec, got %v", err)
@@ -218,7 +246,7 @@ func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	parent, _, _, _ := localFixture(t)
 	child := filepath.Join(parent, "exported")
 	assert.Equal(t, os.Mkdir(child, 0o750), nil)
-	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
+	repository := localSource(sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
 	got, err := ResolveLocal(t.Context(), localLocation(t, child), []*manifest.GitRepository{repository}, "")
 	assert.Equal(t, err, nil)
 	assert.Equal(t, len(got), 0)
@@ -244,10 +272,10 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	t.Parallel()
 	root, repo, a, b := localFixture(t)
 
-	first := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
-	second := localSource(manifest.GitRepositoryRef{Commit: a.String()})
+	first := localSource(sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
+	second := localSource(sourcev1.GitRepositoryRef{Commit: a.String()})
 	second.Name = "second"
-	ignored := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
+	ignored := localSource(sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
 	ignored.Name = "ignored"
 	ignore := "/extra.txt\n"
 	ignored.Ignore = &ignore
@@ -287,7 +315,7 @@ func TestResolveLocal_AnnotatedSemverWinner(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	repository := localSource(manifest.GitRepositoryRef{SemVer: ">=1.0.0 <2.0.0"})
+	repository := localSource(sourcev1.GitRepositoryRef{SemVer: ">=1.0.0 <2.0.0"})
 	artifacts, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -338,7 +366,7 @@ func TestResolveLocal_ConcurrentReuseAndCancellation(t *testing.T) {
 	t.Parallel()
 	root, _, _, _ := localFixture(t)
 
-	repository := localSource(manifest.GitRepositoryRef{Tag: "v1.0.0"})
+	repository := localSource(sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
 	var paths [2]string
 	var wg sync.WaitGroup
 	for i := range paths {
@@ -375,7 +403,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			root, repo, a, _ := localFixture(t)
-			ref := manifest.GitRepositoryRef{Tag: "v1.0.0"}
+			ref := sourcev1.GitRepositoryRef{Tag: "v1.0.0"}
 			switch kind {
 			case "tag-target":
 				assert.Equal(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), plumbing.NewHash(strings.Repeat("f", 40)))), nil)
@@ -401,7 +429,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 				hash, err := repo.Storer.SetEncodedObject(encoded)
 				assert.Equal(t, err, nil)
 				if kind == "tree" {
-					ref = manifest.GitRepositoryRef{Commit: hash.String()}
+					ref = sourcev1.GitRepositoryRef{Commit: hash.String()}
 				} else {
 					assert.Equal(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(ref.Tag), hash)), nil)
 				}
@@ -421,7 +449,7 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 	for _, option := range []string{"sparse", "submodules"} {
 		t.Run(option, func(t *testing.T) {
 			for _, tag := range []string{"v1.0.0", "v2.0.0"} {
-				repository := localSource(manifest.GitRepositoryRef{Tag: tag})
+				repository := localSource(sourcev1.GitRepositoryRef{Tag: tag})
 				if option == "sparse" {
 					repository.SparseCheckout = []string{"apps"}
 				} else {
@@ -439,7 +467,7 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.WriteFile(t, root, ".git", "gitdir: "+gitdir+"\n")
-	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{localSource(manifest.GitRepositoryRef{Tag: "v2.0.0"})}, "")
+	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{localSource(sourcev1.GitRepositoryRef{Tag: "v2.0.0"})}, "")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("gitdir indirection = %v, %v", got, err)
 	}
@@ -470,7 +498,7 @@ func TestResolveLocal_MissingBlobFailsOnRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repository := localSource(manifest.GitRepositoryRef{Commit: hash.String()})
+	repository := localSource(sourcev1.GitRepositoryRef{Commit: hash.String()})
 	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -495,12 +523,65 @@ func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
 	if err := wt.Checkout(&git.CheckoutOptions{Hash: b, Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkoutRef(repo, manifest.GitRepositoryRef{Branch: "pinned"}, nil); err != nil {
+	resolved, err := resolveRefHash(repo, &sourcev1.GitRepositoryRef{Branch: "pinned"}, true)
+	if err != nil || resolved != b {
+		t.Fatalf("acquired branch resolved %s, %v, want %s", resolved, err, b)
+	}
+	if err := checkoutRef(repo, resolved, nil); err != nil {
 		t.Fatal(err)
 	}
 	head, err := repo.Head()
-	if err != nil || head.Hash() != b {
-		t.Fatalf("checkout must prefer origin: %v, %v (root %s)", head, err, root)
+	if err != nil || head.Hash() != resolved {
+		t.Fatalf("checkout must use resolved hash: %v, %v (root %s)", head, err, root)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "value.txt"))
+	if err != nil || string(data) != "B" {
+		t.Fatalf("checkout content = %q, %v, want B", data, err)
+	}
+
+	for _, kind := range []string{"name", "commit-branch"} {
+		t.Run("acquisition/"+kind, func(t *testing.T) {
+			t.Parallel()
+			src, remote, first, second := localFixture(t)
+			branch := plumbing.NewBranchReferenceName("pinned")
+			assert.NoError(t, remote.Storer.SetReference(plumbing.NewHashReference(branch, first)))
+			assert.NoError(t, remote.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, branch)))
+			var advertisements atomic.Int32
+			handler := gitHTTPHandler(t, src)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && advertisements.Add(1) == 2 {
+					if err := remote.Storer.SetReference(plumbing.NewHashReference(branch, second)); err != nil {
+						t.Error(err)
+						http.Error(w, "move branch", http.StatusInternalServerError)
+						return
+					}
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			defer srv.Close()
+			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+			ref := &sourcev1.GitRepositoryRef{Name: branch.String()}
+			if kind == "commit-branch" {
+				ref = &sourcev1.GitRepositoryRef{Commit: second.String(), Branch: "pinned"}
+			}
+			spec := &manifest.GitRepository{
+				URL: srv.URL, Reference: ref, RecurseSubmodules: true,
+			}
+			artifact, err := f.Fetch(t.Context(), spec, sourcecache.Policy{MaxAge: time.Hour})
+			assert.NoError(t, err)
+			acquired := openGeneration(t, f, spec, artifact)
+			local, err := acquired.Reference(branch, true)
+			assert.NoError(t, err)
+			origin, err := acquired.Reference(plumbing.NewRemoteReferenceName("origin", "pinned"), true)
+			assert.NoError(t, err)
+			assert.Equal(t, local.Hash(), second)
+			assert.Equal(t, origin.Hash(), first)
+			resolved, err := resolveRefHash(acquired, spec.Reference, true)
+			assert.NoError(t, err)
+			assert.Equal(t, resolved, second)
+			assert.Equal(t, artifact.Revision, resolved.String())
+			assertWorktree(t, artifact.FS, "value.txt", "B")
+		})
 	}
 }
 
@@ -539,7 +620,7 @@ func TestResolveSemver_DeterministicTiesAndReadErrors(t *testing.T) {
 	if _, err := resolveSemver(repo, "*"); !errors.Is(err, failure) {
 		t.Fatalf("iterator error lost: %v", err)
 	}
-	if _, err := lookupBranch(repo, "master"); !errors.Is(err, failure) || errors.Is(err, errRefUnavailable) {
+	if _, err := lookupBranch(repo, "master", false); !errors.Is(err, failure) || errors.Is(err, errRefUnavailable) {
 		t.Fatalf("reference read error became miss: %v", err)
 	}
 }
@@ -555,7 +636,7 @@ func (s *failingRefStore) Reference(plumbing.ReferenceName) (*plumbing.Reference
 
 func (s *failingRefStore) IterReferences() (storer.ReferenceIter, error) { return nil, s.err }
 
-func localSource(ref manifest.GitRepositoryRef) *manifest.GitRepository {
+func localSource(ref sourcev1.GitRepositoryRef) *manifest.GitRepository {
 	repo := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 	repo.URL = "git://fixture.invalid/cluster"
 	repo.Reference = &ref

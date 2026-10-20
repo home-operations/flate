@@ -21,7 +21,7 @@ func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, erro
 	prepared := &httpRepository{HelmRepository: r}
 	if r.SecretRef != nil {
 		if secrets == nil {
-			return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, helmID(r))
+			return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name))
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
 		if sec == nil {
@@ -34,7 +34,7 @@ func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, erro
 		}
 	}
 	owner := r.Named()
-	owner.Name = helmID(r)
+	owner.Name = source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name)
 	resolved, err := source.ResolveTransport(secrets, owner, []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		return nil, err

@@ -22,9 +22,9 @@ type generatedOCIFetcher struct {
 	wantRetry sourcecache.RetryConfig
 }
 
-func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-	if retry != f.wantRetry {
-		return nil, fmt.Errorf("unexpected retry: %+v", retry)
+func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+	if policy.Retry != f.wantRetry {
+		return nil, fmt.Errorf("unexpected retry: %+v", policy.Retry)
 	}
 	if obj.Named().Name == "app" {
 		f.fetched.Store(true)

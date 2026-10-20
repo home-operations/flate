@@ -16,6 +16,7 @@ import (
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -129,31 +130,31 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 	for _, tc := range []struct {
 		name, base                                        string
 		commit                                            bool
-		ref                                               *manifest.GitRepositoryRef
+		ref                                               *sourcev1.GitRepositoryRef
 		head, fallback, fail, noStore, sparse, submodules bool
 	}{
 		{name: "no-ref", head: true},
-		{name: "empty-ref", ref: &manifest.GitRepositoryRef{}, head: true},
-		{name: "head", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
-		{name: "older-base-head-tag", base: "v1.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}},
+		{name: "empty-ref", ref: &sourcev1.GitRepositoryRef{}, head: true},
+		{name: "head", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
+		{name: "older-base-head-tag", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}},
 		{name: "older-base-head-commit", base: "v1.0.0", commit: true},
-		{name: "matching-base-head", base: "v2.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
-		{name: "older-base-head-sparse", base: "v1.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true},
-		{name: "older-base-head-submodules", base: "v1.0.0", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, submodules: true, fallback: true},
-		{name: "non-head", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}},
-		{name: "conflicting", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}},
-		{name: "missing-tag", ref: &manifest.GitRepositoryRef{Tag: "missing"}, fallback: true},
-		{name: "missing-name", ref: &manifest.GitRepositoryRef{Name: "refs/pull/9/head"}, fallback: true},
-		{name: "missing-branch", ref: &manifest.GitRepositoryRef{Branch: "missing"}, fallback: true},
-		{name: "missing-semver", ref: &manifest.GitRepositoryRef{SemVer: ">3.0.0"}, fallback: true},
-		{name: "no-store", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, noStore: true, fallback: true},
-		{name: "no-store-invalid", ref: &manifest.GitRepositoryRef{Commit: "abc"}, noStore: true, fail: true},
+		{name: "matching-base-head", base: "v2.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, head: true},
+		{name: "older-base-head-sparse", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true},
+		{name: "older-base-head-submodules", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, submodules: true, fallback: true},
+		{name: "non-head", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}},
+		{name: "conflicting", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}},
+		{name: "missing-tag", ref: &sourcev1.GitRepositoryRef{Tag: "missing"}, fallback: true},
+		{name: "missing-name", ref: &sourcev1.GitRepositoryRef{Name: "refs/pull/9/head"}, fallback: true},
+		{name: "missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, fallback: true},
+		{name: "missing-semver", ref: &sourcev1.GitRepositoryRef{SemVer: ">3.0.0"}, fallback: true},
+		{name: "no-store", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, noStore: true, fallback: true},
+		{name: "no-store-invalid", ref: &sourcev1.GitRepositoryRef{Commit: "abc"}, noStore: true, fail: true},
 		{name: "no-store-no-ref", noStore: true, head: true},
-		{name: "sparse", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, sparse: true},
-		{name: "submodules", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}, submodules: true, fallback: true},
-		{name: "head-sparse", ref: &manifest.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true, head: true},
-		{name: "missing-commit", ref: &manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, sparse: true, fallback: true},
-		{name: "missing-commit-branch", ref: &manifest.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, fallback: true},
+		{name: "sparse", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, sparse: true},
+		{name: "submodules", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, submodules: true, fallback: true},
+		{name: "head-sparse", ref: &sourcev1.GitRepositoryRef{Tag: "v2.0.0"}, sparse: true, head: true},
+		{name: "missing-commit", ref: &sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40)}, sparse: true, fallback: true},
+		{name: "missing-commit-branch", ref: &sourcev1.GitRepositoryRef{Commit: strings.Repeat("f", 40), Branch: "master"}, fallback: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := discoveryRefFixture(t)
@@ -177,7 +178,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				}
 				revision = head.Hash().String()
 				if tc.commit {
-					repository.Reference = &manifest.GitRepositoryRef{Commit: revision}
+					repository.Reference = &sourcev1.GitRepositoryRef{Commit: revision}
 				}
 				ignore := "apps/excluded.txt\n"
 				repository.Ignore = &ignore
@@ -234,7 +235,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				if status, ok := st.GetStatus(repository.Named()); ok && status.Status == store.StatusReady {
 					t.Fatal("fallback marked source ready")
 				}
-				if strings.Count(logs.String(), "level=WARN") != 1 || !strings.Contains(logs.String(), "cluster") || !strings.Contains(logs.String(), manifest.GitRefString(*repository.Reference)) {
+				if strings.Count(logs.String(), "level=WARN") != 1 || !strings.Contains(logs.String(), "cluster") || !strings.Contains(logs.String(), (*manifest.GitRepositoryRef)(repository.Reference).String()) {
 					t.Fatalf("fallback warning = %s", logs.String())
 				}
 				return
@@ -318,7 +319,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			if tc.kind == manifest.KindGitRepository {
 				st.AddObject(&manifest.GitRepository{
 					Name: id.Name, Namespace: id.Namespace, URL: tc.url,
-					Reference: &manifest.GitRepositoryRef{Tag: "v1.0.0"},
+					Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 				})
 			} else {
 				st.AddObject(&manifest.OCIRepository{Name: id.Name, Namespace: id.Namespace, URL: tc.url})
@@ -495,7 +496,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	st := store.New()
 	repository := &manifest.GitRepository{Name: "flux-system", Namespace: "flux-system"}
 	repository.URL = "git://fixture.invalid/cluster"
-	repository.Reference = &manifest.GitRepositoryRef{Commit: "invalid"}
+	repository.Reference = &sourcev1.GitRepositoryRef{Commit: "invalid"}
 	st.AddObject(repository)
 	d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
@@ -647,7 +648,7 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		repository := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
 		repository.URL = "git://fixture.invalid/cluster"
 		if tag != "" {
-			repository.Reference = &manifest.GitRepositoryRef{Tag: tag}
+			repository.Reference = &sourcev1.GitRepositoryRef{Tag: tag}
 		}
 		st := store.New()
 		st.AddObject(repository)

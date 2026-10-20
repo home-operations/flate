@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"maps"
 	"slices"
 	"strings"
@@ -818,7 +819,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 						run.store.AddObject(&manifest.HelmRepository{Name: "chart", Namespace: ns.source})
 					default:
 						source := &manifest.OCIRepository{Name: "chart", Namespace: ns.source}
-						source.Reference = tc.ref
+						source.Reference = (*sourcev1.OCIRepositoryRef)(tc.ref)
 						run.store.AddObject(source)
 					}
 				}

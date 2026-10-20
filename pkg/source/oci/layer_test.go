@@ -31,11 +31,13 @@ func TestPickLayer_Selection(t *testing.T) {
 		},
 		{name: "unmatched", layers: layers, selector: &manifest.OCILayerSelector{MediaType: "application/missing"}},
 		{name: "provenance first", layers: []ocispec.Descriptor{prov, chart}, want: chart, wantOK: true},
+		{name: "all provenance", layers: []ocispec.Descriptor{prov}, want: prov, wantOK: true},
+		{name: "empty"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := pickLayer(tc.layers, tc.selector)
+			got, ok := pickLayer(tc.layers, (&manifest.OCIRepository{LayerSelector: tc.selector}).LayerMediaType())
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}

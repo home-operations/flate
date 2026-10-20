@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -174,17 +175,17 @@ func TestFetcher_TLSOperations(t *testing.T) {
 			t.Parallel()
 			for _, tc := range []struct {
 				name            string
-				ref             *manifest.GitRepositoryRef
+				ref             *sourcev1.GitRepositoryRef
 				recurse, refuse bool
 			}{
 				{name: "clone"},
-				{name: "branch", ref: &manifest.GitRepositoryRef{Branch: "master"}},
-				{name: "tag", ref: &manifest.GitRepositoryRef{Tag: "v1.0.0"}},
-				{name: "semver", ref: &manifest.GitRepositoryRef{SemVer: ">=1.0.0"}},
-				{name: "named", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}},
-				{name: "clone-fetch", ref: &manifest.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, recurse: true},
-				{name: "exact", ref: &manifest.GitRepositoryRef{Commit: head}},
-				{name: "fallback", ref: &manifest.GitRepositoryRef{Commit: head}, refuse: true},
+				{name: "branch", ref: &sourcev1.GitRepositoryRef{Branch: "master"}},
+				{name: "tag", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}},
+				{name: "semver", ref: &sourcev1.GitRepositoryRef{SemVer: ">=1.0.0"}},
+				{name: "named", ref: &sourcev1.GitRepositoryRef{Name: "refs/tags/v1.0.0"}},
+				{name: "clone-fetch", ref: &sourcev1.GitRepositoryRef{Name: "refs/tags/v1.0.0"}, recurse: true},
+				{name: "exact", ref: &sourcev1.GitRepositoryRef{Commit: head}},
+				{name: "fallback", ref: &sourcev1.GitRepositoryRef{Commit: head}, refuse: true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					t.Parallel()
@@ -228,7 +229,7 @@ func TestFetcher_TLSOperations(t *testing.T) {
 					if route != "direct" {
 						repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
 					}
-					art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+					art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 					if err != nil {
 						_, fallback := f.fallback.Load(srv.URL)
 						t.Fatalf("fetch: %v (requests=%d, fallback=%t)", err, requests.Load(), fallback)
@@ -251,7 +252,7 @@ func TestFetcher_TLSOperations(t *testing.T) {
 						t.Errorf("initial advertisements=%d, want %d", advertisements.Load(), wantAdvertisements)
 					}
 					t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d proxy_CONNECT=%d", advertisements.Load(), requests.Load(), connections.Load(), connects.Load())
-					_, err = f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+					_, err = f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -280,7 +281,7 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		}}
 		ssrfguard.Restrict(true)
 		defer ssrfguard.Restrict(false)
-		_, err := f.Fetch(t.Context(), gitRepoWithSecret("restricted", srv.URL, "tls"), sourcecache.RetryConfig{})
+		_, err := f.Fetch(t.Context(), gitRepoWithSecret("restricted", srv.URL, "tls"), sourcecache.Policy{})
 		if op, ok := errors.AsType[*net.OpError](err); !ok || op.Op != "dial" {
 			t.Fatalf("fetch error = %v, want dial error", err)
 		}
@@ -357,9 +358,9 @@ func TestFetcher_RecursiveTLSDefaults(t *testing.T) {
 				repo := gitRepoWithSecret("recursive", srv.URL, "tls")
 				repo.RecurseSubmodules = true
 				if exact {
-					repo.Reference = &manifest.GitRepositoryRef{Commit: hash.String()}
+					repo.Reference = &sourcev1.GitRepositoryRef{Commit: hash.String()}
 				}
-				art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+				art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 				if child == "private-ca" {
 					if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 						t.Fatalf("child inherited private CA: %v", err)
@@ -432,7 +433,7 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 			done := make(chan error, len(repos))
 			for _, repo := range repos {
 				workers.Go(func() {
-					art, err := f.Fetch(ctx, repo, sourcecache.RetryConfig{})
+					art, err := f.Fetch(ctx, repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 					if err == nil {
 						var content []byte
 						content, err = fs.ReadFile(art.FS, "hello.txt")
@@ -450,19 +451,19 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 					t.Fatal("custom TLS acquisitions did not overlap")
 				}
 			}
-			_, err := f.Fetch(ctx, gitRepoWithSecret("anonymous", repos[0].URL, ""), sourcecache.RetryConfig{})
+			_, err := f.Fetch(ctx, gitRepoWithSecret("anonymous", repos[0].URL, ""), sourcecache.Policy{})
 			if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 				t.Fatalf("anonymous fetch inherited private trust: %v", err)
 			}
 			for _, name := range []string{"wrong-ca", "wrong-client"} {
 				bad := gitRepoWithSecret(name, repos[0].URL, name)
 				bad.ProxySecretRef = repos[0].ProxySecretRef
-				if _, err := f.Fetch(ctx, bad, sourcecache.RetryConfig{}); err == nil {
+				if _, err := f.Fetch(ctx, bad, sourcecache.Policy{MaxAge: bad.SourceInterval()}); err == nil {
 					t.Fatalf("%s fetch inherited another operation's credentials", name)
 				}
 			}
 			for _, ref := range []string{"", mustHead(t, root)} {
-				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref}, sourcecache.RetryConfig{})
+				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref}, sourcecache.Policy{})
 				if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 					t.Fatalf("anonymous remote base inherited private trust: %v", err)
 				}
@@ -572,7 +573,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 					assert.Equal(t, missing.Owner, repo.Named())
 					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
 				} else {
-					if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/tls") || !strings.Contains(err.Error(), gitID(repo)) {
+					if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/tls") || !strings.Contains(err.Error(), source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)) {
 						t.Fatalf("missing input context: %v", err)
 					}
 					if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
@@ -662,7 +663,7 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.wantInput)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.wantMissing)
-				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/creds") || !strings.Contains(err.Error(), gitID(repo)) {
+				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/creds") || !strings.Contains(err.Error(), source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)) {
 					t.Fatalf("wrong selected error context: %v", err)
 				}
 				if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
@@ -711,7 +712,7 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	}}
 	repo := gitRepoWithSecret("tls", "https://example.com/x.git", "tls")
 	repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
-	_, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+	_, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("proxy validation before cache admission: %v", err)
 	}
@@ -795,7 +796,7 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := requests.Load()
-			art, err := f.fetch(t.Context(), request, sourcecache.RetryConfig{Attempts: 3})
+			art, err := f.fetch(t.Context(), request, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: sourcecache.RetryConfig{Attempts: 3}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -804,13 +805,13 @@ func TestFetcher_HTTPSBasicAuth_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = requests.Load()
-			if _, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{}); err != nil || requests.Load() != before {
+			if _, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()}); err != nil || requests.Load() != before {
 				t.Fatalf("warm snapshot missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *repo
 			failed.Interval.Duration = 0
-			_, err = f.Fetch(t.Context(), &failed, sourcecache.RetryConfig{})
+			_, err = f.Fetch(t.Context(), &failed, sourcecache.Policy{MaxAge: failed.SourceInterval()})
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)

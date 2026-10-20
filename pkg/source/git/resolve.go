@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -15,55 +16,38 @@ import (
 
 var errRefUnavailable = errors.New("local git reference unavailable")
 
-// resolveRefHash translates a Flux GitRepositoryRef into a concrete
-// commit hash within repo (a bare mirror). Ordering matches upstream
-// source-controller:
-//
-//   - explicit Commit always wins
-//   - Name resolves a full git ref like refs/heads/main or refs/pull/1/head
-//   - SemVer picks the highest tag satisfying the constraint
-//   - Tag resolves by name (annotated or lightweight)
-//   - Branch resolves by name
-//   - empty/missing → HEAD (the mirror's default branch)
-//
-// Returns a wrapped error if no match exists; the caller surfaces it
-// to the user with the originating CR's identity.
-func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumbing.Hash, error) {
-	if ref != nil {
-		switch {
-		case ref.Commit != "":
-			if !plumbing.IsHash(ref.Commit) {
-				return plumbing.ZeroHash, fmt.Errorf("%w: invalid full commit hash %q", manifest.ErrInput, ref.Commit)
-			}
-			hash := plumbing.NewHash(ref.Commit)
-			if _, err := readCommit(repo, hash); err != nil {
-				if errors.Is(err, plumbing.ErrObjectNotFound) {
-					if _, objectErr := repo.Object(plumbing.AnyObject, hash); errors.Is(objectErr, plumbing.ErrObjectNotFound) {
-						return plumbing.ZeroHash, fmt.Errorf("%w: commit %s", errRefUnavailable, hash)
-					}
-				}
-				return plumbing.ZeroHash, err
-			}
-			if err := validateCommitBranch(repo, hash, ref.Branch); err != nil {
-				return plumbing.ZeroHash, err
-			}
-			return hash, nil
-		case ref.Name != "":
-			if strings.HasPrefix(ref.Name, "refs/") || ref.Name == "HEAD" {
-				return lookupNamedRef(repo, ref.Name)
-			}
-			h, err := repo.ResolveRevision(plumbing.Revision(ref.Name))
-			if err != nil {
-				return plumbing.ZeroHash, fmt.Errorf("resolve revision %q: %w", ref.Name, err)
-			}
-			return *h, nil
-		case ref.SemVer != "":
-			return resolveSemver(repo, ref.SemVer)
-		case ref.Tag != "":
-			return lookupReference(repo, plumbing.NewTagReferenceName(ref.Tag))
-		case ref.Branch != "":
-			return lookupBranch(repo, ref.Branch)
+func resolveRefHash(repo *git.Repository, ref *sourcev1.GitRepositoryRef, originFirst bool) (plumbing.Hash, error) {
+	selected := (*manifest.GitRepositoryRef)(ref)
+	kind, value := selected.Effective()
+	switch kind {
+	case "commit":
+		if err := selected.Validate(); err != nil {
+			return plumbing.ZeroHash, fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
+		hash := plumbing.NewHash(value)
+		commit, err := readCommit(repo, hash)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		if err := validateCommitBranch(repo, commit, ref.Branch); err != nil {
+			return plumbing.ZeroHash, err
+		}
+		return hash, nil
+	case "name":
+		if strings.HasPrefix(value, "refs/") || value == "HEAD" {
+			return lookupNamedRef(repo, value)
+		}
+		resolved, err := repo.ResolveRevision(plumbing.Revision(value))
+		if err != nil {
+			return plumbing.ZeroHash, fmt.Errorf("resolve revision %q: %w", value, err)
+		}
+		return *resolved, nil
+	case "semver":
+		return resolveSemver(repo, value)
+	case "tag":
+		return lookupReference(repo, plumbing.NewTagReferenceName(value))
+	case "branch":
+		return lookupBranch(repo, value, originFirst)
 	}
 	head, err := repo.Head()
 	if err != nil {
@@ -72,47 +56,41 @@ func resolveRefHash(repo *git.Repository, ref *manifest.GitRepositoryRef) (plumb
 	return head.Hash(), nil
 }
 
-func validateCommitBranch(repo *git.Repository, commit plumbing.Hash, branch string) error {
+func validateCommitBranch(repo *git.Repository, commit *object.Commit, branch string) error {
 	if branch == "" {
 		return nil
 	}
-	branchHash, err := lookupBranch(repo, branch)
+	branchHash, err := lookupBranch(repo, branch, false)
 	if err != nil {
-		return fmt.Errorf("branch %q for commit %s: %w", branch, commit, err)
-	}
-	commitObj, err := readCommit(repo, commit)
-	if err != nil {
-		if errors.Is(err, plumbing.ErrObjectNotFound) {
-			if _, objectErr := repo.Object(plumbing.AnyObject, commit); errors.Is(objectErr, plumbing.ErrObjectNotFound) {
-				return fmt.Errorf("%w: commit %s", errRefUnavailable, commit)
-			}
-		}
-		return fmt.Errorf("commit %s not found: %w", commit, err)
+		return fmt.Errorf("branch %q for commit %s: %w", branch, commit.Hash, err)
 	}
 	branchObj, err := readCommit(repo, branchHash)
 	if err != nil {
 		return fmt.Errorf("branch %q target %s is not a commit: %w", branch, branchHash, err)
 	}
-	reachable, err := commitObj.IsAncestor(branchObj)
+	reachable, err := commit.IsAncestor(branchObj)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrObjectNotFound) {
-			return fmt.Errorf("%w: incomplete history for commit %s from branch %q", errRefUnavailable, commit, branch)
+			return fmt.Errorf("%w: incomplete history for commit %s from branch %q", errRefUnavailable, commit.Hash, branch)
 		}
-		return fmt.Errorf("check commit %s reachability from branch %q: %w", commit, branch, err)
+		return fmt.Errorf("check commit %s reachability from branch %q: %w", commit.Hash, branch, err)
 	}
 	if !reachable {
-		return fmt.Errorf("commit %s is not reachable from branch %q", commit, branch)
+		return fmt.Errorf("commit %s is not reachable from branch %q", commit.Hash, branch)
 	}
 	return nil
 }
 
-func lookupBranch(repo *git.Repository, name string) (plumbing.Hash, error) {
+func lookupBranch(repo *git.Repository, name string, originFirst bool) (plumbing.Hash, error) {
+	if originFirst {
+		return lookupReference(repo, plumbing.NewRemoteReferenceName("origin", name), plumbing.NewBranchReferenceName(name))
+	}
 	return lookupReference(repo, plumbing.NewBranchReferenceName(name), plumbing.NewRemoteReferenceName("origin", name))
 }
 
 func lookupNamedRef(repo *git.Repository, name string) (plumbing.Hash, error) {
 	if branch, ok := strings.CutPrefix(name, "refs/heads/"); ok {
-		return lookupReference(repo, plumbing.ReferenceName(name), plumbing.NewRemoteReferenceName("origin", branch))
+		return lookupBranch(repo, branch, false)
 	}
 	return lookupReference(repo, plumbing.ReferenceName(name))
 }
@@ -157,6 +135,11 @@ func peelCommit(repo *git.Repository, hash plumbing.Hash) (plumbing.Hash, error)
 func readCommit(repo *git.Repository, hash plumbing.Hash) (*object.Commit, error) {
 	commit, err := repo.CommitObject(hash)
 	if err != nil {
+		if errors.Is(err, plumbing.ErrObjectNotFound) {
+			if _, objectErr := repo.Object(plumbing.AnyObject, hash); errors.Is(objectErr, plumbing.ErrObjectNotFound) {
+				return nil, fmt.Errorf("%w: commit %s", errRefUnavailable, hash)
+			}
+		}
 		return nil, fmt.Errorf("read commit %s: %w", hash, err)
 	}
 	if _, err := commit.Tree(); err != nil {

@@ -13,9 +13,15 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+type emptySourceFetcher struct{}
+
+func (emptySourceFetcher) Fetch(context.Context, manifest.BaseManifest, sourcecache.Policy) (*store.SourceArtifact, error) {
+	return nil, nil
+}
 
 type arrivalDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
 
@@ -41,7 +47,7 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 			}()
 			delete(o.src.Fetchers, manifest.KindExternalArtifact)
 			if tc.fetcher {
-				o.src.Fetchers[manifest.KindExternalArtifact] = source.ExistenceFetcher{}
+				o.src.Fetchers[manifest.KindExternalArtifact] = emptySourceFetcher{}
 			}
 			obj := &manifest.ExternalArtifact{Name: "external", Namespace: "apps"}
 			o.store.AddObject(obj)
@@ -210,5 +216,25 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	_, err = o.Render(ctx)
 	if err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {
 		t.Fatalf("Render error=%v context=%v, want scheduler redispatch error", err, ctx.Err())
+	}
+}
+
+func TestWithFetcher_ExistenceOnlyDisabled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Concurrency: 2})
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+	repo := &manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://charts.example"}
+	o.store.AddObject(repo)
+	if f, registered := o.src.Fetchers[manifest.KindHelmRepository]; !registered || f != nil || !o.schedulable(repo) || !slices.Contains(o.seedNodes(), repo.Named()) {
+		t.Fatal("default nil reservation did not enable scheduling")
+	}
+	o.WithFetcher(manifest.KindHelmRepository, nil)
+	if o.schedulable(repo) || slices.Contains(o.seedNodes(), repo.Named()) {
+		t.Fatal("unregistered existence-only source still scheduled")
+	}
+	if _, registered := o.src.Fetchers[manifest.KindHelmRepository]; registered {
+		t.Fatal("nil override retained map entry")
 	}
 }

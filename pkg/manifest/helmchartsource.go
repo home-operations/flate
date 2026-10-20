@@ -2,7 +2,9 @@ package manifest
 
 import (
 	"cmp"
+	"time"
 
+	"github.com/Masterminds/semver/v3"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 )
 
@@ -24,6 +26,14 @@ func (h *HelmChartSource) Named() NamedResource {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (h *HelmChartSource) Suspended() bool { return h.Suspend }
+
+// ExistenceOnly reports whether readiness requires no artifact acquisition.
+func (h *HelmChartSource) ExistenceOnly() bool {
+	return h.SourceRef.Kind != "" && h.SourceRef.Kind != KindHelmRepository
+}
+
+// SourceInterval returns the authored source refresh interval.
+func (h *HelmChartSource) SourceInterval() time.Duration { return h.Interval.Duration }
 
 // ChartVersion returns the source's declared chart version.
 func (h *HelmChartSource) ChartVersion() string { return h.Version }
@@ -78,3 +88,9 @@ func (h *HelmChartSource) references(yield func(Reference) bool) {
 }
 
 func (h *HelmChartSource) kind() KindInfo { return kindTable[kindHelmChartSource].KindInfo }
+
+// ExactVersion reports whether the chart version is a concrete semver, including partial versions.
+func (h *HelmChartSource) ExactVersion() bool {
+	_, err := semver.NewVersion(h.Version)
+	return err == nil
+}

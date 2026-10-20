@@ -23,7 +23,6 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/resourceset"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -430,13 +429,10 @@ type sharedRepositoryFetcher struct {
 	calls map[manifest.NamedResource]int
 }
 
-func (f *sharedRepositoryFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+func (f *sharedRepositoryFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.mu.Lock()
 	f.calls[obj.Named()]++
 	f.mu.Unlock()
-	if obj.Named().Kind == manifest.KindHelmRepository {
-		return (source.ExistenceFetcher{}).Fetch(ctx, obj, retry)
-	}
 	return &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart", FS: fstest.MapFS{
 		"Chart.yaml":               {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
 		"templates/configmap.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n")},
@@ -588,13 +584,9 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						}
 					}
 				}
-				want := 1
-				if scenario != "unchanged" {
-					want = 2
-				}
 				t.Logf("repository %s acquisitions=%d completions=%d; all acquisitions=%v completions=%v", repo, f.calls[repo], completions[repo], f.calls, completions)
-				if f.calls[repo] != want || completions[repo] != want {
-					t.Errorf("repository acquisitions=%d completions=%d, want %d", f.calls[repo], completions[repo], want)
+				if f.calls[repo] != 0 || completions[repo] != 0 {
+					t.Errorf("existence-only repository fetched: acquisitions=%d completions=%d", f.calls[repo], completions[repo])
 				}
 				for id, calls := range f.calls {
 					if completions[id] != calls {

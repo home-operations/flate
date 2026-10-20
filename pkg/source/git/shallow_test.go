@@ -20,8 +20,8 @@ import (
 func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, artifact *store.SourceArtifact) *git.Repository {
 	t.Helper()
 	ref := "HEAD"
-	if spec.Reference != nil && gitRefLabel(*spec.Reference) != "" {
-		ref = gitRefLabel(*spec.Reference)
+	if label := (*manifest.GitRepositoryRef)(spec.Reference).Label(); label != "" {
+		ref = label
 	}
 	request, err := f.resolveTransport(spec)
 	if err != nil {
@@ -30,7 +30,7 @@ func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, arti
 	key := sourcecache.GitKey{Content: struct {
 		Source, Transport any
 		Depth             int
-	}{spec.Content(effectiveRef(spec.Reference)), request.material, f.Depth}, Ref: ref, RecurseSubmodules: spec.RecurseSubmodules}
+	}{spec.Content((*manifest.GitRepositoryRef)(spec.Reference).Normalized()), request.material, f.Depth}, Ref: ref, RecurseSubmodules: spec.RecurseSubmodules}
 	generation, id, err := f.Cache.Git(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
-	art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+	art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch tag: %v", err)
 	}
@@ -123,12 +123,12 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 	}
 }
 
-func TestEffectiveDepth(t *testing.T) {
+func TestResolveTransport_Depth(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name  string
 		depth int
-		ref   *manifest.GitRepositoryRef
+		ref   *sourcev1.GitRepositoryRef
 		want  int
 	}{
 		{"head nil ref", 1, nil, 1},
@@ -145,8 +145,13 @@ func TestEffectiveDepth(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := effectiveDepth(tc.depth, tc.ref); got != tc.want {
-				t.Errorf("effectiveDepth(%d, %+v) = %d, want %d", tc.depth, tc.ref, got, tc.want)
+			f := &Fetcher{Depth: tc.depth}
+			request, err := f.resolveTransport(&manifest.GitRepository{URL: "file:///repo", Reference: tc.ref})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := request.options.Depth; got != tc.want {
+				t.Errorf("depth = %d, want %d", got, tc.want)
 			}
 		})
 	}

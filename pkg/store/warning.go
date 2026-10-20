@@ -75,9 +75,13 @@ func (s *Store) Warnings() []manifest.Warning {
 			for i, c := range contributions {
 				owners[i] = c.owner.String()
 			}
+			winner := "static object"
+			if owner := s.EmissionOwner(id); owner != (manifest.NamedResource{}) {
+				winner = owner.String()
+			}
 			out = append(out, manifest.Warning{
 				Resource: id, Category: manifest.WarnConflictingProducers, Count: 1,
-				Message: "conflicting producers; using " + owners[len(owners)-1],
+				Message: "conflicting producers; using " + winner,
 				Detail:  owners,
 			})
 		}

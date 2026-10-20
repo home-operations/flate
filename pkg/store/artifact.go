@@ -89,7 +89,7 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 	e, emitted := artifact.(*Emission)
 	var input Child
 	if emitted && e.input != nil {
-		input = sh.representativeLocked(id)
+		input, _ = sh.representativeLocked(id)
 	}
 	sh.mu.RUnlock()
 	if emitted && !emissionCurrent(e, input) {

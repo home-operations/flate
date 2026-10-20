@@ -201,13 +201,8 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 	return res, runErr
 }
 
-// collectManifests harvests every reconcilable resource's rendered docs into a
-// Result.Manifests map, applying --skip-kinds and the SDK helm.Options skip
-// fields uniformly so embedders see the same output the CLI emits. Kustomization docs
-// reach the artifact unfiltered (the Store must hold the full set for downstream
-// valuesFrom/substituteFrom resolution), so the skip-kind drop happens here, at
-// the embed boundary, leaving the Store whole.
-// Accepted completed output remains available after a failed successor.
+// collectManifests filters completed output without changing stored documents needed by value consumers.
+// Accepted completed output MUST remain available after a failed successor.
 func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[string]any {
 	skip := o.cfg.HelmOptions.SkipResourceKinds()
 	var objects []manifest.BaseManifest
@@ -216,17 +211,12 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 	}
 	objects = append(objects, o.store.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSet)...)
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-	type collected struct {
-		store.Emission
-		parent manifest.NamedResource
-	}
-	attempts := make(map[manifest.NamedResource]collected, len(objects))
-	rawOwners := map[manifest.NamedResource]manifest.NamedResource{}
+	out := map[manifest.NamedResource][]map[string]any{}
 	for _, obj := range objects {
 		id := obj.Named()
 		parent := id
-		_, rawOnly := obj.(*manifest.ResourceSet)
-		if rawOnly {
+		_, parentAttributed := obj.(*manifest.ResourceSet)
+		if parentAttributed {
 			var ok bool
 			parent, ok = o.parentOf(id)
 			if !ok {
@@ -234,35 +224,17 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 			}
 		}
 		_, attempt := o.store.GetEmission(id)
-		for _, child := range attempt.Children {
-			target := child.Obj.Named()
-			if rawOnly {
-				if owner, ok := rawOwners[target]; !ok || id.Compare(owner) < 0 {
-					rawOwners[target] = id
-				}
-			}
-		}
 		attempt.Finish()
-		attempts[id] = collected{Emission: attempt, parent: parent}
-	}
-	out := map[manifest.NamedResource][]map[string]any{}
-	for _, obj := range objects {
-		id := obj.Named()
-		attempt, ok := attempts[id]
-		if !ok {
-			continue
-		}
-		_, rawOnly := obj.(*manifest.ResourceSet)
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
 		for _, child := range attempt.Children {
 			if child.Doc != nil {
 				target := child.Obj.Named()
-				selected[resourceset.DedupKey(child.Doc)] = !rawOnly || !manifest.KindOf(child.Obj).Tracked && rawOwners[target] == id
+				selected[resourceset.DedupKey(child.Doc)] = !parentAttributed || !manifest.KindOf(child.Obj).Render && o.store.EmissionOwner(target) == id
 			}
 		}
 		for _, doc := range manifest.DropKinds(attempt.Manifests, skip) {
-			if chosen, tracked := selected[resourceset.DedupKey(doc)]; chosen || !tracked && !rawOnly {
-				out[attempt.parent] = append(out[attempt.parent], doc)
+			if chosen, known := selected[resourceset.DedupKey(doc)]; chosen || !known && !parentAttributed {
+				out[parent] = append(out[parent], doc)
 			}
 		}
 	}

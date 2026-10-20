@@ -194,6 +194,106 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 	}
 }
 
+func TestRenderTrees_ResourceSetGeneratedData(t *testing.T) {
+	t.Parallel()
+
+	baseDir, headDir := t.TempDir(), t.TempDir()
+	for i, dir := range []string{baseDir, headDir} {
+		writeCluster(t, dir, "unused", "same")
+		testutil.WriteFile(t, dir, "apps/app-a/cm.yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: z, namespace: flux-system}
+spec:
+  inputs: [{name: one}]
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: cm-<< inputs.name >>, namespace: default}
+      data: {key: v%d}
+    - apiVersion: v1
+      kind: Secret
+      metadata: {name: secret-<< inputs.name >>, namespace: default}
+      stringData: {key: same}
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: a, namespace: flux-system}
+spec:
+  inputs: [{name: one}]
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: cm-<< inputs.name >>, namespace: default}
+      data: {key: losing}
+`, i+1))
+	}
+	base, head, err := orchestrator.RenderTrees(t.Context(),
+		orchestrator.Tree{RepoRoot: baseDir},
+		orchestrator.Tree{RepoRoot: headDir},
+		orchestrator.Config{Concurrency: 2, Network: new(source.Network)})
+	assert.NoError(t, err)
+	parent := testutil.KustomizationID("flux-system", "app-a")
+	for i, side := range []orchestrator.Rendered{base, head} {
+		if side.Result == nil || side.Err != nil {
+			t.Fatalf("side %d incomplete: result=%v err=%v", i, side.Result, side.Err)
+		}
+		if len(side.Result.Manifests[testutil.KustomizationID("flux-system", "app-b")]) != 0 || configMapNames(side.Result)["cfg-b"] {
+			t.Fatalf("side %d rendered unchanged app-b: %v", i, side.Result.Manifests)
+		}
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "cm-one"}
+		cm, ok := side.Store().Get[*manifest.ConfigMap](id)
+		if !ok {
+			t.Fatal("missing shared ConfigMap")
+		}
+		assert.Diff(t, cm.Data, map[string]any{"key": fmt.Sprintf("v%d", i+1)})
+		winner := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "z"}
+		assert.Equal(t, side.Store().EmissionOwner(id), winner)
+		assert.Equal(t, len(side.Result.Warnings), 1)
+		if len(side.Result.Warnings) == 1 {
+			assert.Equal(t, side.Result.Warnings[0].Message, "conflicting producers; using "+winner.String())
+		}
+		identities := make([]string, 0, len(side.Result.Manifests[parent]))
+		for _, doc := range side.Result.Manifests[parent] {
+			name, namespace := manifest.DocMetadata(doc)
+			identities = append(identities, manifest.DocKind(doc)+"/"+namespace+"/"+name)
+			switch manifest.DocKind(doc) {
+			case manifest.KindConfigMap:
+				assert.Diff(t, doc["data"], map[string]any{"key": fmt.Sprintf("v%d", i+1)})
+			case manifest.KindSecret:
+				assert.Diff(t, doc["stringData"], map[string]any{"key": "same"})
+			}
+		}
+		slices.Sort(identities)
+		assert.Diff(t, identities, []string{"ConfigMap/default/cm-one", "ResourceSet/flux-system/a", "ResourceSet/flux-system/z", "Secret/default/secret-one"})
+	}
+	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+	body, err := diff.Compare(
+		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		selectedErr, diff.Options{Format: diff.FormatJSON})
+	assert.NoError(t, err)
+	var output struct {
+		Changes []diff.Change `json:"changes"`
+	}
+	assert.NoError(t, json.Unmarshal(body, &output))
+	generatedChanges := 0
+	for _, c := range output.Changes {
+		if c.Name == "cfg-b" || c.Name == "secret-one" {
+			t.Fatalf("unchanged document in diff: %+v", c)
+		}
+		if c.Kind == manifest.KindConfigMap && c.Namespace == "default" && c.Name == "cm-one" {
+			generatedChanges++
+			assert.Equal(t, c.Parent.Name, parent.Name)
+			assert.Equal(t, c.Parent.Namespace, parent.Namespace)
+			assert.Equal(t, c.Status, diff.StatusChanged)
+			assert.Diff(t, c.Old["data"], map[string]any{"key": "v1"})
+			assert.Diff(t, c.New["data"], map[string]any{"key": "v2"})
+		}
+	}
+	assert.Equal(t, generatedChanges, 1)
+}
+
 // writeHomeOpsCluster lays out a cluster-template-style tree under dir
 // with NO .git: the Flux entry point is kubernetes/flux/cluster/ks.yaml
 // (cluster-apps → ./kubernetes/apps, repo-ROOT-relative), and the app's

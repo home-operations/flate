@@ -92,11 +92,22 @@ type membership struct {
 	declaration bool
 }
 
+// EmissionOwner returns the generated producer supplying the representative for id.
+// Static, hidden or absent representatives have an empty owner. This individual
+// read does not form an atomic pair with a separate GetEmission call.
+func (s *Store) EmissionOwner(id manifest.NamedResource) manifest.NamedResource {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	_, owner := sh.representativeLocked(id)
+	sh.mu.RUnlock()
+	return owner
+}
+
 // GetEmission borrows the accepted inventory and binds an attempt to its current input.
 func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, Emission) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	view := sh.representativeLocked(id)
+	view, _ := sh.representativeLocked(id)
 	obj := view.Obj
 	var prev *Emission
 	if slot := sh.slots[id]; slot != nil {
@@ -519,8 +530,9 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 	publications := make(map[manifest.NamedResource]publication, len(region))
 	for target := range region {
 		sh := s.shardFor(target)
+		before, _ := sh.representativeLocked(target)
 		publications[target] = publication{
-			before:  sh.representativeLocked(target),
+			before:  before,
 			visible: !sh.hidden[target] && (sh.static[target] != nil || len(sh.members[target]) > 0),
 		}
 	}
@@ -553,7 +565,7 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 	for target := range region {
 		sh := s.shardFor(target)
 		change := publications[target]
-		change.after = sh.representativeLocked(target)
+		change.after, _ = sh.representativeLocked(target)
 		obj := change.after.Obj
 		if obj != nil {
 			sh.setLocked(target, obj)
@@ -838,17 +850,18 @@ func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 	if sh.rooted[id] {
 		return sh.static[id]
 	}
-	return sh.representativeLocked(id).Obj
+	child, _ := sh.representativeLocked(id)
+	return child.Obj
 }
-func (sh *shard) representativeLocked(id manifest.NamedResource) Child {
+func (sh *shard) representativeLocked(id manifest.NamedResource) (Child, manifest.NamedResource) {
 	if len(sh.members) == 0 && len(sh.hidden) == 0 && len(sh.retired) == 0 {
-		return Child{Obj: sh.objects[id]}
+		return Child{Obj: sh.objects[id]}, manifest.NamedResource{}
 	}
 	if sh.hidden[id] {
-		return Child{}
+		return Child{}, manifest.NamedResource{}
 	}
 	if sh.rooted[id] && sh.static[id] != nil {
-		return Child{Obj: sh.static[id]}
+		return Child{Obj: sh.static[id]}, manifest.NamedResource{}
 	}
 	var chosen *membership
 	for i := range sh.members[id] {
@@ -858,12 +871,12 @@ func (sh *shard) representativeLocked(id manifest.NamedResource) Child {
 		}
 	}
 	if chosen != nil {
-		return chosen.slot.current.Load().entries[chosen.position].child
+		return chosen.slot.current.Load().entries[chosen.position].child, chosen.slot.id
 	}
 	if sh.rooted[id] || !sh.retired[id] {
-		return Child{Obj: sh.static[id]}
+		return Child{Obj: sh.static[id]}, manifest.NamedResource{}
 	}
-	return Child{}
+	return Child{}, manifest.NamedResource{}
 }
 func (s *Store) affectedLocked(changed map[manifest.NamedResource]struct{}) map[manifest.NamedResource]struct{} {
 	queue := slices.Collect(maps.Keys(changed))

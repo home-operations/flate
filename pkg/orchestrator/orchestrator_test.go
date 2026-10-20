@@ -543,7 +543,7 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			s.AddObject(b)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a.Named(): {Parent: parent}, b.Named(): {Parent: parent}}}
 			o := &Orchestrator{store: s, index: index}
-			doc := map[string]any{"apiVersion": "example.com/v1", "kind": "Widget", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "spec": map[string]any{"value": "equal"}}
+			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": "equal"}}
 			children, docs := base.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
 			ids := []manifest.NamedResource{a.Named(), b.Named()}
 			if reverse {
@@ -552,27 +552,27 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			for _, id := range ids {
 				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
 			}
-			if got := o.collectManifests()[parent]; len(got) != 1 {
-				t.Fatalf("grouped output: %v", got)
-			}
+			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: docs})
 			second := manifest.DeepCopyMap(doc)
 			second["metadata"].(map[string]any)["name"] = "second"
 			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
-				entries, authoritative := base.ParseChildren(a.Named(), ordered, manifest.ParseDocOptions{})
-				s.RecordEmitted(a.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true})
+				entries, authoritative := base.ParseChildren(b.Named(), ordered, manifest.ParseDocOptions{})
+				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true})
 				if got := o.collectManifests()[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
 					t.Fatalf("authoritative document order lost: %v", got)
 				}
 			}
-			s.RecordEmitted(a.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
-
 			unequal := manifest.DeepCopyMap(doc)
-			unequal["spec"] = map[string]any{"value": "different"}
+			unequal["data"] = map[string]any{"value": "different"}
 			changed, changedDocs := base.ParseChildren(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
-			s.RecordEmitted(b.Named(), &store.Emission{Children: changed, Manifests: changedDocs, Complete: true})
-			if got := o.collectManifests()[parent]; len(got) != 1 || got[0]["spec"].(map[string]any)["value"] != "equal" {
-				t.Fatalf("grouped output lost the first producer document: %v", got)
+			for _, id := range ids {
+				if id == a.Named() {
+					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
+				} else {
+					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: changedDocs, Complete: true})
+				}
 			}
+			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: changedDocs})
 		})
 	}
 }
@@ -1740,41 +1740,44 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			"spec":       map[string]any{"owner": owner},
 		}
 	}
-	docA, docB := mkDoc("a-wins"), mkDoc("b-loses")
+	docA, docB := mkDoc("a-loses"), mkDoc("b-wins")
 	other := mkDoc("other-group")
 	other["apiVersion"] = "other.example/v1"
 	version := mkDoc("version-loses")
 	version["apiVersion"] = "example.com/v2"
 
-	for iter := range 50 {
-		s := store.New()
-		a := &manifest.ResourceSet{Name: ownerA.Name, Namespace: ownerA.Namespace}
-		b := &manifest.ResourceSet{Name: ownerB.Name, Namespace: ownerB.Namespace}
-		s.AddObjects([]manifest.BaseManifest{a, b})
-		o := &Orchestrator{store: s, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{ownerA: {Parent: parent}, ownerB: {Parent: parent}}}}
-		ids := []manifest.NamedResource{ownerA, ownerB}
-		if iter%2 == 0 {
-			slices.Reverse(ids)
-		}
-		for _, id := range ids {
-			input := []map[string]any{docB, version, other}
-			if id == ownerA {
-				input = []map[string]any{docA, {"apiVersion": "example.com/v1", "kind": "Widget"}, {"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "incomplete"}}}
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			a := &manifest.ResourceSet{Name: ownerA.Name, Namespace: ownerA.Namespace}
+			b := &manifest.ResourceSet{Name: ownerB.Name, Namespace: ownerB.Namespace}
+			s.AddObjects([]manifest.BaseManifest{a, b})
+			o := &Orchestrator{store: s, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{ownerA: {Parent: parent}, ownerB: {Parent: parent}}}}
+			ids := []manifest.NamedResource{ownerA, ownerB}
+			if reverse {
+				slices.Reverse(ids)
 			}
-			children, authoritative := base.ParseChildren(id, input, manifest.ParseDocOptions{})
-			s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true})
-		}
-		docs := o.collectManifests()[parent]
-		if len(docs) != 2 {
-			t.Fatalf("iter %d: out[apps] = %d docs, want 2 (one winner per group)", iter, len(docs))
-		}
-		if manifest.DocAPIVersion(docs[1]) != "other.example/v1" {
-			t.Fatalf("foreign group lost: %v", docs)
-		}
-		spec, _ := docs[0]["spec"].(map[string]any)
-		if got := spec["owner"]; got != "a-wins" {
-			t.Fatalf("iter %d: collision winner owner = %v, want a-wins (sorted-first RS); nondeterministic", iter, got)
-		}
+			for _, id := range ids {
+				input := []map[string]any{docB, other}
+				if id == ownerA {
+					input = []map[string]any{docA, version, {"apiVersion": "example.com/v1", "kind": "Widget"}, {"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "incomplete"}}}
+				}
+				children, authoritative := base.ParseChildren(id, input, manifest.ParseDocOptions{})
+				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true})
+			}
+			docs := o.collectManifests()[parent]
+			if len(docs) != 2 {
+				t.Fatalf("out[apps] = %d docs, want 2 (one winner per group)", len(docs))
+			}
+			if manifest.DocAPIVersion(docs[1]) != "other.example/v1" {
+				t.Fatalf("foreign group lost: %v", docs)
+			}
+			spec, _ := docs[0]["spec"].(map[string]any)
+			if got := spec["owner"]; got != "b-wins" {
+				t.Fatalf("collision winner owner = %v, want b-wins", got)
+			}
+		})
 	}
 }
 

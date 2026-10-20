@@ -147,7 +147,7 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 			}
 			var input Child
 			if _, ok := any(v).(*Emission); ok {
-				input = sh.representativeLocked(id)
+				input, _ = sh.representativeLocked(id)
 			}
 			if eventObj, ok := any(v).(manifest.BaseManifest); ok {
 				obj := sh.objectLocked(eventObj.Named())

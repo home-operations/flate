@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
@@ -396,6 +397,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					for _, id := range hidden {
 						s.UpdateFailure(id, fmt.Errorf("%w: hidden successor", manifest.ErrInput))
 						s.SetArtifact(id, &SourceArtifact{Key: "late"})
+						assert.Equal(t, s.EmissionOwner(id), manifest.NamedResource{})
 						if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
 							t.Fatal("hidden payload leaked")
 						}
@@ -776,6 +778,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			}, false)
 			s.RecordEmitted(p, &attempt)
 			unsub()
+			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
 			if independent {
 				if s.GetObject(seed.Obj.Named()) != actual.Obj {
 					t.Fatal("accepted output did not replace independent static content")
@@ -785,6 +788,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				empty.Complete = true
 				accept(t, s, p, &empty)
 				empty.Finish()
+				assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), manifest.NamedResource{})
 				if got := slices.Collect(s.Productions(seed.Obj.Named(), nil)); s.GetObject(seed.Obj.Named()) != seed.Obj || len(got) != 1 || got[0] != productions[len(productions)-1] {
 					t.Fatalf("complete empty retired independent source/input anchor: %v", got)
 				}
@@ -825,8 +829,23 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			seed, child := emissionChild("seed", "static"), emissionChild("seed", "emitted")
 			s.AddObject(seed.Obj)
 			s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
+			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
 			if mode == "rooted_representative" {
 				s.AddObject(child.Obj)
+				q := ownerID("q")
+				s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
+				other := emissionChild("seed", "other")
+				s.RecordEmitted(q, &Emission{Children: []Child{other}, Complete: true})
+				assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), manifest.NamedResource{})
+				warnings := s.Warnings()
+				if len(warnings) != 1 {
+					t.Fatalf("static conflict warnings: %+v", warnings)
+				}
+				assert.Equal(t, warnings[0].Resource, seed.Obj.Named())
+				assert.Equal(t, warnings[0].Category, manifest.WarnConflictingProducers)
+				assert.Equal(t, warnings[0].Count, 1)
+				assert.Equal(t, warnings[0].Message, "conflicting producers; using static object")
+				assert.Diff(t, warnings[0].Detail, []string{p.String(), q.String()})
 				if s.GetObject(seed.Obj.Named()) != seed.Obj {
 					t.Fatal("rooted read lost static authority")
 				}
@@ -835,6 +854,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			if !s.DeleteObject(seed.Obj.Named()) || s.GetObject(seed.Obj.Named()) != child.Obj {
 				t.Fatal("static deletion lost live emitted support")
 			}
+			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
 		})
 	}
 	t.Run("never_emitted_static", func(t *testing.T) {
@@ -1113,7 +1133,9 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	accept(t, s, p, &Emission{Children: []Child{child}, Manifests: []map[string]any{child.Doc}, Complete: true})
 	s.UpdateFailure(p, fmt.Errorf("%w: private failure", manifest.ErrInput))
 	s.SetArtifact(p, &SourceArtifact{Key: "private"})
+	assert.Equal(t, s.EmissionOwner(ownerID("missing")), manifest.NamedResource{})
 	for _, id := range []manifest.NamedResource{p, child.Obj.Named()} {
+		assert.Equal(t, s.EmissionOwner(id), manifest.NamedResource{})
 		if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
 			t.Fatal("absent producer leaked live object or artifact")
 		}
@@ -1170,6 +1192,8 @@ func TestStore_AddListener_ReplayWithdrawnDeclaredSecret(t *testing.T) {
 	if s.GetObject(secret.Named()) != nil || s.GetObject(external.Named()) != external {
 		t.Fatal("withdrawal did not preserve only the effective ExternalSecret")
 	}
+	assert.Equal(t, s.EmissionOwner(secret.Named()), manifest.NamedResource{})
+	assert.Equal(t, s.EmissionOwner(external.Named()), q)
 	proofs := slices.Collect(s.Productions(secret.Named(), nil))
 	if len(proofs) != 1 || proofs[0].Owner != q || proofs[0].Declaration != external.Named() {
 		t.Fatalf("withdrawal lost declaration evidence: %v", proofs)
@@ -1440,18 +1464,22 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 				wg.Wait()
 				winner := children[workers-1]
 				id := winner.Obj.Named()
-				if s.GetObject(id) != winner.Obj {
-					t.Fatal("winner depends on publication order")
+				check := func(child Child, owner manifest.NamedResource) {
+					t.Helper()
+					assert.Equal(t, s.EmissionOwner(id), owner)
+					assert.Equal(t, s.GetObject(id), child.Obj)
+					obj, _ := s.Snapshot(id)
+					assert.Equal(t, obj, child.Obj)
+					replayed := false
+					s.AddListener(EventObjectAdded, func(got manifest.NamedResource, data any) {
+						if got == id {
+							replayed = true
+							assert.Equal(t, data.(manifest.BaseManifest), child.Obj)
+						}
+					}, true)()
+					assert.Equal(t, replayed, true)
 				}
-				if obj, _ := s.Snapshot(id); obj != winner.Obj {
-					t.Fatal("snapshot did not select the winner")
-				}
-				unsub := s.AddListener(EventObjectAdded, func(got manifest.NamedResource, data any) {
-					if got == id && data != winner.Obj {
-						t.Error("replay did not select the winner")
-					}
-				}, true)
-				unsub()
+				check(winner, owners[workers-1])
 				warnings := s.Warnings()
 				want := make([]string, workers)
 				for i, owner := range owners {
@@ -1460,17 +1488,20 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 				if len(warnings) != 1 || warnings[0].Resource != id || warnings[0].Category != "ConflictingProducers" || !slices.Equal(warnings[0].Detail, want) || warnings[0].Count != 1 {
 					t.Fatalf("conflict warning: %+v", warnings)
 				}
+				assert.Equal(t, warnings[0].Message, "conflicting producers; using "+owners[workers-1].String())
 				accept(t, s, owners[workers-1], &Emission{Complete: true})
-				if s.GetObject(id) != children[workers-2].Obj {
-					t.Fatal("withdrawal did not select the surviving winner")
-				}
+				check(children[workers-2], owners[workers-2])
 				warnings = s.Warnings()
 				if workers == 2 && len(warnings) != 0 || workers == 4 && (len(warnings) != 1 || !slices.Equal(warnings[0].Detail, want[:workers-1])) {
 					t.Fatalf("withdrawn producer remained in warning: %+v", warnings)
 				}
+				if len(warnings) != 0 {
+					assert.Equal(t, warnings[0].Message, "conflicting producers; using "+owners[workers-2].String())
+				}
 				for _, owner := range owners {
 					accept(t, s, owner, &Emission{Children: []Child{winner}, Manifests: []map[string]any{winner.Doc}, Complete: true})
 				}
+				check(winner, owners[workers-1])
 				if warnings := s.Warnings(); len(warnings) != 0 {
 					t.Fatalf("equal content warned: %+v", warnings)
 				}
@@ -1573,7 +1604,8 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		sh := s.shardFor(id)
 		sh.mu.RLock()
 		defer sh.mu.RUnlock()
-		if !sh.hidden[id] || !sh.retired[id] || sh.representativeLocked(id).Obj != nil {
+		child, owner := sh.representativeLocked(id)
+		if !sh.hidden[id] || !sh.retired[id] || child.Obj != nil || owner != (manifest.NamedResource{}) {
 			t.Errorf("%v hidden, retirement and representative disagree", id)
 		}
 		if slot := sh.slots[id]; slot != nil && (slot.visible.Load() || !slot.hidden.Load()) {

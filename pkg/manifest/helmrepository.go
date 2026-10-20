@@ -35,11 +35,12 @@ func (h *HelmRepository) SourceInterval() time.Duration { return h.Interval.Dura
 // Content returns the repository inputs that define HTTP acquisitions.
 func (h *HelmRepository) Content() any {
 	var auth []NamedResource
-	for _, ref := range []*LocalObjectReference{h.SecretRef, h.CertSecretRef} {
-		if ref != nil && ref.Name != "" {
-			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: h.Namespace, Name: ref.Name})
+	h.references(func(ref Reference) bool {
+		if ref.Content && ref.Name != "" {
+			auth = append(auth, ref.NamedResource)
 		}
-	}
+		return true
+	})
 	return struct {
 		URL             string
 		Auth            []NamedResource

@@ -121,13 +121,13 @@ func nativeInput(location string, paired []pairedResource) (ytbx.InputFile, erro
 		buf.WriteString("---\n")
 		buf.Write(raw)
 		*pos = len(input.Names)
-		name, ns := manifest.DocMetadata(m)
-		label := manifest.DocAPIVersion(m) + "/" + manifest.DocKind(m) + "/"
+		id := manifest.DocIdentity(m)
+		label := manifest.DocAPIVersion(m) + "/" + id.Kind + "/"
 		meta, _ := m["metadata"].(map[string]any)
 		if _, ok := meta["namespace"]; ok {
-			label += ns + "/"
+			label += id.Namespace + "/"
 		}
-		input.Names = append(input.Names, label+name)
+		input.Names = append(input.Names, label+id.Name)
 	}
 	if buf.Len() != 0 {
 		parsed, err := ytbx.LoadDocuments(buf.Bytes())

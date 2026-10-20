@@ -91,7 +91,7 @@ spec: {url: https://example.test/excluded.git}
 	st := store.New()
 	hr := &manifest.HelmRelease{
 		Name: "consumer", Namespace: "apps",
-		Chart:      manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoNamespace: "apps", RepoName: "chart"},
+		Chart:      manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}},
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}},
 	}
 	st.AddObject(hr)

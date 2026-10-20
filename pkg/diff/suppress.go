@@ -37,7 +37,7 @@ func (s Suppression) String() string {
 	if s.Count == 1 {
 		noun = "object"
 	}
-	label := strings.Replace(s.Parent.String(), "/", " ", 1)
+	label := s.Parent.KindLabel() + " " + s.Parent.NamespacedName()
 	reason := strings.Join(strings.Fields(s.Reason), " ")
 	if s.Side == SideBoth {
 		return fmt.Sprintf("%s: %d %s withheld; diff suppressed (%s)",

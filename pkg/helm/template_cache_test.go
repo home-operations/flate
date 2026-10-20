@@ -392,7 +392,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 			st, hr, dir := ociRenderFixture(t)
 			hr = hr.Clone()
 			hr.ChartRef = nil
-			hr.Chart.RepoKind = kind
+			hr.Chart.Source.Kind = kind
 			if kind == manifest.KindHelmChart {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: kind, Name: "podinfo"}
 			}
@@ -1007,7 +1007,7 @@ func sourceValuesCacheFixture(t *testing.T) (string, *store.Store, *manifest.Hel
 	assert.NoError(t, err)
 	admitted, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoNamespace: "apps", RepoName: "repo"}, ChartValuesFiles: []string{"config/prod.yaml"}, IgnoreMissingValuesFiles: true}
+	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}}, ChartValuesFiles: []string{"config/prod.yaml"}, IgnoreMissingValuesFiles: true}
 	st := store.New()
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: admitted.FS})
 	return root, st, hr

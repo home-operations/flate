@@ -11,11 +11,9 @@ import (
 // across renders; the returned release belongs to the caller.
 func Prepare(hr *manifest.HelmRelease, lookup manifest.HelmChartLookup, provider values.Provider, cache *values.Cache) (*manifest.HelmRelease, error) {
 	hr = hr.Clone()
-	chart := hr.Chart
 	if source := hr.ChartSource(); source.Name != "" {
-		chart.RepoGroup, chart.RepoKind, chart.RepoNamespace, chart.RepoName = source.Group, source.Kind, source.Namespace, source.Name
+		hr.Chart.Source = source
 	}
-	hr.Chart = chart
 	if err := hr.ResolveChartRef(lookup); err != nil {
 		return nil, err
 	}

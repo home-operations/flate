@@ -73,7 +73,7 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 		}
 		reader = ks
 	} else {
-		hr := &manifest.HelmRelease{Name: "reader", Namespace: "flux-system", Chart: manifest.HelmChart{Name: "chart", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoNamespace: manifest.BootstrapSourceID.Namespace, RepoName: manifest.BootstrapSourceID.Name}, ValuesFrom: []manifest.ValuesReference{{Kind: target.Kind, Name: target.Name, Optional: true}}}
+		hr := &manifest.HelmRelease{Name: "reader", Namespace: "flux-system", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: manifest.BootstrapSourceID.Namespace, Name: manifest.BootstrapSourceID.Name}}, ValuesFrom: []manifest.ValuesReference{{Kind: target.Kind, Name: target.Name, Optional: true}}}
 		if required {
 			hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: target.Kind, Name: "cluster-vars"})
 		}

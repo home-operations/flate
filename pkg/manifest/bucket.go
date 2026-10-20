@@ -40,11 +40,12 @@ func (b *Bucket) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
 // Content returns the source inputs for the effective bucket endpoint.
 func (b *Bucket) Content(endpoint string, secure bool) any {
 	var auth []NamedResource
-	for _, ref := range []*LocalObjectReference{b.SecretRef, b.CertSecretRef, b.ProxySecretRef} {
-		if ref != nil && ref.Name != "" {
-			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: b.Namespace, Name: ref.Name})
+	b.references(func(ref Reference) bool {
+		if ref.Content && ref.Name != "" {
+			auth = append(auth, ref.NamedResource)
 		}
-	}
+		return true
+	})
 	return struct {
 		Endpoint   string
 		Secure     bool

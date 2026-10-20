@@ -24,6 +24,8 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 		{"resource version", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "apps/v2", 1},
 		{"parent kind", manifest.HelmReleaseDomain, "OtherProducer", "ns", "a", "apps/v1", 2},
 		{"parent namespace", manifest.HelmReleaseDomain, "HelmRelease", "other", "a", "apps/v1", 2},
+		{"permissive resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "apps/v1/extra", 1},
+		{"core resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "v1", 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -52,8 +54,11 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 					want = right
 				}
 				group := "apps"
-				if want.Manifest["apiVersion"] == "example.test/v1" {
-					group = "example.test"
+				if c.Status != string(StatusRemoved) {
+					group, _, _ = strings.Cut(tt.apiVersion, "/")
+					if !strings.Contains(tt.apiVersion, "/") {
+						group = ""
+					}
 				}
 				if c.Parent != want.Parent.NamedResource || c.Resource != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}) {
 					t.Errorf("line change dropped identity: %+v", c)
@@ -153,7 +158,9 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			last.Parent.Path = "new/apps"
 			last.Manifest["apiVersion"] = "v2"
 			other := cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "ns"}, "other-side", "other-3")
-			left, right := []Doc{first, last}, []Doc{other}
+			foreign := cmDoc(parent, manifest.NamedResource{Name: "foreign", Namespace: "ns"}, "separate-group", "")
+			foreign.Manifest["apiVersion"] = "example.test/v1"
+			left, right := []Doc{first, last, foreign}, []Doc{other}
 			if side == "right" {
 				left, right = right, left
 			}
@@ -161,8 +168,16 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 				meta := m["metadata"].(map[string]any)
 				meta["name"], meta["namespace"] = "normalized", "normalized-ns"
 			}})
-			if len(pairs) != 1 {
-				t.Fatalf("expected one paired resource, got %d", len(pairs))
+			if len(pairs) != 2 {
+				t.Fatalf("expected two paired resources, got %d", len(pairs))
+			}
+			assert.Equal(t, pairs[1].resource, manifest.NamedResource{Group: "example.test", Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"})
+			foreignDoc, absent := pairs[1].a, pairs[1].b
+			if side == "right" {
+				foreignDoc, absent = absent, foreignDoc
+			}
+			if absent != nil || foreignDoc["data"].(map[string]any)["k"] != "separate-group" {
+				t.Fatal("cross-group duplicate changed pairing")
 			}
 			retained, counterpart := pairs[0].a, pairs[0].b
 			if side == "right" {
@@ -187,7 +202,7 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if strings.Count(logs.String(), "level=WARN") != 1 {
 				t.Fatalf("expected one duplicate warning, got %q", logs.String())
 			}
-			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v2", "kind=ConfigMap", "namespace=normalized-ns", "name=normalized"} {
+			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentGroup=kustomize.toolkit.fluxcd.io", "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v2", `group=""`, "kind=ConfigMap", "namespace=normalized-ns", "name=normalized"} {
 				if !strings.Contains(logs.String(), field) {
 					t.Errorf("warning missing %q: %s", field, logs.String())
 				}

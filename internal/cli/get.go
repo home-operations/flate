@@ -58,7 +58,7 @@ func newGetHRCmd() *cobra.Command {
 			source := o.ChartSource()
 			chart := o.Chart
 			if source.Name != "" {
-				chart.RepoName, chart.RepoNamespace = source.Name, source.Namespace
+				chart.Source = source
 			}
 			chartName := chart.ChartName()
 			version := o.Chart.Version

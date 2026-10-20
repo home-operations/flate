@@ -75,7 +75,7 @@ func (r TestReport) rosterBlock(color bool) string {
 	all := slices.Concat(r.Cases, r.Blocked)
 	kindW := 0
 	for _, c := range all {
-		kindW = max(kindW, len(kindLabel(c.ID)))
+		kindW = max(kindW, len(c.ID.KindLabel()))
 	}
 	rows := make([]string, len(all))
 	for i, c := range all {
@@ -89,7 +89,7 @@ func caseRow(c Case, kindW int, color bool) string {
 	var row strings.Builder
 	fmt.Fprintf(&row, "  %s  %s  %s",
 		paint(glyph, color),
-		Dim(fmt.Sprintf("%-*s", kindW, kindLabel(c.ID)), color),
+		Dim(fmt.Sprintf("%-*s", kindW, c.ID.KindLabel()), color),
 		c.ID.NamespacedName())
 	row.WriteString(MessageTail(c.Reason, Dim, color))
 	return row.String()

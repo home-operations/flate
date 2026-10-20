@@ -54,6 +54,26 @@ data:
 		t.Fatalf("NewClient: %v", err)
 	}
 	resolver := helm.NewStoreSourceResolver(st)
+	chart := &manifest.HelmChartSource{Name: "chart-repo", Namespace: "flux-system"}
+	st.AddObject(chart)
+	for _, tc := range []struct {
+		name string
+		id   manifest.NamedResource
+		want *manifest.HelmChartSource
+	}{
+		{"complete", chart.Named(), chart},
+		{"group", manifest.NamedResource{Group: "foreign.example", Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: chart.Name}, nil},
+		{"kind", gr.Named(), nil},
+		{"namespace", manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "other", Name: chart.Name}, nil},
+		{"name", manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: "other"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolver.HelmChart(tc.id); got != tc.want {
+				t.Fatalf("HelmChart(%+v) = %p, want %p", tc.id, got, tc.want)
+			}
+		})
+	}
 	foreign := gr.Named()
 	foreign.Group = "example.test"
 	foreignArtifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "foreign"}
@@ -65,13 +85,7 @@ data:
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 
 	out, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, helm.Options{})

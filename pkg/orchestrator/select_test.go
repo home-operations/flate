@@ -998,7 +998,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 				if kind == "" {
 					kind = manifest.KindOCIRepository
 				}
-				hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", Chart: manifest.HelmChart{Version: "9.9.9", RepoGroup: manifest.SourceDomain, RepoKind: kind, RepoNamespace: ns.namespace, RepoName: "chart"}}
+				hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", Chart: manifest.HelmChart{Version: "9.9.9", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: ns.namespace, Name: "chart"}}}
 				hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
 				run.store.AddObject(hr)
 				if !tc.absent {

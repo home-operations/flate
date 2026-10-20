@@ -533,7 +533,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		cli.SetSourceResolver(helm.NewStoreSourceResolver(st))
-		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", RepoGroup: alias.Named().Group, RepoKind: alias.Named().Kind, RepoName: alias.Name, RepoNamespace: alias.Namespace}}
+		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: alias.Named().Group, Kind: alias.Named().Kind, Name: alias.Name, Namespace: alias.Namespace}}}
 		for _, exists := range []bool{false, true, false} {
 			if exists {
 				testutil.WriteFile(t, root, "chart/templates/arrived/deep/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: arrived\n")

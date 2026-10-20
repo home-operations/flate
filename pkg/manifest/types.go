@@ -8,8 +8,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 // LocalObjectReference is a name-only reference to a same-namespace
@@ -62,13 +60,18 @@ func (n NamedResource) NamespacedName() string {
 	return n.Namespace + "/" + n.Name
 }
 
-// String displays "kind.group/namespace/name", omitting empty group and namespace.
-func (n NamedResource) String() string {
+// KindLabel returns "kind.group", omitting an empty group.
+func (n NamedResource) KindLabel() string {
 	kind := n.Kind
 	if n.Group != "" {
 		kind += "." + n.Group
 	}
-	return kind + "/" + n.NamespacedName()
+	return kind
+}
+
+// String displays "kind.group/namespace/name", omitting empty group and namespace.
+func (n NamedResource) String() string {
+	return n.KindLabel() + "/" + n.NamespacedName()
 }
 
 // Compare orders NamedResources by (kind, group, namespace, name), returning
@@ -242,34 +245,20 @@ func (r *RawObject) Clone() *RawObject {
 	return &out
 }
 
-// parseRawObject decodes any Kubernetes document into RawObject.
 func parseRawObject(doc map[string]any) (*RawObject, error) {
 	apiVersion := DocAPIVersion(doc)
-	if apiVersion == "" {
-		return nil, inputf("missing apiVersion")
-	}
-	gv, err := schema.ParseGroupVersion(apiVersion)
-	if err != nil || gv.Version == "" {
-		return nil, inputf("invalid %w", field.Invalid(field.NewPath("apiVersion"), apiVersion, "must have a valid version"))
+	if err := checkAPIVersion(doc, apiGroup(apiVersion)); err != nil {
+		return nil, err
 	}
 	kind := DocKind(doc)
 	if kind == "" {
 		return nil, inputf("missing kind")
 	}
-	metadata, _ := doc["metadata"].(map[string]any)
-	if metadata == nil {
-		return nil, inputf("missing metadata for %s", kind)
+	name, ns, missing := requireMetadata(doc)
+	if missing != "" {
+		return nil, inputf("missing %s for %s", missing, kind)
 	}
-	name, _ := metadata["name"].(string)
-	if name == "" {
-		return nil, inputf("missing metadata.name for %s", kind)
-	}
-	ns, _ := metadata["namespace"].(string)
 	spec, _ := doc["spec"].(map[string]any)
-	// Deep-copy the spec map so RawObject doesn't alias the loader's
-	// parsed YAML — mutating r.Spec then corrupts the multi-doc
-	// stream the loader reuses across passes. Cheap; spec sub-trees
-	// are small relative to chart-style HR.Values.
 	spec = DeepCopyMap(spec)
 	return &RawObject{
 		Kind:       kind,

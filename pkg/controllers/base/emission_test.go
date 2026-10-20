@@ -141,7 +141,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 					continue
 				}
 				value, ok, err := data.Value(key)
-				if !ok || err != nil || value != fmt.Sprintf(manifest.ValuePlaceholderTemplate, key) {
+				if !ok || err != nil || value != manifest.ValuePlaceholder(key) {
 					t.Fatalf("runtime key: %q %v %v", value, ok, err)
 				}
 				if key == "Y" {
@@ -500,7 +500,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}}
 	release := &manifest.HelmRelease{Name: "release", Namespace: "apps",
-		Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: "chart"}}
+		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
 		s.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonUnchanged, "unchanged")

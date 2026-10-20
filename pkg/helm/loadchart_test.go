@@ -63,7 +63,7 @@ func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
 				cli, err := NewClient(owner)
 				assert.NoError(t, err)
 				st := store.New()
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: location, RepoName: "repo", RepoNamespace: "default", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: location, Source: manifest.NamedResource{Name: "repo", Namespace: "default", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, LocalPath: root, Key: "untrusted"})
 				cli.SetSourceResolver(NewStoreSourceResolver(st))
 				var charts [callers]*chart.Chart
@@ -168,7 +168,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 	cli, err := NewClient(cachetest.New(t, "", cache.New))
 	assert.NoError(t, err)
 	st := store.New()
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: ".", RepoName: "repo", RepoNamespace: "default", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
+	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Name: "repo", Namespace: "default", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
 	canonical, err := cli.loadChart(t.Context(), hr)
@@ -240,7 +240,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 	assert.NoError(t, err)
 	st := store.New()
 	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	hr := &manifest.HelmRelease{Name: "first", Namespace: "default", Chart: manifest.HelmChart{Name: "one", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository, RepoName: "repo", RepoNamespace: "default"}}
+	hr := &manifest.HelmRelease{Name: "first", Namespace: "default", Chart: manifest.HelmChart{Name: "one", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo", Namespace: "default"}}}
 	var previous *chart.Chart
 	for _, id := range []string{"git-one", "git-two"} {
 		generation, _, err := owner.Git(t.Context(), cache.GitKey{Content: id}, cache.Policy{MaxAge: cache.Forever}, produce)
@@ -281,7 +281,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		rootChart, err := cli.loadChart(t.Context(), explicit)
 		assert.NoError(t, err)
 		auto := explicit.Clone()
-		auto.Chart.RepoKind = manifest.KindHelmChart
+		auto.Chart.Source.Kind = manifest.KindHelmChart
 		st.SetArtifact(auto.ChartSource(), art)
 		autoChart, err := cli.loadChart(t.Context(), auto)
 		assert.NoError(t, err)
@@ -314,7 +314,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 			assert.NoError(t, err)
 			st := store.New()
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: tc.kind, RepoName: "chart"}}
+			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "chart"}}}
 			if tc.kind == manifest.KindBucket {
 				hr.Chart.Name = "."
 				if tc.shape == "archive" {
@@ -372,7 +372,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				_, err = cli.loadChart(ctx, hr)
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 				explicit := hr.Clone()
-				explicit.Chart.RepoKind, explicit.Chart.Name = manifest.KindGitRepository, "."
+				explicit.Chart.Source.Kind, explicit.Chart.Name = manifest.KindGitRepository, "."
 				st.SetArtifact(explicit.ChartSource(), art)
 				if _, err := cli.loadChart(t.Context(), explicit); err == nil {
 					t.Fatal("explicit root reused a different chart selector")

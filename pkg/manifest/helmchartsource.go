@@ -78,7 +78,7 @@ func (h *HelmChartSource) references(yield func(Reference) bool) {
 	kind := cmp.Or(h.SourceRef.Kind, KindHelmRepository)
 	chart := helmChartFromSource(h)
 	var files []string
-	if chart.RepoGroup == SourceDomain && chart.UsesSourceValuesFiles() {
+	if chart.Source.Group == SourceDomain && chart.UsesSourceValuesFiles() {
 		files = h.ValuesFiles
 	}
 	yield(Reference{

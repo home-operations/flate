@@ -554,8 +554,22 @@ type ObjectLister interface {
 // Reverse admission retains discovery's scope; only named substitution inputs
 // extend it. Forward traversal also follows content dependencies.
 func appendReferences(dst []manifest.NamedResource, obj manifest.BaseManifest, reverse bool) []manifest.NamedResource {
-	for ref := range manifest.References(obj) {
-		if (!reverse && ref.Content) || (ref.Use == "substituteFrom" && ref.Name != "") {
+	include := func(ref manifest.Reference) bool {
+		return (!reverse && ref.Content) || (ref.Use == "substituteFrom" && ref.Name != "")
+	}
+	refs := manifest.References(obj)
+	prefixLen := len(dst)
+	for ref := range refs {
+		if include(ref) {
+			if len(dst) == cap(dst) {
+				count := prefixLen
+				for next := range refs {
+					if include(next) {
+						count++
+					}
+				}
+				dst = slices.Grow(dst, count-len(dst))
+			}
 			dst = append(dst, ref.NamedResource)
 		}
 	}

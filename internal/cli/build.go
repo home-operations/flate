@@ -90,9 +90,5 @@ func emissionDocs(mans []map[string]any, b *buildFlags) []map[string]any {
 }
 
 func compareDocs(a, b map[string]any) int {
-	an, ans := manifest.DocMetadata(a)
-	bn, bns := manifest.DocMetadata(b)
-	aid := (&manifest.RawObject{APIVersion: manifest.DocAPIVersion(a), Kind: manifest.DocKind(a), Namespace: ans, Name: an}).Named()
-	bid := (&manifest.RawObject{APIVersion: manifest.DocAPIVersion(b), Kind: manifest.DocKind(b), Namespace: bns, Name: bn}).Named()
-	return aid.Compare(bid)
+	return manifest.DocIdentity(a).Compare(manifest.DocIdentity(b))
 }

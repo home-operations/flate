@@ -22,7 +22,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 				}
 				owner := cachetest.New(b, root, sourcecache.New)
 				resolver := benchChartResolver(b, dir, os.DirFS(dir))
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository}}
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 				newClient := func() *Client {
 					cli, err := NewClient(owner)
 					if err != nil {

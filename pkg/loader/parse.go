@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"slices"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -30,9 +29,16 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 			r.cache[path] = cached
 		}
 	}
-	return slices.DeleteFunc(slices.Clone(out), func(obj manifest.BaseManifest) bool {
-		return !manifest.KindOf(obj).Tracked
-	}), err
+	if out == nil {
+		return nil, err
+	}
+	tracked := make([]manifest.BaseManifest, 0, len(out))
+	for _, obj := range out {
+		if manifest.KindOf(obj).Tracked {
+			tracked = append(tracked, obj)
+		}
+	}
+	return tracked, err
 }
 
 // Raw objects must be retained for producer scans when keepRaw is set.

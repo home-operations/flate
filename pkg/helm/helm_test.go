@@ -45,13 +45,7 @@ data:
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 
 	out, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, Options{})
@@ -85,9 +79,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	vals := map[string]any{
 		"image": map[string]any{"tag": "v1", "repository": "nginx"},
@@ -176,10 +168,7 @@ func localChartResolver(t *testing.T, name, namespace, dir string) SourceResolve
 func newHR() *manifest.HelmRelease {
 	return &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name: "mychart", RepoName: "chart-repo",
-			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 }
 

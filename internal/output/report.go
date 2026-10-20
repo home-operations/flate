@@ -86,7 +86,7 @@ func (m Model) failuresBlock(color bool) string {
 	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
 		row := fmt.Sprintf("  %s  %s  %s",
-			Fail(GlyphFail, color), Dim(kindLabel(p.ID), color), p.ID.NamespacedName()) +
+			Fail(GlyphFail, color), Dim(p.ID.KindLabel(), color), p.ID.NamespacedName()) +
 			MessageTail(p.Msg, nil, color)
 		if len(p.Blocks) > 0 {
 			row += "\n" + msgIndent + Dim("blocks "+summarize(p.Blocks), color)
@@ -95,7 +95,7 @@ func (m Model) failuresBlock(color bool) string {
 	}
 	for _, mr := range m.Missing {
 		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s\n%s%s",
-			Fail(GlyphFail, color), Dim(kindLabel(mr.ID), color), mr.ID.NamespacedName(),
+			Fail(GlyphFail, color), Dim(mr.ID.KindLabel(), color), mr.ID.NamespacedName(),
 			Fail("not found", color), msgIndent,
 			Dim("required by "+summarize(mr.RequiredBy), color)))
 	}
@@ -111,7 +111,7 @@ func WarningsBlock(warnings []manifest.Warning, color bool) string {
 	for _, wn := range warnings {
 		head := wn.Message
 		if wn.Resource != (manifest.NamedResource{}) {
-			head = kindLabel(wn.Resource) + " " + wn.Resource.NamespacedName() + ": " + wn.Message
+			head = wn.Resource.KindLabel() + " " + wn.Resource.NamespacedName() + ": " + wn.Message
 		}
 		if wn.Count > 1 {
 			head = fmt.Sprintf("%s (×%d)", head, wn.Count)
@@ -226,11 +226,6 @@ func Verdict(color bool, glyph string, elapsed time.Duration, counts ...Count) s
 	return b.String()
 }
 
-func kindLabel(id manifest.NamedResource) string {
-	kind, _, _ := strings.Cut(id.String(), "/")
-	return kind
-}
-
 // summarize caps an id list at blockedSample and includes kinds for ambiguous names.
 func summarize(ids []manifest.NamedResource) string {
 	names := make([]string, 0, len(ids))
@@ -242,7 +237,7 @@ func summarize(ids []manifest.NamedResource) string {
 	}
 	for i, name := range names {
 		if counts[name] > 1 {
-			names[i] = kindLabel(ids[i]) + " " + name
+			names[i] = ids[i].KindLabel() + " " + name
 		}
 	}
 	if len(names) <= blockedSample {

@@ -35,7 +35,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{
 		{Kind: KindConfigMap, Name: "shared"}, {Kind: "Unsupported"}, {Kind: KindSecret, Name: "shared"}, {Kind: KindConfigMap, Name: "shared", Optional: true}, {Kind: KindConfigMap, Name: "shared"},
 	}}
-	hr := &HelmRelease{Namespace: "authored", Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindOCIRepository, RepoName: "chart"}}
+	hr := &HelmRelease{Namespace: "authored", Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindOCIRepository, Name: "chart"}}}
 	hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}
 	hr.DependsOn = []helmv2.DependencyReference{{Name: "parent"}}
 	hr.ValuesFrom = []ValuesReference{{Kind: KindConfigMap, Name: "vars", Optional: true}}
@@ -143,7 +143,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		})
 	}
 	hr = hr.WithNamespace("effective").(*HelmRelease)
-	hr.Chart = HelmChart{RepoGroup: SourceDomain, RepoKind: KindGitRepository, RepoName: "resolved"}
+	hr.Chart = HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "resolved"}}
 	hr.ChartValuesFiles = []string{"./config/prod.yaml"}
 	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true, Files: hr.ChartValuesFiles}})
 	assert.Equal(t, r.InputsFrom[0].Kind, "Unsupported")
@@ -153,17 +153,20 @@ func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace, want, apiVersion, group string
+		kind, version                            string
 		resolve                                  bool
 	}{
-		{"inherited namespace", "", "effective", "", SourceDomain, true},
-		{"explicit namespace", "other", "other", "", SourceDomain, true},
-		{"explicit source group", "", "effective", SourceDomain + "/v1", SourceDomain, true},
-		{"explicit core group", "", "effective", "v1", "", false},
-		{"foreign group", "", "effective", "foreign.example/v1", "foreign.example", false},
+		{"inherited namespace", "", "effective", "", SourceDomain, KindHelmChart, "", true},
+		{"explicit namespace", "other", "other", "", SourceDomain, KindHelmChart, "", true},
+		{"explicit source group", "", "effective", SourceDomain + "/v1", SourceDomain, KindHelmChart, "", true},
+		{"explicit core group", "", "effective", "v1", "", KindHelmChart, "", false},
+		{"foreign group", "", "effective", "foreign.example/v1", "foreign.example", KindHelmChart, "", false},
+		{"non-chart kind", "", "effective", "", SourceDomain, KindOCIRepository, "", false},
+		{"already versioned", "", "effective", "", SourceDomain, KindHelmChart, "1.2.3", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ref := map[string]any{"kind": KindHelmChart, "name": "chart", "namespace": tc.namespace}
+			ref := map[string]any{"kind": tc.kind, "name": "chart", "namespace": tc.namespace}
 			if tc.apiVersion != "" {
 				ref["apiVersion"] = tc.apiVersion
 			}
@@ -176,20 +179,26 @@ func TestResolveChartRef_EffectiveNamespace(t *testing.T) {
 				t.Fatal(err)
 			}
 			hr := obj.(*HelmRelease)
+			hr.Chart.Version = tc.version
+			assert.Equal(t, hr.Chart.Source.Namespace, tc.namespace)
 			projected := hr.WithNamespace("effective").(*HelmRelease)
 			before := projected.Chart
-			assert.Equal(t, projected.ChartSource(), NamedResource{Group: tc.group, Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
+			assert.Equal(t, projected.ChartSource(), NamedResource{Group: tc.group, Kind: tc.kind, Namespace: tc.want, Name: "chart"})
 			called := false
-			if err := projected.ResolveChartRef(func(ns, name string) *HelmChartSource {
+			if err := projected.ResolveChartRef(func(id NamedResource) *HelmChartSource {
 				called = true
-				assert.Equal(t, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: ns, Name: name}, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
-				return &HelmChartSource{Namespace: ns, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindHelmRepository, Name: name}}
+				assert.Equal(t, id, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: tc.want, Name: "chart"})
+				return &HelmChartSource{Namespace: id.Namespace, Chart: "resolved", ValuesFiles: []string{"values.yaml"}, IgnoreMissingValuesFiles: true, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindHelmRepository, Name: id.Name}}
 			}); err != nil {
 				t.Fatal(err)
 			}
 			assert.Equal(t, called, tc.resolve)
 			if tc.resolve {
 				assert.Equal(t, projected.ChartSource(), NamedResource{Group: SourceDomain, Kind: KindHelmRepository, Namespace: tc.want, Name: "chart"})
+				assert.Equal(t, projected.Chart.Name, "resolved")
+				assert.Equal(t, projected.Chart.Version, "")
+				assert.Diff(t, projected.ChartValuesFiles, []string{"values.yaml"})
+				assert.Equal(t, projected.IgnoreMissingValuesFiles, true)
 			} else {
 				assert.Equal(t, projected.Chart, before)
 			}
@@ -210,6 +219,116 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 		{Kind: KindSecret, Namespace: "effective", Name: "cert", Use: "certSecretRef", Position: 1, Content: true},
 		{Kind: KindSecret, Namespace: "effective", Name: "proxy", Use: "proxySecretRef", Position: 2, Content: true},
 	})
+	for _, tc := range []struct {
+		name    string
+		content func(*LocalObjectReference, *LocalObjectReference, *LocalObjectReference) any
+		cases   []struct {
+			name                string
+			secret, cert, proxy *LocalObjectReference
+			want                string
+		}
+	}{
+		{name: "GitRepository", content: func(secret, _, proxy *LocalObjectReference) any {
+			g := &GitRepository{Namespace: "effective"}
+			g.SecretRef = secret
+			g.ProxySecretRef = proxy
+			g.URL = "git-url"
+			g.Ignore = new("ignored")
+			g.SparseCheckout = []string{"apps"}
+			g.RecurseSubmodules = true
+			g.Verification = &sourcev1.GitRepositoryVerification{SecretRef: LocalObjectReference{Name: "verification"}}
+			return g.Content(sourcev1.GitRepositoryRef{Branch: "main"})
+		}, cases: []struct {
+			name                string
+			secret, cert, proxy *LocalObjectReference
+			want                string
+		}{
+			{"none", nil, nil, nil, `{"URL":"git-url","Ref":{"branch":"main"},"Auth":null,"Ignore":"ignored","SparseCheckout":["apps"],"RecurseSubmodules":true}`},
+			{"secret", &LocalObjectReference{Name: "auth"}, nil, nil, `{"URL":"git-url","Ref":{"branch":"main"},"Auth":[{"kind":"Secret","namespace":"effective","name":"auth"}],"Ignore":"ignored","SparseCheckout":["apps"],"RecurseSubmodules":true}`},
+			{"proxy", nil, nil, &LocalObjectReference{Name: "proxy"}, `{"URL":"git-url","Ref":{"branch":"main"},"Auth":[{"kind":"Secret","namespace":"effective","name":"proxy"}],"Ignore":"ignored","SparseCheckout":["apps"],"RecurseSubmodules":true}`},
+			{"all", &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}, `{"URL":"git-url","Ref":{"branch":"main"},"Auth":[{"kind":"Secret","namespace":"effective","name":"auth"},{"kind":"Secret","namespace":"effective","name":"proxy"}],"Ignore":"ignored","SparseCheckout":["apps"],"RecurseSubmodules":true}`},
+			{"duplicates", &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, `{"URL":"git-url","Ref":{"branch":"main"},"Auth":[{"kind":"Secret","namespace":"effective","name":"shared"},{"kind":"Secret","namespace":"effective","name":"shared"}],"Ignore":"ignored","SparseCheckout":["apps"],"RecurseSubmodules":true}`},
+			{"empty names", &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, `{"URL":"git-url","Ref":{"branch":"main"},"Auth":null,"Ignore":"ignored","SparseCheckout":["apps"],"RecurseSubmodules":true}`},
+		}},
+		{name: "OCIRepository", content: func(secret, cert, proxy *LocalObjectReference) any {
+			o := &OCIRepository{Namespace: "effective"}
+			o.SecretRef = secret
+			o.CertSecretRef = cert
+			o.ProxySecretRef = proxy
+			o.URL = "oci-url"
+			o.Ignore = new("ignored")
+			o.Insecure = true
+			o.LayerSelector = &OCILayerSelector{MediaType: "media", Operation: "copy"}
+			o.Verify = &sourcev1.OCIRepositoryVerification{Provider: "cosign", SecretRef: &LocalObjectReference{Name: "verification"}}
+			return o.Content(sourcev1.OCIRepositoryRef{Tag: "v1"})
+		}, cases: []struct {
+			name                string
+			secret, cert, proxy *LocalObjectReference
+			want                string
+		}{
+			{"none", nil, nil, nil, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":null,"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+			{"secret", &LocalObjectReference{Name: "auth"}, nil, nil, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":[{"kind":"Secret","namespace":"effective","name":"auth"}],"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+			{"cert", nil, &LocalObjectReference{Name: "cert"}, nil, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":[{"kind":"Secret","namespace":"effective","name":"cert"}],"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+			{"proxy", nil, nil, &LocalObjectReference{Name: "proxy"}, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":[{"kind":"Secret","namespace":"effective","name":"proxy"}],"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+			{"all", &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":[{"kind":"Secret","namespace":"effective","name":"auth"},{"kind":"Secret","namespace":"effective","name":"cert"},{"kind":"Secret","namespace":"effective","name":"proxy"}],"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+			{"duplicates", &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":[{"kind":"Secret","namespace":"effective","name":"shared"},{"kind":"Secret","namespace":"effective","name":"shared"},{"kind":"Secret","namespace":"effective","name":"shared"}],"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+			{"empty names", &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, `{"URL":"oci-url","Ref":{"tag":"v1"},"Auth":null,"Insecure":true,"LayerSelector":{"mediaType":"media","operation":"copy"},"Ignore":"ignored"}`},
+		}},
+		{name: "HelmRepository", content: func(secret, cert, _ *LocalObjectReference) any {
+			h := &HelmRepository{Namespace: "effective"}
+			h.SecretRef = secret
+			h.CertSecretRef = cert
+			h.URL = "helm-url"
+			h.PassCredentials = true
+			return h.Content()
+		}, cases: []struct {
+			name                string
+			secret, cert, proxy *LocalObjectReference
+			want                string
+		}{
+			{"none", nil, nil, nil, `{"URL":"helm-url","Auth":null,"PassCredentials":true}`},
+			{"secret", &LocalObjectReference{Name: "auth"}, nil, nil, `{"URL":"helm-url","Auth":[{"kind":"Secret","namespace":"effective","name":"auth"}],"PassCredentials":true}`},
+			{"cert", nil, &LocalObjectReference{Name: "cert"}, nil, `{"URL":"helm-url","Auth":[{"kind":"Secret","namespace":"effective","name":"cert"}],"PassCredentials":true}`},
+			{"all", &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}, `{"URL":"helm-url","Auth":[{"kind":"Secret","namespace":"effective","name":"auth"},{"kind":"Secret","namespace":"effective","name":"cert"}],"PassCredentials":true}`},
+			{"duplicates", &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, `{"URL":"helm-url","Auth":[{"kind":"Secret","namespace":"effective","name":"shared"},{"kind":"Secret","namespace":"effective","name":"shared"}],"PassCredentials":true}`},
+			{"empty names", &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, `{"URL":"helm-url","Auth":null,"PassCredentials":true}`},
+		}},
+		{name: "Bucket", content: func(secret, cert, proxy *LocalObjectReference) any {
+			b := &Bucket{Namespace: "effective"}
+			b.SecretRef = secret
+			b.CertSecretRef = cert
+			b.ProxySecretRef = proxy
+			b.BucketName, b.Prefix, b.Region = "bucket", "prefix", "region"
+			return b.Content("endpoint", true)
+		}, cases: []struct {
+			name                string
+			secret, cert, proxy *LocalObjectReference
+			want                string
+		}{
+			{"none", nil, nil, nil, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":null}`},
+			{"secret", &LocalObjectReference{Name: "auth"}, nil, nil, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":[{"kind":"Secret","namespace":"effective","name":"auth"}]}`},
+			{"cert", nil, &LocalObjectReference{Name: "cert"}, nil, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":[{"kind":"Secret","namespace":"effective","name":"cert"}]}`},
+			{"proxy", nil, nil, &LocalObjectReference{Name: "proxy"}, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":[{"kind":"Secret","namespace":"effective","name":"proxy"}]}`},
+			{"all", &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":[{"kind":"Secret","namespace":"effective","name":"auth"},{"kind":"Secret","namespace":"effective","name":"cert"},{"kind":"Secret","namespace":"effective","name":"proxy"}]}`},
+			{"duplicates", &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, &LocalObjectReference{Name: "shared"}, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":[{"kind":"Secret","namespace":"effective","name":"shared"},{"kind":"Secret","namespace":"effective","name":"shared"},{"kind":"Secret","namespace":"effective","name":"shared"}]}`},
+			{"empty names", &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, &LocalObjectReference{Name: ""}, `{"Endpoint":"endpoint","Secure":true,"BucketName":"bucket","Prefix":"prefix","Region":"region","Auth":null}`},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, c := range tc.cases {
+				t.Run(c.name, func(t *testing.T) {
+					t.Parallel()
+					content := tc.content(c.secret, c.cert, c.proxy)
+					got, err := json.Marshal(content)
+					assert.NoError(t, err)
+					assert.Equal(t, string(got), c.want)
+					assert.Equal(t, Fingerprint(content), Fingerprint(json.RawMessage(c.want)))
+				})
+			}
+		})
+	}
+
 }
 
 func TestReferences_NoAllocations(t *testing.T) {
@@ -227,7 +346,7 @@ func TestReferences_NoAllocations(t *testing.T) {
 		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(136))
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
-	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindGitRepository, RepoName: "source"}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
+	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "source"}}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf(obj) }), float64(0))
 			count := 0
@@ -270,18 +389,17 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 					switch form {
 					case "inline":
 						hr := &HelmRelease{Namespace: "authored", Chart: helmChartFromSource(chart), ChartValuesFiles: files}
-						hr.Chart.RepoNamespace = ""
+						hr.Chart.Source.Namespace = ""
 						hr.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
 							SourceRef: helmv2.CrossNamespaceObjectReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: "source"},
 						}}
 						obj = hr.WithNamespace("effective")
 					case "resolved":
-						hr := &HelmRelease{Namespace: "effective", Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindHelmChart, RepoName: "chart"}}
+						hr := &HelmRelease{Namespace: "effective", Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindHelmChart, Name: "chart"}}}
 						hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: KindHelmChart, Name: "chart"}
-						assert.NoError(t, hr.ResolveChartRef(func(ns, name string) *HelmChartSource {
-							assert.Equal(t, ns, "effective")
-							assert.Equal(t, name, "chart")
-							return chart.WithNamespace(ns).(*HelmChartSource)
+						assert.NoError(t, hr.ResolveChartRef(func(id NamedResource) *HelmChartSource {
+							assert.Equal(t, id, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "effective", Name: "chart"})
+							return chart.WithNamespace(id.Namespace).(*HelmChartSource)
 						}))
 						obj = hr
 					case "standalone":

@@ -163,13 +163,13 @@ func buildHTMLResource(p LineChange, hl *highlighter) htmlResource {
 	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
 	ah, bh := highlightPair(a, b, groups, hl)
-	parent := kindLabel(p.Parent) + " " + p.Parent.NamespacedName()
+	parent := p.Parent.KindLabel() + " " + p.Parent.NamespacedName()
 	if p.ParentPath != "" {
 		parent += " (" + p.ParentPath + ")"
 	}
 	res := htmlResource{
-		Title:  kindLabel(p.Resource) + " " + p.Resource.NamespacedName(),
-		Kind:   kindLabel(p.Resource),
+		Title:  p.Resource.KindLabel() + " " + p.Resource.NamespacedName(),
+		Kind:   p.Resource.KindLabel(),
 		Name:   p.Resource.NamespacedName(),
 		Parent: parent,
 		Status: p.Status,

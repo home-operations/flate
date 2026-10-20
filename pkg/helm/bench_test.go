@@ -55,13 +55,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
@@ -91,13 +85,7 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
@@ -185,13 +173,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
@@ -240,13 +222,7 @@ func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "chart-repo",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	ctx := context.Background()
 	if _, err := cli.loadChart(ctx, hr); err != nil {

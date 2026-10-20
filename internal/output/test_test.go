@@ -165,7 +165,7 @@ func TestEncoder_TestMultilineColorAndNotes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			color := tc.color
-			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim(kindLabel(root), color) + "  ns/root  " + Dim("first", color) +
+			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization.kustomize.toolkit.fluxcd.io", color) + "  ns/root  " + Dim("first", color) +
 				"\n         " + Dim("second", color) + "\n         " + Dim("third", color) +
 				"\n  " + Dim(GlyphBlocked, color) + "  " + Dim("HelmRelease.helm.toolkit.fluxcd.io       ", color) + "  ns/child  " + Dim("blocked by ns/root", color) +
 				"\n\n  " + Warn("⚠ warnings (1)", color) + "\n    " + Warn("advisory (×2)", color) +

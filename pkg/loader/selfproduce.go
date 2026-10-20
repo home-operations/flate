@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -563,7 +562,7 @@ func (b *selfProduceBuilder) synthesizePlaceholderSecret(target manifest.NamedRe
 	}
 	stringData := make(map[string]any, len(keys))
 	for _, k := range keys {
-		stringData[k] = fmt.Sprintf(manifest.ValuePlaceholderTemplate, k)
+		stringData[k] = manifest.ValuePlaceholder(k)
 	}
 	b.secrets[target] = &manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: stringData}
 }

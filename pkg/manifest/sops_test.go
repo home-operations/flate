@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestIsEncryptedSecret(t *testing.T) {
+func TestEncryptedSecret_Classification(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -61,8 +61,8 @@ func TestIsEncryptedSecret(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := IsEncryptedSecret(tc.doc); got != tc.want {
-				t.Errorf("IsEncryptedSecret = %v, want %v", got, tc.want)
+			if got := isEncryptedSecret(tc.doc); got != tc.want {
+				t.Errorf("isEncryptedSecret = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -89,6 +89,24 @@ func TestWipeValue_Ciphertext(t *testing.T) {
 			t.Parallel()
 			if got := WipeValue("key", tc.in, nil, false) != tc.in; got != tc.want {
 				t.Errorf("WipeValue(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name, value, want string
+		encoding          *base64.Encoding
+		encrypted         bool
+	}{
+		{"plaintext ciphertext", "ENC[AES256_GCM,data:abc]", "..PLACEHOLDER_key..", nil, false},
+		{"encoded ciphertext", "RU5DW0FFUzI1Nl9HQ00sZGF0YTphYmNd", "Li5QTEFDRUhPTERFUl9rZXkuLg==", base64.StdEncoding, false},
+		{"encoded malformed", "malformed!", "malformed!", base64.StdEncoding, false},
+		{"marked plaintext", "short", "..PLACEHOLDER_key..", nil, true},
+		{"marked encoded", "short", "Li5QTEFDRUhPTERFUl9rZXkuLg==", base64.StdEncoding, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := WipeValue("key", tc.value, tc.encoding, tc.encrypted); got != tc.want {
+				t.Fatalf("wiped = %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -83,10 +83,8 @@ type pairKey struct {
 func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
 	add := func(side string, d Doc, chart string, pos int) {
-		kind := manifest.DocKind(d.Manifest)
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
-		name, ns := manifest.DocMetadata(d.Manifest)
-		resource := (&manifest.RawObject{APIVersion: apiVersion, Kind: kind, Namespace: ns, Name: name}).Named()
+		resource := manifest.DocIdentity(d.Manifest)
 		k := pairKey{d.Parent.NamedResource, resource}
 		p, ok := idx[k]
 		if !ok {
@@ -104,7 +102,7 @@ func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 				"side", side, "parentGroup", d.Parent.Group, "parentKind", d.Parent.Kind,
 				"parentNamespace", d.Parent.Namespace, "parentName", d.Parent.Name,
 				"parentPath", d.Parent.Path, "apiVersion", apiVersion,
-				"group", resource.Group, "kind", kind, "namespace", ns, "name", name)
+				"group", resource.Group, "kind", resource.Kind, "namespace", resource.Namespace, "name", resource.Name)
 		}
 		*dst, *dstChart, *dstPos = d.Manifest, chart, pos
 	}

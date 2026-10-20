@@ -22,7 +22,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			t.Parallel()
 			st, hr, dir := ociRenderFixture(t)
 			hr = hr.Clone()
-			hr.Chart.RepoKind = kind
+			hr.Chart.Source.Kind = kind
 			if kind != manifest.KindOCIRepository {
 				hr.ChartRef = nil
 			}
@@ -47,7 +47,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	st, hr, first := ociRenderFixture(t)
 	hr = hr.Clone()
 	hr.ChartRef = nil
-	hr.Chart.RepoKind = manifest.KindGitRepository
+	hr.Chart.Source.Kind = manifest.KindGitRepository
 	second := t.TempDir()
 	writeChartFiles(t, second, "podinfo", "6.15.0")
 	testutil.WriteFile(t, second, "prod.yaml", "marker: second\n")
@@ -82,7 +82,7 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			t.Parallel()
 			st, hr, dir := ociRenderFixture(t)
 			hr = hr.Clone()
-			hr.Chart.RepoKind = kind
+			hr.Chart.Source.Kind = kind
 			if kind == manifest.KindGitRepository {
 				hr.ChartRef = nil
 			}

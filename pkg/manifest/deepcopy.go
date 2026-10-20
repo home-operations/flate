@@ -106,7 +106,7 @@ func fillEmptyLeaf(node any, name, path string, paths *[]string) any {
 	}
 	if node == nil || node == "" {
 		*paths = append(*paths, path)
-		return fmt.Sprintf(ValuePlaceholderTemplate, name)
+		return ValuePlaceholder(name)
 	}
 	return node
 }

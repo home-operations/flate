@@ -17,22 +17,18 @@ type HelmChart struct {
 	// Name is the chart name within the source repository.
 	Name string `json:"name" yaml:"name"`
 	// Version is omitted from output for tidy diffs but kept in memory.
-	Version string `json:"-" yaml:"-"`
-	// RepoGroup, RepoKind, RepoNamespace and RepoName identify the sourceRef.
-	RepoGroup     string `json:"repoGroup,omitempty" yaml:"repoGroup,omitempty"`
-	RepoName      string `json:"repoName" yaml:"repoName"`
-	RepoNamespace string `json:"repoNamespace" yaml:"repoNamespace"`
-	RepoKind      string `json:"repoKind" yaml:"repoKind"`
+	Version string        `json:"-" yaml:"-"`
+	Source  NamedResource `json:"source" yaml:"source"`
 }
 
 // UsesSourceValuesFiles reports whether values files are relative to the source artifact root.
 func (h HelmChart) UsesSourceValuesFiles() bool {
-	return h.RepoKind == KindGitRepository || h.RepoKind == KindBucket
+	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket
 }
 
-// RepoFullName is "<namespace>-<name>" — the canonical id of the source.
+// RepoFullName returns the source namespace-name display label.
 func (h HelmChart) RepoFullName() string {
-	return h.RepoNamespace + "-" + h.RepoName
+	return h.Source.Namespace + "-" + h.Source.Name
 }
 
 // ChartName is "<repoFullName>/<chartName>" — used as the helm chart ref.
@@ -40,9 +36,6 @@ func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
 
-// chartFromHelmRelease projects the chart reference out of a typed
-// HelmRelease spec, unifying spec.chartRef and spec.chart into one
-// shape while preserving authored reference namespaces.
 func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
 	if ref := spec.ChartRef; ref != nil {
 		if ref.Kind == "" {
@@ -54,12 +47,10 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
 		// A chartRef name identifies the source, not the chart inside it.
 		// ResolveChartRef reads the chart name from a HelmChartSource;
 		// other source kinds determine it from their artifact's layout.
-		return HelmChart{
-			RepoGroup:     referenceGroup(ref.Kind, ref.APIVersion),
-			RepoName:      ref.Name,
-			RepoNamespace: ref.Namespace,
-			RepoKind:      ref.Kind,
-		}, nil
+		return HelmChart{Source: NamedResource{
+			Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind,
+			Namespace: ref.Namespace, Name: ref.Name,
+		}}, nil
 	}
 	tmpl := spec.Chart
 	if tmpl == nil {
@@ -74,27 +65,21 @@ func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
 		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.sourceRef.name")
 	}
 	return HelmChart{
-		Name:          chartName,
-		Version:       tmpl.Spec.Version,
-		RepoGroup:     referenceGroup(cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository), tmpl.Spec.SourceRef.APIVersion),
-		RepoName:      srcName,
-		RepoNamespace: tmpl.Spec.SourceRef.Namespace,
-		RepoKind:      cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository),
+		Name: chartName, Version: tmpl.Spec.Version,
+		Source: NamedResource{
+			Group: referenceGroup(cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository), tmpl.Spec.SourceRef.APIVersion),
+			Kind:  cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository), Namespace: tmpl.Spec.SourceRef.Namespace, Name: srcName,
+		},
 	}, nil
 }
 
-// helmChartFromSource constructs a HelmChart from a resolved
-// HelmChartSource. The Repo* fields are read from the embedded
-// SourceRef (which always shares the HelmChart's namespace per Flux
-// schema).
 func helmChartFromSource(src *HelmChartSource) HelmChart {
 	return HelmChart{
-		Name:          src.Chart,
-		Version:       src.Version,
-		RepoGroup:     referenceGroup(cmp.Or(src.SourceRef.Kind, KindHelmRepository), src.SourceRef.APIVersion),
-		RepoName:      src.SourceRef.Name,
-		RepoNamespace: src.Namespace,
-		RepoKind:      cmp.Or(src.SourceRef.Kind, KindHelmRepository),
+		Name: src.Chart, Version: src.Version,
+		Source: NamedResource{
+			Group: referenceGroup(cmp.Or(src.SourceRef.Kind, KindHelmRepository), src.SourceRef.APIVersion),
+			Kind:  cmp.Or(src.SourceRef.Kind, KindHelmRepository), Namespace: src.Namespace, Name: src.SourceRef.Name,
+		},
 	}
 }
 
@@ -230,30 +215,17 @@ func (h *HelmRelease) ChartSource() NamedResource {
 	return source
 }
 
-// HelmChartLookup returns the HelmChartSource at (namespace, name) or
-// nil when not present. The shape ResolveChartRef accepts so callers
-// can pass either a SourceResolver method (orchestrator path) or a
-// custom lookup (embedders with their own source registry).
-type HelmChartLookup func(namespace, name string) *HelmChartSource
+// HelmChartLookup returns the HelmChartSource at the full identity, or nil when absent.
+type HelmChartLookup func(NamedResource) *HelmChartSource
 
-// ResolveChartRef replaces a chartRef placeholder with the resolved
-// source. When the chartRef resolves to a HelmChart CRD, its
-// spec.valuesFiles + spec.ignoreMissingValuesFiles propagate onto the
-// HelmRelease so the rendering pipeline can merge them ahead of
-// HR.Values.
-//
-// The chart rewrite is unconditional once we find the source — even
-// when the HelmChart CRD has no spec.version, we need RepoKind to flip
-// from KindHelmChart to the underlying real source (HelmRepository /
-// OCIRepository / GitRepository) so downstream chart loading can
-// dispatch. Without it, chart loading would see RepoKind=HelmChart and
-// fall through with an "unsupported chart repo kind" error.
+// ResolveChartRef replaces an unresolved HelmChart reference and propagates its values files.
+// Versionless HelmCharts MUST resolve to their underlying source for acquisition.
 func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
-	if h.Chart.RepoKind != KindHelmChart || h.Chart.RepoGroup != kindTable[kindHelmChartSource].Group || h.Chart.Version != "" {
+	if h.Chart.Source.Kind != KindHelmChart || h.Chart.Source.Group != kindTable[kindHelmChartSource].Group || h.Chart.Version != "" {
 		return nil
 	}
 	id := h.ChartSource()
-	src := lookup(id.Namespace, id.Name)
+	src := lookup(id)
 	if src == nil {
 		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
 			ErrObjectNotFound, id.NamespacedName(), h.Named().NamespacedName())
@@ -335,7 +307,7 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 }
 
 func (h *HelmRelease) references(yield func(Reference) bool) {
-	source := Resolve(NamedResource{Group: h.Chart.RepoGroup, Kind: h.Chart.RepoKind, Namespace: h.Chart.RepoNamespace, Name: h.Chart.RepoName}, "", h.Namespace)
+	source := Resolve(h.Chart.Source, "", h.Namespace)
 	var files []string
 	if source.Group == SourceDomain && h.Chart.UsesSourceValuesFiles() {
 		files = h.ChartValuesFiles

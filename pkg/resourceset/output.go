@@ -9,10 +9,11 @@ import (
 
 // DedupKey identifies a document by its authored API group, kind, namespace and name.
 func DedupKey(doc map[string]any) manifest.NamedResource {
-	kind := manifest.DocKind(doc)
-	name, ns := manifest.DocMetadata(doc)
-	gv, _ := schema.ParseGroupVersion(manifest.DocAPIVersion(doc))
-	return manifest.NamedResource{Group: gv.Group, Kind: kind, Namespace: ns, Name: name}
+	id := manifest.DocIdentity(doc)
+	if _, err := schema.ParseGroupVersion(manifest.DocAPIVersion(doc)); err != nil {
+		id.Group = ""
+	}
+	return id
 }
 
 func applyCommonMetadata(doc map[string]any, cm *fluxopv1.CommonMetadata) {

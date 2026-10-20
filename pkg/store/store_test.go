@@ -35,31 +35,42 @@ func TestStore_AddObject_ContentDedup(t *testing.T) {
 	} {
 		t.Run(insert.name, func(t *testing.T) {
 			t.Parallel()
-			for _, distinct := range []bool{false, true} {
-				t.Run(fmt.Sprintf("distinct=%t", distinct), func(t *testing.T) {
-					t.Parallel()
-					s := New()
-					obj := &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Namespace: "ns", Spec: map[string]any{"replicas": 1}}
-					seen := 0
-					s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
-						seen++
-						if s.GetObject(id) == nil {
-							t.Error("listener cannot see rendered object")
+			for _, tc := range []struct {
+				name      string
+				newObject func(string) manifest.BaseManifest
+			}{
+				{"raw", func(value string) manifest.BaseManifest {
+					return &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: "app", Namespace: "ns", Spec: map[string]any{"replicas": value}}
+				}},
+				{"typed", func(value string) manifest.BaseManifest {
+					return &manifest.ConfigMap{Name: "app", Namespace: "ns", Data: map[string]any{"value": value}}
+				}},
+			} {
+				for _, distinct := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/distinct=%t", tc.name, distinct), func(t *testing.T) {
+						t.Parallel()
+						s := New()
+						obj := tc.newObject("1")
+						seen := 0
+						s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+							seen++
+							if s.GetObject(id) == nil {
+								t.Error("listener cannot see rendered object")
+							}
+						}, false)
+						insert.add(s, obj)
+						equal := obj
+						if distinct {
+							equal = tc.newObject("1")
 						}
-					}, false)
-					insert.add(s, obj)
-					equal := obj
-					if distinct {
-						equal = obj.Clone()
-					}
-					insert.add(s, equal)
-					assert.Equal(t, seen, 1)
-					changed := obj.Clone()
-					changed.Spec["replicas"] = 2
-					insert.add(s, changed)
-					assert.Equal(t, seen, 2)
-					assert.Equal(t, s.GetObject(obj.Named()), manifest.BaseManifest(changed))
-				})
+						insert.add(s, equal)
+						assert.Equal(t, seen, 1)
+						changed := tc.newObject("2")
+						insert.add(s, changed)
+						assert.Equal(t, seen, 2)
+						assert.Equal(t, s.GetObject(obj.Named()), changed)
+					})
+				}
 			}
 		})
 	}

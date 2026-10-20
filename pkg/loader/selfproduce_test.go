@@ -694,7 +694,7 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 		t.Fatal("app-secret was not synthesized from its declared keys")
 	}
 	for _, k := range []string{"HOST", "TOKEN"} {
-		if want := fmt.Sprintf(manifest.ValuePlaceholderTemplate, k); got.StringData[k] != want {
+		if want := manifest.ValuePlaceholder(k); got.StringData[k] != want {
 			t.Errorf("app-secret stringData[%s] = %v, want %q", k, got.StringData[k], want)
 		}
 	}
@@ -751,7 +751,7 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 	if got == nil {
 		t.Fatal("SOPS cluster-secrets was not materialized into the store")
 	}
-	if want := fmt.Sprintf(manifest.ValuePlaceholderTemplate, "SECRET_DOMAIN"); got.StringData["SECRET_DOMAIN"] != want {
+	if want := manifest.ValuePlaceholder("SECRET_DOMAIN"); got.StringData["SECRET_DOMAIN"] != want {
 		t.Errorf("materialized SECRET_DOMAIN = %v, want %q", got.StringData["SECRET_DOMAIN"], want)
 	}
 	if obj := s.GetObject(secretID("flux-system", "plain-secret")); obj != nil {

@@ -34,11 +34,12 @@ func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 // Content returns the source inputs that define the selected Git content.
 func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 	var auth []NamedResource
-	for _, ref := range []*LocalObjectReference{g.SecretRef, g.ProxySecretRef} {
-		if ref != nil && ref.Name != "" {
-			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: g.Namespace, Name: ref.Name})
+	g.references(func(ref Reference) bool {
+		if ref.Content && ref.Name != "" {
+			auth = append(auth, ref.NamedResource)
 		}
-	}
+		return true
+	})
 	ignore := ""
 	if g.Ignore != nil {
 		ignore = *g.Ignore
@@ -161,11 +162,12 @@ func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 // Content returns the source inputs that define the selected OCI content.
 func (o *OCIRepository) Content(ref sourcev1.OCIRepositoryRef) any {
 	var auth []NamedResource
-	for _, ref := range []*LocalObjectReference{o.SecretRef, o.CertSecretRef, o.ProxySecretRef} {
-		if ref != nil && ref.Name != "" {
-			auth = append(auth, NamedResource{Kind: KindSecret, Namespace: o.Namespace, Name: ref.Name})
+	o.references(func(ref Reference) bool {
+		if ref.Content && ref.Name != "" {
+			auth = append(auth, ref.NamedResource)
 		}
-	}
+		return true
+	})
 	ignore := ""
 	if o.Ignore != nil {
 		ignore = *o.Ignore

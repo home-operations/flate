@@ -13,6 +13,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/home-operations/flate/internal/assert"
 )
@@ -648,8 +649,8 @@ spec:
 		{"ReleaseNamespace", hr.ReleaseNamespace(), "apps"},
 		{"Chart.Name", hr.Chart.Name, "podinfo"},
 		{"Chart.Version", hr.Chart.Version, "6.3.2"},
-		{"Chart.RepoKind", hr.Chart.RepoKind, "HelmRepository"},
-		{"Chart.RepoName", hr.Chart.RepoName, "podinfo"},
+		{"Chart.Source.Kind", hr.Chart.Source.Kind, "HelmRepository"},
+		{"Chart.Source.Name", hr.Chart.Source.Name, "podinfo"},
 		{"replicaCount", hr.Values["replicaCount"], float64(3)},
 		{"ValuesFrom[0].Optional", hr.ValuesFrom[0].Optional, true},
 	}
@@ -725,7 +726,8 @@ spec:
 	if err != nil {
 		t.Fatalf("parseHelmRelease: %v", err)
 	}
-	if hr.Chart.RepoKind != KindHelmChart || hr.Chart.Version != "" {
+	assert.Equal(t, hr.Chart.Source, NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "flux-system", Name: "my-chart"})
+	if hr.Chart.Source.Kind != KindHelmChart || hr.Chart.Version != "" {
 		t.Fatalf("expected unresolved chartRef, got %+v", hr.Chart)
 	}
 
@@ -736,8 +738,8 @@ spec:
 			Name: "podinfo", Kind: KindHelmRepository,
 		},
 	}
-	lookup := func(namespace, name string) *HelmChartSource {
-		if namespace == src.Namespace && name == src.Name {
+	lookup := func(id NamedResource) *HelmChartSource {
+		if id == src.Named() {
 			return src
 		}
 		return nil
@@ -749,8 +751,8 @@ spec:
 		t.Errorf("after resolve: %+v", hr.Chart)
 	}
 
-	missing := &HelmRelease{Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: KindHelmChart, RepoName: "absent", RepoNamespace: "ns"}}
-	none := func(_, _ string) *HelmChartSource { return nil }
+	missing := &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindHelmChart, Name: "absent", Namespace: "ns"}}}
+	none := func(NamedResource) *HelmChartSource { return nil }
 	if err := missing.ResolveChartRef(none); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
@@ -1117,7 +1119,7 @@ data:
 			t.Fatalf("parseConfigMap: %v", err)
 		}
 		assert.Diff(t, cm.Data, map[string]any{
-			"BASE_DOMAIN": fmt.Sprintf(ValuePlaceholderTemplate, "BASE_DOMAIN"),
+			"BASE_DOMAIN": ValuePlaceholder("BASE_DOMAIN"),
 			"PLAINTEXT":   "keep-me",
 		})
 	})
@@ -1173,11 +1175,11 @@ stringData:
 		}
 		// SOPS ciphertext is neutralized: base64(placeholder) in .data,
 		// plaintext placeholder in .stringData.
-		wantB64 := base64.StdEncoding.EncodeToString(fmt.Appendf(nil, ValuePlaceholderTemplate, "enc-blob"))
+		wantB64 := base64.StdEncoding.EncodeToString([]byte(ValuePlaceholder("enc-blob")))
 		if s.Data["enc-blob"] != wantB64 {
 			t.Errorf("SOPS .data not wiped: %v", s.Data["enc-blob"])
 		}
-		if s.StringData["enc-key"] != fmt.Sprintf(ValuePlaceholderTemplate, "enc-key") {
+		if s.StringData["enc-key"] != ValuePlaceholder("enc-key") {
 			t.Errorf("SOPS .stringData not wiped: %v", s.StringData["enc-key"])
 		}
 	})
@@ -1215,7 +1217,7 @@ data:
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
-		wantB64 := base64.StdEncoding.EncodeToString(fmt.Appendf(nil, ValuePlaceholderTemplate, "values.yaml"))
+		wantB64 := base64.StdEncoding.EncodeToString([]byte(ValuePlaceholder("values.yaml")))
 		if s.Data["values.yaml"] != wantB64 {
 			t.Errorf("embedded SOPS values blob not wiped: %v", s.Data["values.yaml"])
 		}
@@ -1376,6 +1378,11 @@ metadata: {name: x}`, "Foo", false},
 					before["metadata"].(map[string]any)["namespace"] = want
 				}
 				assert.Diff(t, authoritative, before)
+				replayed, replayDoc, replayChanged, err := ParseDoc(authoritative, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ns.fallback})
+				assert.NoError(t, err)
+				assert.Equal(t, replayed.Named(), obj.Named())
+				assert.Equal(t, replayChanged, false)
+				assert.Diff(t, replayDoc, authoritative)
 				if raw, ok := obj.(*RawObject); ok {
 					info := KindOf(raw)
 					assert.Equal(t, info.Group, apiGroup(DocAPIVersion(doc)))
@@ -1524,6 +1531,16 @@ func TestStripResourceAttributes(t *testing.T) {
 	if _, ok := tplMeta["annotations"]; ok {
 		t.Errorf("template annotation not stripped (empty map should have been removed)")
 	}
+	for _, malformed := range []map[string]any{
+		{"metadata": "bad", "spec": "bad"},
+		{"metadata": map[string]any{"labels": "bad", "annotations": map[string]any(nil)}, "spec": map[string]any{"template": "bad", "jobTemplate": map[string]any{"metadata": "bad", "spec": "bad"}, "volumeClaimTemplates": "bad"}},
+		{"spec": map[string]any{"volumeClaimTemplates": []any{nil, "bad", map[string]any{"metadata": "bad"}}}},
+	} {
+		before := DeepCopyMap(malformed)
+		StripResourceAttributes(malformed, []string{"helm.sh/chart", "checksum/"})
+		assert.Diff(t, malformed, before)
+	}
+
 }
 
 // TestStripResourceAttributes_CronJob pins the CronJob walk: chart
@@ -1694,6 +1711,62 @@ func TestParseDoc_MissingFields(t *testing.T) {
 	if obj != nil {
 		t.Errorf("expected nil for missing-kind doc, got %T", obj)
 	}
+	for _, tc := range []struct {
+		name             string
+		metadata         any
+		absent           bool
+		raw, core, typed string
+	}{
+		{name: "absent", absent: true, raw: "missing metadata for Widget", core: "ConfigMap missing metadata", typed: "HelmRelease missing metadata.name"},
+		{name: "null", raw: "missing metadata for Widget", core: "ConfigMap missing metadata", typed: "HelmRelease missing metadata.name"},
+		{name: "scalar", metadata: "bad", raw: "missing metadata for Widget", core: "ConfigMap missing metadata", typed: "HelmRelease decode: json: cannot unmarshal string"},
+		{name: "numeric metadata", metadata: 7, raw: "missing metadata for Widget", core: "ConfigMap missing metadata", typed: "HelmRelease decode: json: cannot unmarshal number"},
+		{name: "empty map", metadata: map[string]any{}, raw: "missing metadata.name for Widget", core: "ConfigMap missing metadata.name", typed: "HelmRelease missing metadata.name"},
+		{name: "numeric name", metadata: map[string]any{"name": 7}, raw: "missing metadata.name for Widget", core: "ConfigMap missing metadata.name", typed: "HelmRelease decode: json: cannot unmarshal number"},
+		{name: "numeric namespace", metadata: map[string]any{"name": "app", "namespace": 7}, typed: "HelmRelease decode: json: cannot unmarshal number"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, admission := range []struct{ kind, version, want string }{
+				{"Widget", "example.test/v1", tc.raw},
+				{KindConfigMap, "v1", tc.core},
+				{KindHelmRelease, HelmReleaseDomain + "/v2", tc.typed},
+			} {
+				t.Run(admission.kind, func(t *testing.T) {
+					t.Parallel()
+					doc := map[string]any{"apiVersion": admission.version, "kind": admission.kind}
+					if !tc.absent {
+						doc["metadata"] = tc.metadata
+					}
+					before := DeepCopyMap(doc)
+					obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+					if admission.want == "" {
+						assert.NoError(t, err)
+						assert.Equal(t, obj.Named().Namespace, "apps")
+						assert.Equal(t, changed, true)
+					} else {
+						if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), admission.want) {
+							t.Fatalf("error = %v, want %q with ErrInput/ErrFlux", err, admission.want)
+						}
+						assert.Equal(t, changed, false)
+						assert.Diff(t, authoritative, before)
+					}
+					assert.Diff(t, doc, before)
+				})
+			}
+		})
+	}
+	t.Run("typed spec error precedes missing metadata", func(t *testing.T) {
+		t.Parallel()
+		doc := map[string]any{"apiVersion": HelmReleaseDomain + "/v2", "kind": KindHelmRelease, "spec": "bad"}
+		_, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+		if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), "HelmRelease decode: json: cannot unmarshal string") {
+			t.Fatalf("malformed spec lost decode precedence: %v", err)
+		}
+		assert.Equal(t, changed, false)
+		assert.Diff(t, authoritative, doc)
+	})
+
 }
 
 func TestSplitDocs(t *testing.T) {
@@ -2089,15 +2162,33 @@ func TestCheckAPIVersion_ExactGroup(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		wantErr error
+		invalid bool
 	}{
 		{version: SourceDomain + "/v1"},
 		{version: SourceDomain + ".example.com/v1", wantErr: ErrInput},
+		{version: "", wantErr: ErrInput},
+		{version: SourceDomain + "/", wantErr: ErrInput, invalid: true},
+		{version: SourceDomain + "/v1/extra", wantErr: ErrInput, invalid: true},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			t.Parallel()
 			err := checkAPIVersion(map[string]any{"apiVersion": tc.version}, SourceDomain)
-			if !errors.Is(err, tc.wantErr) {
+			if !errors.Is(err, tc.wantErr) || (tc.wantErr != nil && !errors.Is(err, ErrFlux)) {
 				t.Errorf("error = %v, want %v", err, tc.wantErr)
+			}
+			_, invalid := errors.AsType[*field.Error](err)
+			assert.Equal(t, invalid, tc.invalid)
+			if tc.invalid {
+				for _, kind := range []string{KindGitRepository, "Widget"} {
+					doc := map[string]any{"apiVersion": tc.version, "kind": kind, "metadata": 7, "spec": "bad"}
+					_, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+					invalid, ok := errors.AsType[*field.Error](err)
+					if !ok || invalid.Field != "apiVersion" || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+						t.Fatalf("version error lost precedence or classification: %v", err)
+					}
+					assert.Equal(t, changed, false)
+					assert.Diff(t, authoritative, doc)
+				}
 			}
 		})
 	}
@@ -2198,6 +2289,52 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 					t.Fatalf("bucket policy/view: %+v", a)
 				}
 			}
+		})
+	}
+}
+
+func TestDocIdentity_ReadOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  map[string]any
+		want NamedResource
+	}{
+		{name: "nil"},
+		{name: "empty", doc: map[string]any{}},
+		{name: "wrong fields", doc: map[string]any{"apiVersion": 1, "kind": false, "metadata": "wrong"}},
+		{name: "null metadata", doc: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": nil}, want: NamedResource{Kind: "ConfigMap"}},
+		{name: "wrong metadata fields", doc: map[string]any{"apiVersion": "example.test/v1", "kind": "Widget", "metadata": map[string]any{"name": 1, "namespace": false}}, want: NamedResource{Group: "example.test", Kind: "Widget"}},
+		{name: "core", doc: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "config", "namespace": "apps"}}, want: NamedResource{Kind: "ConfigMap", Namespace: "apps", Name: "config"}},
+		{name: "group", doc: map[string]any{"apiVersion": "example.test/v1", "kind": "Widget", "metadata": map[string]any{"name": "widget", "namespace": "apps"}}, want: NamedResource{Group: "example.test", Kind: "Widget", Namespace: "apps", Name: "widget"}},
+		{name: "version", doc: map[string]any{"apiVersion": "example.test/v2", "kind": "Widget", "metadata": map[string]any{"name": "widget", "namespace": "apps"}}, want: NamedResource{Group: "example.test", Kind: "Widget", Namespace: "apps", Name: "widget"}},
+		{name: "permissive group", doc: map[string]any{"apiVersion": "example.test/v1/extra", "kind": "Widget", "metadata": map[string]any{"name": "widget"}}, want: NamedResource{Group: "example.test", Kind: "Widget", Name: "widget"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := DeepCopyMap(tc.doc)
+			for range 2 {
+				assert.Equal(t, DocIdentity(tc.doc), tc.want)
+			}
+			assert.Diff(t, tc.doc, before)
+			assert.Equal(t, testing.AllocsPerRun(100, func() { DocIdentity(tc.doc) }), float64(0))
+		})
+	}
+}
+
+func TestNamedResource_Labels(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		id         NamedResource
+		kind, full string
+	}{
+		{"core", NamedResource{Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "ConfigMap", "ConfigMap/ns/shared"},
+		{"foreign group", NamedResource{Group: "example.test", Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "ConfigMap.example.test", "ConfigMap.example.test/ns/shared"},
+		{"cluster", NamedResource{Group: "example.test", Kind: "Widget", Name: "shared"}, "Widget.example.test", "Widget.example.test/shared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.id.KindLabel(), tc.kind)
+			assert.Equal(t, tc.id.String(), tc.full)
 		})
 	}
 }

@@ -143,3 +143,31 @@ metadata: {namespace: apps}
 		})
 	}
 }
+
+func TestParseFile_NoTrackedObjects(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantNil bool
+	}{
+		{name: "Empty", wantNil: true},
+		{name: "RawOnly", body: "apiVersion: example.io/v1\nkind: Example\nmetadata: {name: raw}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "objects.yaml", tc.body)
+			reader := readerForTest(root)
+			path := filepath.Join(root, "objects.yaml")
+			for range 2 {
+				objects, err := reader.parseFile(path, manifest.ParseDocOptions{})
+				assert.NoError(t, err)
+				assert.Equal(t, len(objects), 0)
+				assert.Equal(t, objects == nil, tc.wantNil)
+			}
+		})
+	}
+}

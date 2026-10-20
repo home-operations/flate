@@ -23,10 +23,10 @@ type SourceResolver interface {
 	// LocalSourceArtifact returns an admitted source artifact or nil.
 	// FS supplies content and acquisition authority through source.OperationView.
 	LocalSourceArtifact(manifest.NamedResource) *store.SourceArtifact
-	// HelmChart returns the HelmChartSource at the given (ns, name) or
+	// HelmChart returns the HelmChartSource at the given full identity or
 	// nil. Used by HelmRelease.ResolveChartRef to materialize a
 	// spec.chartRef into a concrete chart reference.
-	HelmChart(namespace, name string) *manifest.HelmChartSource
+	HelmChart(manifest.NamedResource) *manifest.HelmChartSource
 }
 
 // NewStoreSourceResolver returns a SourceResolver backed by the
@@ -50,7 +50,7 @@ func (r *storeResolver) LocalSourceArtifact(id manifest.NamedResource) *store.So
 	return art
 }
 
-func (r *storeResolver) HelmChart(namespace, name string) *manifest.HelmChartSource {
-	obj, _ := r.store.Get[*manifest.HelmChartSource](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name})
+func (r *storeResolver) HelmChart(id manifest.NamedResource) *manifest.HelmChartSource {
+	obj, _ := r.store.Get[*manifest.HelmChartSource](id)
 	return obj
 }

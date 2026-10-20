@@ -484,9 +484,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 				}}
 				var releases []manifest.NamedResource
 				for i := range 3 {
-					hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{
-						Name: "demo", Version: "1.0.0", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "apps", RepoName: repo.Name,
-					}}
+					hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: repo.Name}}}
 					s.AddObject(hr)
 					releases = append(releases, hr.Named())
 				}

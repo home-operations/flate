@@ -38,7 +38,7 @@ func (c *ConfigMap) Value(key string) (string, bool, error) {
 	}
 	s, err := scalarString(v)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: stringData[%s]: %w", ErrInput, key, err)
+		return "", false, fmt.Errorf("%w: data[%s]: %w", ErrInput, key, err)
 	}
 	return s, true, nil
 }
@@ -54,9 +54,9 @@ func (c *ConfigMap) Snapshot() map[string]any {
 }
 
 func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
-	name, ns, err := requireMetadata(KindConfigMap, doc)
-	if err != nil {
-		return nil, err
+	name, ns, missing := requireMetadata(doc)
+	if missing != "" {
+		return nil, inputf("%s missing %s", KindConfigMap, missing)
 	}
 	data, _ := doc["data"].(map[string]any)
 	return &ConfigMap{Name: name, Namespace: ns, Data: data}, nil
@@ -101,11 +101,11 @@ func (s *Secret) Value(key string) (string, bool, error) {
 	}
 	value, err := scalarString(v)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: binaryData[%s]: %w", ErrInput, key, err)
+		return "", false, fmt.Errorf("%w: data[%s]: %w", ErrInput, key, err)
 	}
 	decoded, err := base64.StdEncoding.DecodeString(value)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: decode binaryData[%s]: %w", ErrInput, key, err)
+		return "", false, fmt.Errorf("%w: decode data[%s]: %w", ErrInput, key, err)
 	}
 	return string(decoded), true, nil
 }
@@ -149,9 +149,9 @@ func copyData(data map[string]any) map[string]any {
 }
 
 func parseSecret(doc map[string]any) (*Secret, error) {
-	name, ns, err := requireMetadata(KindSecret, doc)
-	if err != nil {
-		return nil, err
+	name, ns, missing := requireMetadata(doc)
+	if missing != "" {
+		return nil, inputf("%s missing %s", KindSecret, missing)
 	}
 	data, _ := doc["data"].(map[string]any)
 	stringData, _ := doc["stringData"].(map[string]any)

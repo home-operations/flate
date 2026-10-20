@@ -36,12 +36,9 @@ import (
 func StripResourceAttributes(resource map[string]any, attrs []string) {
 	stripObjectMetadata(resource, attrs)
 	if spec, ok := resource["spec"].(map[string]any); ok {
-		// Deployment / StatefulSet / DaemonSet / ReplicaSet / Job pod
-		// template.
 		if tmpl, ok := spec["template"].(map[string]any); ok {
 			stripObjectMetadata(tmpl, attrs)
 		}
-		// CronJob jobTemplate + its nested pod template.
 		if jobTmpl, ok := spec["jobTemplate"].(map[string]any); ok {
 			stripObjectMetadata(jobTmpl, attrs)
 			if jobSpec, ok := jobTmpl["spec"].(map[string]any); ok {
@@ -50,48 +47,26 @@ func StripResourceAttributes(resource map[string]any, attrs []string) {
 				}
 			}
 		}
-		// StatefulSet PVC templates — Helm puts chart labels here too.
-		stripMetadataInList(spec, "volumeClaimTemplates", attrs)
+		items, _ := spec["volumeClaimTemplates"].([]any)
+		for _, item := range items {
+			if obj, ok := item.(map[string]any); ok {
+				stripObjectMetadata(obj, attrs)
+			}
+		}
 	}
 }
 
-// stripObjectMetadata strips the configured attrs from parent's
-// "metadata" field when present. No-op when metadata is absent or
-// isn't a map. Centralizes the type assertion + nil guard so the
-// outer walker stays readable as a navigation of the K8s object
-// graph rather than a pile of typed-map dances.
 func stripObjectMetadata(parent map[string]any, attrs []string) {
 	meta, ok := parent["metadata"].(map[string]any)
 	if !ok {
 		return
 	}
-	stripAttrs(meta, attrs)
-}
-
-// stripMetadataInList walks parent[listKey] as a []any of
-// map[string]any objects and strips attrs from each item's metadata.
-// Used for StatefulSet volumeClaimTemplates.
-func stripMetadataInList(parent map[string]any, listKey string, attrs []string) {
-	items, ok := parent[listKey].([]any)
-	if !ok {
-		return
-	}
-	for _, it := range items {
-		if obj, ok := it.(map[string]any); ok {
-			stripObjectMetadata(obj, attrs)
-		}
-	}
-}
-
-func stripAttrs(metadata map[string]any, attrs []string) {
 	for _, key := range []string{"annotations", "labels"} {
-		val, ok := metadata[key].(map[string]any)
+		val, ok := meta[key].(map[string]any)
 		if !ok || val == nil {
 			continue
 		}
 		for _, a := range attrs {
-			// Trailing "/" → prefix match (covers every checksum/<x>
-			// suffix charts emit); otherwise an exact key delete.
 			if strings.HasSuffix(a, "/") {
 				maps.DeleteFunc(val, func(k string, _ any) bool {
 					return strings.HasPrefix(k, a)
@@ -101,7 +76,7 @@ func stripAttrs(metadata map[string]any, attrs []string) {
 			delete(val, a)
 		}
 		if len(val) == 0 {
-			delete(metadata, key)
+			delete(meta, key)
 		}
 	}
 }

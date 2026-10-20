@@ -57,7 +57,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 				cli, err := NewClient(owner)
 				assert.NoError(t, err)
 				st := store.New()
-				hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", RepoKind: kind, RepoGroup: manifest.SourceDomain, RepoName: "repo", RepoNamespace: "apps"}, IgnoreMissingValuesFiles: ignore}
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Kind: kind, Group: manifest.SourceDomain, Name: "repo", Namespace: "apps"}}, IgnoreMissingValuesFiles: ignore}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
 				cli.SetSourceResolver(NewStoreSourceResolver(st))
 				for _, tc := range []struct {
@@ -88,10 +88,10 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 						}
 						if tc.name == "standalone" {
 							selected.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "standalone"}
-							selected.Chart.RepoKind, selected.Chart.RepoName = manifest.KindHelmChart, "standalone"
+							selected.Chart.Source.Kind, selected.Chart.Source.Name = manifest.KindHelmChart, "standalone"
 							var err error
-							selected, err = Prepare(selected, func(namespace, name string) *manifest.HelmChartSource {
-								return &manifest.HelmChartSource{Name: name, Namespace: namespace, Chart: "charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: kind, Name: "repo"}, ValuesFiles: tc.files, IgnoreMissingValuesFiles: ignore}
+							selected, err = Prepare(selected, func(id manifest.NamedResource) *manifest.HelmChartSource {
+								return &manifest.HelmChartSource{Name: id.Name, Namespace: id.Namespace, Chart: "charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: kind, Name: "repo"}, ValuesFiles: tc.files, IgnoreMissingValuesFiles: ignore}
 							}, nil, nil)
 							assert.NoError(t, err)
 						}
@@ -131,7 +131,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 				"charts/demo/templates/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  marker: {{ .Values.marker | quote }}\n")},
 				"prod.yaml":                     {Data: []byte("marker: outside\n")},
 			}
-			hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", RepoGroup: manifest.SourceDomain, RepoKind: kind, RepoName: "repo", RepoNamespace: "apps"}}
+			hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Name: "repo", Namespace: "apps"}}}
 			var artifact fs.FS = input
 			if kind != manifest.KindExternalArtifact {
 				sub, err := fs.Sub(input, "charts/demo")

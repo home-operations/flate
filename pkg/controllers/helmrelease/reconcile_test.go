@@ -256,10 +256,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "podinfo", Namespace: "flux-system",
-		Chart: manifest.HelmChart{
-			Name: "podinfo", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindOCIRepository,
-			RepoName: "podinfo", RepoNamespace: "flux-system",
-		},
+		Chart: manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "podinfo", Namespace: "flux-system"}},
 	}
 	st.AddObject(hr)
 	err := c.awaitChartSource(hr, manifest.DrainForce)

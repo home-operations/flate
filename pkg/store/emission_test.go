@@ -1040,34 +1040,47 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 			}
 		})
 	}
-	t.Run("equal_static", func(t *testing.T) {
-		t.Parallel()
+	for _, state := range []string{"member", "retired", "hidden"} {
+		t.Run("equal_static/"+state, func(t *testing.T) {
+			t.Parallel()
 
-		s := New()
-		p, k := ownerID("p"), ownerID("k")
-		s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
-		seed := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
-		s.AddObject(seed)
-		s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{k: {Productions: []manifest.Production{{Owner: p}}}}})
-		contribution := seed.Clone()
-		s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true})
-		s.AddObject(seed)
-		s.RecordEmitted(p, &Emission{Complete: true})
-		if s.GetObject(k) != seed {
-			t.Fatal("equal direct write did not retain independent static authority")
-		}
-		var events int
-		defer s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
-			if id == k {
-				events++
+			s := New()
+			p, k := ownerID("p"), ownerID("k")
+			s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+			seed := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
+			s.AddObject(seed)
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{k: {Productions: []manifest.Production{{Owner: p}}}}})
+			contribution := seed.Clone()
+			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true})
+			if state == "hidden" {
+				child := emissionChild("grandchild", "retained")
+				accept(t, s, k, &Emission{Children: []Child{child}, Complete: true})
 			}
-		}, false)()
-		s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true})
-		s.AddObject(seed)
-		if s.GetObject(k) != seed || events != 0 {
-			t.Fatal("equal static write changed the rooted representative")
-		}
-	})
+			if state != "member" {
+				accept(t, s, p, &Emission{Complete: true})
+				assert.Equal(t, s.GetObject(k), nil)
+			}
+			s.AddObject(seed)
+			if state == "hidden" {
+				assert.Equal(t, s.GetObject(emissionChild("grandchild", "retained").Obj.Named()) != nil, true)
+			}
+			s.RecordEmitted(p, &Emission{Complete: true})
+			if s.GetObject(k) != seed {
+				t.Fatal("equal direct write did not retain independent static authority")
+			}
+			var events int
+			defer s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+				if id == k {
+					events++
+				}
+			}, false)()
+			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true})
+			s.AddObject(seed)
+			if s.GetObject(k) != seed || events != 0 {
+				t.Fatal("equal static write changed the rooted representative")
+			}
+		})
+	}
 }
 
 func TestStore_ProductionsScopedFileBridge(t *testing.T) {
@@ -1719,6 +1732,13 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.AddObject(obj)
+	foreignDoc := manifest.DeepCopyMap(doc)
+	foreignDoc["apiVersion"] = "example.test/v1"
+	foreign, _, _, err := manifest.ParseDoc(foreignDoc, manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddObject(foreign)
 	var arrivals int
 	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id == obj.Named() {
@@ -1726,23 +1746,31 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: doc}}, Manifests: []map[string]any{doc}, Complete: true})
+	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: doc}, {Obj: foreign, Doc: foreignDoc}}, Manifests: []map[string]any{foreignDoc, doc}, Complete: true})
 	if arrivals != 0 {
 		t.Fatalf("equal seed acquired document with %d arrivals", arrivals)
 	}
 	_, accepted := s.GetEmission(p)
-	if len(accepted.Manifests) != 1 || !specValueEqual(accepted.Manifests[0], doc) {
+	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], foreignDoc) || !specValueEqual(accepted.Manifests[1], doc) {
 		t.Fatal("suppressed arrival lost authoritative document")
 	}
 	if got := s.Productions(obj.Named(), nil); len(got) != 1 || got[0].Owner != p {
 		t.Fatalf("accepted support = %v", got)
 	}
 	next := manifest.DeepCopyMap(doc)
-	next["metadata"].(map[string]any)["annotations"] = map[string]any{"semantic": "changed"}
-	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: next}, emissionChild("other", "value")}, Complete: true})
+	next["apiVersion"] = manifest.SourceDomain + "/v1beta2"
+	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: next}, emissionChild("other", "value")}, Manifests: []map[string]any{next}})
 	if arrivals != 1 {
 		t.Fatalf("changed authoritative document arrivals = %d, want 1", arrivals)
 	}
+	_, accepted = s.GetEmission(p)
+	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], next) || !specValueEqual(accepted.Manifests[1], foreignDoc) {
+		t.Fatalf("partial version update lost cross-group documents: %v", accepted.Manifests)
+	}
+	if got := s.Productions(foreign.Named(), nil); len(got) != 1 || got[0].Owner != p {
+		t.Fatalf("cross-group support = %v", got)
+	}
+
 }
 
 type admissionBarrier struct {

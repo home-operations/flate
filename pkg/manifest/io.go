@@ -34,20 +34,6 @@ func getDecodedMap() map[string]any {
 	return *decodedMapPool.Get().(*map[string]any)
 }
 
-// putDecodedMap clears and returns the map to the pool. The clear is
-// mandatory: pooled maps must not leak prior entries into the next
-// caller. Callers must ensure no live reference to the top-level map
-// remains. Inner submaps
-// retained by other parsers (ConfigMap.Data, Secret.Data)
-// stay alive independently — clear(m) only removes top-level entries.
-func putDecodedMap(m map[string]any) {
-	if m == nil {
-		return
-	}
-	clear(m)
-	decodedMapPool.Put(&m)
-}
-
 // ReleaseDoc returns a decoded document to the internal pool. Safe to
 // call only after the caller is done reading the top-level map.
 //
@@ -55,7 +41,11 @@ func putDecodedMap(m map[string]any) {
 // DecodeDocs is allowed but pollutes the pool; reserve for the
 // internal load path.
 func ReleaseDoc(m map[string]any) {
-	putDecodedMap(m)
+	if m == nil {
+		return
+	}
+	clear(m)
+	decodedMapPool.Put(&m)
 }
 
 // DecodeDocs reads zero or more YAML documents from r and returns each
@@ -91,7 +81,7 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			err = node.Load(&m, constructionOption)
 		}
 		if err != nil {
-			putDecodedMap(m)
+			ReleaseDoc(m)
 			if errors.Is(err, io.EOF) {
 				return out, nil
 			}
@@ -101,7 +91,7 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			return nil, fmt.Errorf("%w: %w", ErrInput, err)
 		}
 		if len(m) == 0 {
-			putDecodedMap(m)
+			ReleaseDoc(m)
 			continue
 		}
 		out = append(out, m)

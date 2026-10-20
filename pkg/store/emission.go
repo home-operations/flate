@@ -723,7 +723,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			}
 			available := make(map[manifest.NamedResource][]int, len(e.Manifests))
 			for i, doc := range e.Manifests {
-				key := documentIdentity(doc)
+				key := manifest.DocIdentity(doc)
 				available[key] = append(available[key], i)
 			}
 			used := make([]bool, len(e.Manifests))
@@ -733,7 +733,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 					continue
 				}
 				present := false
-				for _, j := range available[documentIdentity(doc)] {
+				for _, j := range available[manifest.DocIdentity(doc)] {
 					if !used[j] && specValueEqual(doc, e.Manifests[j]) {
 						used[j], present = true, true
 						break
@@ -756,22 +756,18 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	}
 	return &e
 }
-func documentIdentity(doc map[string]any) manifest.NamedResource {
-	name, namespace := manifest.DocMetadata(doc)
-	raw := manifest.RawObject{APIVersion: manifest.DocAPIVersion(doc), Kind: manifest.DocKind(doc), Name: name, Namespace: namespace}
-	return raw.Named()
-}
+
 func bindDocuments(docs []map[string]any, entries []admission) []manifest.NamedResource {
 	byDocument := make(map[manifest.NamedResource][]admission, len(entries))
 	for _, entry := range entries {
 		if entry.child.Doc != nil {
-			key := documentIdentity(entry.child.Doc)
+			key := manifest.DocIdentity(entry.child.Doc)
 			byDocument[key] = append(byDocument[key], entry)
 		}
 	}
 	owners := make([]manifest.NamedResource, len(docs))
 	for i, doc := range docs {
-		for _, entry := range byDocument[documentIdentity(doc)] {
+		for _, entry := range byDocument[manifest.DocIdentity(doc)] {
 			if specValueEqual(doc, entry.child.Doc) {
 				owners[i] = entry.child.Obj.Named()
 				break

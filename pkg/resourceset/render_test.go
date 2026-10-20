@@ -1149,6 +1149,9 @@ metadata: {name: incomplete}`}
 		t.Fatalf("docs = %d, want 10", len(docs))
 	}
 	assert.Diff(t, []string{manifest.DocAPIVersion(docs[0]), manifest.DocAPIVersion(docs[len(docs)-1])}, []string{"apps/v1", "other.example/v1"})
+	malformed := map[string]any{"apiVersion": "example.io/v1/extra", "kind": "Deployment", "metadata": map[string]any{"name": "shared", "namespace": "default"}}
+	assert.Equal(t, manifest.DocIdentity(malformed).Group, "example.io")
+	assert.Equal(t, resourceset.DedupKey(malformed), manifest.NamedResource{Kind: "Deployment", Namespace: "default", Name: "shared"})
 }
 
 func TestRender_NoInputJSONBypassesExclusionAndDedup(t *testing.T) {

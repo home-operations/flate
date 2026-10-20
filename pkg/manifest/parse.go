@@ -1,11 +1,8 @@
 package manifest
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	"maps"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -26,19 +23,15 @@ func decodeInto(doc map[string]any, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
-// decodeCR runs the shared typed-CR decode preamble: API-version
-// check, JSON round-trip into cr, and a non-empty metadata.name
-// check. cr must be a pointer to a Flux CR type (all embed
-// metav1.ObjectMeta, so GetName() is available). Centralizes the
-// identical opening previously hand-copied across the typed parsers.
-func decodeCR(doc map[string]any, cr metav1.Object, kind, domain string) error {
+func decodeCR(doc map[string]any, cr any, kind, domain string) error {
 	if err := checkAPIVersion(doc, domain); err != nil {
 		return err
 	}
+	// Typed JSON errors MUST precede permissive required-metadata checks.
 	if err := decodeInto(doc, cr); err != nil {
 		return inputf("%s decode: %w", kind, err)
 	}
-	if cr.GetName() == "" {
+	if _, _, missing := requireMetadata(doc); missing != "" {
 		return inputf("%s missing metadata.name", kind)
 	}
 	return nil
@@ -87,6 +80,12 @@ func DropKinds(docs []map[string]any, drop []string) []map[string]any {
 	return out
 }
 
+// DocIdentity extracts a document's resource identity without validation or namespace defaulting.
+func DocIdentity(doc map[string]any) NamedResource {
+	name, namespace := DocMetadata(doc)
+	return NamedResource{Group: apiGroup(DocAPIVersion(doc)), Kind: DocKind(doc), Namespace: namespace, Name: name}
+}
+
 // DocMetadata returns (name, namespace) from a manifest document's
 // metadata block. Both are "" when metadata is absent or unset.
 func DocMetadata(doc map[string]any) (name, namespace string) {
@@ -96,7 +95,7 @@ func DocMetadata(doc map[string]any) (name, namespace string) {
 	}
 	name, _ = md["name"].(string)
 	namespace, _ = md["namespace"].(string)
-	return
+	return name, namespace
 }
 
 // ParseDocOptions tunes ParseDoc behavior.
@@ -122,44 +121,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 
 	changed := false
 	if opts.WipeSecrets && apiVersion == CoreAPIVersion && (kind == KindConfigMap || kind == KindSecret) {
-		encrypted := IsEncryptedSecret(doc)
-		var sanitized map[string]any
-		for _, field := range []string{"data", "stringData", "binaryData"} {
-			var encoding *base64.Encoding
-			if field == "binaryData" || (kind == KindSecret && field == "data") {
-				encoding = base64.StdEncoding
-			}
-			data, _ := doc[field].(map[string]any)
-			var replaced map[string]any
-			for key, raw := range data {
-				// Base64 decoding cannot lengthen a scalar to contain a longer marker.
-				if value, ok := raw.(string); !encrypted && ok && len(value) < len(sopsCiphertextPrefix) {
-					continue
-				}
-				value, err := scalarString(raw)
-				if err != nil && !encrypted {
-					continue
-				}
-				wiped := WipeValue(key, value, encoding, encrypted)
-				if wiped == value {
-					continue
-				}
-				if replaced == nil {
-					replaced = maps.Clone(data)
-				}
-				replaced[key] = wiped
-			}
-			if replaced != nil {
-				if sanitized == nil {
-					sanitized = maps.Clone(doc)
-				}
-				sanitized[field] = replaced
-			}
-		}
-		if sanitized != nil {
-			doc = sanitized
-			changed = true
-		}
+		doc, changed = sanitizeData(doc, kind)
 	}
 	var obj BaseManifest
 	var err error
@@ -169,17 +131,8 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 	} else {
 		obj, err = parseRawObject(doc)
 	}
-	if err == nil && obj != nil && opts.DefaultNamespace != "" && obj.Named().Namespace == "" {
-		if (KindInfo{Kind: kind, apiVersion: apiVersion}).Namespaced() {
-			obj = obj.WithNamespace(opts.DefaultNamespace)
-			if !changed {
-				doc = maps.Clone(doc)
-			}
-			metadata := maps.Clone(doc["metadata"].(map[string]any))
-			metadata["namespace"] = opts.DefaultNamespace
-			doc["metadata"] = metadata
-			changed = true
-		}
+	if err == nil {
+		obj, doc, changed = defaultNamespace(obj, doc, opts.DefaultNamespace, changed)
 	}
 	return obj, doc, changed, err
 }
@@ -200,16 +153,13 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	return nil
 }
 
-// requireMetadata pulls name + namespace from a non-nil metadata block.
-func requireMetadata(kind string, doc map[string]any) (name, ns string, err error) {
-	md, _ := doc["metadata"].(map[string]any)
-	if md == nil {
-		return "", "", inputf("%s missing metadata", kind)
+func requireMetadata(doc map[string]any) (name, namespace, missing string) {
+	name, namespace = DocMetadata(doc)
+	if name != "" {
+		return name, namespace, ""
 	}
-	name, _ = md["name"].(string)
-	if name == "" {
-		return "", "", inputf("%s missing metadata.name", kind)
+	if md, _ := doc["metadata"].(map[string]any); md == nil {
+		return "", "", "metadata"
 	}
-	ns, _ = md["namespace"].(string)
-	return name, ns, nil
+	return "", "", "metadata.name"
 }

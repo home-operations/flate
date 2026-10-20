@@ -85,9 +85,7 @@ data:
 			t.Parallel()
 			hr := &manifest.HelmRelease{
 				Name: "demo", Namespace: "default", CRDsPolicy: tc.policy,
-				Chart: manifest.HelmChart{
-					Name: "mychart", RepoName: "chart-repo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
-				},
+				Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 			}
 			opts := Options{SkipCRDs: tc.skip}
 			inst, _ := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())

@@ -89,7 +89,7 @@ func DeclaredData(s *store.Store, id manifest.NamedResource, productions []manif
 			}
 			data := make(map[string]any, len(target.DeclaredKeys))
 			for _, key := range target.DeclaredKeys {
-				data[key] = strings.ReplaceAll(manifest.ValuePlaceholderTemplate, "%s", key)
+				data[key] = manifest.ValuePlaceholder(key)
 			}
 			return &manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: data}
 		}

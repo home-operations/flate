@@ -135,7 +135,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 				st.AddObject(obj)
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
 				err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
-				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "Data[values.yaml]") {
+				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "data[values.yaml]") {
 					t.Fatalf("malformed requested key must fail with its name: %v", err)
 				}
 			})
@@ -536,9 +536,7 @@ func TestUnreadableSubstituteSecrets(t *testing.T) {
 	provider := &SliceProvider{
 		ConfigMaps: []*manifest.ConfigMap{{Name: "cm", Namespace: "flux-system", Data: map[string]any{"X": "1"}}},
 		Secrets: []*manifest.Secret{
-			// SOPS-wiped: data resolves to a placeholder, so its vars still substitute.
-			{Name: "sops-vars", Namespace: "flux-system", StringData: map[string]any{"Y": fmt.Sprintf(manifest.ValuePlaceholderTemplate, "Y")}},
-			// A real, readable Secret.
+			{Name: "sops-vars", Namespace: "flux-system", StringData: map[string]any{"Y": manifest.ValuePlaceholder("Y")}},
 			{Name: "real", Namespace: "flux-system", StringData: map[string]any{"Z": "z"}},
 			{Name: "empty", Namespace: "flux-system"},
 			{Name: "empty-value", Namespace: "flux-system", StringData: map[string]any{"Z": ""}},

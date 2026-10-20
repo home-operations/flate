@@ -214,6 +214,67 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	if got, _ := r.read(missing); got != nil {
 		t.Fatal("negative result was re-read")
 	}
+	t.Run("retained objects through skips and errors", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		reader := documentReader{views: map[string]fs.FS{root: os.DirFS(root)}}
+		testutil.WriteFile(t, root, "mixed.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: retained}
+spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
+---
+plain: data
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 7
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: '${TEMPLATE}'}
+---
+apiVersion: example.test/v1
+kind: Widget
+metadata: {name: ignored}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: values}
+data: {VALUE: keep}
+---
+apiVersion: example.test/v1/extra
+kind: Widget
+metadata: {name: invalid}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: pending}
+`)
+		var objects []manifest.BaseManifest
+		opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
+		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(obj manifest.BaseManifest) {
+			objects = append(objects, obj)
+		})
+		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || len(objects) != 2 {
+			t.Fatalf("objects=%v err=%v", objects, err)
+		}
+		k := objects[0].(*manifest.Kustomization)
+		c := objects[1].(*manifest.ConfigMap)
+		before, err := k.RenderDocument()
+		assert.NoError(t, err)
+		testutil.WriteFile(t, root, "next.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: replaced}\n")
+		_, err = reader.parseFile(filepath.Join(root, "next.yaml"), opts)
+		assert.NoError(t, err)
+		assert.Equal(t, k.Namespace, "apps")
+		after, err := k.RenderDocument()
+		assert.NoError(t, err)
+		assert.Diff(t, after, before)
+		value, found, err := c.Value("VALUE")
+		assert.NoError(t, err)
+		assert.Equal(t, found, true)
+		assert.Equal(t, value, "keep")
+	})
+
 	t.Run("load missing mounted child", func(t *testing.T) {
 		t.Parallel()
 		child := filepath.Join(committed, "child")

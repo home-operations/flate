@@ -62,10 +62,7 @@ data:
 			hr := &manifest.HelmRelease{
 				Name: "demo", Namespace: "default",
 				ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
-				Chart: manifest.HelmChart{
-					Name: "mychart", RepoName: "charts",
-					RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
-				},
+				Chart:      manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 			}
 			if tc.duplicate {
 				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"})
@@ -126,9 +123,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
 	s.UpdateStatus(chart.Named(), store.StatusFailed, "", "chart unavailable")
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{
-		RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: chart.Name, RepoNamespace: chart.Namespace,
-	}}
+	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: chart.Name, Namespace: chart.Namespace}}}
 	s.AddObject(hr)
 	err := c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: preparePrereqs(hr), Declaration: hr, AllowMissingSecrets: true}, manifest.ReconcileAttempt{Drain: manifest.DrainForce}, &depwait.Resolution{})
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)

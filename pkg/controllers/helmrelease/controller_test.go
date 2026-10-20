@@ -124,14 +124,7 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
-		Chart: manifest.HelmChart{
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindHelmRepository,
-			RepoNamespace: "flux-system",
-			RepoName:      "truecharts",
-			Name:          "kromgo",
-			Version:       "3.0.0",
-		},
+		Chart: manifest.HelmChart{Name: "kromgo", Version: "3.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "truecharts"}},
 	}
 
 	filter := change.NewFilter(change.NewSet([]string{"release.yaml"}), &manifest.DiscoveryIndex{
@@ -152,7 +145,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	for _, group := range []string{"", "example.test"} {
 		t.Run("group="+group, func(t *testing.T) {
 			foreign := hr.Clone()
-			foreign.Chart.RepoGroup = group
+			foreign.Chart.Source.Group = group
 			if _, repointed := c.materializeHelmChartSource(foreign.Named(), foreign); repointed {
 				t.Fatal("foreign chart source borrowed the real HelmRepository")
 			}
@@ -166,17 +159,17 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	}
 
 	// Chart repointed to a synthetic HelmChart; name/version kept.
-	if got.Chart.RepoKind != manifest.KindHelmChart {
-		t.Fatalf("RepoKind = %q, want HelmChart", got.Chart.RepoKind)
+	if got.Chart.Source.Kind != manifest.KindHelmChart {
+		t.Fatalf("Source.Kind = %q, want HelmChart", got.Chart.Source.Kind)
 	}
-	if got.Chart.RepoNamespace != "flux-system" {
-		t.Errorf("RepoNamespace = %q, want flux-system", got.Chart.RepoNamespace)
+	if got.Chart.Source.Namespace != "flux-system" {
+		t.Errorf("Source.Namespace = %q, want flux-system", got.Chart.Source.Namespace)
 	}
 	if got.Chart.Name != "kromgo" || got.Chart.Version != "3.0.0" {
 		t.Errorf("chart name/version = %q/%q, want kromgo/3.0.0", got.Chart.Name, got.Chart.Version)
 	}
 
-	synID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: got.Chart.RepoNamespace, Name: got.Chart.RepoName}
+	synID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: got.Chart.Source.Namespace, Name: got.Chart.Source.Name}
 	obj := st.GetObject(synID)
 	if obj == nil {
 		t.Fatalf("synthetic HelmChart %s not added to store", synID)
@@ -227,10 +220,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					for i := range consumers {
 						consumers[i] = &manifest.HelmRelease{Name: fmt.Sprintf("redis-%02d", i), Namespace: "apps"}
 					}
-					chart := manifest.HelmChart{
-						RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
-						Name: "redis", Version: "1.0.0",
-					}
+					chart := manifest.HelmChart{Name: "redis", Version: "1.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "bitnami"}}
 					for _, hr := range consumers {
 						hr.Chart = chart
 						st.AddObject(hr)
@@ -387,10 +377,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 	c, st := newTestController(t, nil)
 	hr := &manifest.HelmRelease{
 		Name: "kromgo", Namespace: "apps",
-		Chart: manifest.HelmChart{
-			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "truecharts",
-			Name: "kromgo", Version: "3.0.0",
-		},
+		Chart: manifest.HelmChart{Name: "kromgo", Version: "3.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "truecharts"}},
 	}
 
 	// Pass 1: HelmRepository not in the Store yet — must not repoint.
@@ -425,14 +412,11 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 	})
 	hr := &manifest.HelmRelease{
 		Name: "redis", Namespace: "apps",
-		Chart: manifest.HelmChart{
-			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
-			Name: "redis", Version: "1.0.0",
-		},
+		Chart: manifest.HelmChart{Name: "redis", Version: "1.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "bitnami"}},
 	}
 	st.AddObject(hr)
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
-	if !repointed || got.Chart.RepoKind != manifest.KindHelmChart {
+	if !repointed || got.Chart.Source.Kind != manifest.KindHelmChart {
 		t.Fatalf("HTTP HelmRepository was not materialized: %+v (repointed=%v)", got.Chart, repointed)
 	}
 	if hc, ok := st.GetObject(got.ChartSource()).(*manifest.HelmChartSource); !ok || hc.SourceRef.Name != "bitnami" {
@@ -453,14 +437,11 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 	})
 	hr := &manifest.HelmRelease{
 		Name: "redis", Namespace: "apps",
-		Chart: manifest.HelmChart{
-			RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoNamespace: "flux-system", RepoName: "bitnami",
-			Name: "redis", // Version omitted
-		},
+		Chart: manifest.HelmChart{Name: "redis", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "bitnami"}},
 	}
 	st.AddObject(hr)
 	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
-	if !repointed || got.Chart.RepoKind != manifest.KindHelmChart {
+	if !repointed || got.Chart.Source.Kind != manifest.KindHelmChart {
 		t.Fatalf("empty-version HelmRepository chart not materialized: %+v (repointed=%v)", got.Chart, repointed)
 	}
 }
@@ -536,13 +517,7 @@ data:
 			{Kind: manifest.KindSecret, Name: "app-values"},
 			{Kind: manifest.KindConfigMap, Name: "runtime-values"},
 		},
-		Chart: manifest.HelmChart{
-			Name:          "mychart",
-			RepoName:      "charts",
-			RepoNamespace: "flux-system",
-			RepoGroup:     manifest.SourceDomain,
-			RepoKind:      manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	st.AddObject(hr)
 
@@ -596,7 +571,7 @@ func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
 	st.UpdateStatus(chart.Named(), store.StatusFailed, "", "chart failed")
 	hr := &manifest.HelmRelease{
 		Name: "consumer", Namespace: "apps",
-		Chart:      manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: chart.Name},
+		Chart:      manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: chart.Name}},
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "values"}},
 	}
 	st.AddObject(hr)
@@ -659,10 +634,7 @@ data:
 			{Kind: manifest.KindConfigMap, Name: "present-values"},
 			{Kind: manifest.KindSecret, Name: "app-values"},
 		},
-		Chart: manifest.HelmChart{
-			Name: "mychart", RepoName: "charts",
-			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
-		},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	st.AddObject(hr)
 
@@ -703,10 +675,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		Interval:   metav1Duration(time.Hour),
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
-		Chart: manifest.HelmChart{
-			Name: "mychart", RepoName: "charts",
-			RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindGitRepository,
-		},
+		Chart:      manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	st.AddObject(hr)
 
@@ -737,7 +706,7 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 	if resolver == nil {
 		t.Fatal("HelmClient has no resolver wired")
 	}
-	got := resolver.HelmChart(src.Namespace, src.Name)
+	got := resolver.HelmChart(src.Named())
 	if got == nil {
 		t.Fatalf("resolver.HelmChart(%q, %q) returned nil; expected the just-added source", src.Namespace, src.Name)
 	}
@@ -757,7 +726,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Chart:    manifest.HelmChart{Name: "podinfo", RepoName: "podinfo", RepoNamespace: "flux-system", RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository},
+		Chart:    manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Name: "podinfo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository}},
 		Values:   map[string]any{"replicas": 2},
 	}
 	stamped := base.Clone()
@@ -872,11 +841,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Chart: manifest.HelmChart{
-			Name: "mychart", RepoName: "charts", RepoNamespace: "flux-system",
-			RepoGroup: manifest.SourceDomain,
-			RepoKind:  manifest.KindGitRepository,
-		},
+		Chart:    manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	st.AddObject(hr)
 	if info := runValuesFixture(t, c, hr); info.Status != store.StatusReady {
@@ -966,7 +931,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 			HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{
 				Spec: helmv2.HelmChartTemplateSpec{Chart: "app", SourceRef: helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: repo.Name}},
 			}},
-			Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace},
+			Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace}},
 		}
 		for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainForce} {
 			if err := c.awaitChartSource(hr, level); err != nil {
@@ -979,7 +944,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 				apiVersion = group + "/v1"
 			}
 			publishRawFixture(t, c, &manifest.RawObject{APIVersion: apiVersion, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace})
-			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{RepoGroup: group, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace}}
+			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: group, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace}}}
 			if err := c.awaitChartSource(foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 				t.Fatalf("foreign repository bypassed content gate: %v", err)
 			}

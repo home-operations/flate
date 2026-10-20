@@ -105,14 +105,14 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 	if hr == nil {
 		return chartLoadResult{}, errors.New("nil HelmRelease")
 	}
-	switch hr.Chart.RepoKind {
+	switch hr.Chart.Source.Kind {
 	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact,
 		manifest.KindOCIRepository, manifest.KindHelmChart:
 	case manifest.KindHelmRepository, "":
 		return chartLoadResult{}, fmt.Errorf("%w: HelmRepository chart %s reached chart loading unmaterialized: render via the orchestrator",
 			manifest.ErrInput, hr.Chart.RepoFullName())
 	default:
-		return chartLoadResult{}, fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.RepoKind)
+		return chartLoadResult{}, fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.Source.Kind)
 	}
 	var art *store.SourceArtifact
 	if r := c.Resolver(); r != nil {
@@ -120,7 +120,7 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 	}
 	if art == nil || art.FS == nil {
 		return chartLoadResult{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.Chart.RepoKind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
+			manifest.ErrObjectNotFound, hr.Chart.Source.Kind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
 	}
 	input, pin, err := source.OperationView(ctx, art.FS)
 	if err != nil {
@@ -130,7 +130,7 @@ func (c *Client) loadChart(ctx context.Context, hr *manifest.HelmRelease) (chart
 		Pin, Path string
 		Auto      bool
 	}{Pin: pin, Auto: true}
-	switch hr.Chart.RepoKind {
+	switch hr.Chart.Source.Kind {
 	case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
 		selector.Path, selector.Auto = path.Clean(hr.Chart.Name), false
 	}

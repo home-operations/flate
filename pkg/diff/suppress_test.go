@@ -33,6 +33,23 @@ func TestSuppression_String(t *testing.T) {
 	if got := (Suppression{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "x"}).String(); !strings.Contains(got, "1 object not") {
 		t.Errorf("singular noun expected, got %q", got)
 	}
+	for _, tc := range []struct {
+		name   string
+		parent Parent
+		want   string
+	}{
+		{"core", Parent{Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "ConfigMap ns/shared: 1 object withheld; diff suppressed (reason)"},
+		{"foreign group", Parent{Group: "example.test", Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "ConfigMap.example.test ns/shared: 1 object withheld; diff suppressed (reason)"},
+		{"cluster", Parent{Group: "example.test", Kind: "Widget", Name: "shared", Path: "ignored/path"}, "Widget.example.test shared: 1 object withheld; diff suppressed (reason)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (Suppression{Parent: tc.parent, Side: SideBoth, Count: 1, Reason: "reason"}).String(); got != tc.want {
+				t.Fatalf("String() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
 }
 
 func TestSuppression_StringBothAndEmpty(t *testing.T) {

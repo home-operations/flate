@@ -801,6 +801,7 @@ func TestCompareDocs_OrdersByIdentity(t *testing.T) {
 		{"name", mkDoc("v1", "CM", "a", "x"), mkDoc("v1", "CM", "a", "y"), -1},
 		{"same", mkDoc("v1", "CM", "a", "x"), mkDoc("v1", "CM", "a", "x"), 0},
 		{"version", mkDoc("a.example/v1", "CM", "a", "x"), mkDoc("a.example/v2", "CM", "a", "x"), 0},
+		{"permissive group", mkDoc("a.example/v1/extra", "CM", "a", "x"), mkDoc("a.example/v2", "CM", "a", "x"), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -811,6 +812,16 @@ func TestCompareDocs_OrdersByIdentity(t *testing.T) {
 			}
 		})
 	}
+	first := mkDoc("a.example/v1", "CM", "ns", "shared")
+	second := mkDoc("a.example/v2", "CM", "ns", "shared")
+	foreign := mkDoc("z.example/v1", "CM", "ns", "shared")
+	core := mkDoc("v1", "CM", "ns", "shared")
+	docs := []map[string]any{foreign, second, core, first}
+	for range 2 {
+		assert.Diff(t, emissionDocs(docs, &buildFlags{}), []map[string]any{core, second, first, foreign})
+		assert.Diff(t, docs, []map[string]any{foreign, second, core, first})
+	}
+
 }
 
 // TestEmissionDocs_OnlyKinds drops every non-CRD doc.

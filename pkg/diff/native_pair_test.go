@@ -202,6 +202,34 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 
 func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 	t.Parallel()
+	t.Run("namespace presence", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name    string
+			present bool
+			want    string
+		}{
+			{"absent", false, "v1/ConfigMap/hello"},
+			{"empty", true, "v1/ConfigMap//hello"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				left, right := ncm("hello", "greeting", "old"), ncm("hello", "greeting", "new")
+				for _, doc := range []Doc{left, right} {
+					md := doc.Manifest["metadata"].(map[string]any)
+					delete(md, "namespace")
+					if tc.present {
+						md["namespace"] = ""
+					}
+				}
+				report, err := nativeReport([]Doc{left}, []Doc{right}, Options{})
+				assert.NoError(t, err)
+				assert.Diff(t, report.From.Names, []string{tc.want})
+				assert.Diff(t, report.To.Names, []string{tc.want})
+				assert.Equal(t, report.Diffs[0].Path.RootDescription(), tc.want)
+			})
+		}
+	})
 	t.Run("same group version", func(t *testing.T) {
 		t.Parallel()
 		left, right := ncm("hello", "greeting", "same"), ncm("hello", "greeting", "same")

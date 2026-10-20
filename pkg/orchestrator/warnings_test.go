@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -341,7 +340,7 @@ spec:
 	}
 
 	// The ${CLOUDFLARE_TUNNEL_ID} resolved to its placeholder, not empty/literal.
-	want := fmt.Sprintf(manifest.ValuePlaceholderTemplate, "CLOUDFLARE_TUNNEL_ID") + ".cfargotunnel.com"
+	want := manifest.ValuePlaceholder("CLOUDFLARE_TUNNEL_ID") + ".cfargotunnel.com"
 	var got string
 	for _, docs := range res.Manifests {
 		for _, d := range docs {

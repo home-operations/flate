@@ -224,7 +224,7 @@ Other entry points worth knowing:
 
 - `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
 - `Store.AddListener(kind, fn, replay)` - the only store observer; payloads are `manifest.BaseManifest`, `StatusInfo` or `Artifact` by `EventKind`.
-- `helm.Prepare(hr, lookup, provider)` then `helmClient.Template(...)` and `manifest.SplitDocs(...)` — render one HelmRelease without the orchestrator. `lookup` is a `manifest.HelmChartLookup` (`func(ns, name string) *HelmChartSource`). `kustomize.Prepare(ks, provider, nil)` is the symmetric helper for Kustomizations.
+- `helm.Prepare(hr, lookup, provider)` then `helmClient.Template(...)` and `manifest.SplitDocs(...)` — render one HelmRelease without the orchestrator. `lookup` is a `manifest.HelmChartLookup` (`func(manifest.NamedResource) *manifest.HelmChartSource`). `kustomize.Prepare(ks, provider, nil)` is the symmetric helper for Kustomizations.
 - `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.
 - `change.Filter.AddEmitted(emitter, child)` — extend the changed-only-mode keep set at runtime when a custom controller emits a child that wasn't visible at filter-build time; records the emitter→child edge. Call BEFORE `Store.AddObject(child)` so the synchronous listener sees the extended set.
 - `Store.Mutate[T]` — clone-then-AddObject helper encoding the immutability contract. See [`pkg/manifest/doc.go`](pkg/manifest/doc.go) for the full rule.

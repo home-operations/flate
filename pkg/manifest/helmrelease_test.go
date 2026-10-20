@@ -22,7 +22,7 @@ func TestHelmRelease_UsesDirectOCIRepository(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			hr := &HelmRelease{Chart: HelmChart{RepoGroup: SourceDomain, RepoKind: tc.repoKind}}
+			hr := &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: tc.repoKind}}}
 			if tc.refKind != "" {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{APIVersion: tc.apiVersion, Kind: tc.refKind, Name: "chart"}
 			}

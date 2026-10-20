@@ -3,7 +3,7 @@ package manifest
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
+	"maps"
 	"strings"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -14,6 +14,52 @@ import (
 // algorithm-qualified prefix plus trailing `]` is specific enough that a
 // real cleartext value never matches it by accident.
 const sopsCiphertextPrefix = "ENC[AES256_GCM,"
+
+// ValuePlaceholder returns the offline placeholder token for key.
+func ValuePlaceholder(key string) string {
+	return ValuePlaceholderPrefix + key + ".."
+}
+
+func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
+	encrypted := isEncryptedSecret(doc)
+	var sanitized map[string]any
+	for _, field := range []string{"data", "stringData", "binaryData"} {
+		var encoding *base64.Encoding
+		if field == "binaryData" || (kind == KindSecret && field == "data") {
+			encoding = base64.StdEncoding
+		}
+		data, _ := doc[field].(map[string]any)
+		var replaced map[string]any
+		for key, raw := range data {
+			// Base64 decoding cannot lengthen a scalar to contain a longer marker.
+			if value, ok := raw.(string); !encrypted && ok && len(value) < len(sopsCiphertextPrefix) {
+				continue
+			}
+			value, err := scalarString(raw)
+			if err != nil && !encrypted {
+				continue
+			}
+			wiped := WipeValue(key, value, encoding, encrypted)
+			if wiped == value {
+				continue
+			}
+			if replaced == nil {
+				replaced = maps.Clone(data)
+			}
+			replaced[key] = wiped
+		}
+		if replaced != nil {
+			if sanitized == nil {
+				sanitized = maps.Clone(doc)
+			}
+			sanitized[field] = replaced
+		}
+	}
+	if sanitized != nil {
+		return sanitized, true
+	}
+	return doc, false
+}
 
 // WipeValue replaces raw or once-decoded SOPS ciphertext with a per-key token.
 // Nil encoding denotes a plaintext field; malformed encoding alone is preserved.
@@ -27,26 +73,14 @@ func WipeValue(key, value string, encoding *base64.Encoding, encrypted bool) str
 	if !wiped {
 		return value
 	}
-	token := fmt.Sprintf(ValuePlaceholderTemplate, key)
+	token := ValuePlaceholder(key)
 	if encoding != nil {
 		return encoding.EncodeToString([]byte(token))
 	}
 	return token
 }
 
-// IsEncryptedSecret reports whether doc looks like a SOPS-encrypted
-// Kubernetes resource. SOPS appends a top-level `sops` map containing
-// its metadata (mac, kms/age/pgp blocks, version) after encrypting the
-// document's body; presence of that map with a `mac` or `version`
-// field is the unambiguous signal.
-//
-// flate runs offline and cannot decrypt; the kustomization and
-// helmrelease controllers call this to log the encrypted resource
-// then wipe its data fields to ValuePlaceholderTemplate via
-// ParseDoc, when --wipe-secrets is enabled.
-// flate ignores spec.decryption entirely — there is no path that
-// reads the decryption Secret.
-func IsEncryptedSecret(doc map[string]any) bool {
+func isEncryptedSecret(doc map[string]any) bool {
 	sops, ok := doc["sops"].(map[string]any)
 	if !ok {
 		return false

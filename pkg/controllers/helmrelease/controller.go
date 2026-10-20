@@ -432,11 +432,11 @@ func (c *Controller) awaitChartSource(hr *manifest.HelmRelease, level manifest.D
 // already-fetched artifact and AddObject of the same synthetic id is a no-op
 // re-emit.
 func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
-	// RepoKind "" defaults to HelmRepository (see chart source dispatch).
-	if hr.Chart.RepoGroup != manifest.SourceDomain || hr.Chart.RepoKind != "" && hr.Chart.RepoKind != manifest.KindHelmRepository {
+	// An empty source kind uses HelmRepository acquisition.
+	if hr.Chart.Source.Group != manifest.SourceDomain || hr.Chart.Source.Kind != "" && hr.Chart.Source.Kind != manifest.KindHelmRepository {
 		return hr, false
 	}
-	r := c.Helm.Resolver().HelmRepository(hr.Chart.RepoNamespace, hr.Chart.RepoName)
+	r := c.Helm.Resolver().HelmRepository(hr.Chart.Source.Namespace, hr.Chart.Source.Name)
 	if r == nil {
 		return hr, false
 	}
@@ -446,10 +446,7 @@ func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *m
 	attempt.Children = []store.Child{{Obj: syn}}
 	c.Emit(id, &attempt)
 	attempt.Finish()
-	hr.Chart.RepoKind = manifest.KindHelmChart
-	hr.Chart.RepoGroup = syn.Named().Group
-	hr.Chart.RepoNamespace = syn.Namespace
-	hr.Chart.RepoName = syn.Name
+	hr.Chart.Source = syn.Named()
 	return hr, true
 }
 

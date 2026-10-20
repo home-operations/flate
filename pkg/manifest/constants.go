@@ -50,14 +50,7 @@ var BootstrapSourceID = NamedResource{
 	Group: SourceDomain, Kind: KindGitRepository, Namespace: DefaultNamespace, Name: DefaultNamespace,
 }
 
-// ValuePlaceholderTemplate is the format string used when wiping Secret
-// values. The "%s" verb is replaced with the data key.
-const ValuePlaceholderTemplate = "..PLACEHOLDER_%s.."
-
-// ValuePlaceholderPrefix is the literal prefix produced by
-// ValuePlaceholderTemplate; consumers checking whether a string is a
-// wipe placeholder should use ContainsValuePlaceholder / HasValuePlaceholder
-// rather than hard-coding the prefix.
+// ValuePlaceholderPrefix is the literal prefix used to detect offline placeholders.
 const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 
 // KustomizeBuilderFilenames is the upstream list of recognized root filenames.

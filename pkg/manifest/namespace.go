@@ -1,5 +1,7 @@
 package manifest
 
+import "maps"
+
 // EnsureMetadata returns doc["metadata"] as a map[string]any, lazily
 // creating one when absent (or when present as a non-map). Used by
 // writers that mutate metadata.labels / metadata.annotations; readers
@@ -33,4 +35,18 @@ func MergeStringMap(md map[string]any, key string, in map[string]string) {
 		out[k] = v
 	}
 	md[key] = out
+}
+
+func defaultNamespace(obj BaseManifest, doc map[string]any, namespace string, changed bool) (BaseManifest, map[string]any, bool) {
+	if obj == nil || namespace == "" || obj.Named().Namespace != "" || !(KindInfo{Kind: DocKind(doc), apiVersion: DocAPIVersion(doc)}).Namespaced() {
+		return obj, doc, changed
+	}
+	obj = obj.WithNamespace(namespace)
+	if !changed {
+		doc = maps.Clone(doc)
+	}
+	metadata := maps.Clone(doc["metadata"].(map[string]any))
+	metadata["namespace"] = namespace
+	doc["metadata"] = metadata
+	return obj, doc, true
 }

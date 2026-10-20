@@ -3,9 +3,11 @@ package oci
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +26,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -723,6 +726,154 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			if lookups.Load() != 2 {
 				t.Fatalf("retained fallback reread mutable Secrets: %d", lookups.Load())
 			}
+		})
+	}
+}
+
+func TestFetcher_BearerTokenReuse(t *testing.T) {
+	t.Parallel()
+	for _, authenticated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("authenticated=%t", authenticated), func(t *testing.T) {
+			t.Parallel()
+			artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+			upstream, _ := newMutableFakeRegistry(t, artifact)
+			var challenges, exchanges, wrongContext atomic.Int32
+			var generation atomic.Int32
+			var failTokens atomic.Bool
+			var password atomic.Value
+			password.Store("")
+			if authenticated {
+				password.Store("first")
+			}
+			token := func(host, scope, secret string) string {
+				return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%s|%s|%s|%d", host, scope, secret, generation.Load())))
+			}
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				secret := password.Load().(string)
+				if r.URL.Path == "/token" {
+					exchanges.Add(1)
+					user, pass, present := r.BasicAuth()
+					if failTokens.Load() || secret != "" && (!present || user != "user" || pass != secret) || secret == "" && present {
+						http.Error(w, "token denied", http.StatusForbidden)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]string{"token": token(r.Host, r.URL.Query().Get("scope"), secret)})
+					return
+				}
+				name, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
+				scope := "repository:" + name + ":pull"
+				header := r.Header.Get("Authorization")
+				if header != "Bearer "+token(r.Host, scope, secret) {
+					challenges.Add(1)
+					if header != "" {
+						decoded, _ := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(header, "Bearer "))
+						if !strings.HasPrefix(string(decoded), r.Host+"|"+scope+"|"+secret+"|") {
+							wrongContext.Add(1)
+						}
+					}
+					w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q,service=%q,scope=%q", "https://"+r.Host+"/token", "registry", scope))
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				upstream.Config.Handler.ServeHTTP(w, r)
+			})
+			srv := httptest.NewTLSServer(handler)
+			t.Cleanup(srv.Close)
+			repo := &manifest.OCIRepository{Name: "bearer", Namespace: "test",
+				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+			creds := credentials.NewMemoryStore()
+			setCredentials := func(host string) {
+				t.Helper()
+				cred := auth.EmptyCredential
+				if secret := password.Load().(string); secret != "" {
+					cred = auth.Credential{Username: "user", Password: secret}
+				}
+				assert.NoError(t, creds.Put(t.Context(), host, cred))
+			}
+			setCredentials(mustURL(t, srv.URL).Host)
+			owner := cachetest.New(t, t.TempDir(), sourcecache.New)
+			network := newTestNetwork(t)
+			fetch := func(request *manifest.OCIRepository, n *source.Network) {
+				t.Helper()
+				f := &Fetcher{Network: n, Cache: owner}
+				got, err := f.fetchWithCredentials(t.Context(), request, creds, sourcecache.RetryConfig{})
+				assert.NoError(t, err)
+				assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "version: v1\n")
+			}
+			fetch(repo, network)
+			assert.Equal(t, challenges.Load(), int32(1))
+			assert.Equal(t, exchanges.Load(), int32(1))
+			fetch(repo, network)
+			assert.Equal(t, challenges.Load(), int32(1))
+			assert.Equal(t, exchanges.Load(), int32(1))
+
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for range 2 {
+				f := &Fetcher{Network: network, Cache: cachetest.New(t, "", sourcecache.New)}
+				client, material, err := f.newRepoClient(t.Context(), repo, creds)
+				assert.NoError(t, err)
+				wg.Go(func() {
+					<-start
+					got, err := f.fetch(t.Context(), repo, registryAcquisition{client, material}, sourcecache.RetryConfig{})
+					if err != nil {
+						t.Errorf("concurrent acquisition: %v", err)
+						return
+					}
+					data, err := fs.ReadFile(got.FS, "app.yaml")
+					if err != nil || string(data) != "version: v1\n" {
+						t.Errorf("concurrent content=%q error=%v", data, err)
+					}
+				})
+			}
+			close(start)
+			wg.Wait()
+			assert.Equal(t, challenges.Load(), int32(1))
+			assert.Equal(t, exchanges.Load(), int32(1))
+
+			fetch(repo, newTestNetwork(t))
+			assert.Equal(t, challenges.Load(), int32(2))
+			assert.Equal(t, exchanges.Load(), int32(2))
+			password.Store("rotated")
+			setCredentials(mustURL(t, srv.URL).Host)
+			fetch(repo, network)
+			assert.Equal(t, challenges.Load(), int32(3))
+			assert.Equal(t, exchanges.Load(), int32(3))
+
+			otherScope := *repo
+			otherScope.URL = "oci://" + mustURL(t, srv.URL).Host + "/other"
+			fetch(&otherScope, network)
+			assert.Equal(t, challenges.Load(), int32(4))
+			assert.Equal(t, exchanges.Load(), int32(4))
+			otherRegistry := httptest.NewTLSServer(handler)
+			t.Cleanup(otherRegistry.Close)
+			setCredentials(mustURL(t, otherRegistry.URL).Host)
+			other := *repo
+			other.URL = "oci://" + mustURL(t, otherRegistry.URL).Host + "/app"
+			fetch(&other, network)
+			assert.Equal(t, challenges.Load(), int32(5))
+			assert.Equal(t, exchanges.Load(), int32(5))
+
+			generation.Add(1)
+			fetch(repo, network)
+			assert.Equal(t, challenges.Load(), int32(6))
+			assert.Equal(t, exchanges.Load(), int32(6))
+			generation.Add(1)
+			failTokens.Store(true)
+			_, err := (&Fetcher{Network: network, Cache: owner}).fetchWithCredentials(t.Context(), repo, creds, sourcecache.RetryConfig{})
+			if err == nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("token rejection did not propagate: %v", err)
+			}
+			response, ok := errors.AsType[*fetcherr.ResponseError](err)
+			if !ok || response.StatusCode != http.StatusForbidden {
+				t.Fatalf("token endpoint failure lost response: %v", err)
+			}
+			assert.Equal(t, challenges.Load(), int32(7))
+			assert.Equal(t, exchanges.Load(), int32(7))
+			assert.Equal(t, wrongContext.Load(), int32(0))
+			t.Logf("initial, warm, concurrent, invocation, credential, scope, registry and rejection stages: challenges=%d exchanges=%d wrong_context=%d", challenges.Load(), exchanges.Load(), wrongContext.Load())
 		})
 	}
 }

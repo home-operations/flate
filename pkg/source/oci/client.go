@@ -92,7 +92,7 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 	if err != nil {
 		return nil, nil, err
 	}
-	client.Client = &auth.Client{Client: &http.Client{Transport: tr},
+	client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache),
 		Credential: auth.StaticCredential(client.Reference.Registry, cred)}
 	return client, material, nil
 }

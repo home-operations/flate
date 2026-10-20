@@ -112,25 +112,30 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("resolve %s: %w", tag, orasError(err))
 	}
-	data, err := content.FetchAll(ctx, client, desc)
+	previous, err := w.Previous(ctx)
 	if err != nil {
-		return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(err))
-	}
-	var m ocispec.Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
 		return cache.ProducerResult{}, err
 	}
-	desc.Annotations = maps.Clone(m.Annotations)
+	unchanged := previous != nil && previous.Digest == desc.Digest
+	var m ocispec.Manifest
+	if unchanged {
+		desc = *previous
+	} else {
+		data, err := content.FetchAll(ctx, client, desc)
+		if err != nil {
+			return cache.ProducerResult{}, fmt.Errorf("fetch manifest: %w", orasError(err))
+		}
+		if err := json.Unmarshal(data, &m); err != nil {
+			return cache.ProducerResult{}, err
+		}
+		desc.Annotations = maps.Clone(m.Annotations)
+	}
 	if desc.Annotations == nil {
 		desc.Annotations = make(map[string]string)
 	}
 	desc.Annotations["flate.revision"] = ociRevision(ref, desc.Digest.String())
 	desc.Annotations["flate.resolved-tag"] = ref.Tag
-	previous, err := w.Previous(ctx)
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	if previous != nil && previous.Digest == desc.Digest {
+	if unchanged {
 		return cache.ProducerResult{Descriptor: desc, Unchanged: true}, nil
 	}
 	result := cache.ProducerResult{Descriptor: desc}

@@ -49,7 +49,8 @@ func NewHTTPTransport(tlsCfg *tls.Config, proxy *ProxyConfig) (*http.Transport, 
 
 // HTTPTransportConfig specifies immutable effective transport material.
 // A nil ProxyEnvironment captures the environment at selection time.
-// Credentials separate source security boundaries; auth remains client-local.
+// Credentials separate source security boundaries and remain client-bound.
+// Compatible OCI clients share upstream auth tokens through the selected transport.
 type HTTPTransportConfig struct {
 	TLS                *TLSMaterial
 	Insecure           bool

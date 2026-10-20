@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
@@ -416,12 +418,29 @@ func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest
 		if !errors.Is(err, errdef.ErrAlreadyExists) {
 			return stored, err
 		}
-		exists, checkErr := c.store.Exists(ctx, stored)
-		if checkErr != nil {
-			return stored, checkErr
-		}
-		if !exists {
+		info, err := os.Stat(filepath.Join(c.root.Name(), blobPath(stored.Digest)))
+		if err != nil {
 			return stored, err
+		}
+		if info.Size() != stored.Size {
+			name, err := filepath.Rel(c.root.Name(), tmp.Name())
+			if err != nil {
+				return stored, err
+			}
+			name, err = safepath.ArchiveName(name)
+			if err != nil {
+				return stored, err
+			}
+			if err := tmp.Chmod(0o444); err != nil {
+				return stored, err
+			}
+			repair := acquirePath(uuid.NewString())
+			if err := c.root.Link(name, repair); err != nil {
+				return stored, err
+			}
+			if err := c.root.Rename(repair, blobPath(stored.Digest)); err != nil {
+				return stored, err
+			}
 		}
 	}
 	return stored, nil

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"golang.org/x/net/idna"
+	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -58,13 +59,14 @@ type networkRequest struct {
 type networkRequestKey struct{}
 
 type networkTransport struct {
+	auth.Cache
 	network   *Network
 	transport *http.Transport
 	proxy     func(*http.Request) (*url.URL, error)
 }
 
 func (n *Network) wrapHTTPTransport(tr *http.Transport) http.RoundTripper {
-	t := &networkTransport{network: n, transport: tr, proxy: tr.Proxy}
+	t := &networkTransport{Cache: auth.NewCache(), network: n, transport: tr, proxy: tr.Proxy}
 	tr.Proxy = func(r *http.Request) (*url.URL, error) {
 		return r.Context().Value(networkRequestKey{}).(*networkRequest).proxy, nil
 	}

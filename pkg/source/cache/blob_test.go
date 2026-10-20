@@ -959,13 +959,16 @@ func TestBlob_Revalidation(t *testing.T) {
 				if err != nil || previous != nil {
 					t.Fatalf("invalid previous=%+v, error=%v", previous, err)
 				}
-				_, err = io.WriteString(w, "complete")
+				_, err = io.WriteString(w, "old")
 				return ProducerResult{}, err
 			})
 			assert.NoError(t, err)
 			body, err := io.ReadAll(r)
 			assert.NoError(t, errors.Join(err, r.Close()))
-			assert.Equal(t, string(body), "complete")
+			assert.Equal(t, string(body), "old")
+			info, err := c.root.Stat(path)
+			assert.NoError(t, err)
+			assert.Equal(t, info.Mode().Perm(), fs.FileMode(0o444))
 		})
 	}
 }

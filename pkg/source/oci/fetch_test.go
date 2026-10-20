@@ -291,10 +291,20 @@ func TestFetcher_Revalidation(t *testing.T) {
 			v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 			v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
 			srv, setArtifact := newMutableFakeRegistry(t, v1, v2)
-			var layers atomic.Int32
+			var heads, manifests, layers atomic.Int32
+			var failResolve atomic.Bool
 			handler := srv.Config.Handler
 			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.Contains(r.URL.Path, "/blobs/") {
+				switch {
+				case strings.Contains(r.URL.Path, "/manifests/") && r.Method == http.MethodHead:
+					heads.Add(1)
+					if failResolve.Load() {
+						http.Error(w, "resolution failed", http.StatusBadRequest)
+						return
+					}
+				case strings.Contains(r.URL.Path, "/manifests/"):
+					manifests.Add(1)
+				case strings.Contains(r.URL.Path, "/blobs/"):
 					layers.Add(1)
 				}
 				handler.ServeHTTP(w, r)
@@ -304,8 +314,42 @@ func TestFetcher_Revalidation(t *testing.T) {
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 			repo := &manifest.OCIRepository{Name: "revalidate", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, LayerSelector: &sourcev1.OCILayerSelector{Operation: operation}}
 			var identity string
-			for _, phase := range []string{"initial", "unchanged", "reopened", "changed"} {
-				if phase == "reopened" {
+			for _, phase := range []string{"initial", "unchanged", "reopened", "changed", "missing", "truncated", "resolve failure"} {
+				if phase == "missing" || phase == "truncated" {
+					payload := v2.layer
+					if operation == sourcev1.OCILayerExtract {
+						gz, err := gzip.NewReader(bytes.NewReader(payload))
+						if err != nil {
+							t.Fatal(err)
+						}
+						payload, err = io.ReadAll(gz)
+						if err := errors.Join(err, gz.Close()); err != nil {
+							t.Fatal(err)
+						}
+					}
+					found := 0
+					err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+						if err != nil || !entry.Type().IsRegular() {
+							return err
+						}
+						data, err := os.ReadFile(path)
+						if err != nil || !bytes.Equal(data, payload) {
+							return err
+						}
+						found++
+						if phase == "missing" {
+							return os.Remove(path)
+						}
+						if err := os.Chmod(path, 0o600); err != nil {
+							return err
+						}
+						return os.WriteFile(path, []byte("truncated"), 0o600)
+					})
+					if err != nil || found != 1 {
+						t.Fatalf("%s backing: found=%d error=%v", phase, found, err)
+					}
+				}
+				if phase == "reopened" || phase == "missing" || phase == "truncated" {
 					if err := f.Cache.Close(); err != nil {
 						t.Fatal(err)
 					}
@@ -314,18 +358,30 @@ func TestFetcher_Revalidation(t *testing.T) {
 				if phase == "changed" {
 					setArtifact(1)
 				}
-				before := layers.Load()
+				failResolve.Store(phase == "resolve failure")
+				beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()
 				art, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+				if phase == "resolve failure" {
+					if err == nil || !errors.Is(err, manifest.ErrFlux) || art != nil {
+						t.Fatalf("stale revalidation result: artifact=%+v error=%v", art, err)
+					}
+					if heads.Load()-beforeHeads != 1 || manifests.Load() != beforeManifests || layers.Load() != beforeLayers {
+						t.Fatal("failed resolve requested content")
+					}
+					continue
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
 				wantLayers := int32(0)
-				if phase == "initial" || phase == "changed" {
+				if phase == "initial" || phase == "changed" || phase == "missing" || phase == "truncated" {
 					wantLayers = 1
 				}
-				if got := layers.Load() - before; got != wantLayers {
-					t.Fatalf("%s layer GET=%d, want %d", phase, got, wantLayers)
+				h, m, l := heads.Load()-beforeHeads, manifests.Load()-beforeManifests, layers.Load()-beforeLayers
+				if h != 1 || m != wantLayers || l != wantLayers {
+					t.Fatalf("%s HEAD/manifest GET/layer GET=%d/%d/%d, want 1/%d/%d", phase, h, m, l, wantLayers, wantLayers)
 				}
+				t.Logf("%s HEAD/manifest GET/layer GET=%d/%d/%d", phase, h, m, l)
 				got := sourcecache.AcquisitionIdentity(art.FS)
 				if phase == "initial" {
 					identity = got
@@ -333,12 +389,13 @@ func TestFetcher_Revalidation(t *testing.T) {
 					if got == identity {
 						t.Fatal("changed manifest retained content identity")
 					}
+					identity = got
 				} else if got != identity {
 					t.Fatal("revalidation changed content identity")
 				}
 				if operation == sourcev1.OCILayerExtract {
 					want := "version: v1\n"
-					if phase == "changed" {
+					if phase == "changed" || phase == "missing" || phase == "truncated" {
 						want = "version: v2\n"
 					}
 					if got := mustReadFile(t, art.FS, "app.yaml"); got != want {
@@ -346,7 +403,7 @@ func TestFetcher_Revalidation(t *testing.T) {
 					}
 				} else {
 					want := v1.layer
-					if phase == "changed" {
+					if phase == "changed" || phase == "missing" || phase == "truncated" {
 						want = v2.layer
 					}
 					got, err := fs.ReadFile(art.FS, source.OCICopiedLayerFilename)
@@ -403,15 +460,12 @@ func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 			}
 			h, m, l := heads.Load()-beforeHeads, manifests.Load()-beforeManifests, layers.Load()-beforeLayers
 			t.Logf("%s operation=%d: tag_HEAD=%d manifest_GET=%d layer_GET=%d accepted_connections=%d", invocation, operation, h, m, l, connections.Load()-beforeConnections)
-			if h != 1 || m != 1 {
-				t.Errorf("due tag resolution: HEAD=%d GET=%d, want 1 each", h, m)
-			}
 			wantLayers := int32(0)
 			if invocation == "cold" && operation == 0 {
 				wantLayers = 1
 			}
-			if l != wantLayers {
-				t.Errorf("%s operation=%d: unchanged layer requests=%d, want %d", invocation, operation, l, wantLayers)
+			if h != 1 || m != wantLayers || l != wantLayers {
+				t.Errorf("%s operation=%d: HEAD/manifest GET/layer GET=%d/%d/%d, want 1/%d/%d", invocation, operation, h, m, l, wantLayers, wantLayers)
 			}
 		}
 		if got := connections.Load() - beforeConnections; got != 1 {
@@ -1132,6 +1186,85 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			}
 			if got := requests.Load(); got != want {
 				t.Fatalf("registry requests=%d want=%d", got, want)
+			}
+		})
+	}
+}
+
+func TestFetcher_Revalidation_SelectedTagMetadata(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{sourcev1.OCILayerExtract, sourcev1.OCILayerCopy} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+			var m ocispec.Manifest
+			assert.NoError(t, json.Unmarshal(artifact.manifest, &m))
+			m.Annotations = map[string]string{"content.annotation": "retained"}
+			var err error
+			artifact.manifest, err = json.Marshal(m)
+			assert.NoError(t, err)
+			artifact.manifestDigest = sha256Digest(artifact.manifest)
+			srv, _ := newMutableFakeRegistry(t, artifact)
+			var newer atomic.Bool
+			var tags, heads, manifests, layers atomic.Int32
+			handler := srv.Config.Handler
+			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/tags/list"):
+					tags.Add(1)
+					available := []string{"v1.0.0"}
+					if newer.Load() {
+						available = append(available, "v1.1.0")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "app", "tags": available})
+					return
+				case strings.Contains(r.URL.Path, "/manifests/") && r.Method == http.MethodHead:
+					heads.Add(1)
+				case strings.Contains(r.URL.Path, "/manifests/"):
+					manifests.Add(1)
+				case strings.Contains(r.URL.Path, "/blobs/"):
+					layers.Add(1)
+				}
+				handler.ServeHTTP(w, r)
+			})
+			srv.StartTLS()
+			root := t.TempDir()
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
+			repo := &manifest.OCIRepository{Name: "metadata", Namespace: "test",
+				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+				Reference:     &sourcev1.OCIRepositoryRef{SemVer: ">=1.0.0"},
+				LayerSelector: &sourcev1.OCILayerSelector{Operation: operation}}
+			first, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			firstMetadata := map[string]string{"content.annotation": "retained", "flate.revision": "v1.0.0@" + artifact.manifestDigest, "flate.resolved-tag": "v1.0.0"}
+			assert.Diff(t, first.Metadata, firstMetadata)
+			newer.Store(true)
+			for _, phase := range []string{"newer tag", "reopened"} {
+				if phase == "reopened" {
+					assert.NoError(t, f.Cache.Close())
+					f.Cache = cachetest.New(t, root, sourcecache.New)
+				}
+				beforeTags, beforeHeads, beforeManifests, beforeLayers := tags.Load(), heads.Load(), manifests.Load(), layers.Load()
+				got, err := f.Fetch(t.Context(), repo, sourcecache.RetryConfig{})
+				assert.NoError(t, err)
+				if tags.Load()-beforeTags != 1 || heads.Load()-beforeHeads != 1 || manifests.Load() != beforeManifests || layers.Load() != beforeLayers {
+					t.Fatalf("%s: tag lists/HEAD/manifest GET/layer GET=%d/%d/%d/%d", phase, tags.Load()-beforeTags, heads.Load()-beforeHeads, manifests.Load()-beforeManifests, layers.Load()-beforeLayers)
+				}
+				assert.Equal(t, got.Key, first.Key)
+				assert.Equal(t, sourcecache.AcquisitionIdentity(got.FS), sourcecache.AcquisitionIdentity(first.FS))
+				assert.Equal(t, got.Digest, first.Digest)
+				assert.Equal(t, got.Size, first.Size)
+				assert.Equal(t, got.Revision, "v1.1.0@"+artifact.manifestDigest)
+				assert.Diff(t, got.Metadata, map[string]string{"content.annotation": "retained", "flate.revision": got.Revision, "flate.resolved-tag": "v1.1.0"})
+				assert.Diff(t, first.Metadata, firstMetadata)
+				if operation == sourcev1.OCILayerExtract {
+					assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "version: v1\n")
+				} else {
+					body, err := fs.ReadFile(got.FS, source.OCICopiedLayerFilename)
+					assert.NoError(t, err)
+					assert.Diff(t, body, artifact.layer)
+				}
 			}
 		})
 	}

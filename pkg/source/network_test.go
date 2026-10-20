@@ -542,6 +542,9 @@ func TestNetwork_TransportReuse(t *testing.T) {
 		if clients[0].Transport != clients[1].Transport {
 			t.Fatal("concurrent selection escaped different transports")
 		}
+		if clients[0].Transport.(*networkTransport).Cache == nil {
+			t.Fatal("published transport has no upstream auth cache")
+		}
 		for i := range clients {
 			if err := networkGet(t.Context(), &clients[i], srv.URL); err != nil {
 				t.Fatal(err)

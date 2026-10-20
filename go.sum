@@ -145,8 +145,8 @@ github.com/fluxcd/pkg/apis/acl v0.10.0 h1:KPfAmELNvtvaz8wixnm/MYXqa+MJf7ntVVMUU9
 github.com/fluxcd/pkg/apis/acl v0.10.0/go.mod h1:a87i2A7AlFO5N2J8CxtzaUCCDmuLLWOHwkKu3eJF5fY=
 github.com/fluxcd/pkg/apis/kustomize v1.23.0 h1:tT/sUURyh6ixQG4+Y/ZoUu+hh5/DQLRraWBgy42ubqQ=
 github.com/fluxcd/pkg/apis/kustomize v1.23.0/go.mod h1:Jm/LmEsqJIldhhTmhkORAq8JKVZK3ZV2Q88rntjGxEI=
-github.com/fluxcd/pkg/apis/meta v1.32.0 h1:jWuNuIziUM8NOrhZB7vovdFQ4wBYRNJoAn+XUoYlj1I=
-github.com/fluxcd/pkg/apis/meta v1.32.0/go.mod h1:bZmU0RbSwFzsCg9sgjhbSWxgSbUy+3Oh/s7qUCZjwPk=
+github.com/fluxcd/pkg/apis/meta v1.36.0 h1:sgT0N/tXPTLYPzYjO3WHt3LKaRBOlQIP+/dTrJRzvDQ=
+github.com/fluxcd/pkg/apis/meta v1.36.0/go.mod h1:1MLvK2Xu3UdTKBzg+Q1Oj7H9PHeiKsUB1UW3uwxAwiM=
 github.com/fluxcd/pkg/envsubst v1.8.0 h1:++pY6RUuLDPJAJ9cS7/oD69TCT8BzGF5njz0hkQ3RZY=
 github.com/fluxcd/pkg/envsubst v1.8.0/go.mod h1:aoWeSIOamhqBZ3bHVj1GDwpdA10DXrI8yYbyjPiFly0=
 github.com/fluxcd/pkg/kustomize v1.41.0 h1:ShntVMiX8ZvvQCM3MNIaxZbYT4T4ehV2wIWC73rzBrg=

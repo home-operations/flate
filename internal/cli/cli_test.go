@@ -170,15 +170,11 @@ func TestRun_MissingPathErrors(t *testing.T) {
 
 func TestRun_BuildAll(t *testing.T) {
 	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)
+	stdout, stderr, code := runCLI(t, "build", "all", "--path", path, "--concurrency", "2")
 	if code != 0 {
 		t.Fatalf("build all exited %d: stderr=%s", code, stderr)
 	}
-	for _, want := range []string{"kind: ConfigMap", "name: hello", "greeting: hi"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("build output missing %q:\n%s", want, stdout)
-		}
-	}
+	assert.Diff(t, stdout, "---\napiVersion: v1\ndata:\n  greeting: hi\nkind: ConfigMap\nmetadata:\n  labels:\n    kustomize.toolkit.fluxcd.io/name: apps\n    kustomize.toolkit.fluxcd.io/namespace: flux-system\n  name: hello\n  namespace: apps\n")
 }
 
 func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
@@ -311,7 +307,6 @@ func TestRun_GetKS_NameFilter_NamespaceMismatchFails(t *testing.T) {
 	}
 }
 
-// TestRun_GetKS_YAML exercises -o yaml on a list verb.
 func TestRun_GetKS_YAML(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(t, path, "nosrc.yaml", testutil.KustomizationYAML("nosrc", "flux-system", "  {path: ./apps, suspend: true}\n"))
@@ -324,6 +319,11 @@ func TestRun_GetKS_YAML(t *testing.T) {
 			t.Errorf("yaml output missing %q:\n%s", want, stdout)
 		}
 	}
+	apps, stderr, code := runCLI(t, "get", "ks", "apps", "--path", path, "-o", "yaml", "--concurrency", "2")
+	if code != 0 {
+		t.Fatalf("get ks apps -o yaml exited %d: %s", code, stderr)
+	}
+	assert.Diff(t, apps, "---\nkind: Kustomization\nname: apps\nnamespace: flux-system\npath: ./apps\nprune: false\nsourceRef:\n  kind: GitRepository\n  name: flux-system\n  namespace: flux-system\nwait: false\n")
 	for _, output := range []string{"yaml", "json"} {
 		stdout, stderr, code := runCLI(t, "get", "ks", "nosrc", "--path", path, "-o", output)
 		if code != 0 || !strings.Contains(stdout, "flux-system") || strings.Contains(stdout, `namespace: ""`) || strings.Contains(stdout, `"namespace": ""`) {
@@ -345,16 +345,13 @@ func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	}
 }
 
-// TestRun_GetAll_Yaml emits a key:value cluster summary.
 func TestRun_GetAll_Yaml(t *testing.T) {
 	path := writeFixture(t)
-	stdout, _, code := runCLI(t, "get", "all", "--path", path, "-o", "yaml")
+	stdout, _, code := runCLI(t, "get", "all", "--path", path, "-o", "yaml", "--concurrency", "2")
 	if code != 0 {
 		t.Fatalf("get all exited %d", code)
 	}
-	if !strings.Contains(stdout, "kustomizations:") {
-		t.Errorf("summary missing kustomizations key:\n%s", stdout)
-	}
+	assert.Diff(t, stdout, "helmReleases: 0\nkustomizations: 1\n")
 }
 
 func TestRun_GetAll_RespectsNamespace(t *testing.T) {
@@ -434,9 +431,10 @@ func TestRun_AdvisoriesOnlyInTest(t *testing.T) {
 func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(t, path, "flux/hidden.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: hidden, namespace: flux-system}\nstatus: {artifact: {url: 'file://"+path+"'}}\n")
-	stdout, _, code := runCLI(t, "test", "all", "--path", path)
+	stdout, _, code := runCLI(t, "test", "all", "--path", path, "--concurrency", "2")
 	assert.Equal(t, code, 0)
-	assert.Equal(t, strings.Contains(stdout, "✓") && strings.Contains(stdout, "passed"), true)
+	assert.Equal(t, strings.Contains(stdout, "flux-system/apps\n") && strings.Contains(stdout, "✓"), true)
+	assert.Equal(t, strings.Contains(stdout, "1 passed") && strings.HasSuffix(stdout, "\n"), true)
 	assert.Equal(t, strings.Contains(stdout, "failed") || strings.Contains(stdout, "hidden"), false)
 }
 
@@ -884,6 +882,9 @@ data:
 				t.Fatalf("diff images exited %d: %s", code, stderr)
 			}
 			assert.Diff(t, delta, get)
+			if format == "yaml" {
+				assert.Diff(t, get, "- ghcr.io/example/a:1\n- ghcr.io/example/z:2\n")
+			}
 			var images []string
 			if format == "name" {
 				assert.Equal(t, get, strings.Join(want, "\n")+"\n")

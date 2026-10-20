@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"unicode/utf8"
-
-	"sigs.k8s.io/yaml"
 )
 
 // Format is the discriminator selected via -o on the CLI.
@@ -142,10 +140,9 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 	}
 }
 
-// yamlMulti emits a multi-document YAML stream.
 func (e Encoder) yamlMulti(docs []map[string]any) error {
 	for _, d := range docs {
-		out, err := yaml.Marshal(d)
+		out, err := marshalYAML(d)
 		if err != nil {
 			return err
 		}
@@ -161,7 +158,7 @@ func (e Encoder) yamlMulti(docs []map[string]any) error {
 
 // YAML emits a single document.
 func (e Encoder) YAML(value any) error {
-	out, err := yaml.Marshal(value)
+	out, err := marshalYAML(value)
 	if err != nil {
 		return err
 	}

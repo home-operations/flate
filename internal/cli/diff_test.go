@@ -527,11 +527,8 @@ data: {greeting: hola}
 			}
 			assert.Equal(t, stderr, persistenceNotice)
 			if tc.changed {
-				for _, want := range []string{"-  greeting: hola", "+  greeting: hi"} {
-					if !strings.Contains(stdout, want) {
-						t.Errorf("expected a real field change %q, got:\n%s", want, stdout)
-					}
-				}
+				assert.Equal(t, strings.Contains(stdout, "-  greeting: hola\n+  greeting: hi\n"), true)
+				assert.Equal(t, strings.HasSuffix(stdout, "\n"), true)
 			} else if stdout != "" {
 				t.Errorf("identical snapshots should have no diff:\n%s", stdout)
 			}

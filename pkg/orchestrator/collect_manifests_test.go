@@ -166,3 +166,40 @@ func TestCollectManifests_ParentlessResourceSetSharedChild(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectManifests_ResourceSetDataChildren(t *testing.T) {
+	t.Parallel()
+
+	st := store.New()
+	parent := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
+	rs := &manifest.ResourceSet{Name: "demo", Namespace: "flux-system"}
+	st.AddObject(parent)
+	st.AddObject(rs)
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		rs.Named(): {Parent: parent.Named()},
+	}}
+	doc := func(apiVersion, kind, name string) map[string]any {
+		return map[string]any{"apiVersion": apiVersion, "kind": kind, "metadata": map[string]any{"name": name, "namespace": "default"}}
+	}
+	cm := doc("v1", "ConfigMap", "cm-one")
+	cm["data"] = map[string]any{"key": "value"}
+	secret := doc("v1", "Secret", "secret-one")
+	secret["data"] = map[string]any{"key": "dmFsdWU="}
+	sa := doc("v1", "ServiceAccount", "sa-one")
+	ks := doc("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "generated")
+	children, docs := base.ParseChildren(rs.Named(), []map[string]any{cm, secret, sa, ks}, manifest.ParseDocOptions{})
+	if len(children) != 4 {
+		t.Fatalf("ResourceSet must publish four children: %v", children)
+	}
+	st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
+
+	o := &Orchestrator{store: st, index: index}
+	assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{
+		parent.Named(): {cm, secret, sa},
+	})
+
+	o.cfg.HelmOptions.SkipKinds = []string{manifest.KindSecret}
+	assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{
+		parent.Named(): {cm, sa},
+	})
+}

@@ -257,7 +257,10 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 		for _, child := range attempt.Children {
 			if child.Doc != nil {
 				target := child.Obj.Named()
-				selected[resourceset.DedupKey(child.Doc)] = !rawOnly || !manifest.KindOf(child.Obj).Tracked && rawOwners[target] == id
+				// A ResourceSet's Flux children are not output, but the
+				// ConfigMaps and Secrets it generates are, like any other object.
+				info := manifest.KindOf(child.Obj)
+				selected[resourceset.DedupKey(child.Doc)] = !rawOnly || (!info.Tracked || info.Data) && rawOwners[target] == id
 			}
 		}
 		for _, doc := range manifest.DropKinds(attempt.Manifests, skip) {

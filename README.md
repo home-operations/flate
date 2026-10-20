@@ -216,7 +216,9 @@ for id, info := range res.Failed {
 }
 ```
 
-SDK callers that inject `source.Network` own its lifetime: join renders and close TreeCache workers before calling `Network.Close`. Orchestrators borrow injected networks; an internally created network closes after its render or both `RenderTrees` sides finish. Low-level OCI, Bucket and HelmChart fetchers require a caller-owned, non-nil `source.Network`; join all fetches before calling `Network.Close`.
+SDK callers that inject `source.Network` own its lifetime: join renders and close TreeCache workers before calling `Network.Close`. Orchestrators borrow injected networks; an internally created network closes after its render or both `RenderTrees` sides finish.
+
+Low-level OCI, Bucket and HelmChart fetchers require a caller-owned, non-nil `source.Network`: set `oci.Fetcher.Network` and `bucket.Fetcher.Network`, or pass it through `helmchart.Config.Network` to `helmchart.New`. These fetchers borrow the network; the caller must join all fetches before calling `Network.Close`.
 
 Other entry points worth knowing:
 

@@ -575,16 +575,14 @@ func TestStrictParent_SkipsSelf(t *testing.T) {
 	}
 }
 
-// TestClaims_IncludesSpecComponents pins the components fold:
-// a KS that lists a relative spec.components path should claim that
-// component subtree in the prefix set, so a child file living under
-// the component dir attributes back to the parent. Without this,
-// discovery's parent index treats the child as orphan and the
-// change-mode index's already-correct attribution diverges — exactly
-// the false-positive the audit's 9.1 finding called out.
 func TestClaims_IncludesSpecComponents(t *testing.T) {
 	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/team-a/kustomization.yaml", "components: [../shared/local]\n")
+	testutil.WriteFile(t, root, "apps/shared/observability/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
+	testutil.WriteFile(t, root, "apps/shared/local/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
 	s := store.New()
+	admitForTest(s, root)
 	parent := &manifest.Kustomization{
 		Name: "parent", Namespace: "flux-system",
 		Path:       "./apps/team-a",
@@ -592,30 +590,13 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 	}
 	s.AddObject(parent)
 
-	prefixes := Claims(s, "")
-	// Expect TWO entries for the parent: its spec.path and the
-	// resolved component dir.
-	var sawPath, sawComponent bool
-	for _, p := range prefixes {
-		if p.ID != parent.Named() {
-			continue
-		}
-		switch p.Prefix {
-		case "apps/team-a/":
-			sawPath = true
-		case "apps/shared/observability/":
-			sawComponent = true
-		}
-	}
-	if !sawPath {
-		t.Errorf("expected prefix for spec.path; got %+v", prefixes)
-	}
-	if !sawComponent {
-		t.Errorf("expected prefix for resolved spec.components entry; got %+v", prefixes)
-	}
+	prefixes := Claims(s, root)
+	assert.Diff(t, prefixes, []manifest.KSClaim{
+		{ID: parent.Named(), Prefix: "apps/shared/observability/"},
+		{ID: parent.Named(), Prefix: "apps/shared/local/"},
+		{ID: parent.Named(), Prefix: "apps/team-a/"},
+	})
 
-	// Integration: StrictParent over a file under the component dir
-	// must attribute to the parent KS.
 	got, ok := manifest.StrictParent(prefixes, "apps/shared/observability/karma.yaml", manifest.NamedResource{}, nil)
 	if !ok {
 		t.Fatalf("StrictParent missed component-dir child — components fold regression")

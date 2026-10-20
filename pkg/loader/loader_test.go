@@ -777,11 +777,11 @@ components:
 func TestLoader_DiscoveryPicksUpBootstrapSiblingKS(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	// kustomization.yaml exists but does NOT list bootstrap.yaml.
 	testutil.WriteFile(t, dir, "repositories/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./source.yaml
+generators: ["# flux-entry.yaml"]
 `)
 	testutil.WriteFile(t, dir, "repositories/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
@@ -793,11 +793,7 @@ spec:
   ref:
     tag: 1.0.0
 `)
-	// The bootstrap-style Flux KS, sibling to kustomization.yaml but
-	// outside its resources graph.
-	testutil.WriteFile(t, dir, "repositories/flux-entry.yaml", testutil.KustomizationYAML("flux-entry-repos", "flux-system", "  path: ./repositories\n  sourceRef:\n    kind: GitRepository\n    name: cluster\n  interval: 10m\n"))
-	// A sibling HelmRelease should stay invisible — the scan is
-	// scoped to Flux Kustomization CRs only.
+	testutil.WriteFile(t, dir, "repositories/# flux-entry.yaml", testutil.KustomizationYAML("flux-entry-repos", "flux-system", "  path: ./repositories\n  sourceRef:\n    kind: GitRepository\n    name: cluster\n  interval: 10m\n"))
 	testutil.WriteFile(t, dir, "repositories/stray-hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -821,7 +817,7 @@ spec:
 	if s.GetObject(ksID) == nil {
 		t.Errorf("bootstrap-sibling Flux KS must reach the Store during discovery")
 	}
-	if got, want := filesForTest(l.Index)[ksID], "repositories/flux-entry.yaml"; got != want {
+	if got, want := filesForTest(l.Index)[ksID], "repositories/# flux-entry.yaml"; got != want {
 		t.Errorf("SourceFiles[KS] = %q; want %q", got, want)
 	}
 

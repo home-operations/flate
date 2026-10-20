@@ -9,13 +9,14 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/kustomize/api/filters/namespace"
 	"sigs.k8s.io/kustomize/api/types"
 	sigsyaml "sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/internal/kustpath"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -93,12 +94,12 @@ func (reader documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir
 // sets Kustomization spec/targetNamespace, the directive value is the namespace
 // that transformer injects.
 func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
-	d, _ := reader.read(filepath.Join(repoRoot, overlayDir))
-	if d == nil || len(d.Transformers) == 0 {
-		return nsResolution{}
-	}
-	for _, ref := range d.Transformers {
-		transformerDir, ok := kustpath.Resolve(overlayDir, ref, kustpath.Transformer)
+	spec, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+	for ref := range kustomizeinput.Kustomization(spec) {
+		if ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers") || ref.Inline {
+			continue
+		}
+		transformerDir, ok := kustomizeinput.Local(repoRoot, overlayDir, ref.Path)
 		if !ok {
 			continue
 		}
@@ -152,16 +153,19 @@ func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string
 	if d == nil {
 		return false
 	}
-	// A ref is either a file (the transformer manifest itself) or a
-	// directory with its own kustomization.yaml — try both.
-	return slices.ContainsFunc(slices.Concat(d.Resources, d.Transformers), func(ref string) bool {
-		target, ok := kustpath.Resolve(dir, ref, kustpath.Transformer)
-		if !ok {
-			return false
+	for ref := range kustomizeinput.Kustomization(d) {
+		if ref.Role != kustomizeinput.Resource && (ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) || ref.Inline {
+			continue
 		}
-		return reader.fileHasNamespaceTransformer(repoRoot, target) ||
-			reader.subtreeHasNamespaceTransformer(repoRoot, target, visited, depth+1)
-	})
+		target, ok := kustomizeinput.Local(repoRoot, dir, ref.Path)
+		if !ok {
+			continue
+		}
+		if reader.fileHasNamespaceTransformer(repoRoot, target) || reader.subtreeHasNamespaceTransformer(repoRoot, target, visited, depth+1) {
+			return true
+		}
+	}
+	return false
 }
 
 // fileHasNamespaceTransformer reads target as a (possibly multi-document)
@@ -230,8 +234,20 @@ func replacementInjectsTargetNamespace(r types.ReplacementField, reader document
 	if r.Source != nil || len(r.Targets) != 0 || r.SourceValue != nil {
 		return false
 	}
-	ref, ok := kustpath.Resolve(overlayDir, r.Path, kustpath.Transformer)
-	if !ok {
+	var ref string
+	spec, _ := reader.read(filepath.Join(repoRoot, overlayDir))
+	for input := range kustomizeinput.Kustomization(spec) {
+		if !strings.HasPrefix(input.Field, ".replacements.*") || input.Path != r.Path {
+			continue
+		}
+		var ok bool
+		ref, ok = kustomizeinput.Local(repoRoot, overlayDir, input.Path)
+		if !ok {
+			return false
+		}
+		break
+	}
+	if ref == "" {
 		return false
 	}
 	input, name := reader.input(filepath.Join(repoRoot, ref))

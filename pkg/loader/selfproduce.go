@@ -2,7 +2,6 @@ package loader
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 
 	"sigs.k8s.io/kustomize/api/types"
 
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
@@ -29,6 +29,7 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 		store:        l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}}
 	var generators []generatorRecord
+	incomplete := map[manifest.NamedResource][]string{}
 	remaining := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
 		if doc.body != nil && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
@@ -36,11 +37,22 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 		}
 	}
 	record := func(v graphVisit) {
-		if v.owner != (manifest.NamedResource{}) && !v.generated {
+		if v.owner != (manifest.NamedResource{}) && v.coordinate != "" {
 			l.recordReader(v.coordinate, v.localCoordinate(), v.owner)
+		}
+		if v.incomplete != "" {
+			if v.owner != (manifest.NamedResource{}) {
+				incomplete[v.owner] = append(incomplete[v.owner], v.source.String()+":"+v.coordinate+": "+v.incomplete)
+			}
+			return
 		}
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
+		}
+		if v.role != kustomizeinput.Resource {
+			return
+		}
+		if v.document != nil {
 			for _, g := range v.document.ConfigMapGenerator {
 				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), isConfigMap: true, args: g.GeneratorArgs, owner: v.owner, reader: l.documents})
 			}
@@ -53,12 +65,22 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 			b.recordProduced(v, l.documents.cache[v.file].objects)
 		}
 	}
-	for _, root := range l.scopes.roots {
-		for _, v := range l.scopes.walks[root.graphContext] {
-			v.owner, v.source = root.owner, root.source
+	for _, contribution := range l.scopes.contributions {
+		for _, v := range contribution.visits {
+			v.owner, v.source = contribution.owner, contribution.source
 			record(v)
 		}
 	}
+	if len(incomplete) != 0 {
+		for _, owner := range slices.SortedFunc(maps.Keys(incomplete), manifest.NamedResource.Compare) {
+			details := incomplete[owner]
+			slices.Sort(details)
+			details = slices.Compact(details)
+			l.Store.AddWarning(owner, manifest.Warning{Resource: owner, Category: manifest.WarnIncompleteInputCoverage,
+				Message: "changed-only input coverage is incomplete; run flate build all without --base or --path-orig to validate the full tree", Detail: details})
+		}
+	}
+
 	if len(remaining) != 0 {
 		for _, dir := range l.unreachedGeneratorRoots(repoRoot, remaining) {
 			root := graphVisit{root: repoRoot, dir: dir}
@@ -134,6 +156,11 @@ func (l *Loader) addGenerated(generators []generatorRecord) {
 
 type graphContext struct {
 	root, dir, namespace, fallback string
+	pluginRoot                     string
+	role                           kustomizeinput.Role
+	deferMaterialization           bool
+	checkMetadata                  bool
+	deferDecode                    bool
 }
 
 type graphVisit struct {
@@ -142,10 +169,10 @@ type graphVisit struct {
 	prefix, coordinate string
 	owner              manifest.NamedResource
 	source             manifest.NamedResource
+	localBase          string
+	incomplete         string
 	document           *types.Kustomization
 	readable           bool
-	localBase          string
-	generated          bool
 }
 
 func (v graphVisit) localCoordinate() string {
@@ -184,11 +211,12 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 		if doc.body == nil {
 			continue
 		}
-		for _, refs := range [][]string{doc.body.Resources, doc.body.Components} {
-			for _, ref := range refs {
-				if child, ok := kustpath.Resolve(dir, ref, kustpath.Directory); ok {
-					delete(roots, child)
-				}
+		for ref := range kustomizeinput.Kustomization(doc.body) {
+			if ref.Role == kustomizeinput.File || ref.Inline {
+				continue
+			}
+			if child, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
+				delete(roots, child)
 			}
 		}
 	}
@@ -213,77 +241,156 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 	if _, ok := kustpath.Resolve("", v.dir, kustpath.Root); !ok {
 		return true
 	}
-	d, file := w.documents.read(filepath.Join(v.root, v.dir))
+	abs := filepath.Join(v.root, v.dir)
+	if !safepath.Contains(v.root, abs) || w.documents.mountedRoot(abs) != w.documents.mountedRoot(v.root) {
+		return true
+	}
+	v.file, v.coordinate, v.document = abs, path.Join(v.prefix, v.dir), nil
+	if v.role == kustomizeinput.File {
+		return yield(v)
+	}
+	d, file := w.documents.read(abs)
+	cached := w.documents.cache[abs]
+	if d != nil || cached.pathState == pathDirectory {
+		if _, seen := w.visited[v.graphContext]; seen {
+			return true
+		}
+		w.visited[v.graphContext] = struct{}{}
+	}
 	if d == nil {
-		input, name := w.documents.input(filepath.Join(v.root, v.dir))
-		entries, _ := fs.ReadDir(input, name)
-		for _, entry := range entries {
-			child := v
-			child.generated = true
-			child.dir = path.Join(v.dir, entry.Name())
-			if entry.IsDir() {
+		if cached.pathState == pathDirectory {
+			input, name := w.documents.input(abs)
+			entries, _ := fs.ReadDir(input, name)
+			for _, entry := range entries {
+				if !entry.IsDir() && !isManifestFile(entry.Name()) {
+					continue
+				}
+				child := v
+				child.deferMaterialization = true
+				child.dir = path.Join(v.dir, entry.Name())
 				if !w.walk(child, yield) {
 					return false
 				}
-			} else if ext := path.Ext(entry.Name()); ext == ".yaml" || ext == ".yml" {
-				child.file, child.coordinate, child.document = filepath.Join(v.root, child.dir), path.Join(v.prefix, child.dir), nil
-				child.readable = true
-				if !yield(child) {
-					return false
+			}
+			return true
+		}
+		v.readable = cached.pathState != pathMissing && !v.deferDecode
+		if v.role != kustomizeinput.Configuration {
+			return yield(v)
+		}
+		if cached.plugins == nil {
+			var plugins []pluginInputs
+			input, name := w.documents.input(abs)
+			body, readErr := fs.ReadFile(input, name)
+			resources, parseErr := kustomizeinput.Resources(body)
+			if readErr == nil && parseErr == nil {
+				for _, resource := range resources {
+					refs, known := kustomizeinput.Plugin(resource.YNode())
+					plugins = append(plugins, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())})
 				}
+			}
+			cached.plugins = &plugins
+			w.documents.cache[abs] = cached
+		}
+		if !yield(v) {
+			return false
+		}
+		if len(*cached.plugins) == 0 {
+			return w.uncertain(v, "configuration content is unavailable or opaque", yield)
+		}
+		for _, config := range *cached.plugins {
+			if !w.configuration(v, config, yield) {
+				return false
 			}
 		}
 		return true
 	}
+	v.deferDecode = false
 	v.namespace = cmp.Or(v.namespace, d.Namespace)
 	if v.namespace == "" {
 		v.namespace = w.documents.transformerInjectedNamespace(v.root, v.dir).ns
 	}
-	if _, seen := w.visited[v.graphContext]; seen {
-		return true
-	}
-	w.visited[v.graphContext] = struct{}{}
 	v.file, v.document, v.readable = file, d, true
 	v.coordinate = path.Join(v.prefix, v.dir, filepath.Base(file))
 	if !yield(v) {
 		return false
 	}
-	for _, refs := range [][]string{d.Resources, d.Components} {
-		for _, ref := range refs {
-			resolved, ok := kustpath.Resolve(v.dir, ref, kustpath.Directory)
-			if !ok {
-				continue
-			}
-			child := v
-			child.dir = filepath.ToSlash(resolved)
-			abs := filepath.Join(v.root, resolved)
-			childDoc, known := w.documents.cache[abs]
-			directory := childDoc.body != nil
-			readable := true
-			if !known {
-				input, name := w.documents.input(abs)
-				info, err := fs.Stat(input, name)
-				directory = err == nil && info.IsDir()
-				readable = !errors.Is(err, fs.ErrNotExist)
-			}
-			if directory {
-				if !w.walk(child, yield) {
-					return false
-				}
-				continue
-			}
-			child.file, child.document = abs, nil
-			child.coordinate = path.Join(v.prefix, filepath.ToSlash(resolved))
-			child.readable = readable
-			if child.readable {
-				_, child.readable = kustpath.Resolve(filepath.Join(v.root, v.dir), ref, kustpath.File)
-			}
-			if !yield(child) {
-				return false
-			}
+	doc := w.documents.cache[abs]
+	if v.role == kustomizeinput.Configuration && !kustomizeinput.PreservesOperands(doc.body) {
+		if !w.uncertain(v, "configuration transformations may rewrite plugin file operands", yield) {
+			return false
+		}
+	}
+	for ref := range kustomizeinput.Kustomization(doc.body) {
+		if !w.reference(v, ref, yield) {
+			return false
 		}
 	}
 	return true
+}
+
+func (w *graphWalker) reference(v graphVisit, ref kustomizeinput.Reference, yield func(graphVisit) bool) bool {
+	child := v
+	child.document, child.readable, child.incomplete = nil, false, ""
+	base := v.dir
+	if ref.Role == kustomizeinput.Configuration {
+		child.role, child.pluginRoot = kustomizeinput.Configuration, v.dir
+		child.checkMetadata = v.role == kustomizeinput.Configuration && strings.HasPrefix(ref.Field, ".transformers")
+		if ref.Inline {
+			for _, resource := range ref.Resources {
+				refs, known := kustomizeinput.Plugin(resource.YNode())
+				if !w.configuration(child, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())}, yield) {
+					return false
+				}
+			}
+			return true
+		}
+	} else if ref.Role == kustomizeinput.File {
+		child.role = kustomizeinput.File
+	} else if v.role != kustomizeinput.Configuration {
+		child.role = kustomizeinput.Resource
+	}
+	resolved, ok := kustpath.Resolve(filepath.Join(v.root, base), ref.Path, kustpath.Dependency)
+	if !ok || !safepath.Contains(v.root, resolved) || w.documents.mountedRoot(resolved) != w.documents.mountedRoot(v.root) {
+		if child.role == kustomizeinput.Configuration {
+			return w.uncertain(v, ref.FieldPath()+": configuration reference cannot be inspected locally", yield)
+		}
+		return true
+	}
+	rel, _ := filepath.Rel(v.root, resolved)
+	child.dir = filepath.ToSlash(rel)
+	// Reader coordinates survive the stricter object admission boundary.
+	if child.role == kustomizeinput.Resource {
+		_, admitted := kustpath.Resolve(filepath.Join(v.root, base), ref.Path, kustpath.File)
+		child.deferDecode = !admitted || filepath.IsAbs(ref.Path)
+	}
+	return w.walk(child, yield)
+}
+
+func (w *graphWalker) configuration(v graphVisit, config pluginInputs, yield func(graphVisit) bool) bool {
+	if !config.known {
+		if !w.uncertain(v, "unknown plugin configuration may read additional files", yield) {
+			return false
+		}
+	}
+	if v.checkMetadata && !config.metadataOnly {
+		if !w.uncertain(v, "configuration transformer may rewrite plugin file operands", yield) {
+			return false
+		}
+	}
+	for _, ref := range config.references {
+		child := v
+		child.dir = v.pluginRoot
+		if !w.reference(child, ref, yield) {
+			return false
+		}
+	}
+	return true
+}
+
+func (w *graphWalker) uncertain(v graphVisit, reason string, yield func(graphVisit) bool) bool {
+	v.document, v.readable, v.incomplete = nil, false, reason
+	return yield(v)
 }
 
 type selfProduceBuilder struct {
@@ -317,13 +424,13 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 			r.Productions = append(r.Productions, p)
 		}
 		b.idx.Records[id] = r
-		if !v.generated {
+		if !v.deferMaterialization {
 			b.recordProducer(obj, v.namespace, v.fallback, v.owner)
 		}
 		info := manifest.KindOf(obj)
 		switch {
 		case info.Data:
-			if s, ok := obj.(*manifest.Secret); ok && !v.generated {
+			if s, ok := obj.(*manifest.Secret); ok && !v.deferMaterialization {
 				b.materializeSecret(s, v.namespace, v.fallback)
 			}
 		case info.Structural:

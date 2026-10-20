@@ -8,6 +8,7 @@ import (
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
@@ -61,11 +62,18 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 			}
 		}
 		if root != "" {
-			if k, _ := documents.read(filepath.Join(root, base)); k != nil && len(k.Components) != 0 {
+			var refs []string
+			spec, _ := documents.read(filepath.Join(root, base))
+			for ref := range kustomizeinput.Kustomization(spec) {
+				if ref.Role == kustomizeinput.Component {
+					refs = append(refs, ref.Path)
+				}
+			}
+			if len(refs) != 0 {
 				if components == nil {
 					components = map[manifest.NamedResource][]string{}
 				}
-				components[ks.Named()] = k.Components
+				components[ks.Named()] = refs
 			}
 		}
 	}

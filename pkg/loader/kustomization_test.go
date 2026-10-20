@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -542,5 +543,55 @@ func TestLoader_ClaimsDocumentLifetime(t *testing.T) {
 			}
 			t.Fatalf("missing %s in %v", tc.component, tc.claims)
 		})
+	}
+}
+
+func TestDocumentReader_InputSnapshot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", `defaults: &defaults
+  namespace: apps
+  bases: [../base]
+  configMapGenerator:
+    - name: settings
+      env: ../settings.env
+<<: *defaults
+Resources: [ignored.yaml]
+resources: &resources [selected.yaml]
+components: [component]
+`)
+	r := readerForTest(root)
+	body, _ := r.read(root)
+	if body == nil {
+		t.Fatal("document was not decoded")
+	}
+	assert.Equal(t, body.Namespace, "apps")
+	assert.Diff(t, body.Resources, []string{"selected.yaml", "../base"})
+	assert.Diff(t, body.ConfigMapGenerator[0].EnvSources, []string{"../settings.env"})
+	var paths []string
+	spec, _ := r.read(root)
+	for ref := range kustomizeinput.Kustomization(spec) {
+		paths = append(paths, ref.Path)
+	}
+	slices.Sort(paths)
+	assert.Diff(t, paths, []string{"../base", "../settings.env", "component", "selected.yaml"})
+	for _, input := range []string{"namespace: {invalid: type}", "resources: [{invalid: type}]"} {
+		dir := t.TempDir()
+		testutil.WriteFile(t, dir, "kustomization.yaml", input)
+		invalid := readerForTest(dir)
+		if body, _ := invalid.read(dir); body != nil {
+			t.Fatalf("invalid typed document was decoded: %s", input)
+		}
+	}
+	componentDir := t.TempDir()
+	testutil.WriteFile(t, componentDir, "kustomization.yaml", "kind: Component\n")
+	componentReader := readerForTest(componentDir)
+	component, _ := componentReader.read(componentDir)
+	if !isKustomizeComponent(component) {
+		t.Fatal("component lost its default API version")
+	}
+	again, _ := r.read(root)
+	if again != body {
+		t.Fatal("input classification replaced the cached document")
 	}
 }

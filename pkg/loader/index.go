@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -53,8 +54,11 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 				if !seen {
 					if k, _ := l.documents.read(dir); k != nil {
 						listed = make(map[string]struct{}, len(k.Resources))
-						for _, ref := range k.Resources {
-							if resolved, ok := kustpath.Resolve(dir, ref, kustpath.Directory); ok {
+						for ref := range kustomizeinput.Kustomization(k) {
+							if ref.Role != kustomizeinput.Resource {
+								continue
+							}
+							if resolved, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
 								listed[resolved] = struct{}{}
 							}
 						}

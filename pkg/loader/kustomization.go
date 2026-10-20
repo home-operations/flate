@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -18,11 +20,24 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects.
 type document struct {
-	body    *types.Kustomization
-	file    string
-	objects []manifest.BaseManifest
-	loaded  bool
+	body      *types.Kustomization
+	file      string
+	objects   []manifest.BaseManifest
+	plugins   *[]pluginInputs
+	loaded    bool
+	pathState pathState
+	searched  bool
 }
+
+type pathState uint8
+
+const (
+	pathUnknown pathState = iota
+	pathDirectory
+	pathFile
+	pathMissing
+	pathUnavailable
+)
 
 // documentReader caches positive and negative results by absolute source-view directory.
 type documentReader struct {
@@ -118,10 +133,12 @@ func (l *Loader) mountSources() {
 	}
 }
 
+var errSourceUnavailable = fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
+
 type unavailableSource struct{}
 
 func (unavailableSource) Open(string) (fs.File, error) {
-	return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
+	return nil, errSourceUnavailable
 }
 
 // input binds source coordinates to their filesystem; an absent mounted file
@@ -150,9 +167,26 @@ func (r documentReader) mountedRoot(file string) string {
 }
 
 func (r *documentReader) read(dir string) (*types.Kustomization, string) {
-	if cached, ok := r.cache[dir]; ok {
+	cached, seen := r.cache[dir]
+	if seen && (cached.body != nil || cached.searched || cached.pathState == pathFile || cached.pathState == pathMissing) {
 		return cached.body, cached.file
 	}
+	if cached.objects != nil {
+		cached.pathState = pathFile
+		if r.cache != nil {
+			r.cache[dir] = cached
+		}
+		return nil, ""
+	}
+	if cached.pathState == pathUnknown {
+		input, name := r.input(dir)
+		info, err := fs.Stat(input, name)
+		cached = r.rememberStat(dir, info, err)
+	}
+	if cached.pathState == pathFile || cached.pathState == pathMissing {
+		return nil, ""
+	}
+	cached.searched = true
 	for _, name := range manifest.KustomizeBuilderFilenames {
 		file := filepath.Join(dir, name)
 		input, name := r.input(file)
@@ -164,17 +198,52 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 		if yaml.Unmarshal(data, &k) != nil {
 			continue
 		}
+		//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
+		fix := k.Kind == types.ComponentKind && k.APIVersion == "" || len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
+		for _, g := range k.ConfigMapGenerator {
+			fix = fix || g.EnvSource != ""
+		}
+		for _, g := range k.SecretGenerator {
+			fix = fix || g.EnvSource != ""
+		}
+		if fix {
+			k.FixKustomization()
+		}
+		cached.body, cached.file, cached.pathState = &k, file, pathDirectory
 		if r.cache != nil {
-			r.cache[dir] = document{body: &k, file: file}
+			r.cache[dir] = cached
 		}
 		return &k, file
 	}
 	if r.cache != nil {
-		r.cache[dir] = document{}
+		r.cache[dir] = cached
 	}
 	return nil, ""
 }
 
+func (r documentReader) rememberStat(file string, info fs.FileInfo, err error) document {
+	cached := r.cache[file]
+	switch {
+	case err == nil && info.IsDir():
+		cached.pathState = pathDirectory
+	case err == nil:
+		cached.pathState = pathFile
+	case errors.Is(err, fs.ErrNotExist):
+		cached.pathState = pathMissing
+	default:
+		cached.pathState = pathUnavailable
+	}
+	if r.cache != nil {
+		r.cache[file] = cached
+	}
+	return cached
+}
+
 func isKustomizeComponent(k *types.Kustomization) bool {
 	return k != nil && k.Kind == types.ComponentKind && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
+}
+
+type pluginInputs struct {
+	references          []kustomizeinput.Reference
+	known, metadataOnly bool
 }

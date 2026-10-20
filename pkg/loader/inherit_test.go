@@ -11,12 +11,13 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/source/gitrepo"
-	"github.com/home-operations/flate/pkg/source/gittree"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -490,14 +491,28 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 
 func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 	t.Parallel()
-
-	l := loaderFixture(store.New(), nil)
-	l.ensureScopes()
-	owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system"}
-	l.Store.AddObject(owner)
-	l.scopes.visits["child.yaml"] = []graphVisit{{
-		namespace: "inner", generated: true, owner: owner.Named(),
-	}}
-	r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.HelmReleaseID("authored", "child")}
-	assert.Diff(t, l.recordNamespaces(r, ""), []string{"authored"})
+	for _, tc := range []struct {
+		name     string
+		role     kustomizeinput.Role
+		deferred bool
+		want     string
+	}{
+		{"resource", kustomizeinput.Resource, false, "inner"},
+		{"implicit resource", kustomizeinput.Resource, true, "authored"},
+		{"configuration", kustomizeinput.Configuration, false, "authored"},
+		{"terminal", kustomizeinput.File, false, "authored"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := loaderFixture(store.New(), nil)
+			l.ensureScopes()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system"}
+			l.Store.AddObject(owner)
+			l.scopes.visits["child.yaml"] = []graphVisit{{
+				namespace: "inner", deferMaterialization: tc.deferred, role: tc.role, owner: owner.Named(),
+			}}
+			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.HelmReleaseID("authored", "child")}
+			assert.Diff(t, l.recordNamespaces(r, ""), []string{tc.want})
+		})
+	}
 }

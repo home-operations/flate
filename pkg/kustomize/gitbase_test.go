@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 
@@ -85,16 +86,16 @@ func TestIsGitRemoteBase(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			spec, ok := isGitRemoteBase(tc.url)
+			spec, ok := kustomizeinput.ParseGitBase(tc.url)
 			if ok != tc.ok {
-				t.Fatalf("isGitRemoteBase(%q) ok = %v, want %v (spec %+v)", tc.url, ok, tc.ok, spec)
+				t.Fatalf("kustomizeinput.ParseGitBase(%q) ok = %v, want %v (spec %+v)", tc.url, ok, tc.ok, spec)
 			}
 			if !ok {
 				return
 			}
-			if spec.repoURL != tc.repoURL || spec.subPath != tc.subPath || spec.ref != tc.ref {
-				t.Errorf("isGitRemoteBase(%q) = {repoURL:%q subPath:%q ref:%q}, want {repoURL:%q subPath:%q ref:%q}",
-					tc.url, spec.repoURL, spec.subPath, spec.ref, tc.repoURL, tc.subPath, tc.ref)
+			if spec.RepoURL != tc.repoURL || spec.SubPath != tc.subPath || spec.Ref != tc.ref {
+				t.Errorf("kustomizeinput.ParseGitBase(%q) = {repoURL:%q subPath:%q ref:%q}, want {repoURL:%q subPath:%q ref:%q}",
+					tc.url, spec.RepoURL, spec.SubPath, spec.Ref, tc.repoURL, tc.subPath, tc.ref)
 			}
 		})
 	}

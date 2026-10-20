@@ -49,6 +49,8 @@ const (
 	// WarnOmittedValues: a required HelmRelease valuesFrom reference was
 	// unavailable offline, so the release rendered with the remaining values.
 	WarnOmittedValues = "OmittedValues"
+	// WarnIncompleteInputCoverage reports statically opaque Kustomize configuration inputs.
+	WarnIncompleteInputCoverage = "IncompleteInputCoverage"
 	// WarnEmptyScan: no Flux Kustomization/HelmRelease objects were found under
 	// --path (likely a wrong path). Render-global.
 	WarnEmptyScan = "EmptyScan"

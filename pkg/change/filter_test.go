@@ -350,10 +350,6 @@ func TestFilter_ArtifactProducerIgnoresCheckoutRootClaim(t *testing.T) {
 	}
 }
 
-// TestFilter_FileOwnerFallbackCatchesResourcesEscape reproduces #833: a
-// Kustomization's resources: entry reaches outside its own claimed
-// spec.path, so resolve() must fall back to the caller-supplied
-// FileOwnerLookup to find the owner.
 func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 	t.Parallel()
 	apps := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "apps/homelab"}
@@ -370,6 +366,28 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 	f := NewFilter(NewSet([]string{baseFile}), filterFixture{files: map[manifest.NamedResource]string{appsID: "apps/homelab/kustomization.yaml"}, root: "", objects: controllertest.MapLister{appsID: apps}, refs: nil, excluded: nil, readers: fileOwners, changed: NewSet([]string{baseFile})}.index(), controllertest.MapLister{appsID: apps})
 	if !f.ShouldReconcile(appsID) {
 		t.Fatalf("owner supplied by the fileOwners fallback must be kept; keep=%v", f.KeepNames())
+	}
+
+	apps.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "cluster"}
+	source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+	other := &manifest.Kustomization{Name: "unrelated", Namespace: "flux-system", Path: "apps/other"}
+	objects := controllertest.MapLister{apps.Named(): apps, source.Named(): source, other.Named(): other}
+	for _, file := range []string{baseFile, "inputs/patch", "inputs/unrelated"} {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			fileOwners := func(file string) []manifest.NamedResource {
+				if file == baseFile || file == "inputs/patch" {
+					return []manifest.NamedResource{apps.Named()}
+				}
+				return nil
+			}
+			changed := NewSet([]string{file})
+			f := NewFilter(changed, filterFixture{files: map[manifest.NamedResource]string{apps.Named(): "apps/homelab/kustomization.yaml"}, objects: objects, readers: fileOwners, changed: changed}.index(), objects)
+			want := file != "inputs/unrelated"
+			assert.Equal(t, f.ShouldReconcile(apps.Named()), want)
+			assert.Equal(t, f.ShouldReconcile(source.Named()), want)
+			assert.Equal(t, f.ShouldReconcile(other.Named()), false)
+		})
 	}
 }
 

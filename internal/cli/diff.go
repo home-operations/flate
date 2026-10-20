@@ -95,6 +95,11 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 	if len(selected) == 0 {
 		return runErr
 	}
+	for i, label := range []string{"orig", "current"} {
+		if err := reportComparisonWarnings(cmd.ErrOrStderr(), selected[i].Warnings, label); err != nil {
+			return errors.Join(err, runErr)
+		}
+	}
 	imgs, suppressed, runErr := diff.CompareImages(
 		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
@@ -136,7 +141,7 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 				return errors.Join(err, runErr)
 			}
 		}
-		if err := reportOmittedValues(cmd.ErrOrStderr(), res.Warnings, label); err != nil {
+		if err := reportComparisonWarnings(cmd.ErrOrStderr(), res.Warnings, label); err != nil {
 			return errors.Join(err, runErr)
 		}
 	}
@@ -174,13 +179,20 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 	return nil
 }
 
-func reportOmittedValues(w io.Writer, warnings []manifest.Warning, label string) error {
+func reportComparisonWarnings(w io.Writer, warnings []manifest.Warning, label string) error {
 	for _, warning := range warnings {
-		if warning.Category != manifest.WarnOmittedValues {
+		if warning.Category != manifest.WarnOmittedValues && warning.Category != manifest.WarnIncompleteInputCoverage {
 			continue
 		}
 		if _, err := fmt.Fprintf(w, "flate warning: %s snapshot: %s: %s\n", label, warning.Resource, warning.Message); err != nil {
 			return err
+		}
+		if warning.Category == manifest.WarnIncompleteInputCoverage {
+			for _, detail := range warning.Detail {
+				if _, err := fmt.Fprintf(w, "  %s\n", detail); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

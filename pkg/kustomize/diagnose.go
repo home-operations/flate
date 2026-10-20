@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"maps"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
-	kustypes "sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/internal/kustomizeinput"
+	"github.com/home-operations/flate/internal/kustpath"
 )
 
 // dupDiagBuildLimit caps how many child paths the diagnostic rebuilds, so a
@@ -39,7 +40,7 @@ const dupDiagBuildLimit = 256
 // subDir (absolute); subPath is the repo-relative spec.path, used to render
 // producer paths the reader can open.
 func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustomizationYAML []byte) string {
-	var kus kustypes.Kustomization
+	var kus types.Kustomization
 	if yaml.Unmarshal(kustomizationYAML, &kus) != nil {
 		return ""
 	}
@@ -47,11 +48,18 @@ func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustom
 	// Invert each child's resource ids into id → the paths that emit it.
 	pathsByID := map[string][]string{}
 	attempted := 0
-	for _, entry := range kus.Resources {
+	for ref := range kustomizeinput.Kustomization(&kus) {
+		if ref.Role != kustomizeinput.Resource {
+			continue
+		}
+		entry := ref.Path
 		if attempted >= dupDiagBuildLimit {
 			break
 		}
-		dir := filepath.Join(subDir, entry)
+		dir, local := kustpath.Resolve(subDir, entry, kustpath.Directory)
+		if !local {
+			continue
+		}
 		if !memFS.IsDir(dir) {
 			continue
 		}

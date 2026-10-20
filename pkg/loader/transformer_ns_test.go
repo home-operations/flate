@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -454,10 +455,16 @@ func TestResolve_TransformerRejections(t *testing.T) {
 			if got, ok := kustpath.Resolve(tc.base, tc.ref, kustpath.Transformer); ok {
 				t.Errorf("kustpath.Resolve(%q,%q)=(%q,true), want rejected", tc.base, tc.ref, got)
 			}
+			if got, ok := kustomizeinput.Local(".", tc.base, tc.ref); ok {
+				t.Errorf("kustomizeinput.Local(%q,%q)=(%q,true), want rejected", tc.base, tc.ref, got)
+			}
 		})
 	}
 	if got, ok := kustpath.Resolve("apps/x", "../shared", kustpath.Transformer); !ok || got != "apps/shared" {
 		t.Errorf("kustpath.Resolve(apps/x,../shared)=(%q,%v), want (apps/shared,true)", got, ok)
+	}
+	if got, ok := kustomizeinput.Local(".", "apps/x", "../shared"); !ok || got != "apps/shared" {
+		t.Errorf("kustomizeinput.Local(apps/x,../shared)=(%q,%v), want (apps/shared,true)", got, ok)
 	}
 }
 

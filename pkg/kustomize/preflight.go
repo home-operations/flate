@@ -10,15 +10,14 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
 
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -41,38 +40,13 @@ const (
 	httpLastModifiedAnnotation = "flate.http-last-modified"
 )
 
-type inputKind uint8
-
-const (
-	fileInput inputKind = iota
-	resourceInput
-	pluginInput
-	generatorInput
-	strategicInput
-)
-
-type inputField struct {
-	path string
-	kind inputKind
-}
-
-var generatorFields = []inputField{{"files/*", generatorInput}, {"envs/*", fileInput}}
-
-var controlFields = []inputField{
-	{"resources/*", resourceInput}, {"bases/*", resourceInput}, {"components/*", resourceInput},
-	{"patches/*/path", fileInput}, {"patchesJson6902/*/path", fileInput}, {"patchesStrategicMerge/*", strategicInput},
-	{"replacements/*/path", fileInput}, {"configurations/*", fileInput}, {"crds/*", fileInput}, {"openapi/path", fileInput},
-	{"configMapGenerator/*/files/*", generatorInput}, {"configMapGenerator/*/envs/*", fileInput}, {"configMapGenerator/*/env", fileInput},
-	{"secretGenerator/*/files/*", generatorInput}, {"secretGenerator/*/envs/*", fileInput}, {"secretGenerator/*/env", fileInput},
-	{"generators/*", pluginInput}, {"transformers/*", pluginInput}, {"validators/*", pluginInput},
-}
-
 // Plugin inputs resolve against the owning loader, even when the config is a
 // resource of a separately accumulated directory. Resource leaves stay data
 // unless they are reached through a declared plugin edge.
 type controlLocation struct {
 	file, root, pluginRoot string
 	field                  string
+	indices                [2]int
 	remote                 bool
 }
 
@@ -153,10 +127,14 @@ func (w *inputWalk) directory(ctx context.Context, dir string, scope walkScope) 
 	if err := yaml.NewRNode(&doc).DeAnchor(); err != nil {
 		return inputResult{}, nil
 	}
+	refs := slices.Collect(kustomizeinput.Kustomization(&k))
+	for i := range refs {
+		refs[i].Bind(&doc)
+	}
 	observation := controlObservation{out: []byte(canonical.String()), parent: scope.observation}
 	w.visited[key] = observation
 	loc.observation = key
-	result, err := w.fields(ctx, loc, &doc, controlFields)
+	result, err := w.references(ctx, loc, refs)
 	observation = w.visited[key]
 	if loc.pluginRoot != "" && !result.injected {
 		observation.out = []byte(key.root)
@@ -239,66 +217,40 @@ func (w *inputWalk) location(loc controlLocation) controlLocation {
 	return loc
 }
 
-func (w *inputWalk) fields(ctx context.Context, loc walkScope, doc *yaml.Node, fields []inputField) (inputResult, error) {
+func (w *inputWalk) references(ctx context.Context, loc walkScope, refs []kustomizeinput.Reference) (inputResult, error) {
 	var result inputResult
-	for _, field := range fields {
-		c, err := w.selectField(ctx, loc, doc, field)
+	for _, ref := range refs {
+		next := loc
+		next.field, next.indices = ref.Field, ref.Indices
+		node := *ref.Node
+		node.Value = ref.Path
+		var c inputResult
+		var err error
+		switch ref.Role {
+		case kustomizeinput.Resource, kustomizeinput.Component:
+			c, err = w.resourceOperand(ctx, next, &node)
+		case kustomizeinput.Configuration:
+			if ref.Inline {
+				var out []byte
+				out, c, err = w.plugins(ctx, next, []byte(ref.Path), ref.Resources)
+				if c.rewritten {
+					node.Value = string(out)
+				}
+			} else {
+				c, err = w.pluginOperand(ctx, next, &node)
+			}
+		default:
+			c, err = w.fileOperand(ctx, next, &node)
+		}
 		if err != nil {
-			return inputResult{}, err
+			return inputResult{}, fmt.Errorf("%s %s %q (line %d): %w", loc.file, ref.FieldPath(), ref.Path, ref.Node.Line, err)
+		}
+		if c.rewritten {
+			ref.Rewrite(node.Value)
 		}
 		result = result.merge(c)
 	}
 	return result, nil
-}
-
-func (w *inputWalk) selectField(ctx context.Context, loc walkScope, node *yaml.Node, field inputField) (inputResult, error) {
-	if node == nil {
-		return inputResult{}, nil
-	}
-	if field.path == "" {
-		if node.Kind != yaml.ScalarNode || node.Value == "" {
-			return inputResult{}, nil
-		}
-		result, err := w.operand(ctx, loc, node, field.kind)
-		if err != nil {
-			return inputResult{}, fmt.Errorf("%s %s %q (line %d): %w", loc.file, loc.field, node.Value, node.Line, err)
-		}
-		return result, nil
-	}
-	part, rest, _ := strings.Cut(field.path, "/")
-	field.path = rest
-	if part != "*" {
-		loc.field += "." + part
-		return w.selectField(ctx, loc, findMappingValue(node, part), field)
-	}
-	var result inputResult
-	if node.Kind == yaml.SequenceNode {
-		for i, child := range node.Content {
-			next := loc
-			next.field += fmt.Sprintf("[%d]", i)
-			c, err := w.selectField(ctx, next, child, field)
-			if err != nil {
-				return inputResult{}, err
-			}
-			result = result.merge(c)
-		}
-	}
-	return result, nil
-}
-
-func (w *inputWalk) operand(ctx context.Context, loc walkScope, node *yaml.Node, kind inputKind) (inputResult, error) {
-	switch kind {
-	case resourceInput:
-		return w.resourceOperand(ctx, loc, node)
-	case pluginInput:
-		return w.pluginOperand(ctx, loc, node)
-	case generatorInput:
-		return w.generatorOperand(ctx, loc, node)
-	case strategicInput:
-		return w.strategicOperand(ctx, loc, node)
-	default:
-		return w.fileOperand(ctx, loc, node)
-	}
 }
 
 func (w *inputWalk) fileOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
@@ -308,32 +260,6 @@ func (w *inputWalk) fileOperand(ctx context.Context, loc walkScope, node *yaml.N
 		setPlainScalar(node, path.replacement)
 	}
 	return result, err
-}
-
-func (w *inputWalk) generatorOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	if strings.Count(node.Value, "=") > 1 {
-		return inputResult{}, nil // Upstream MUST retain its invalid file-source grammar.
-	}
-	key, raw, explicit := strings.Cut(node.Value, "=")
-	if !explicit {
-		raw, key = key, filepath.Base(key)
-	} else if key == "" || raw == "" {
-		return inputResult{}, nil
-	}
-	file := *node
-	file.Value = raw
-	result, err := w.fileOperand(ctx, loc, &file)
-	if result.rewritten {
-		setPlainScalar(node, key+"="+file.Value)
-	}
-	return result, err
-}
-
-func (w *inputWalk) strategicOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	if _, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes([]byte(node.Value)); err == nil {
-		return inputResult{}, nil
-	}
-	return w.fileOperand(ctx, loc, node)
 }
 
 func (w *inputWalk) resourceOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
@@ -364,13 +290,6 @@ func (w *inputWalk) resourceOperand(ctx context.Context, loc walkScope, node *ya
 }
 
 func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	if rm, err := provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes([]byte(node.Value)); err == nil {
-		out, result, err := w.plugins(ctx, loc, []byte(node.Value), rm)
-		if result.rewritten {
-			node.Value = string(out)
-		}
-		return result, err
-	}
 	path, err := w.resourcePath(ctx, loc, node.Value)
 	if err != nil {
 		return inputResult{}, err
@@ -428,7 +347,7 @@ func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (in
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(loc.root, file)
 	}
-	if _, _, ok := cutHTTPScheme(raw); !ok {
+	if _, _, ok := kustomizeinput.CutHTTPScheme(raw); !ok {
 		return inputPath{file: file}, nil
 	}
 	descriptor := remoteInput{Operation: remoteHTTP, URL: raw}
@@ -445,10 +364,9 @@ func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (in
 }
 
 func (w *inputWalk) resourcePath(ctx context.Context, loc walkScope, raw string) (inputPath, error) {
-	if spec, ok := isGitRemoteBase(raw); ok {
-		spec.dir = loc.root
+	if spec, ok := kustomizeinput.ParseGitBase(raw); ok {
 		dest, err := w.fetchGitBase(ctx, spec, loc)
-		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true, descriptor: remoteInput{Operation: remoteGit, URL: spec.repoURL, Ref: spec.ref}}, err
+		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true, descriptor: remoteInput{Operation: remoteGit, URL: spec.RepoURL, Ref: spec.Ref}}, err
 	}
 	path, err := w.filePath(ctx, loc, raw)
 	path.directory = err == nil && path.replacement == "" && w.fs.IsDir(path.file)
@@ -481,14 +399,14 @@ func (w *inputWalk) pluginFile(ctx context.Context, loc walkScope, node *yaml.No
 
 func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, resources []*resource.Resource) ([]byte, inputResult, error) {
 	key := w.location(loc.controlLocation)
-	key.field = manifest.Fingerprint(body)
+	key.field, key.indices = manifest.Fingerprint(body), [2]int{}
 	if prior, ok := w.visited[key]; ok {
 		w.reuse(prior, loc)
 		return prior.out, replaced(prior.out != nil), nil
 	}
 	if resources == nil {
 		var err error
-		resources, err = provider.NewDefaultDepProvider().GetResourceFactory().SliceFromBytes(body)
+		resources, err = kustomizeinput.Resources(body)
 		if err != nil {
 			if !loc.remote {
 				return body, inputResult{}, nil
@@ -509,23 +427,8 @@ func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, res
 			}
 			return nil, inputResult{}, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
 		}
-		var fields []inputField
-		api, kind := findMappingValue(doc, "apiVersion"), findMappingValue(doc, "kind")
-		if api != nil && api.Value == "builtin" && kind != nil {
-			switch kind.Value {
-			case "ConfigMapGenerator", "SecretGenerator":
-				fields = generatorFields
-			case "PatchTransformer", "PatchJson6902Transformer":
-				fields = []inputField{{"path", fileInput}}
-			case "PatchStrategicMergeTransformer":
-				fields = []inputField{{"paths/*", strategicInput}}
-			case "ReplacementTransformer":
-				fields = []inputField{{"replacements/*/path", fileInput}}
-			case "ValueAddTransformer":
-				fields = []inputField{{"targetFilePath", fileInput}}
-			}
-		}
-		c, err := w.fields(ctx, loc, doc, fields)
+		refs, _ := kustomizeinput.Plugin(doc)
+		c, err := w.references(ctx, loc, refs)
 		if err != nil {
 			return nil, inputResult{}, err
 		}
@@ -557,27 +460,6 @@ func setPlainScalar(node *yaml.Node, value string) {
 	node.Value = value
 	node.Tag = "!!str"
 	node.Style = 0
-}
-
-func findMappingValue(node *yaml.Node, key string) *yaml.Node {
-	if node == nil {
-		return nil
-	}
-	if node.Kind == yaml.DocumentNode && len(node.Content) != 0 {
-		node = node.Content[0]
-	}
-	var found *yaml.Node
-	matched := ""
-	if node.Kind == yaml.MappingNode {
-		// Upstream decodes YAML through JSON's sorted keys and case-insensitive
-		// struct fields; the last matching spelling owns the operand.
-		for pair := range slices.Chunk(node.Content, 2) {
-			if len(pair) == 2 && strings.EqualFold(pair[0].Value, key) && pair[0].Value >= matched {
-				matched, found = pair[0].Value, pair[1]
-			}
-		}
-	}
-	return found
 }
 
 func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {

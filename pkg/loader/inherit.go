@@ -1,11 +1,16 @@
 package loader
 
 import (
+	"io/fs"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	fluxkustomize "github.com/fluxcd/pkg/kustomize"
+
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -13,13 +18,18 @@ import (
 // scopeConstruction is confined to sequential discovery. Physical walks are
 // shared by equal contexts; each owner retains its own visits and claims.
 type scopeConstruction struct {
-	walks    map[graphContext][]graphVisit
-	scanned  map[string]struct{}
-	ready    map[sourceState]struct{}
-	complete bool
-	visits   map[string][]graphVisit
-	roots    []graphVisit
-	claims   []manifest.KSClaim
+	walks         map[graphContext][]graphVisit
+	scanned       map[string]struct{}
+	ready         map[sourceState]struct{}
+	complete      bool
+	visits        map[string][]graphVisit
+	contributions []scopeContribution
+	claims        []manifest.KSClaim
+}
+
+type scopeContribution struct {
+	owner, source manifest.NamedResource
+	visits        []graphVisit
 }
 
 type sourceState struct {
@@ -60,7 +70,7 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 			}
 		}
 		clear(l.scopes.visits)
-		l.scopes.roots = nil
+		l.scopes.contributions = nil
 		for _, dir := range l.standaloneRoots(repoRoot, kss) {
 			l.visitScope(graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID})
 		}
@@ -103,10 +113,12 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 	}
 }
 
-func (l *Loader) visitScope(root graphVisit) []graphVisit {
-	l.scopes.roots = append(l.scopes.roots, root)
+func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 	visits, seen := l.scopes.walks[root.graphContext]
 	if !seen {
+		if k := l.documents.cache[filepath.Join(root.root, root.dir)].body; k != nil {
+			visits = make([]graphVisit, 0, len(k.Resources)+len(k.Components)+1)
+		}
 		w := graphWalker{documents: l.documents, visited: map[graphContext]struct{}{}}
 		collect := func(v graphVisit) bool {
 			visits = append(visits, v)
@@ -115,8 +127,41 @@ func (l *Loader) visitScope(root graphVisit) []graphVisit {
 		w.walk(root, collect)
 		l.scopes.walks[root.graphContext] = visits
 	}
+	return visits
+}
+
+func (l *Loader) visitScope(root graphVisit) []graphVisit {
+	root.role = kustomizeinput.Resource
+	visits := l.scopeWalk(root)
+	if ks, ok := l.Store.Get[*manifest.Kustomization](root.owner); ok && len(ks.Components) != 0 {
+		visits = slices.Clone(visits)
+		namespace := root.namespace
+		for _, visit := range visits {
+			if visit.document != nil && visit.dir == root.dir {
+				namespace = visit.namespace
+				break
+			}
+		}
+		for _, component := range ks.Components {
+			if !fluxkustomize.IsLocalRelativePath(component) {
+				continue
+			}
+			child := root
+			child.dir = path.Join(root.dir, filepath.ToSlash(component))
+			file := filepath.Join(root.root, child.dir)
+			input, name := l.documents.input(file)
+			info, err := fs.Stat(input, name)
+			l.documents.rememberStat(file, info, err)
+			if err != nil && ks.IgnoreMissingComponents {
+				continue
+			}
+			child.namespace = namespace
+			visits = append(visits, l.scopeWalk(child)...)
+		}
+	}
+	l.scopes.contributions = append(l.scopes.contributions, scopeContribution{owner: root.owner, source: root.source, visits: visits})
 	for _, v := range visits {
-		v.owner = root.owner
+		v.owner, v.source = root.owner, root.source
 		l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
 		if local := v.localCoordinate(); local != "" {
 			file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
@@ -249,16 +294,6 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 }
 
 func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []string {
-	var scopes []graphVisit
-	for _, v := range l.scopes.visits[r.Path] {
-		if v.generated || l.selfClaim(v.owner, r.Authored) {
-			continue
-		}
-		scopes = append(scopes, v)
-	}
-	if len(scopes) == 0 && forced != "" {
-		return []string{manifest.Resolve(r.Authored, forced, "").Namespace}
-	}
 	var owners []manifest.NamedResource
 	depth := -1
 	for _, c := range l.scopes.claims {
@@ -276,26 +311,31 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 		}
 	}
 	var namespaces []string
-	if len(scopes) == 0 {
+	for _, v := range l.scopes.visits[r.Path] {
+		if v.deferMaterialization || v.role != kustomizeinput.Resource || l.selfClaim(v.owner, r.Authored) {
+			continue
+		}
+		fallback := v.fallback
+		if v.namespace == "" && len(owners) == 1 {
+			if ks, ok := l.Store.Get[*manifest.Kustomization](owners[0]); ok {
+				fallback = ks.TargetNamespace
+			}
+		}
+		ns := manifest.Resolve(r.Authored, v.namespace, fallback).Namespace
+		if !slices.Contains(namespaces, ns) {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	if len(namespaces) == 0 {
+		if forced != "" {
+			return []string{manifest.Resolve(r.Authored, forced, "").Namespace}
+		}
 		for _, owner := range owners {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](owner); ok {
 				ns := manifest.Resolve(r.Authored, "", ks.TargetNamespace).Namespace
 				if !slices.Contains(namespaces, ns) {
 					namespaces = append(namespaces, ns)
 				}
-			}
-		}
-	} else {
-		for _, v := range scopes {
-			fallback := v.fallback
-			if v.namespace == "" && len(owners) == 1 {
-				if ks, ok := l.Store.Get[*manifest.Kustomization](owners[0]); ok {
-					fallback = ks.TargetNamespace
-				}
-			}
-			ns := manifest.Resolve(r.Authored, v.namespace, fallback).Namespace
-			if !slices.Contains(namespaces, ns) {
-				namespaces = append(namespaces, ns)
 			}
 		}
 	}

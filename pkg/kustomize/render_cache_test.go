@@ -28,6 +28,7 @@ import (
 	"oras.land/oras-go/v2/errdef"
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -1273,7 +1274,7 @@ func TestRenderFlux_RemoteCacheLocalAttribution(t *testing.T) {
 			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Revision: "1"}, nil
 		})
 		walk := inputWalk{cache: c, fs: view}
-		gitPath, err := walk.fetchGitBase(t.Context(), gitBaseSpec{repoURL: "https://example.invalid/o/repo.git", dir: filepath.Join(root, "view")}, walkScope{})
+		gitPath, err := walk.fetchGitBase(t.Context(), kustomizeinput.GitBase{RepoURL: "https://example.invalid/o/repo.git"}, walkScope{root: filepath.Join(root, "view")})
 		if err != nil {
 			t.Fatal(err)
 		}

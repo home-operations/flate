@@ -12,6 +12,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -232,27 +233,34 @@ func TestDiscoveryIndex_NilSafe(t *testing.T) {
 	}
 }
 
-// TestFinalizeIndex_OwnersOfFileResourcesEscape reproduces #833: an
-// overlay's kustomization.yaml pulls a resource in from outside its own
-// spec.path via a `resources:` entry. OwnersOfFile must attribute every
-// file the walk reads — both kustomization.yamls and the leaf resource —
-// back to the owning top-level Kustomization.
 func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 	t.Parallel()
-	for _, count := range []int{1, 2} {
-		t.Run(fmt.Sprintf("owners_%d", count), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, overlay string
+		mixed         bool
+	}{
+		{"explicit", "apps/homelab", false},
+		{"shallow", "apps/homelab/nested", false},
+		{"deep", "apps/homelab/deep/nested", false},
+		{"mixed", "apps/homelab/deep/nested", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
-				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
+			base, err := filepath.Rel(tc.overlay, "apps/base/postgres")
+			assert.NoError(t, err)
+			testutil.WriteFile(t, dir, tc.overlay+"/kustomization.yaml", "resources: ["+filepath.ToSlash(base)+"]\n")
+			if tc.mixed {
+				testutil.WriteFile(t, dir, "apps/homelab/sibling.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\n")
+			}
 			testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
-				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
+				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\npatches: [{path: ../../../inputs/patch}]\n")
 			testutil.WriteFile(t, dir, "apps/base/postgres/cluster.yaml",
 				"apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: postgres\n")
 
 			s := store.New()
 			var want []manifest.NamedResource
-			for i := range count {
+			for i := range 2 {
 				ks := &manifest.Kustomization{Name: fmt.Sprintf("apps-%d", i), Namespace: "flux-system", Path: "./apps/homelab"}
 				s.AddObject(ks)
 				want = append(want, ks.Named())
@@ -261,9 +269,10 @@ func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 			idx := rendererFixture(t, loaderFixture(s, nil), dir)
 
 			for _, file := range []string{
-				"apps/homelab/kustomization.yaml",
+				tc.overlay + "/kustomization.yaml",
 				"apps/base/postgres/kustomization.yaml",
 				"apps/base/postgres/cluster.yaml",
+				"inputs/patch",
 			} {
 				if got := idx.Readers[file]; !slices.Equal(got, want) {
 					t.Errorf("Readers[%s] = %v, want %v", file, got, want)
@@ -305,56 +314,95 @@ func TestFinalizeIndex_OwnersOfFileDirectFileEscape(t *testing.T) {
 
 type missingResourceFS struct {
 	fs.FS
-	missing   string
-	statError error
-	opens     int
+	missing              string
+	statError            error
+	opens, stats, probes int
 }
 
 func (f *missingResourceFS) Open(name string) (fs.File, error) {
 	if name == f.missing {
 		f.opens++
+	} else if strings.HasPrefix(name, f.missing+"/") {
+		f.probes++
 	}
 	return f.FS.Open(name)
 }
 
 func (f *missingResourceFS) Stat(name string) (fs.FileInfo, error) {
-	if name == f.missing && f.statError != nil {
-		return nil, f.statError
+	if name == f.missing {
+		f.stats++
+		if f.statError != nil {
+			return nil, f.statError
+		}
 	}
 	return fs.Stat(f.FS, name)
 }
 
 func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 	t.Parallel()
-
 	for _, tc := range []struct {
 		name      string
 		statError error
+		present   bool
+		preload   bool
 		wantOpens int
 	}{
+		{name: "cached_file", present: true, preload: true},
+		{name: "unscanned_file", present: true, wantOpens: 4},
 		{name: "absent"},
-		{name: "stat_permission", statError: fs.ErrPermission, wantOpens: 1},
+		{name: "stat_permission", statError: fs.ErrPermission, wantOpens: 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml",
-				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../base/postgres\n")
-			testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml",
-				"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cluster.yaml\n")
+			testutil.WriteFile(t, dir, "apps/homelab/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [../base/postgres]\n")
+			testutil.WriteFile(t, dir, "apps/base/postgres/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [cluster.yaml]\n")
 			s := store.New()
 			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps/homelab"}
+			other := &manifest.Kustomization{Name: "other", Namespace: "flux-system", Path: "./apps/homelab", TargetNamespace: "second"}
 			s.AddObject(ks)
+			s.AddObject(other)
 			input := &missingResourceFS{FS: os.DirFS(dir), missing: "apps/base/postgres/cluster.yaml", statError: tc.statError}
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir, LocalRoot: dir, FS: input})
 			l := loaderFixture(s, nil)
+			l.SourceRoot = dir
+			if tc.present {
+				testutil.WriteFile(t, dir, input.missing, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: postgres, namespace: authored}\n")
+			}
+			if tc.preload {
+				l.documents.mountSources(s)
+				_, err := l.loadFile(filepath.Join(dir, input.missing))
+				assert.NoError(t, err)
+				input.opens = 0
+			}
 			l.FinalizeIndex(dir)
-			if got := ownersForTest(l.Index, input.missing); !slices.Contains(got, ks.Named()) {
-				t.Errorf("OwnersOfFile(dangling cluster.yaml) = %v, want to contain apps", got)
+			l.FinalizeIndex(dir)
+			for _, owner := range []manifest.NamedResource{ks.Named(), other.Named()} {
+				if got := ownersForTest(l.Index, input.missing); !slices.Contains(got, owner) {
+					t.Errorf("OwnersOfFile(cluster.yaml) = %v, want %v", got, owner)
+				}
 			}
 			if input.opens != tc.wantOpens {
-				t.Fatalf("redundant missing resource decode opens=%d, want %d", input.opens, tc.wantOpens)
+				t.Fatalf("resource decode opens=%d, want %d", input.opens, tc.wantOpens)
+			}
+			wantStats := 1
+			if tc.preload {
+				wantStats = 0
+			}
+			if input.stats != wantStats {
+				t.Fatalf("resource stats across owners and index freezes=%d, want %d", input.stats, wantStats)
+			}
+			wantProbes := 0
+			if tc.statError != nil {
+				wantProbes = len(manifest.KustomizeBuilderFilenames)
+			}
+			if input.probes != wantProbes {
+				t.Fatalf("kustomization probes beneath a resource=%d, want %d", input.probes, wantProbes)
+			}
+			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir, LocalRoot: dir, FS: input})
+			l.FinalizeIndex(dir)
+			if input.stats != wantStats+1 {
+				t.Fatalf("resource stats after source replacement=%d, want %d", input.stats, wantStats+1)
 			}
 		})
 	}
@@ -454,8 +502,13 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 				l := New(st)
 				admitForTest(st, root)
 				l.mountSources()
-				_, err := l.documents.parseFile(path, manifest.ParseDocOptions{})
+				objects, err := l.documents.parseFile(path, manifest.ParseDocOptions{})
 				assert.NoError(t, err)
+				for _, obj := range objects {
+					if _, ok := obj.(*manifest.Kustomization); ok && st.GetObject(obj.Named()) == nil {
+						st.AddObject(obj)
+					}
+				}
 				if !tc.graphAdded {
 					l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: path, File: file}
 				}
@@ -598,13 +651,10 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: secure\nresources:\n  - ./declared.yaml\n  - ./datafrom.yaml\n  - ./preexisting.yaml\n")
-	// Declares output keys via target.template.data → synthesized.
 	testutil.WriteFile(t, dir, "apps/declared.yaml",
 		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: app\nspec:\n  target:\n    name: app-secret\n    template:\n      data:\n        HOST: \"{{ .h }}\"\n        TOKEN: \"{{ .t }}\"\n")
-	// dataFrom-only → declares nothing → NOT synthesized.
 	testutil.WriteFile(t, dir, "apps/datafrom.yaml",
 		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: dyn\nspec:\n  target:\n    name: dyn-secret\n  dataFrom:\n    - extract:\n        key: vault/dyn\n")
-	// Declares a key, but a real Secret already occupies the target id → never clobbered.
 	testutil.WriteFile(t, dir, "apps/preexisting.yaml",
 		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: pre\nspec:\n  target:\n    name: pre-secret\n    template:\n      data:\n        K: \"{{ .k }}\"\n")
 
@@ -616,7 +666,14 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
 	s.AddObject(existing)
 
-	rendererFixture(t, loaderFixture(s, nil), dir)
+	testutil.WriteFile(t, dir, "implicit/deep/declared.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: deferred}\nspec: {target: {name: deferred-secret, template: {data: {KEY: placeholder}}}}\n")
+	deferred := &manifest.Kustomization{Name: "deferred", Namespace: "flux-system", Path: "./implicit", TargetNamespace: "secure"}
+	s.AddObject(deferred)
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
+	assert.Diff(t, idx.Readers["implicit/deep/declared.yaml"], []manifest.NamedResource{deferred.Named()})
+	if s.GetObject(secretID("secure", "deferred-secret")) != nil || len(idx.Records[secretID("secure", "deferred-secret")].Productions) != 0 {
+		t.Fatal("implicit producer was registered or synthesized before rendering")
+	}
 
 	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
 	if got == nil {
@@ -635,12 +692,6 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	}
 }
 
-// A SOPS-encrypted Secret in a Kustomization's render subtree is materialized
-// into the store under its rendered namespace, values wiped to placeholders — so
-// a root Kustomization that substituteFroms a secret its OWN render produces (the
-// cluster-secrets-in-a-substitutions-component self-produce pattern) resolves it
-// at Prepare instead of seeing it absent and flagging it unreadable. A cleartext
-// Secret carries no placeholders and is left alone.
 func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -659,9 +710,27 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 
 	testutil.WriteFile(t, dir, "generated/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: deferred-secret}\nstringData: {TOKEN: 'ENC[AES256_GCM,data:x]'}\nsops: {mac: encrypted}\n")
 	s.AddObject(&manifest.Kustomization{Name: "generated", Namespace: "flux-system", Path: "./generated", TargetNamespace: "flux-system"})
-	rendererFixture(t, loaderFixture(s, nil), dir)
+	testutil.WriteFile(t, dir, "generated/nested/kustomization.yaml", "namespace: nested\nresources: [secret.yaml, producer.yaml]\nconfigMapGenerator: [{name: generated-data, files: [payload=../../inputs/payload.yaml]}]\n")
+	testutil.WriteFile(t, dir, "generated/nested/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: nested-secret}\nstringData: {TOKEN: 'ENC[AES256_GCM,data:x]'}\nsops: {mac: encrypted}\n")
+	testutil.WriteFile(t, dir, "generated/nested/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: nested-producer}\nspec: {target: {name: nested-produced}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
+	testutil.WriteFile(t, dir, "inputs/payload.yaml", testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n"))
+	idx := rendererFixture(t, loaderFixture(s, nil), dir)
+	for _, file := range []string{"generated/nested/secret.yaml", "generated/nested/producer.yaml", "inputs/payload.yaml"} {
+		assert.Diff(t, idx.Readers[file], []manifest.NamedResource{testutil.KustomizationID("flux-system", "generated")})
+	}
+	generated, _ := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "generated-data"})
+	if generated == nil || generated.Data["payload"] != testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n") || s.GetObject(testutil.KustomizationID("authored", "terminal")) != nil {
+		t.Fatalf("implicit generator data was lost or admitted as a resource: generated=%+v terminal=%+v", generated, s.GetObject(testutil.KustomizationID("authored", "terminal")))
+	}
 	if obj := s.GetObject(secretID("flux-system", "deferred-secret")); obj != nil {
 		t.Errorf("generated Secret materialized before rendering: %#v", obj)
+	}
+	for _, name := range []string{"nested-secret", "nested-produced"} {
+		for _, namespace := range []string{"nested", "flux-system"} {
+			if obj := s.GetObject(secretID(namespace, name)); obj != nil {
+				t.Fatalf("implicit-boundary input materialized early: %v", obj)
+			}
+		}
 	}
 
 	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
@@ -916,6 +985,9 @@ func TestLoader_DotDotPaths(t *testing.T) {
 			}
 			if got, ok := kustpath.Resolve(".", tc.path, kustpath.Transformer); ok != tc.accepted || got != wantRef {
 				t.Errorf("kustpath.Resolve = (%q, %v), want (%q, %v)", got, ok, wantRef, tc.accepted)
+			}
+			if got, ok := kustomizeinput.Local(".", ".", tc.path); ok != tc.accepted || got != wantRef {
+				t.Errorf("kustomizeinput.Local = (%q, %v), want (%q, %v)", got, ok, wantRef, tc.accepted)
 			}
 		})
 	}

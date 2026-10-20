@@ -1,25 +1,4 @@
 // Package loader hydrates a Store from Flux source filesystems.
-//
-// The loader's discovery model mirrors `kustomize build` (and
-// flux-local): the kustomize resource graph is the source of truth.
-// A directory with a kustomization.yaml defines a kustomize package
-// — the loader follows its `resources:` entries (files load,
-// directories recurse) and ignores everything else in the directory.
-// Files outside the resource graph are invisible by construction;
-// there is no "tree walk + filter" post-pass, no orphan-skip rule,
-// no reachability set computed up front.
-//
-// Entry points without a kustomization.yaml use a fall-back tree
-// walk that loads every YAML it finds and switches into graph-walk
-// mode when it encounters a subdirectory that IS a kustomize
-// package. This keeps the bootstrap-style "bare directory of CRs"
-// shape working without forcing every user to wrap their entry
-// point in a kustomization.yaml.
-//
-// Each loader.Load call is one independent graph root. The
-// orchestrator's iterative discovery — a Flux KS's spec.path
-// triggers another Load — composes naturally: each spec.path is its
-// own graph root with its own resource graph.
 package loader
 
 import (
@@ -33,8 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"sigs.k8s.io/kustomize/api/types"
-
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -136,6 +114,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if l.IgnoreFile != "" {
 		input, name := l.documents.input(abs)
 		info, statErr := fs.Stat(input, name)
+		l.documents.rememberStat(abs, info, statErr)
 		if errors.Is(statErr, fs.ErrNotExist) || statErr == nil && !info.IsDir() {
 			return 0, nil
 		}
@@ -248,21 +227,15 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
 			// Component data must retain producer evidence without admitting
 			// templated Flux resources before their parent's render.
-			return w.walkComponentData(ctx, dir, k)
+			return w.walkComponentData(ctx, dir)
 		}
-		return w.walkKustomize(ctx, dir, k, kpath)
+		return w.walkKustomize(ctx, dir, kpath)
 	}
 	return w.walkAdHoc(ctx, dir)
 }
 
-func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomization, kpath string) (int, error) {
+func (w *walker) walkKustomize(ctx context.Context, dir, kpath string) (int, error) {
 	count := 0
-
-	// Load the kustomization.yaml itself — preserves source-file
-	// visibility for any consumer that inspects on-disk shape, and
-	// lets parseFile recognize a Flux Kustomization that happens to
-	// be authored at the `kustomization.yaml` filename (rare but
-	// permitted). The cached document supplies kpath without another stat.
 	if kpath != "" && !w.ignoreMatches(kpath, false) {
 		n, err := w.loader.loadFile(kpath)
 		if err != nil {
@@ -270,24 +243,22 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 		}
 		count += n
 	}
-
-	for _, r := range k.Resources {
-		if cerr := ctx.Err(); cerr != nil {
-			return count, cerr
+	spec, _ := w.loader.documents.read(dir)
+	for ref := range kustomizeinput.Kustomization(spec) {
+		if ref.Role != kustomizeinput.Resource && ref.Role != kustomizeinput.Component {
+			continue
 		}
-		abs, ok := kustpath.Resolve(dir, r, kustpath.Directory)
+		if err := ctx.Err(); err != nil {
+			return count, err
+		}
+		abs, ok := kustpath.Resolve(dir, ref.Path, kustpath.Directory)
 		if !ok {
-			// URLs, absolute paths, malformed entries — kustomize
-			// handles these at render time; the loader's job is to
-			// ignore them at discovery time.
 			continue
 		}
 		input, name := w.loader.documents.input(abs)
 		info, err := fs.Stat(input, name)
+		w.loader.documents.rememberStat(abs, info, err)
 		if err != nil {
-			// Resource pointer absent from the selected source view. Don't
-			// surface here; kustomize.RenderFlux will produce a
-			// clearer error with the right context at render time.
 			continue
 		}
 		if info.IsDir() {
@@ -296,65 +267,24 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 				return count, err
 			}
 			count += n
-			continue
+		} else if ref.Role == kustomizeinput.Resource {
+			if _, ok := kustpath.Resolve(dir, ref.Path, kustpath.File); !ok {
+				continue
+			}
+			if !isManifestFile(abs) || w.ignoreMatches(abs, false) {
+				continue
+			}
+			n, err := w.loader.loadFile(abs)
+			if err != nil {
+				return count, fmt.Errorf("loader: %w", err)
+			}
+			count += n
 		}
-		if _, ok := kustpath.Resolve(dir, r, kustpath.File); !ok {
-			continue
-		}
-		if !isManifestFile(abs) {
-			continue
-		}
-		if w.ignoreMatches(abs, false) {
-			continue
-		}
-		n, err := w.loader.loadFile(abs)
-		if err != nil {
-			return count, fmt.Errorf("loader: %w", err)
-		}
-		count += n
 	}
-
-	// Walk `components:` entries too. A kustomize Component contributes
-	// resources (and patches) to its parent's render, and any Flux CRs
-	// inside a component's subtree must be discoverable by flate.
-	// parent.go already reads `components:` for ownership-prefix
-	// claiming; without walking them here, the loader's discovery and
-	// parent.go's claim graph disagree.
-	for _, comp := range k.Components {
-		if cerr := ctx.Err(); cerr != nil {
-			return count, cerr
-		}
-		abs, ok := kustpath.Resolve(dir, comp, kustpath.Directory)
-		if !ok {
-			continue
-		}
-		input, name := w.loader.documents.input(abs)
-		info, err := fs.Stat(input, name)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		n, err := w.descend(ctx, abs)
-		if err != nil {
-			return count, err
-		}
-		count += n
-	}
-
-	count += w.scanBootstrapFluxKS(dir, k, kpath)
-	return count, nil
+	return count + w.scanBootstrapFluxKS(dir, kpath), nil
 }
 
-// scanBootstrapFluxKS surfaces Flux Kustomization CRs authored as
-// sibling YAML files of dir's kustomization.yaml but not listed in its
-// `resources:`. Real Flux pattern: the entry KS is kubectl-applied
-// outside any kustomize tree while its spec.path points at the
-// kustomize package beside it; without this scan the KS — and the
-// change-attribution it provides for files under spec.path — stay
-// invisible. Scope is intentionally narrow to *Flux Kustomization*
-// kinds; broadening here would silently undo the "kustomize package
-// = resources only" rule the loader otherwise enforces for HRs /
-// sources / data files.
-func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath string) int {
+func (w *walker) scanBootstrapFluxKS(dir, kpath string) int {
 	// A genuine bootstrap *entry* KS is a root — no other Kustomization's
 	// spec.path covers its directory. A KS commented-out of (excluded from)
 	// a kustomization.yaml lives inside a tree another KS already renders
@@ -368,8 +298,12 @@ func (w *walker) scanBootstrapFluxKS(dir string, k *types.Kustomization, kpath s
 		return 0
 	}
 	seen := map[string]struct{}{kpath: {}}
-	for _, r := range k.Resources {
-		if abs, ok := kustpath.Resolve(dir, r, kustpath.File); ok {
+	spec, _ := w.loader.documents.read(dir)
+	for ref := range kustomizeinput.Kustomization(spec) {
+		if ref.Inline {
+			continue
+		}
+		if abs, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
 			seen[abs] = struct{}{}
 		}
 	}
@@ -456,72 +390,48 @@ func (l *Loader) dirCoveredByOtherKS(dir string) bool {
 	return false
 }
 
-// walkComponentData records direct ConfigMap/Secret resources from
-// kustomize Components without publishing
-// templated Flux CRs as standalone objects. The change filter's
-// producer index needs the data files source-recorded so a downstream
-// substituteFrom consumer can resolve its producing KS, but a
-// Component's own `${VAR}`-templated Flux CRs are NOT renderable
-// standalone — publishing them would corrupt discovery.
-//
-// Component-of-Component graphs recurse via k.Components; w.visited
-// terminates Component cycles (same primitive descend uses for the
-// non-Component graph). We deliberately do NOT call descend() for
-// nested Components — that would re-enter the regular walk and load
-// any non-Component YAMLs from the Component subtree, defeating the
-// whole point of the skip. Stay limited to CM/Secret data-file
-// recording.
-func (w *walker) walkComponentData(ctx context.Context, dir string, k *types.Kustomization) (int, error) {
-	for _, r := range k.Resources {
-		if cerr := ctx.Err(); cerr != nil {
-			return 0, cerr
-		}
-		abs, ok := kustpath.Resolve(dir, r, kustpath.File)
-		if !ok || w.ignoreMatches(abs, false) || !isManifestFile(abs) {
+// Component resources retain data evidence without admitting templated Flux objects.
+func (w *walker) walkComponentData(ctx context.Context, dir string) (int, error) {
+	spec, _ := w.loader.documents.read(dir)
+	for ref := range kustomizeinput.Kustomization(spec) {
+		if ref.Role != kustomizeinput.Resource && ref.Role != kustomizeinput.Component {
 			continue
 		}
-		input, name := w.loader.documents.input(abs)
-		info, err := fs.Stat(input, name)
-		if err != nil || info.IsDir() {
-			// Directories under a Component's `resources:` are sibling
-			// kustomize packages, not bare data files; the producer
-			// index is fed by files, so skip rather than recurse. A
-			// nested kustomize package authored inside a Component is
-			// vanishingly rare and would be loaded via its enclosing
-			// Flux KS spec.path instead.
-			continue
+		if err := ctx.Err(); err != nil {
+			return 0, err
 		}
-		if err := w.loader.recordDataFile(abs); err != nil {
-			slog.Warn("loader: component data file failed to parse", "path", abs, "err", err)
-		}
-	}
-	for _, comp := range k.Components {
-		if cerr := ctx.Err(); cerr != nil {
-			return 0, cerr
-		}
-		abs, ok := kustpath.Resolve(dir, comp, kustpath.Directory)
+		abs, ok := kustpath.Resolve(dir, ref.Path, kustpath.Directory)
 		if !ok {
 			continue
 		}
 		input, name := w.loader.documents.input(abs)
 		info, err := fs.Stat(input, name)
-		if err != nil || !info.IsDir() {
+		w.loader.documents.rememberStat(abs, info, err)
+		if err != nil {
 			continue
 		}
-		if _, seen := w.visited[abs]; seen {
-			continue
-		}
-		w.visited[abs] = struct{}{}
-		nested, _ := w.loader.documents.read(abs)
-		if nested == nil || !isKustomizeComponent(nested) {
-			// A Component that points at a non-Component dir is
-			// malformed for kustomize purposes; skip rather than
-			// descend into walkKustomize, which would publish Flux
-			// CRs we deliberately keep hidden under Component subtrees.
-			continue
-		}
-		if _, err := w.walkComponentData(ctx, abs, nested); err != nil {
-			return 0, err
+		if ref.Role == kustomizeinput.Component {
+			if !info.IsDir() {
+				continue
+			}
+			if _, seen := w.visited[abs]; seen {
+				continue
+			}
+			w.visited[abs] = struct{}{}
+			nested, _ := w.loader.documents.read(abs)
+			if !isKustomizeComponent(nested) {
+				continue
+			}
+			if _, err := w.walkComponentData(ctx, abs); err != nil {
+				return 0, err
+			}
+		} else {
+			if _, ok := kustpath.Resolve(dir, ref.Path, kustpath.File); !ok || info.IsDir() || w.ignoreMatches(abs, false) || !isManifestFile(abs) {
+				continue
+			}
+			if err := w.loader.recordDataFile(abs); err != nil {
+				slog.Warn("loader: component data file failed to parse", "path", abs, "err", err)
+			}
 		}
 	}
 	return 0, nil
@@ -563,13 +473,13 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			// second time.
 			if k, kpath := w.loader.documents.read(path); k != nil {
 				if isKustomizeComponent(k) {
-					if _, err := w.walkComponentData(ctx, path, k); err != nil {
+					if _, err := w.walkComponentData(ctx, path); err != nil {
 						return err
 					}
 					return filepath.SkipDir
 				}
 				w.visited[path] = struct{}{}
-				n, err := w.walkKustomize(ctx, path, k, kpath)
+				n, err := w.walkKustomize(ctx, path, kpath)
 				if err != nil {
 					return err
 				}

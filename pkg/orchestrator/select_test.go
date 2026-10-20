@@ -137,6 +137,57 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	}
 }
 
+func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, namespace, requested string
+		helm, visible              bool
+	}{
+		{name: "inferred unrelated namespace", visible: true},
+		{name: "explicit affected namespace", namespace: "apps", visible: true},
+		{name: "explicit other namespace", namespace: "infra"},
+		{name: "explicit affected name", requested: "affected", visible: true},
+		{name: "explicit other name", requested: "selected"},
+		{name: "explicit other kind", helm: true},
+	} {
+		for _, count := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/%d", tc.name, count), func(t *testing.T) {
+				t.Parallel()
+				affected := testutil.KustomizationID("apps", "affected")
+				selected := testutil.KustomizationID("infra", "selected")
+				warning := manifest.Warning{Resource: affected, Category: manifest.WarnIncompleteInputCoverage, Message: "incomplete"}
+				run := selectedRun(&Result{Warnings: []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}}})
+				run.store.AddObject(&manifest.Kustomization{Name: affected.Name, Namespace: affected.Namespace})
+				run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
+				run.index = indexForTest(map[manifest.NamedResource]string{affected: "affected.yaml", selected: "selected.yaml"})
+				run.filter = change.NewFilter(change.NewSet([]string{"selected.yaml"}), run.index, run.store)
+				runs := []Rendered{run}
+				if count == 2 {
+					runs = append(runs, run)
+				}
+				root := testutil.KustomizationID(tc.namespace, tc.requested)
+				if tc.helm {
+					root = testutil.HelmReleaseID(tc.namespace, tc.requested)
+				}
+				results, err, _ := Select(runs, nil, []manifest.NamedResource{root}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assert.Diff(t, run.Result.Warnings, []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}})
+				for _, result := range results {
+					visible := slices.ContainsFunc(result.Warnings, func(w manifest.Warning) bool { return w.Category == warning.Category && w.Resource == affected })
+					assert.Equal(t, visible, count == 2 && tc.visible)
+					if tc.namespace == "" && tc.requested == "" && !tc.helm {
+						assert.Equal(t, len(result.Objects), 1)
+						assert.Equal(t, result.Objects[0].Named(), selected)
+						assert.Equal(t, len(result.Warnings), count-1)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 	t.Parallel()
 	visible := testutil.KustomizationID("media", "plex")

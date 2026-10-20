@@ -51,7 +51,7 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 	for i, run := range runs {
 		sides[i].run = run
 		sides[i].collect(roots, labels, len(runs) == 2)
-		sides[i].collectWarnings(roots[0].Name, kinds, len(runs) == 2)
+		sides[i].collectWarnings(roots[0], kinds, len(runs) == 2)
 		selected[i] = sides[i].result
 	}
 	candidates := selectionCandidates(sides)
@@ -158,13 +158,18 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 	return ""
 }
 
-func (s *selectionSide) collectWarnings(name string, kinds map[manifest.NamedResource]bool, comparison bool) {
+func (s *selectionSide) collectWarnings(root manifest.NamedResource, kinds map[manifest.NamedResource]bool, comparison bool) {
 	for _, warning := range s.run.Result.Warnings {
-		if warning.Resource != (manifest.NamedResource{}) && !s.includes(warning.Resource.Namespace) {
+		if warning.Category == manifest.WarnIncompleteInputCoverage {
+			id := warning.Resource
+			if !comparison || !kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] || root.Name != "" && id.Name != root.Name || root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
+				continue
+			}
+		} else if warning.Resource != (manifest.NamedResource{}) && !s.includes(warning.Resource.Namespace) {
 			continue
 		}
 		if comparison && warning.Category == manifest.WarnOmittedValues &&
-			(!kinds[manifest.NamedResource{Group: warning.Resource.Group, Kind: warning.Resource.Kind}] || (name != "" && warning.Resource.Name != name)) {
+			(!kinds[manifest.NamedResource{Group: warning.Resource.Group, Kind: warning.Resource.Kind}] || (root.Name != "" && warning.Resource.Name != root.Name)) {
 			continue
 		}
 		s.result.Warnings = append(s.result.Warnings, warning)

@@ -1,7 +1,6 @@
 package change_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -12,36 +11,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// TestIntegration_KeepCascadeIsBlockedByAncestorOnlyEmitter pins
-// the end-to-end behavior of the keep-set fix (#308 + #312) against
-// a realistic two-subtree layout:
-//
-//	cluster-apps (KS at kubernetes/apps)
-//	├── media-apps        (KS at kubernetes/apps/media)
-//	│   └── plex          (KS at kubernetes/apps/media/plex, has CM)
-//	└── db-apps           (KS at kubernetes/apps/db)
-//	    └── postgres      (KS at kubernetes/apps/db/postgres, has CM)
-//
-// The change set touches a single file under media/plex. After
-// orchestrator.Render, the expected story is:
-//
-//   - plex's chain reconciles (ShouldReconcile==true throughout).
-//   - The ancestor chain (cluster-apps, media-apps) renders so
-//     parent-injected patches reach plex — but they don't promote
-//     unrelated children into keep (the #308 cascade fix).
-//   - db-apps and postgres land in the Store with StatusReady,
-//     Outcome=OutcomeUnchanged — proof that PreGate short-circuited
-//     them and no kustomize build / no helm template / no source
-//     fetch happened for the unrelated subtree.
-//
-// Pre-fix, every KS in the tree reconciled because
-// emitRenderedChildren cascaded keep through the ancestor renders.
-// Post-fix, only the change-touched subtree runs.
 func TestIntegration_KeepCascadeIsBlockedByAncestorOnlyEmitter(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", "resources: [media/ks.yaml, db/ks.yaml]\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/media/kustomization.yaml", "resources: [plex/ks.yaml]\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/db/kustomization.yaml", "resources: [postgres/ks.yaml]\n")
 
-	// Root sources + cluster-apps KS that fans out into media-apps
-	// and db-apps.
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/flux/cluster.yaml"), "---\n"+
 		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -60,7 +36,6 @@ spec:
     namespace: flux-system
 `))
 
-	// Intermediate ancestors per subtree.
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/ks.yaml"), testutil.KustomizationYAML("media-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/media
   prune: true
@@ -78,7 +53,6 @@ spec:
     namespace: flux-system
 `))
 
-	// Leaf KSes — each owns its own spec.path directly.
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/ks.yaml"), testutil.KustomizationYAML("plex", "media", `  interval: 10m
   path: ./kubernetes/apps/media/plex/app
   prune: true
@@ -96,14 +70,11 @@ spec:
     namespace: flux-system
 `))
 
-	// Each leaf's app/ subtree gets an empty kustomization.yaml so
-	// kustomize doesn't error out at render time.
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
 
-	// The change touches plex's CM only.
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
@@ -134,13 +105,10 @@ data:
 		t.Fatalf("orchestrator.New: %v", err)
 	}
 
-	if _, err := o.Render(context.Background()); err != nil {
-		t.Logf("Render returned err: %v (informational)", err)
+	if _, err := o.Render(t.Context()); err != nil {
+		t.Fatalf("Render: %v", err)
 	}
 
-	// Resolve every KS's final status. The keep-cascade fix means
-	// the db side stays OutcomeUnchanged — proof its reconcile body
-	// never ran.
 	plex := testutil.KustomizationID("media", "plex")
 	postgres := testutil.KustomizationID("db", "postgres")
 	dbApps := testutil.KustomizationID("flux-system", "db-apps")
@@ -169,12 +137,7 @@ data:
 		}
 	}
 
-	// plex is the file-change owner: must reconcile.
 	requireReconciled(plex)
-	// db-apps and postgres are in the unrelated subtree: must stay
-	// SKIPPED. db-apps is an ancestor in its own tree but NOT an
-	// ancestor of the changed file, so it should also stay
-	// SKIPPED.
 	requireUnchanged(dbApps)
 	requireUnchanged(postgres)
 }

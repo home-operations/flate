@@ -24,6 +24,8 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 		{name: "outside_root", kind: "configMap", input: "files: [VALUE=../../../outside.txt]"},
 		{name: "resource_outside_root", kind: "configMap", input: "literals: [VALUE=outside]", escape: true},
 		{name: "symlink_escape", kind: "configMap", input: "files: [VALUE=escape.txt]", symlink: true},
+		{name: "implicit document", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "fixture", want: "fixture"},
+		{name: "normalized environment", kind: "configMap", input: "env: ../input.txt", value: "VALUE=fixture", want: "fixture"},
 		{name: "inside_root", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "fixture", want: "fixture"},
 		{name: "outer_namespace", kind: "configMap", namespace: "namespace: outer\n", input: "literals: [VALUE=fixture]", want: "fixture"},
 		{name: "real_object_wins", kind: "configMap", input: "literals: [VALUE=generated]", existing: true, want: "real"},
@@ -50,6 +52,9 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			}
 			st := store.New()
 			ks := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./apps/a"}
+			if tc.name == "implicit document" {
+				ks.Path = "./apps"
+			}
 			if tc.external {
 				ks.SourceRef.Kind, ks.SourceRef.Name, ks.SourceRef.Namespace = manifest.KindGitRepository, "external", "flux-system"
 				st.AddObject(&manifest.GitRepository{Name: "external", Namespace: "flux-system"})

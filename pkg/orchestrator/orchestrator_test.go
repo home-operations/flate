@@ -622,6 +622,40 @@ data: {k: v}
 	}
 }
 
+func TestOrchestrator_TypedNullErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ field, diagnostic string }{
+		{"patches", "must specify one of patch and path"},
+		{"components", "new root cannot be empty"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			t.Parallel()
+			dir := testutil.WriteTree(t, map[string]string{
+				"ks.yaml":                 testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  "+tc.field+": [null]\n"),
+				"apps/kustomization.yaml": "resources: [cm.yaml]\n",
+				"apps/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n",
+			})
+			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: 2})
+			assert.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+			res, err := o.Render(t.Context())
+			if _, ok := errors.AsType[*FailuresError](err); !ok {
+				t.Fatalf("render error = %v, want resource failure", err)
+			}
+			if !strings.Contains(err.Error(), tc.diagnostic) {
+				t.Fatalf("missing upstream diagnostic: %v", err)
+			}
+			if res == nil {
+				t.Fatal("missing render result")
+			}
+			id := testutil.KustomizationID("flux-system", "apps")
+			if info, ok := res.Failed[id]; !ok || !strings.Contains(info.Message, tc.diagnostic) {
+				t.Fatalf("Kustomization failure = %+v, present = %t", info, ok)
+			}
+		})
+	}
+}
+
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))

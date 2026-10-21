@@ -3,6 +3,7 @@ package kustomize
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -64,15 +65,15 @@ func TestRenderFlux_Metadata(t *testing.T) {
 			labels: map[string]any{ownerName: "user-override", ownerNamespace: "user-ns-override"},
 		},
 		{
-			name:    "null common metadata preserves existing values",
+			name:    "null common metadata overwrites existing values",
 			fixture: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  labels: {app: existing}\n  annotations: {note: existing}\n",
 			owner:   map[string]any{"name": "owner", "namespace": "ns"},
 			common: map[string]any{
 				"labels":      map[string]any{"app": nil, ownerName: nil},
 				"annotations": map[string]any{"note": nil},
 			},
-			labels:      map[string]any{"app": "existing", ownerName: "owner", ownerNamespace: "ns"},
-			annotations: map[string]any{"note": "existing"},
+			labels:      map[string]any{"app": "", ownerName: "", ownerNamespace: "ns"},
+			annotations: map[string]any{"note": ""},
 		},
 		{
 			name:    "empty common metadata overwrites existing values",
@@ -156,6 +157,65 @@ func TestRenderFlux_Metadata(t *testing.T) {
 					t.Errorf("annotation %s = %v, want %v", key, annotations[key], want)
 				}
 			}
+		})
+	}
+}
+
+func TestRenderFlux_TypedNulls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		spec      map[string]any
+		wantError string
+	}{
+		{name: "patches null", spec: map[string]any{"patches": nil}},
+		{name: "patch element null", spec: map[string]any{"patches": []any{nil}}, wantError: "must specify one of patch and path"},
+		{name: "image element null", spec: map[string]any{"images": []any{nil}}},
+		{name: "build metadata element null", spec: map[string]any{"buildMetadata": []any{nil}}},
+		{name: "component element null", spec: map[string]any{"components": []any{nil}}, wantError: "new root cannot be empty"},
+		{name: "empty scalar overrides", spec: map[string]any{"targetNamespace": "", "namePrefix": "", "nameSuffix": ""}},
+		{name: "generator-only fields", spec: map[string]any{
+			"patchesStrategicMerge": []any{map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "demo"}, "data": map[string]any{"value": "ignored"}}},
+			"patchesJson6902":       []any{map[string]any{"target": map[string]any{"kind": "ConfigMap", "name": "demo"}, "patch": []any{map[string]any{"op": "replace", "path": "/data/value", "value": "ignored"}}}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := testutil.WriteTree(t, map[string]string{
+				"kustomization.yaml": existingKustomization("cm.yaml") + `namespace: existing
+namePrefix: pre-
+nameSuffix: -post
+patches:
+- patch: |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: demo}
+    data: {value: disk}
+`,
+				"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, labels: {app: original}}\ndata: {value: original}\n",
+			})
+			req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: parsedKS(t, ksDoc(tc.spec))}
+			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("render error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			repeated, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			assert.Equal(t, string(repeated), string(out))
+			req.Spec = parsedKS(t, ksDoc(nil))
+			absent, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			assert.Equal(t, string(out), string(absent))
+			var got map[string]any
+			assert.NoError(t, yaml.Unmarshal(out, &got))
+			md := got["metadata"].(map[string]any)
+			assert.Equal(t, md["name"], any("pre-demo-post"))
+			assert.Equal(t, md["namespace"], any("existing"))
+			assert.Equal(t, got["data"].(map[string]any)["value"], any("disk"))
 		})
 	}
 }

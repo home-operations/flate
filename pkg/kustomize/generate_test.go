@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -8,9 +9,11 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 	"github.com/go-git/go-git/v5/plumbing"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -49,13 +52,6 @@ func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
 	}
 	return newTreeFS(input, root, nil)
 }
-
-// These tests pin flate's in-memory generateManifest to flux's real on-disk
-// Generator.GenerateManifest. The acceptance gate for the whole in-memory
-// redesign is byte-equivalence: for an identical source tree and Kustomization
-// spec, the kustomization.yaml flate synthesizes in RAM must be byte-for-byte
-// what flux writes to disk. If flux changes its merge, these tests fail and we
-// re-port — they are the contract.
 
 // cmYAML is a minimal manifest that kustomize's resource factory accepts, used
 // wherever scanManifests must see a valid Kubernetes YAML.
@@ -105,6 +101,17 @@ func renderDoc(tb testing.TB, ks *manifest.Kustomization) map[string]any {
 		tb.Fatal(err)
 	}
 	return doc
+}
+
+func typedFluxDoc(tb testing.TB, doc map[string]any) map[string]any {
+	tb.Helper()
+	raw, err := json.Marshal(doc)
+	assert.NoError(tb, err)
+	var cr kustomizev1.Kustomization
+	assert.NoError(tb, json.Unmarshal(raw, &cr))
+	typed, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cr)
+	assert.NoError(tb, err)
+	return typed
 }
 
 func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
@@ -346,7 +353,7 @@ func TestGenerateManifest_ByteEquivalentToFlux(t *testing.T) {
 			root := testutil.WriteTree(t, tc.files)
 			doc := ksDoc(tc.spec)
 
-			gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: manifest.DeepCopyMap(doc)})
+			gen := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: typedFluxDoc(t, doc)})
 			want, _, _, wantErr := gen.GenerateManifest(filepath.Join(root, tc.subPath))
 
 			borrowed := renderDoc(t, parsedKS(t, manifest.DeepCopyMap(doc)))
@@ -392,7 +399,7 @@ func TestGenerateManifest_TypedOverrides(t *testing.T) {
 			ks.KustomizationSpec = plain.KustomizationSpec
 			got, _, err := generateManifest(testTreeFS(t, root), root, renderDoc(t, ks))
 			assert.NoError(t, err)
-			oracle := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: ksDoc(tc.effective)})
+			oracle := fluxkustomize.NewGenerator(root, unstructured.Unstructured{Object: typedFluxDoc(t, ksDoc(tc.effective))})
 			want, _, _, err := oracle.GenerateManifest(root)
 			assert.NoError(t, err)
 			assert.Equal(t, string(got), string(want))

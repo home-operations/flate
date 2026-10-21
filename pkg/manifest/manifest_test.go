@@ -3,13 +3,16 @@ package manifest
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/home-operations/flate/internal/assert"
 )
@@ -974,25 +977,49 @@ spec: {path: ./p0}
 	assert.Diff(t, published, snapshot)
 }
 
-func TestRenderDocument_OmitsInternalShape(t *testing.T) {
+func TestRenderDocument_TypedSpec(t *testing.T) {
 	t.Parallel()
-	ks, err := parseKustomization(mustYAML(t, `
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: apps}
-spec: {namePrefix: ""}
-`))
-	assert.NoError(t, err)
-	if ks.shape == nil {
-		t.Fatal("authored empty prefix did not produce a shape")
+	for _, tc := range []struct{ name, spec string }{
+		{"absent", "{}"},
+		{"null fields", "{targetNamespace: null, namePrefix: null, nameSuffix: null, patches: null, images: null, components: null, buildMetadata: null}"},
+		{"empty fields", "{targetNamespace: '', namePrefix: '', nameSuffix: '', patches: [], images: [], components: [], buildMetadata: []}"},
+		{"zero elements", "{patches: [null], images: [null], components: [null], buildMetadata: [null]}"},
+		{"metadata values", "{commonMetadata: {labels: {app: null, team: typed}, annotations: {note: null, owner: typed}}}"},
+		{"generator-only fields", "{patchesStrategicMerge: [{metadata: {name: ignored}}], patchesJson6902: not-a-list}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := mustYAML(t, "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: "+tc.spec+"\n")
+			raw, err := json.Marshal(doc)
+			assert.NoError(t, err)
+			var cr kustomizev1.Kustomization
+			assert.NoError(t, json.Unmarshal(raw, &cr))
+			want, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cr)
+			assert.NoError(t, err)
+			ks, err := parseKustomization(doc)
+			assert.NoError(t, err)
+			for range 2 {
+				got, err := ks.RenderDocument()
+				assert.NoError(t, err)
+				assert.Diff(t, got["spec"], want["spec"])
+			}
+		})
 	}
-	for range 2 {
-		doc, err := ks.RenderDocument()
-		assert.NoError(t, err)
-		if _, exists := doc["_flateShape"]; exists {
-			t.Error("render document contains internal shape")
-		}
-		assert.Equal(t, doc["spec"].(map[string]any)["namePrefix"], any(""))
+}
+
+func TestParseKustomization_InvalidGeneratorFields(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"patches", "images", "components", "buildMetadata"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseKustomization(mustYAML(t, "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: apps}\nspec: {"+field+": not-a-list}\n"))
+			if !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+				t.Fatalf("invalid typed field error = %v, want input error", err)
+			}
+			if !strings.Contains(err.Error(), "cannot unmarshal string") {
+				t.Fatalf("missing decoder diagnostic: %v", err)
+			}
+		})
 	}
 }
 

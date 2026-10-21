@@ -551,6 +551,8 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		root   string
 		ignore any
 		spec   map[string]any
+		typed  map[string]any
+		same   bool
 	}{
 		{name: "substitution", change: func(r *RenderRequest) {
 			r.Spec.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "typed"}}
@@ -558,15 +560,20 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		{name: "spec", change: func(r *RenderRequest) { r.Spec.NamePrefix = "other-" }},
 		{name: "owner name", change: func(r *RenderRequest) { r.Spec.Name = "other" }},
 		{name: "owner namespace", change: func(r *RenderRequest) { r.Spec.Namespace = "other" }},
-		{name: "explicit empty namespace", spec: map[string]any{"targetNamespace": ""}},
-		{name: "explicit empty prefix", spec: map[string]any{"namePrefix": ""}},
-		{name: "explicit empty suffix", spec: map[string]any{"nameSuffix": ""}},
-		{name: "null fields", spec: map[string]any{"components": nil}},
-		{name: "null elements", spec: map[string]any{"patches": []any{nil}}},
-		{name: "null common labels", spec: map[string]any{"commonMetadata": map[string]any{"labels": map[string]any{"app": nil}}}},
-		{name: "null common annotations", spec: map[string]any{"commonMetadata": map[string]any{"annotations": map[string]any{"note": nil}}}},
-		{name: "strategic merge patches", spec: map[string]any{"patchesStrategicMerge": []any{map[string]any{"metadata": map[string]any{"name": "app"}}}}},
-		{name: "JSON 6902 patches", spec: map[string]any{"patchesJson6902": []any{map[string]any{"patch": []any{map[string]any{"op": "remove", "path": "/data/old"}}}}}},
+		{name: "explicit empty namespace", same: true, spec: map[string]any{"targetNamespace": ""}},
+		{name: "explicit empty prefix", same: true, spec: map[string]any{"namePrefix": ""}},
+		{name: "explicit empty suffix", same: true, spec: map[string]any{"nameSuffix": ""}},
+		{name: "null fields", same: true, spec: map[string]any{"components": nil}},
+		{name: "null whole fields", same: true, spec: map[string]any{"patches": nil, "images": nil, "components": nil, "buildMetadata": nil, "commonMetadata": nil, "targetNamespace": nil, "namePrefix": nil, "nameSuffix": nil}},
+		{name: "empty lists", same: true, spec: map[string]any{"patches": []any{}, "images": []any{}, "components": []any{}, "buildMetadata": []any{}}},
+		{name: "null image elements", spec: map[string]any{"images": []any{nil}}, typed: map[string]any{"images": []any{map[string]any{"name": ""}}}},
+		{name: "null component elements", spec: map[string]any{"components": []any{nil}}, typed: map[string]any{"components": []any{""}}},
+		{name: "null build metadata elements", spec: map[string]any{"buildMetadata": []any{nil}}, typed: map[string]any{"buildMetadata": []any{""}}},
+		{name: "null patch elements", spec: map[string]any{"patches": []any{nil}}, typed: map[string]any{"patches": []any{map[string]any{"patch": ""}}}},
+		{name: "null common labels", spec: map[string]any{"commonMetadata": map[string]any{"labels": map[string]any{"app": nil}}}, typed: map[string]any{"commonMetadata": map[string]any{"labels": map[string]any{"app": ""}}}},
+		{name: "null common annotations", spec: map[string]any{"commonMetadata": map[string]any{"annotations": map[string]any{"note": nil}}}, typed: map[string]any{"commonMetadata": map[string]any{"annotations": map[string]any{"note": ""}}}},
+		{name: "strategic merge patches", same: true, spec: map[string]any{"patchesStrategicMerge": []any{map[string]any{"metadata": map[string]any{"name": "app"}}}}},
+		{name: "JSON 6902 patches", same: true, spec: map[string]any{"patchesJson6902": []any{map[string]any{"patch": []any{map[string]any{"op": "remove", "path": "/data/old"}}}}}},
 		{name: "root", root: "/other"},
 		{name: "subpath", change: func(r *RenderRequest) { r.SubPath = "app" }},
 		{name: "ignore selection", change: func(r *RenderRequest) { r.ApplyIgnore = true }},
@@ -593,13 +600,23 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 			if tc.root != "" {
 				root = tc.root
 			}
-			if got := renderKey(changed, root, tc.ignore); got == "" || got == key {
-				t.Fatal("changed render input reused the key")
+			got := renderKey(changed, root, tc.ignore)
+			if got == "" || (got == key) != tc.same {
+				t.Fatalf("render key equality = %t, want %t", got == key, tc.same)
+			}
+			if tc.typed != nil {
+				typed := req
+				doc := renderDoc(t, req.Spec)
+				maps.Copy(doc["spec"].(map[string]any), tc.typed)
+				typed.Spec = parsedKS(t, doc)
+				if got != renderKey(typed, root, tc.ignore) {
+					t.Fatal("null input differs from its typed zero value")
+				}
 			}
 		})
 	}
 	for _, field := range []string{"targetNamespace", "namePrefix", "nameSuffix"} {
-		t.Run("nonempty shape/"+field, func(t *testing.T) {
+		t.Run("typed override/"+field, func(t *testing.T) {
 			t.Parallel()
 			changed := req
 			changed.Spec = req.Spec.Clone()
@@ -617,7 +634,7 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 				changed.Spec.NameSuffix, plain.Spec.NameSuffix = "-post", "-post"
 			}
 			if renderKey(changed, "/source", nil) != renderKey(plain, "/source", nil) {
-				t.Fatal("superseded shape changed content")
+				t.Fatal("authored null changed typed content")
 			}
 		})
 	}

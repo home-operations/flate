@@ -157,33 +157,34 @@ func TestKustomization_Clone_Isolation(t *testing.T) {
 	t.Parallel()
 	doc := mustYAML(t, `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata: {name: apps, namespace: flux-system}
+metadata: {name: apps, namespace: flux-system, labels: {owner: original}, annotations: {note: original}}
 spec:
-  patches: [null]
-  components: null
+  patches: [{patch: original, target: {kind: ConfigMap, name: original}}, null]
+  components: [original]
   commonMetadata:
-    labels: {hotel: null, delta: null, alpha: null, golf: null, bravo: null, foxtrot: null, charlie: null, echo: null}
-    annotations: {zulu: null, tango: null, quebec: null, whiskey: null, romeo: null, xray: null, sierra: null, uniform: null}
-  patchesStrategicMerge: [{metadata: {name: original}}]
-  patchesJson6902: [{target: {kind: ConfigMap}, patch: [{op: remove, path: /data/old}]}]
+    labels: {app: null, team: original}
+    annotations: {note: null}
 `)
 	src, err := parseKustomization(doc)
 	assert.NoError(t, err)
-	assert.Diff(t, src.shape.NullCommonLabels, []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"})
-	assert.Diff(t, src.shape.NullCommonAnnotations, []string{"quebec", "romeo", "sierra", "tango", "uniform", "whiskey", "xray", "zulu"})
 	snapshot := Fingerprint(src.Content(nil))
-	doc["spec"].(map[string]any)["patchesStrategicMerge"].([]any)[0].(map[string]any)["metadata"].(map[string]any)["name"] = "raw-edit"
+	rawSpec := doc["spec"].(map[string]any)
+	rawSpec["patches"].([]any)[0].(map[string]any)["target"].(map[string]any)["name"] = "raw-edit"
+	rawSpec["commonMetadata"].(map[string]any)["labels"].(map[string]any)["team"] = "raw-edit"
 	assert.Equal(t, Fingerprint(src.Content(nil)), snapshot)
 	dst := src.Clone()
-	dst.shape.Fields["components"] = "changed"
-	dst.shape.NullElements["patches"][0] = 5
-	dst.shape.NullCommonLabels[0] = "changed"
-	dst.shape.NullCommonAnnotations[0] = "changed"
-	dst.shape.Fields["patchesStrategicMerge"].([]any)[0].(map[string]any)["metadata"].(map[string]any)["name"] = "changed"
-	dst.shape.Fields["patchesJson6902"].([]any)[0].(map[string]any)["patch"].([]any)[0].(map[string]any)["path"] = "/changed"
+	dst.Patches[0].Patch = "changed"
+	dst.Patches[0].Target.Name = "changed"
+	dst.Components[0] = "changed"
+	dst.CommonMetadata.Labels["app"] = "changed"
+	dst.CommonMetadata.Annotations["note"] = "changed"
+	dst.Labels["owner"] = "changed"
+	dst.Annotations["note"] = "changed"
+	assert.Equal(t, src.Labels["owner"], "original")
+	assert.Equal(t, src.Annotations["note"], "original")
 	assert.Equal(t, Fingerprint(src.Content(nil)), snapshot)
 	if Fingerprint(dst.Content(nil)) == snapshot {
-		t.Fatal("auxiliary input edits did not invalidate content")
+		t.Fatal("typed input edits did not invalidate content")
 	}
 }
 

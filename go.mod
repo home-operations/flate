@@ -20,8 +20,8 @@ require (
 	github.com/fluxcd/kustomize-controller/api v1.9.6
 	github.com/fluxcd/pkg/apis/kustomize v1.23.0
 	github.com/fluxcd/pkg/apis/meta v1.36.0
-	github.com/fluxcd/pkg/envsubst v1.8.0
-	github.com/fluxcd/pkg/kustomize v1.41.0
+	github.com/fluxcd/pkg/envsubst v1.9.0
+	github.com/fluxcd/pkg/kustomize v1.43.0
 	github.com/fluxcd/pkg/sourceignore v0.21.0
 	github.com/fluxcd/source-controller/api v1.9.6
 	github.com/go-git/go-billy/v5 v5.9.2
@@ -188,7 +188,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

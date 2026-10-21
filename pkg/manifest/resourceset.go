@@ -238,23 +238,3 @@ func (r *ResourceSet) kind() KindInfo { return kindTable[kindResourceSet].KindIn
 func (p *ResourceSetInputProvider) kind() KindInfo {
 	return kindTable[kindResourceSetInputProvider].KindInfo
 }
-
-// Content returns the spec and resolved providers in render order.
-func (r *ResourceSet) Content(inputs []any) any {
-	return struct {
-		Spec   fluxopv1.ResourceSetSpec
-		Inputs []any
-	}{r.ResourceSetSpec, inputs}
-}
-
-// Content returns the provider identity and exported inputs used by rendering.
-func (p *ResourceSetInputProvider) Content() (any, error) {
-	inputs, err := p.ExportedInputs()
-	if err != nil {
-		return nil, err
-	}
-	return struct {
-		ID     NamedResource
-		Inputs []map[string]any
-	}{p.Named(), inputs}, nil
-}

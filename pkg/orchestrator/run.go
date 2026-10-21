@@ -233,7 +233,7 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 			}
 		}
 		for _, doc := range manifest.DropKinds(attempt.Manifests, skip) {
-			if chosen, known := selected[resourceset.DedupKey(doc)]; chosen || !known && !parentAttributed {
+			if chosen, known := selected[resourceset.DedupKey(doc)]; chosen || !known {
 				out[parent] = append(out[parent], doc)
 			}
 		}

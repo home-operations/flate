@@ -13,7 +13,6 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -172,7 +171,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		c := New(st, tasks)
 		f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 		c.Fetchers[manifest.KindGitRepository] = f
-		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
+		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, controllertest.MapLister{})
 		c.Configure(FetchOptions{Filter: filter}, sourcecache.RetryConfig{})
 		t.Cleanup(func() { c.Close(); tasks.BlockTillDone() })
 		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}

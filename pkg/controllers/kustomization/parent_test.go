@@ -10,6 +10,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -141,7 +142,7 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	cmID := cmObj.Named()
 
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer: {File: "kubernetes/flux/cluster-apps.yaml"}, producer: {File: "kubernetes/flux/cluster-vars.yaml"}, cmID: {File: "kubernetes/flux/vars/cluster-settings.yaml", Productions: []manifest.Production{{Owner: producer, Authored: cmID, Path: "kubernetes/flux/vars/cluster-settings.yaml", File: "kubernetes/flux/vars/cluster-settings.yaml"}}}}, Claims: map[string][]manifest.NamedResource{"kubernetes/apps/": {consumer}, "kubernetes/flux/vars/": {producer}}}
-	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), index, testutil.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj})
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), index, controllertest.MapLister{consumer: consumerObj, producer: producerObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{Filter: f, Index: index}, sourcecache.RetryConfig{})
@@ -185,7 +186,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	cmID := cmObj.Named()
 
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{self: {File: "kubernetes/foo/app/ks.yaml"}, cmID: {File: "kubernetes/foo/app/settings.yaml", Productions: testutil.ProductionEvidence([]manifest.NamedResource{self})}}, Claims: map[string][]manifest.NamedResource{"kubernetes/foo/app/": {self}}}
-	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), index, testutil.MapLister{self: selfObj, cmID: cmObj})
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), index, controllertest.MapLister{self: selfObj, cmID: cmObj})
 
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{Filter: f, Index: index}, sourcecache.RetryConfig{})

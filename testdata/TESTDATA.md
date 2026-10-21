@@ -45,6 +45,8 @@ with `go test -race ./test/e2e/...`.
   orphan; flate does not discover it. Used by
   `test/e2e/scope` test `TestE2E_OrphanedKustomizationNotDiscovered`.
 
+- `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, sanitized ciphertext, authored and explicit namespaces, and one tracked child render.
+
 ## Upstream attribution
 
 flate's controller architecture and behavior follow the design of

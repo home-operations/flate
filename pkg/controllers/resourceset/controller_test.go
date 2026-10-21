@@ -174,15 +174,8 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 	s.AddObject(rs)
 	s.AddObject(staticRSIP("input", rs.Namespace, map[string]string{"color": "blue"}, nil))
 	resolve := resourceset.StoreResolver(s)
-	content := resourceSetContent(rs, resolve)
-	if content != nil {
-		t.Fatalf("invalid selector content=%v, want nil", content)
-	}
-	if _, handled, err := c.FingerprintDedup(rs.Named(), content); handled || err != nil {
-		t.Fatalf("invalid selector fingerprint handled=%t error=%v, want miss", handled, err)
-	}
-	if _, err := resourceset.Render(rs, resolve); err == nil {
-		t.Fatal("invalid selector rendered successfully")
+	if _, fp, err := renderWithAdmission(rs, resolve, "previous"); err == nil || fp != "" {
+		t.Fatalf("invalid selector fingerprint=%q error=%v", fp, err)
 	}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 		t.Fatalf("status=%+v, want Failed", info)
@@ -211,6 +204,19 @@ metadata: {name: bare}
 			`apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: bare}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: config}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: explicit, namespace: other}
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: fleet}
+spec: {}
 `,
 	}
 	s.AddObject(rs)
@@ -225,16 +231,27 @@ metadata: {name: bare}
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
 	}
 	art := s.GetArtifact(rs.Named()).(*store.Emission)
+	for _, child := range art.Children {
+		if child.Obj.Named() == rs.Named() {
+			t.Fatal("effective self child published")
+		}
+	}
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
 		before[i] = manifest.DeepCopyMap(doc)
 		name, ns := manifest.DocMetadata(doc)
 		want := rs.Namespace
-		if manifest.DocKind(doc) == "ClusterRole" {
+		if name == "explicit" {
+			want = "other"
+		} else if manifest.DocKind(doc) == "ClusterRole" {
 			want = ""
 		}
-		if ns != want {
-			t.Fatalf("rendered namespace = %q, want %q", ns, want)
+		authored := ""
+		if name == "explicit" {
+			authored = "other"
+		}
+		if ns != authored {
+			t.Fatalf("rendered namespace = %q, want authored absence", ns)
 		}
 		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
 			t.Fatalf("missing effective child %s/%s", want, name)

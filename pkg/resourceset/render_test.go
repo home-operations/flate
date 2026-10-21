@@ -1,6 +1,7 @@
 package resourceset_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ metadata:
 		return nil, nil
 	}
 
-	docs, err := resourceset.Render(rs, resolver)
+	docs, err := resourceset.Render(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -94,7 +95,7 @@ metadata:
 			DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
 		}}, nil
 	}
-	docs, err := resourceset.Render(rs, resolver)
+	docs, err := resourceset.Render(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -137,7 +138,7 @@ metadata:
 			Type: fluxopv1.InputProviderGitHubBranch,
 		}}, nil
 	}
-	docs, err := resourceset.Render(rs, resolver)
+	docs, err := resourceset.Render(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -173,7 +174,7 @@ metadata: {name: x, namespace: default}`,
 			Type: fluxopv1.InputProviderGitHubBranch,
 		}}, nil
 	}
-	docs, err := resourceset.Render(rs, resolver)
+	docs, err := resourceset.Render(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestRender_PermuteMaxPermutationsRejected(t *testing.T) {
 kind: ConfigMap
 metadata: {name: x, namespace: default}`,
 	}
-	_, err := resourceset.Render(rs, nil)
+	_, err := resourceset.Render(rs, nil, nil)
 	if err == nil {
 		t.Fatal("expected Render to reject the >10000-permutation case")
 	}
@@ -233,7 +234,7 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -272,7 +273,7 @@ func TestRender_Deduplication(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -295,7 +296,7 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -317,7 +318,7 @@ func TestRender_PreservesNamespaces(t *testing.T) {
 			jsonTmpl(t, `{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "explicit", "namespace": "authored"}}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +350,7 @@ func TestRender_CommonMetadata(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -375,7 +376,7 @@ func TestRender_OwnerLabels(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -406,7 +407,7 @@ func TestRender_SprigFunctions(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -443,7 +444,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -453,6 +454,23 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 	md := docs[0]["metadata"].(map[string]any)
 	if md["name"] != "a" {
 		t.Errorf("wrong tenant kept: %v", md["name"])
+	}
+	rs.Resources = []*apix.JSON{
+		jsonTmpl(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"same","annotations":{"fluxcd.controlplane.io/reconcile":"disabled"}}}`),
+		jsonTmpl(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"same"},"data":{"value":"enabled"}}`),
+	}
+	docs, err = resourceset.Render(rs, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, len(docs), 1)
+	assert.Diff(t, docs[0]["data"], map[string]any{"value": "enabled"})
+	for _, value := range []string{"Disabled", "false", "enabled"} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			candidate := &manifest.ResourceSet{Name: "exact", ResourcesTemplate: fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n name: exact\n annotations: {fluxcd.controlplane.io/reconcile: %q}", value)}
+			docs, err := resourceset.Render(candidate, nil, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, len(docs), 1)
+		})
 	}
 }
 
@@ -478,7 +496,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 				}`),
 		},
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -510,7 +528,7 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 				}`),
 		},
 	}
-	_, err := resourceset.Render(rs, nil)
+	_, err := resourceset.Render(rs, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for undefined input key, got nil")
 	}
@@ -544,7 +562,7 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 
 	docs, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -595,7 +613,7 @@ func TestRender_MalformedTemplateErrors(t *testing.T) {
 				}`), // unterminated template
 		},
 	}
-	_, err := resourceset.Render(rs, nil)
+	_, err := resourceset.Render(rs, nil, nil)
 	if err == nil {
 		t.Fatal("expected parse error for malformed template, got nil")
 	}
@@ -622,7 +640,7 @@ spec:
   layerSelector: << inputs.layerSelector | toYaml | nindent 4 >>
 `,
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -666,7 +684,7 @@ data:
 	other.Namespace = "other"
 	st.AddObject(&other)
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindResourceSetInputProvider, Name: rsip.Name, Namespace: rsip.Namespace})
-	docs, err := resourceset.Render(rs, resourceset.StoreResolver(st))
+	docs, err := resourceset.Render(rs, resourceset.StoreResolver(st), nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -702,7 +720,7 @@ data:
 					ref.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"set": "apps"}}
 				}
 				candidate.InputsFrom = []fluxopv1.InputProviderReference{ref}
-				docs, err := resourceset.Render(&candidate, resourceset.StoreResolver(st))
+				docs, err := resourceset.Render(&candidate, resourceset.StoreResolver(st), nil)
 				if err != nil || len(docs) != tc.want {
 					t.Fatalf("docs=%d, error=%v, want %d", len(docs), err, tc.want)
 				}
@@ -724,7 +742,7 @@ data:
 			t.Parallel()
 			candidate := *rs
 			candidate.InputsFrom = tc.refs
-			got, err := resourceset.Render(&candidate, resourceset.StoreResolver(st))
+			got, err := resourceset.Render(&candidate, resourceset.StoreResolver(st), nil)
 			assert.NoError(t, err)
 			if len(got) != tc.want {
 				t.Fatalf("docs=%d, want %d", len(got), tc.want)
@@ -882,7 +900,7 @@ metadata:
 	resolver := func(_ fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
 	}
-	docs, err := resourceset.Render(rs, resolver)
+	docs, err := resourceset.Render(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -895,8 +913,6 @@ metadata:
 	}
 }
 
-// TestRender_ResourcesTemplate covers spec.resourcesTemplate (multi-doc
-// YAML string variant).
 func TestRender_ResourcesTemplate(t *testing.T) {
 	t.Parallel()
 	tmpl := `---
@@ -919,34 +935,62 @@ metadata:
 		},
 		ResourcesTemplate: tmpl,
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	if len(docs) != 4 {
 		t.Errorf("expected 4 docs (2 inputs × 2 docs each), got %d", len(docs))
 	}
+	t.Run("invalid stream separator", func(t *testing.T) {
+		t.Parallel()
+		candidate := &manifest.ResourceSet{Name: "stream", ResourcesTemplate: "\n---oops: kept\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: rejected}"}
+		_, err := resourceset.Render(candidate, nil, nil)
+		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			t.Fatalf("error = %v, want classified invalid stream separator", err)
+		}
+	})
+	t.Run("duplicate mapping keys", func(t *testing.T) {
+		t.Parallel()
+		candidate := &manifest.ResourceSet{Name: "duplicate-keys", ResourcesTemplate: `--- # comment
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: db}
+spec:
+  postgresql: {value: first}
+  postgresql: {value: last}
+`}
+		docs, err := resourceset.Render(candidate, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(docs) != 1 {
+			t.Fatalf("documents = %d, want 1", len(docs))
+		}
+		assert.Diff(t, docs[0]["spec"], map[string]any{"postgresql": map[string]any{"value": "last"}})
+	})
 }
 
 func TestRender_NullInput(t *testing.T) {
 	t.Parallel()
 	rs := &manifest.ResourceSet{
 		Name: "null", Namespace: "apps",
-		Inputs: []fluxopv1.ResourceSetInput{{"value": nil}},
+		Inputs: []fluxopv1.ResourceSetInput{{"value": nil, "malformed": {Raw: []byte("invalid")}}},
 		ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: null-input}
 data:
-  value: << if eq inputs.value nil >>"null"<< end >>`,
+  value: << if eq inputs.value nil >>"null"<< end >>
+  malformed: << if hasKey inputs "malformed" >>present<< else >>omitted<< end >>`,
 	}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(docs) != 1 {
 		t.Fatalf("documents = %d, want 1", len(docs))
 	}
-	assert.Diff(t, docs[0]["data"], map[string]any{"value": "null"})
+	assert.Diff(t, docs[0]["data"], map[string]any{"value": "null", "malformed": "omitted"})
 }
 
 func TestRender_SlugifyLength(t *testing.T) {
@@ -964,7 +1008,7 @@ func TestRender_SlugifyLength(t *testing.T) {
 kind: ConfigMap
 metadata: {name: << inputs.name | slugify >>}`,
 			}
-			docs, err := resourceset.Render(rs, nil)
+			docs, err := resourceset.Render(rs, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1000,6 +1044,10 @@ func TestRender_Steps(t *testing.T) {
 			{Name: "first", Resources: []*apix.JSON{resource}},
 			{Name: "second", Resources: []*apix.JSON{jsonTmpl(t, `{"apiVersion":"apps/v1beta2","kind":"Deployment","metadata":{"name":"first"}}`)}},
 		}}, wantErr: "duplicate resource"},
+		{name: "empty identity across steps", spec: fluxopv1.ResourceSetSpec{Steps: []fluxopv1.ResourceSetStep{
+			{Name: "first", Resources: []*apix.JSON{jsonTmpl(t, `{}`)}},
+			{Name: "second", Resources: []*apix.JSON{jsonTmpl(t, `{}`)}},
+		}}, wantErr: "duplicate resource"},
 		{name: "steps and resources", spec: fluxopv1.ResourceSetSpec{Resources: []*apix.JSON{resource}, Steps: []fluxopv1.ResourceSetStep{{Name: "deploy", Resources: []*apix.JSON{resource}}}}, wantErr: "mutually exclusive"},
 		{name: "steps and template", spec: fluxopv1.ResourceSetSpec{ResourcesTemplate: template, Steps: []fluxopv1.ResourceSetStep{{Name: "deploy", Resources: []*apix.JSON{resource}}}}, wantErr: "mutually exclusive"},
 		{name: "empty step with empty providers", spec: fluxopv1.ResourceSetSpec{InputsFrom: []fluxopv1.InputProviderReference{{Name: "empty"}}, Steps: []fluxopv1.ResourceSetStep{{Name: "empty"}}}, wantErr: "at least one"},
@@ -1008,7 +1056,7 @@ func TestRender_Steps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			rs := &manifest.ResourceSet{Name: "steps", Namespace: "default", ResourceSetSpec: tt.spec}
-			docs, err := resourceset.Render(rs, nil)
+			docs, err := resourceset.Render(rs, nil, nil)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tt.wantErr)
@@ -1054,7 +1102,7 @@ func TestRender_EmptyInputRule(t *testing.T) {
 				resolve := func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 					return []*manifest.ResourceSetInputProvider{{Name: "empty", Type: fluxopv1.InputProviderGitHubBranch}}, nil
 				}
-				docs, err := resourceset.Render(rs, resolve)
+				docs, err := resourceset.Render(rs, resolve, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1070,6 +1118,15 @@ func TestRender_GroupDedup(t *testing.T) {
 	t.Parallel()
 	rs := &manifest.ResourceSet{Name: "group", Namespace: "default", Inputs: []fluxopv1.ResourceSetInput{{}}, Resources: []*apix.JSON{
 		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"shared"}}`),
+		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"StatefulSet","metadata":{"name":"shared"}}`),
+		jsonTmpl(t, `{"apiVersion":"example.test/v1","kind":"Widget"}`),
+		jsonTmpl(t, `{"apiVersion":"other.test/v1","kind":"Widget"}`),
+		jsonTmpl(t, `{"apiVersion":"v1","metadata":{"name":"kindless"}}`),
+		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"shared","namespace":"a"}}`),
+		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"shared","namespace":"b"}}`),
+		jsonTmpl(t, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"other"}}`),
+		jsonTmpl(t, `{"data":{"value":"zero"}}`),
+		jsonTmpl(t, `{}`),
 	}, ResourcesTemplate: `apiVersion: apps/v1beta2
 kind: Deployment
 metadata: {name: shared}
@@ -1084,14 +1141,14 @@ metadata: {}
 ---
 apiVersion: example.test/v1
 metadata: {name: incomplete}`}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(docs) != 2 {
-		t.Fatalf("docs = %d, want 2", len(docs))
+	if len(docs) != 10 {
+		t.Fatalf("docs = %d, want 10", len(docs))
 	}
-	assert.Diff(t, []string{manifest.DocAPIVersion(docs[0]), manifest.DocAPIVersion(docs[1])}, []string{"apps/v1", "other.example/v1"})
+	assert.Diff(t, []string{manifest.DocAPIVersion(docs[0]), manifest.DocAPIVersion(docs[len(docs)-1])}, []string{"apps/v1", "other.example/v1"})
 }
 
 func TestRender_NoInputJSONBypassesExclusionAndDedup(t *testing.T) {
@@ -1106,7 +1163,7 @@ kind: ConfigMap
 metadata:
  name: excluded
  annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1139,7 +1196,7 @@ items:
   metadata:
     name: excluded
     annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
-	docs, err := resourceset.Render(rs, nil)
+	docs, err := resourceset.Render(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1152,4 +1209,81 @@ items:
 		}
 	}
 	assert.Diff(t, names, []string{"first", "second"})
+	for _, tc := range []struct {
+		name, template string
+		count          int
+		wantErr        bool
+	}{
+		{"ordinary missing name", "apiVersion: v1\nkind: ConfigMap", 0, false},
+		{"ordinary missing kind", "apiVersion: v1\nmetadata: {name: excluded}", 0, false},
+		{"ordinary missing apiVersion", "kind: ConfigMap\nmetadata: {name: excluded}", 0, false},
+		{"mixed case directive", "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: kUsToMiZaTiOn\nmetadata: {name: excluded}", 0, false},
+		{"non directive group", "apiVersion: another.example/v1\nkind: Kustomization\nmetadata: {name: kept}", 1, false},
+		{"items without suffix", "items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: item}}]", 1, false},
+		{"suffix without items", "apiVersion: example.test/v1\nkind: WidgetList\nmetadata: {name: ordinary}", 1, false},
+		{"typed incomplete items", "apiVersion: v1\nkind: ConfigMapList\nitems: [{metadata: {name: kindless}}, {apiVersion: v1, kind: ConfigMap}]", 2, false},
+		{"nested list stays wrapped", "items: [{kind: List, items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]}]", 1, false},
+		{"directive item survives", "items: [{apiVersion: kustomize.config.k8s.io/v1beta1, kind: Kustomization, metadata: {name: directive}}]", 1, false},
+		{"invalid YAML", "metadata: [unterminated", 0, true},
+		{"null member", "items: [null]", 0, true},
+		{"scalar member", "items: [plain]", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := &manifest.ResourceSet{Name: "boundary", Namespace: "apps", ResourcesTemplate: tc.template}
+			got, err := resourceset.Render(candidate, nil, nil)
+			if tc.wantErr {
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("error = %v, want classified malformed list error", err)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, len(got), tc.count)
+			if tc.name == "typed incomplete items" && len(got) == 2 {
+				assert.Equal(t, manifest.DocKind(got[0]), "")
+				assert.Equal(t, manifest.DocAPIVersion(got[0]), "")
+				name, _ := manifest.DocMetadata(got[1])
+				assert.Equal(t, name, "")
+			}
+			if tc.name == "nested list stays wrapped" && len(got) == 1 {
+				assert.Equal(t, manifest.DocKind(got[0]), "List")
+				assert.Equal(t, len(got[0]["items"].([]any)), 1)
+			}
+		})
+	}
+
+}
+
+func TestRender_Admission(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("admission failed")
+	for _, tc := range []struct {
+		name string
+		hit  bool
+		err  error
+	}{
+		{"replay", true, nil},
+		{"error", false, failure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rs := &manifest.ResourceSet{Name: "reader", ResourcesTemplate: "<< invalid template"}
+			calls := 0
+			docs, err := resourceset.Render(rs, nil, func(any) (bool, error) {
+				calls++
+				return tc.hit, tc.err
+			})
+			assert.Equal(t, calls, 1)
+			if docs != nil || !errors.Is(err, tc.err) {
+				t.Fatalf("admission: documents=%v error=%v, want %v", docs, err, tc.err)
+			}
+		})
+	}
+	invalid := &manifest.ResourceSet{Name: "invalid", Steps: []fluxopv1.ResourceSetStep{{Name: "empty"}}}
+	called := false
+	_, err := resourceset.Render(invalid, nil, func(any) (bool, error) { called = true; return true, nil })
+	if !errors.Is(err, manifest.ErrInput) || called {
+		t.Fatalf("invalid steps reached admission: called=%v error=%v", called, err)
+	}
 }

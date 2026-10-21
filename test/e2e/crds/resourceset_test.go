@@ -3,11 +3,15 @@ package crds
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -129,5 +133,68 @@ spec:
 			slices.Sort(identities)
 			assert.Diff(t, identities, tc.want)
 		})
+	}
+}
+
+func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
+	path := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "resourceset-documents"), path)
+	args := []string{"build", "all", "--path", path, "--cache-dir", t.TempDir(), "--concurrency", "2"}
+	var previous string
+	for range 2 {
+		out, _ := harness.RequireCLIOK(t, args...)
+		counts := map[string]int{}
+		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 2048)
+		for {
+			var doc map[string]any
+			err := decoder.Decode(&doc)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			assert.NoError(t, err)
+			name, ns := manifest.DocMetadata(doc)
+			if name == "raw" || name == "duplicate" {
+				assert.Equal(t, ns, "")
+			}
+			if name == "explicit" {
+				assert.Equal(t, ns, "other")
+			}
+			if name == "sanitized" {
+				assert.Diff(t, doc["data"], map[string]any{"encrypted": "..PLACEHOLDER_encrypted.."})
+			}
+			if name == "kindless-list" {
+				assert.Equal(t, manifest.DocKind(doc), "")
+				assert.Equal(t, manifest.DocAPIVersion(doc), "")
+			}
+			counts[name]++
+			if data, ok := doc["data"].(map[string]any); ok {
+				counts[fmt.Sprint(data["value"])]++
+			}
+			if spec, ok := doc["spec"].(map[string]any); ok {
+				counts[fmt.Sprint(spec["value"])]++
+			}
+			if manifest.DocKind(doc) == "List" {
+				counts["wrapper"]++
+			}
+			if manifest.DocAPIVersion(doc) == "kustomize.config.k8s.io/v1beta1" {
+				counts["directive"]++
+			}
+		}
+		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
+			if counts[key] != want {
+				t.Errorf("%s count=%d, want %d; all=%v", key, counts[key], want, counts)
+			}
+		}
+		if previous != "" {
+			assert.Equal(t, out, previous)
+		}
+		previous = out
+	}
+
+	testutil.WriteFile(t, path, "apps/rs.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n")
+	out, code := harness.RunCLIExpectErr(t, args...)
+	assert.Equal(t, code, 1)
+	if !strings.Contains(out, "read rendered list") {
+		t.Fatalf("malformed member failure missing: %s", out)
 	}
 }

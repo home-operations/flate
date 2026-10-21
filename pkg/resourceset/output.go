@@ -7,21 +7,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// DedupKey identifies a rendered doc by (API group, kind, namespace,
-// name) for cross-render deduplication. Returns zero when kind or name
-// are missing — signal to the caller to drop the doc rather than
-// merge with an "empty key" collision pile.
-//
-// Exported so the orchestrator's post-Run RS-extension pass can share
-// the same identity rule as the in-package RS render — without that,
-// a name-grouped RS that emits the same child from two namespace
-// variants could land both copies in the parent KS's extension list.
+// DedupKey identifies a document by its authored API group, kind, namespace and name.
 func DedupKey(doc map[string]any) manifest.NamedResource {
 	kind := manifest.DocKind(doc)
 	name, ns := manifest.DocMetadata(doc)
-	if kind == "" || name == "" {
-		return manifest.NamedResource{}
-	}
 	gv, _ := schema.ParseGroupVersion(manifest.DocAPIVersion(doc))
 	return manifest.NamedResource{Group: gv.Group, Kind: kind, Namespace: ns, Name: name}
 }

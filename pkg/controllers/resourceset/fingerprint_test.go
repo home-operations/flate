@@ -2,6 +2,8 @@ package resourceset
 
 import (
 	"encoding/json"
+	"errors"
+	"slices"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -30,9 +32,7 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	s.AddObject(b)
 	s.AddObject(a)
 	resolve := resourceset.StoreResolver(s)
-	content := resourceSetContent(rs, resolve)
-	fp := replayKey(content)
-	docs, err := resourceset.Render(rs, resolve)
+	docs, fp, err := renderWithAdmission(rs, resolve, "")
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 2)
 	encoded, err := json.Marshal(docs)
@@ -44,17 +44,107 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	other.AddObject(a)
 	other.AddObject(b)
 	otherResolve := resourceset.StoreResolver(other)
-	assert.Equal(t, replayKey(resourceSetContent(rs, otherResolve)), fp)
-	otherDocs, err := resourceset.Render(rs, otherResolve)
+	otherDocs, otherFP, err := renderWithAdmission(rs, otherResolve, "")
+	assert.Equal(t, otherFP, fp)
 	assert.NoError(t, err)
 	otherEncoded, err := json.Marshal(otherDocs)
 	assert.NoError(t, err)
 	assert.Equal(t, string(otherEncoded), string(encoded))
-	aContent, err := a.Content()
-	assert.NoError(t, err)
-	bContent, err := b.Content()
-	assert.NoError(t, err)
-	assert.Diff(t, content, rs.Content([]any{aContent, bContent}))
+
+	for _, field := range []string{"name", "namespace", "provider type", "provider identity"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			candidate := *rs
+			providers := []*manifest.ResourceSetInputProvider{a, b}
+			changed := *a
+			providers[0] = &changed
+			switch field {
+			case "name":
+				candidate.Name = "other"
+			case "namespace":
+				candidate.Namespace = "other"
+			case "provider identity":
+				providers[0].Name = "renamed"
+			case "provider type":
+				providers[0].Type = fluxopv1.InputProviderGitHubBranch
+				providers[0].Status.ExportedInputs = []fluxopv1.ResourceSetInput{a.DefaultValues}
+			}
+			calls := 0
+			got, key, err := renderWithAdmission(&candidate, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+				calls++
+				return providers, nil
+			}, fp)
+			assert.NoError(t, err)
+			assert.Equal(t, calls, len(candidate.InputsFrom))
+			assert.Equal(t, len(got), 2)
+			if key == fp {
+				t.Fatal("effective content change replayed")
+			}
+		})
+	}
+
+	t.Run("resolver error cannot replay", func(t *testing.T) {
+		t.Parallel()
+		failure := errors.New("captured provider unavailable")
+		docs, key, err := renderWithAdmission(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+			return nil, failure
+		}, fp)
+		if !errors.Is(err, failure) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || key != "" || docs != nil {
+			t.Fatalf("resolver error became a hit: docs=%v key=%q error=%v", docs, key, err)
+		}
+	})
+	t.Run("inline order", func(t *testing.T) {
+		t.Parallel()
+		candidate := &manifest.ResourceSet{Name: "inline", Namespace: "apps", Inputs: []fluxopv1.ResourceSetInput{
+			{"name": {Raw: []byte(`"first"`)}}, {"name": {Raw: []byte(`"second"`)}},
+		}, ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.name >>'}"}
+		docs, key, err := renderWithAdmission(candidate, nil, "")
+		assert.NoError(t, err)
+		first, _ := manifest.DocMetadata(docs[0])
+		assert.Equal(t, first, "first")
+		candidate.Inputs[0], candidate.Inputs[1] = candidate.Inputs[1], candidate.Inputs[0]
+		docs, current, err := renderWithAdmission(candidate, nil, key)
+		assert.NoError(t, err)
+		if current == key {
+			t.Fatal("inline order replayed")
+		}
+		first, _ = manifest.DocMetadata(docs[0])
+		assert.Equal(t, first, "second")
+	})
+
+	t.Run("resolver delivery order", func(t *testing.T) {
+		t.Parallel()
+		reversed := []*manifest.ResourceSetInputProvider{b, nil, a, a}
+		calls := 0
+		got, key, err := renderWithAdmission(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+			calls++
+			return reversed, nil
+		}, "")
+		assert.NoError(t, err)
+		assert.Equal(t, calls, 1)
+		assert.Equal(t, key, fp)
+		assert.Diff(t, got, docs)
+		assert.Equal(t, reversed[0].Named(), b.Named())
+		overlapped := *rs
+		overlapped.InputsFrom = slices.Clone(rs.InputsFrom)
+		overlapped.InputsFrom = append(overlapped.InputsFrom, fluxopv1.InputProviderReference{Name: "a"})
+		calls = 0
+		got, key, err = renderWithAdmission(&overlapped, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+			calls++
+			return reversed, nil
+		}, "")
+		assert.NoError(t, err)
+		assert.Equal(t, calls, 2)
+		assert.Diff(t, got, docs)
+		hit, replayKey, err := renderWithAdmission(&overlapped, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+			return []*manifest.ResourceSetInputProvider{a, b, nil}, nil
+		}, key)
+		assert.NoError(t, err)
+		assert.Equal(t, replayKey, key)
+		if hit != nil {
+			t.Fatalf("equal canonical input returned documents: %v", hit)
+		}
+	})
 
 	invalid := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}
 	for _, tc := range []struct {
@@ -62,25 +152,25 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 		refs   []fluxopv1.InputProviderReference
 		inputs []any
 	}{
-		{"Flux named", []fluxopv1.InputProviderReference{{APIVersion: fluxopv1.GroupVersion.String(), Kind: manifest.KindResourceSetInputProvider, Name: "a"}}, []any{aContent}},
+		{"Flux named", []fluxopv1.InputProviderReference{{APIVersion: fluxopv1.GroupVersion.String(), Kind: manifest.KindResourceSetInputProvider, Name: "a"}}, []any{a}},
 		{"foreign named", []fluxopv1.InputProviderReference{{APIVersion: "other.example/v1", Kind: manifest.KindResourceSetInputProvider, Name: "a"}}, nil},
-		{"Flux selector", []fluxopv1.InputProviderReference{{APIVersion: fluxopv1.GroupVersion.String(), Kind: manifest.KindResourceSetInputProvider, Selector: rs.InputsFrom[0].Selector}}, []any{aContent, bContent}},
+		{"Flux selector", []fluxopv1.InputProviderReference{{APIVersion: fluxopv1.GroupVersion.String(), Kind: manifest.KindResourceSetInputProvider, Selector: rs.InputsFrom[0].Selector}}, []any{a, b}},
 		{"foreign selector", []fluxopv1.InputProviderReference{{APIVersion: "other.example/v1", Kind: manifest.KindResourceSetInputProvider, Selector: rs.InputsFrom[0].Selector}}, nil},
-		{"expressions", []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: metav1.LabelSelectorOpIn, Values: []string{"db"}}}}}}, []any{aContent, bContent}},
-		{"empty selector", []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{}}}, []any{aContent, bContent}},
-		{"named invalid selector", []fluxopv1.InputProviderReference{{Name: "a", Selector: invalid}}, []any{aContent}},
+		{"expressions", []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: metav1.LabelSelectorOpIn, Values: []string{"db"}}}}}}, []any{a, b}},
+		{"empty selector", []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{}}}, []any{a, b}},
+		{"named invalid selector", []fluxopv1.InputProviderReference{{Name: "a", Selector: invalid}}, []any{a}},
 		{"nil selector", []fluxopv1.InputProviderReference{{}}, nil},
 		{"foreign kind", []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSet, Selector: &metav1.LabelSelector{}}}, nil},
-		{"omitted reference fields", []fluxopv1.InputProviderReference{{Selector: rs.InputsFrom[0].Selector}}, []any{aContent, bContent}},
-		{"overlap", []fluxopv1.InputProviderReference{{Name: "a"}, rs.InputsFrom[0], rs.InputsFrom[0]}, []any{aContent, bContent}},
+		{"omitted reference fields", []fluxopv1.InputProviderReference{{Selector: rs.InputsFrom[0].Selector}}, []any{a, b}},
+		{"overlap", []fluxopv1.InputProviderReference{{Name: "a"}, rs.InputsFrom[0], rs.InputsFrom[0]}, []any{a, b}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			referenced := *rs
 			referenced.InputsFrom = tc.refs
 			resolve := resourceset.StoreResolver(s)
-			assert.Diff(t, resourceSetContent(&referenced, resolve), referenced.Content(tc.inputs))
-			got, err := resourceset.Render(&referenced, resolve)
+			got, _, err := renderWithAdmission(&referenced, resolve, "")
+
 			assert.NoError(t, err)
 			var want []map[string]any
 			if len(tc.inputs) != 0 {
@@ -109,8 +199,8 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 			st.AddObject(b)
 			st.AddObject(tc.provider)
 			resolve := resourceset.StoreResolver(st)
-			assert.Equal(t, replayKey(resourceSetContent(rs, resolve)) != fp, tc.changed)
-			got, err := resourceset.Render(rs, resolve)
+			got, key, err := renderWithAdmission(rs, resolve, "")
+			assert.Equal(t, key != fp, tc.changed)
 			assert.NoError(t, err)
 			values := make(map[string]string)
 			for _, doc := range got {
@@ -121,8 +211,48 @@ func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
 	}
 }
 
-func replayKey(content any) string {
-	c := base.New(store.New(), nil, "test")
-	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
-	return fp
+func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	rs := selectorFixture("reader", "blue")
+	rs.ResourcesTemplate = "<< $_ := set inputs.nested \"value\" \"template\" >>apiVersion: v1\nkind: ConfigMap\nmetadata: {name: captured}\ndata: {value: '<< inputs.value >>'}"
+	s.AddObject(rs)
+	p := staticRSIP("provider", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "spec"})
+	p.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"value": {Raw: []byte(`"status-a"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}}}
+	s.AddObject(p)
+	resolve := resourceset.StoreResolver(s)
+	docs, fingerprint, err := renderWithAdmission(rs, resolve, "")
+	assert.NoError(t, err)
+	assert.Equal(t, len(docs), 1)
+	assert.Equal(t, docs[0]["data"].(map[string]any)["value"].(string), "status-a")
+	assert.Equal(t, string(p.Status.ExportedInputs[0]["nested"].Raw), `{"value":"stored"}`)
+	hit, key, err := renderWithAdmission(rs, resolve, fingerprint)
+	assert.NoError(t, err)
+	assert.Equal(t, key, fingerprint)
+	assert.Equal(t, len(hit), 0)
+	fresh := *p
+	fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"value": {Raw: []byte(`"status-b"`)}, "nested": {Raw: []byte(`{"value":"stored"}`)}}}
+	s.AddObject(&fresh)
+	docs, current, err := renderWithAdmission(rs, resolve, fingerprint)
+	assert.NoError(t, err)
+	assert.Equal(t, len(docs), 1)
+	assert.Equal(t, docs[0]["data"].(map[string]any)["value"].(string), "status-b")
+	if current == fingerprint {
+		t.Fatal("successor did not capture the changed exported inputs")
+	}
+}
+
+func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, previous string) ([]map[string]any, string, error) {
+	s := store.New()
+	s.AddObject(rs)
+	s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: previous})
+	c := base.New(s, nil, "test")
+	var fp string
+	docs, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
+		var hit bool
+		var err error
+		fp, hit, err = c.FingerprintDedup(rs.Named(), content)
+		return hit, err
+	})
+	return docs, fp, err
 }

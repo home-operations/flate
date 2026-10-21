@@ -395,7 +395,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			for _, doc := range raw {
 				name, ns := manifest.DocMetadata(doc)
 				names = append(names, name)
-				assert.Equal(t, ns, rs.Namespace)
+				assert.Equal(t, ns, "")
 				assert.Equal(t, doc["spec"].(map[string]any)["value"].(string), name)
 			}
 			slices.Sort(names)

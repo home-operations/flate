@@ -1,7 +1,8 @@
-package testutil
+package controllertest
 
 import (
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 	"iter"
 )
 
@@ -42,4 +43,9 @@ func (m MapLister) Productions(id manifest.NamedResource, index *manifest.Discov
 			}
 		}
 	}
+}
+
+// GetArtifact returns nil because the fixture has no accepted artifacts.
+func (m MapLister) GetArtifact(manifest.NamedResource) store.Artifact {
+	return nil
 }

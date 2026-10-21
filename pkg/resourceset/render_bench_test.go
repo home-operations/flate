@@ -25,7 +25,7 @@ func BenchmarkRender_Matrix(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := resourceset.Render(rs, nil); err != nil {
+				if _, err := resourceset.Render(rs, nil, nil); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -38,7 +38,7 @@ func BenchmarkRender_Matrix(b *testing.B) {
 		}
 		b.ReportAllocs()
 		for b.Loop() {
-			if _, err := resourceset.Render(rs, nil); err != nil {
+			if _, err := resourceset.Render(rs, nil, nil); err != nil {
 				b.Fatal(err)
 			}
 		}

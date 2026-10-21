@@ -9,7 +9,6 @@ package resourceset
 
 import (
 	"context"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -78,22 +77,39 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 		return err
 	}
 
-	resolve := resourceset.StoreResolver(c.Store)
-	fp, handled, err := c.FingerprintDedup(id, resourceSetContent(rs, resolve))
-	if handled {
-		return err
-	}
-
-	_, attempt := c.Store.GetEmission(id)
-	defer attempt.Finish()
-	docs, err := resourceset.Render(rs, resolve)
+	var attempt *store.Emission
+	defer func() {
+		if attempt != nil {
+			attempt.Finish()
+		}
+	}()
+	handled := false
+	docs, err := resourceset.Render(rs, resourceset.StoreResolver(c.Store), func(content any) (bool, error) {
+		fp, hit, err := c.FingerprintDedup(id, content)
+		handled = hit
+		if hit || err != nil {
+			return hit, err
+		}
+		_, bound := c.Store.GetEmission(id)
+		attempt = &bound
+		attempt.Fingerprint = fp
+		return false, nil
+	})
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, "", err.Error())
 		return err
 	}
-	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: id.Namespace})
-	attempt.Fingerprint, attempt.Complete = fp, true
-	c.Emit(id, &attempt)
+	if handled {
+		return nil
+	}
+	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+	for i, child := range attempt.Children {
+		if child.Obj.Named().Namespace == "" && manifest.KindOf(child.Obj).Namespaced() {
+			attempt.Children[i].Obj = child.Obj.WithNamespace(id.Namespace)
+		}
+	}
+	attempt.Complete = true
+	c.Emit(id, attempt)
 	return nil
 }
 
@@ -139,34 +155,4 @@ func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
 		}
 	}
 	return false
-}
-
-func resourceSetContent(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver) any {
-	providers := make(map[manifest.NamedResource]*manifest.ResourceSetInputProvider)
-	for edge := range manifest.References(rs) {
-		if edge.Use != "inputsFrom" {
-			continue
-		}
-		matches, err := resolve(rs.InputsFrom[edge.Position], edge.NamedResource)
-		if err != nil {
-			return nil
-		}
-		for _, p := range matches {
-			providers[p.Named()] = p
-		}
-	}
-	ids := make([]manifest.NamedResource, 0, len(providers))
-	for id := range providers {
-		ids = append(ids, id)
-	}
-	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	var inputs []any
-	for _, id := range ids {
-		content, err := providers[id].Content()
-		if err != nil {
-			return nil
-		}
-		inputs = append(inputs, content)
-	}
-	return rs.Content(inputs)
 }

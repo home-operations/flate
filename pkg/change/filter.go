@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // Filter answers "should I reconcile this resource?" by checking
@@ -167,6 +168,9 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 		added = append(added, id)
 	}
 	f.primary[id] = struct{}{}
+	for _, accepted := range f.acceptedChildren(id) {
+		added = append(added, f.addRecursiveLocked(accepted.Obj.Named())...)
+	}
 	for _, dep := range transitiveDepsOf(child) {
 		added = append(added, f.addRecursiveLocked(dep)...)
 		added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)
@@ -216,6 +220,9 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 		// resolve() pre-build covered the initial graph already).
 		if f.objs == nil {
 			continue
+		}
+		for _, child := range f.acceptedChildren(cur) {
+			stack = append(stack, child.Obj.Named())
 		}
 		for _, dep := range transitiveDeps(f.objs, cur) {
 			if _, ok := f.primary[dep]; !ok {
@@ -427,6 +434,11 @@ func (f *Filter) resolve() {
 	// (intrange linter must not auto-fix this — see //nolint below).
 	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
 		_, headPrimary := primary[queue[head]]
+		if headPrimary {
+			for _, child := range f.acceptedChildren(queue[head]) {
+				enqueuePrimary(child.Obj.Named())
+			}
+		}
 		// transitiveDeps reads the consumer from the Store; that covers
 		// Kustomizations but NOT HelmReleases, which are render-driven and
 		// absent from the Store at resolve() time (see the reverse-edge note
@@ -534,8 +546,18 @@ func (f *Filter) KeepNamespaces() map[string]struct{} {
 	return out
 }
 
+func (f *Filter) acceptedChildren(id manifest.NamedResource) []store.Child {
+	if f.objs != nil {
+		if current, ok := f.objs.GetArtifact(id).(*store.Emission); ok {
+			return current.Children
+		}
+	}
+	return nil
+}
+
 // ObjectLister is the Store surface filter resolution needs.
 type ObjectLister interface {
+	GetArtifact(manifest.NamedResource) store.Artifact
 	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) iter.Seq[manifest.Production]
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	ListObjects(group, kind string) []manifest.BaseManifest

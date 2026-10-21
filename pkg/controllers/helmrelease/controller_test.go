@@ -70,7 +70,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				changes = change.NewSet(files)
 			}
 			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
-			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, testutil.MapLister{})
+			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, controllertest.MapLister{})
 			c, st := newTestControllerWithOptions(t, ReconcileOptions{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})
 			if tc.present {
 				st.AddObject(target)
@@ -136,7 +136,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 
 	filter := change.NewFilter(change.NewSet([]string{"release.yaml"}), &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "release.yaml"}},
-	}, testutil.MapLister{})
+	}, controllertest.MapLister{})
 	c, st := newTestController(t, filter)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
@@ -477,7 +477,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			t.Parallel()
 			var filter *change.Filter
 			if !tc.suspend {
-				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, testutil.MapLister{})
+				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, controllertest.MapLister{})
 			}
 			c, st := newTestController(t, filter)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}

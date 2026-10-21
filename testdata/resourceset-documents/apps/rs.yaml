@@ -1,0 +1,56 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: documents, namespace: flux-system}
+spec:
+  resources:
+    - apiVersion: v1
+      kind: List
+      items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: wrapped}}]
+    - apiVersion: v1
+      kind: ConfigMap
+      data: {value: nameless-json}
+    - apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      resources: [json-directive]
+    - apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: raw}
+    - apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: explicit, namespace: other}
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: sanitized}
+      data: {encrypted: 'ENC[AES256_GCM,data:fixture,type:str]'}
+    - apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}
+    - apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}
+    - apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata: {name: child}
+      spec:
+        path: ./child
+        sourceRef: {kind: GitRepository, name: flux-system}
+  resourcesTemplate: |
+    items:
+    - apiVersion: apps/v1
+      kind: Deployment
+      spec: {value: nameless-list}
+    - metadata: {name: kindless-list}
+    - kind: List
+      metadata: {name: nested-wrapper}
+      items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]
+    - apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      metadata: {name: item-directive}
+    ---
+    apiVersion: v1
+    kind: ConfigMap
+    data: {value: rejected-yaml}
+    ---
+    apiVersion: kustomize.config.k8s.io/v1beta1
+    kind: kUsToMiZaTiOn
+    metadata: {name: rejected-directive}

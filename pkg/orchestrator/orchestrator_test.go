@@ -1810,13 +1810,13 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true})
 			}
 			docs := o.collectManifests()[parent]
-			if len(docs) != 2 {
-				t.Fatalf("out[apps] = %d docs, want 2 (one winner per group)", len(docs))
+			if len(docs) != 4 {
+				t.Fatalf("out[apps] = %d docs, want 2 tracked winners and 2 incomplete documents", len(docs))
 			}
-			if manifest.DocAPIVersion(docs[1]) != "other.example/v1" {
+			if manifest.DocAPIVersion(docs[3]) != "other.example/v1" {
 				t.Fatalf("foreign group lost: %v", docs)
 			}
-			spec, _ := docs[0]["spec"].(map[string]any)
+			spec, _ := docs[2]["spec"].(map[string]any)
 			if got := spec["owner"]; got != "b-wins" {
 				t.Fatalf("collision winner owner = %v, want b-wins", got)
 			}
@@ -2021,5 +2021,67 @@ func TestRenderTrees_NetworkOwnership(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
+	t.Parallel()
+	source, err := filepath.Abs("../../testdata/resourceset-documents")
+	assert.NoError(t, err)
+	path := t.TempDir()
+	testutil.CopyTree(t, source, path)
+	var previous map[manifest.NamedResource][]map[string]any
+	for range 2 {
+		o, err := New(t.Context(), Config{Path: path, WipeSecrets: true, Concurrency: 2})
+		assert.NoError(t, err)
+		result, err := o.Render(t.Context())
+		assert.NoError(t, err)
+		assert.Equal(t, len(result.Failed), 0)
+		effective := manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "flux-system", Name: "raw"}
+		if child := o.Store().GetObject(effective); child == nil {
+			t.Fatalf("missing effective child %s", effective)
+		}
+
+		counts := map[string]int{}
+		for _, docs := range result.Manifests {
+			for _, doc := range docs {
+				name, ns := manifest.DocMetadata(doc)
+				if name == "raw" || name == "duplicate" {
+					assert.Equal(t, ns, "")
+				}
+				if name == "explicit" {
+					assert.Equal(t, ns, "other")
+				}
+				if name == "sanitized" {
+					assert.Diff(t, doc["data"], map[string]any{"encrypted": "..PLACEHOLDER_encrypted.."})
+				}
+				if name == "kindless-list" {
+					assert.Equal(t, manifest.DocKind(doc), "")
+					assert.Equal(t, manifest.DocAPIVersion(doc), "")
+				}
+				counts[name]++
+				if data, ok := doc["data"].(map[string]any); ok {
+					counts[fmt.Sprint(data["value"])]++
+				}
+				if spec, ok := doc["spec"].(map[string]any); ok {
+					counts[fmt.Sprint(spec["value"])]++
+				}
+				if manifest.DocKind(doc) == "List" {
+					counts["wrapper"]++
+				}
+				if manifest.DocAPIVersion(doc) == "kustomize.config.k8s.io/v1beta1" {
+					counts["directive"]++
+				}
+			}
+		}
+		for key, want := range map[string]int{"raw": 1, "duplicate": 2, "nameless-json": 1, "nameless-list": 1, "kindless-list": 1, "wrapper": 2, "directive": 2, "explicit": 1, "sanitized": 1, "nested": 0, "item-directive": 1, "child-result": 1, "rejected-yaml": 0, "rejected-directive": 0, "child": 0} {
+			if counts[key] != want {
+				t.Errorf("%s count=%d, want %d; all=%v", key, counts[key], want, counts)
+			}
+		}
+		if previous != nil {
+			assert.Diff(t, result.Manifests, previous)
+		}
+		previous = result.Manifests
 	}
 }

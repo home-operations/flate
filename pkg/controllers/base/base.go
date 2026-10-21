@@ -208,9 +208,6 @@ func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any) (s
 		if err := c.PreflightError(id); err != nil {
 			return fp, true, err
 		}
-		for _, child := range current.Children {
-			c.KeepEmitted(id, child.Obj)
-		}
 		return fp, true, nil
 	}
 	_, attempt := c.Store.GetEmission(id)

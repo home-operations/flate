@@ -140,8 +140,12 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 					for i, rs := range sets {
 						tasks.Go(b.Context(), "render", func(context.Context) {
 							resolve := resourceset.StoreResolver(s)
-							fp, _, _ := c.FingerprintDedup(rs.Named(), resourceSetContent(rs, resolve))
-							docs, err := resourceset.Render(rs, resolve)
+							var fp string
+							docs, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
+								var err error
+								fp, _, err = c.FingerprintDedup(rs.Named(), content)
+								return false, err
+							})
 							renders.Add(1)
 							errs[i] = err
 							artifacts[i] = &store.Emission{Manifests: docs, Fingerprint: fp}

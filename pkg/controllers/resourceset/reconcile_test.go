@@ -11,6 +11,9 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -60,7 +63,6 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			release := sync.OnceFunc(func() { close(resume) })
 			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.Close() })
 			old := slog.Default()
-			slog.SetDefault(slog.New(&renderBarrierHandler{Handler: slog.NewTextHandler(io.Discard, nil), tasks: tasks, started: started, resume: resume}))
 			t.Cleanup(func() { slog.SetDefault(old) })
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			st.AddObject(parent)
@@ -88,7 +90,11 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			if !ok {
 				t.Fatal("parent did not emit input A")
 			}
-			wantFingerprint := manifest.Fingerprint(resourceSetContent(rs, resourceset.StoreResolver(st)))
+			_, wantFingerprint, err := renderWithAdmission(rs, resourceset.StoreResolver(st), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			slog.SetDefault(slog.New(&renderBarrierHandler{Handler: slog.NewTextHandler(io.Discard, nil), tasks: tasks, started: started, resume: resume}))
 			var accepted atomic.Pointer[store.Emission]
 			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
 				if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
@@ -147,6 +153,101 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			if string(rs.Inputs[0]["name"].Raw) != `"from-a"` {
 				t.Fatal("render mutated input A")
 			}
+		})
+	}
+}
+
+func TestReconcile_ProviderInventoryRetention(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 4} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			tasks := task.NewBounded(workers)
+			rs := selectorFixture("reader", "blue")
+			rs.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: '<< inputs.value >>'}"
+			owner := &manifest.Kustomization{Name: "providers", Namespace: "ns"}
+			st.AddObjects([]manifest.BaseManifest{rs, owner})
+			st.UpdateStatus(owner.Named(), store.StatusReady, "", "")
+			a := staticRSIP("a", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "first"})
+			b := staticRSIP("b", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "second"})
+			publish := func(providers ...*manifest.ResourceSetInputProvider) {
+				t.Helper()
+				children := make([]store.Child, 0, len(providers))
+				for _, p := range providers {
+					children = append(children, store.Child{Obj: p})
+				}
+				st.RecordEmitted(owner.Named(), &store.Emission{Children: children, Complete: true})
+			}
+			check := func(count int, status store.Status) *store.Emission {
+				t.Helper()
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}}}
+				filter := change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, st)
+				_, before := st.GetEmission(rs.Named())
+				for _, child := range before.Children {
+					if !filter.ShouldReconcile(child.Obj.Named()) {
+						t.Fatal("accepted child missing before replay")
+					}
+				}
+				before.Finish()
+				c := New(st, tasks, false)
+				c.Configure(base.Options{Filter: filter, Index: index})
+				c.StartLifecycle()
+				defer c.Close()
+				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+				if info.Status != status {
+					t.Fatalf("status=%+v, want %s", info, status)
+				}
+				_, current := st.GetEmission(rs.Named())
+				defer current.Finish()
+				if len(current.Manifests) != count || len(current.Children) != count {
+					t.Fatalf("inventory=%+v, want %d documents and children", current, count)
+				}
+				if status == store.StatusReady {
+					for _, child := range current.Children {
+						if !filter.ShouldReconcile(child.Obj.Named()) {
+							t.Fatalf("accepted child %s missing from changed-only selection", child.Obj.Named())
+						}
+					}
+				}
+				accepted, _ := st.GetArtifact(rs.Named()).(*store.Emission)
+				return accepted
+			}
+			publish(a)
+			initial := check(1, store.StatusReady)
+			replayed := check(1, store.StatusReady)
+			if initial.Fingerprint != replayed.Fingerprint || !hasRenderedDoc(replayed, manifest.KindConfigMap, "a") {
+				t.Fatal("replay lost accepted inventory")
+			}
+			publish(b, a)
+			accepted := check(2, store.StatusReady)
+			changed := *a
+			changed.Status.ExportedInputs = []fluxopv1.ResourceSetInput{{"value": {Raw: []byte(`"current"`)}}}
+			publish(&changed, b)
+			updated := check(2, store.StatusReady)
+			if updated.Fingerprint == accepted.Fingerprint {
+				t.Fatal("changed provider replayed stale content")
+			}
+			assert.Diff(t, updated.Manifests[0]["data"], map[string]any{"value": "current"})
+			accepted = updated
+			broken := *a
+			broken.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid")}}
+			publish(&broken, b)
+			check(2, store.StatusFailed)
+			_, retained := st.GetEmission(rs.Named())
+			defer retained.Finish()
+			if retained.Fingerprint != accepted.Fingerprint {
+				t.Fatal("failed successor replaced accepted output")
+			}
+			assert.Diff(t, retained.Manifests, accepted.Manifests)
+			assert.Diff(t, retained.Children, accepted.Children)
+			publish()
+			check(0, store.StatusReady)
+			if st.GetObject(a.Named()) != nil || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "a"}) != nil {
+				t.Fatal("complete empty inventory retained a provider or output")
+			}
+			publish(&broken)
+			check(0, store.StatusFailed)
 		})
 	}
 }

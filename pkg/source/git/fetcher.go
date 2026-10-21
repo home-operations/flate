@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"golang.org/x/net/http/httpproxy"
 
 	// HTTPS operations must retain flate's header timeout and egress guard.
 	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
@@ -57,44 +56,51 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, retry
 }
 
 func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (gitAcquisition, error) {
+	secrets := source.SnapshotSecrets(f.Secrets)
 	var sec *manifest.Secret
-	if repo.SecretRef != nil && f.Secrets != nil {
-		sec = f.Secrets(repo.Namespace, repo.SecretRef.Name)
+	if repo.SecretRef != nil && secrets != nil {
+		sec = secrets(repo.Namespace, repo.SecretRef.Name)
 	}
 	auth, authErr := f.resolveAuth(repo, sec)
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return gitAcquisition{}, authErr
 	}
-	opts, err := f.resolveTLS(repo, sec)
+	var skipTLS bool
+	if repo.SecretRef != nil {
+		endpoint, err := transport.NewEndpoint(repo.URL)
+		if err != nil {
+			return gitAcquisition{}, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, gitID(repo), err)
+		}
+		skipTLS = endpoint.Protocol == "ssh"
+	}
+	var inputs []source.TransportInput
+	if repo.SecretRef != nil && !skipTLS && secrets != nil {
+		inputs = append(inputs, source.TransportInput{Reference: repo.SecretRef, Use: source.TransportSecret, OptionalTLS: true, CAFallback: true})
+	}
+	if authErr == nil {
+		inputs = append(inputs, source.TransportInput{Reference: repo.ProxySecretRef, Use: source.TransportProxy})
+	}
+	owner := repo.Named()
+	resolved, err := source.ResolveTransport(secrets, owner, inputs)
 	if authErr != nil && (err == nil || errors.Is(err, manifest.ErrMissingSecret)) {
 		return gitAcquisition{}, authErr
 	}
 	if err != nil {
 		return gitAcquisition{}, err
 	}
-	secrets := f.Secrets
-	if sec != nil {
-		secrets = func(ns, name string) *manifest.Secret {
-			if name == repo.SecretRef.Name {
-				return sec
-			}
-			return f.Secrets(ns, name)
-		}
+	cert := resolved.Certificate()
+	opts := git.CloneOptions{
+		URL: repo.URL, NoCheckout: true, Auth: auth,
+		Depth:    effectiveDepth(f.Depth, repo.Reference),
+		CABundle: []byte(cert[2]), ClientCert: []byte(cert[0]), ClientKey: []byte(cert[1]),
 	}
-	owner := repo.Named()
-	owner.Name = repo.Namespace + "/" + repo.Name
-	proxy, err := source.ResolveProxy(secrets, owner, repo.ProxySecretRef)
-	if err != nil {
-		return gitAcquisition{}, err
-	}
-	opts.URL, opts.NoCheckout, opts.Auth = repo.URL, true, auth
-	opts.Depth = effectiveDepth(f.Depth, repo.Reference)
-	if proxy != nil {
-		opts.ProxyOptions = transport.ProxyOptions{URL: proxy.Address, Username: proxy.Username, Password: proxy.Password}
+	proxy := resolved.ProxyComponents()
+	if proxy[0] != "" {
+		opts.ProxyOptions = transport.ProxyOptions{URL: proxy[0], Username: proxy[1], Password: proxy[2]}
 	} else if target, err := url.Parse(repo.URL); err == nil && (target.Scheme == "http" || target.Scheme == "https") {
-		selected, err := httpproxy.FromEnvironment().ProxyFunc()(target)
+		selected, err := resolved.ProxyURL(target)
 		if err != nil {
-			return gitAcquisition{}, fmt.Errorf("%w: %s: resolve proxy: %w", manifest.ErrInput, gitID(repo), err)
+			return gitAcquisition{}, fmt.Errorf("%w: %s: resolve proxy: invalid proxy configuration", manifest.ErrInput, gitID(repo))
 		}
 		if selected != nil {
 			opts.ProxyOptions.URL = selected.String()

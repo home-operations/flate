@@ -14,23 +14,16 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/storage/memory"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
-// TestDefaultClientIsBounded confirms init installed a go-git HTTPS default
-// whose transport carries ResponseHeaderTimeout, so an anonymous git fetch
-// against a black-holed host can't hang the run. The transport is a
-// source.NewHTTPTransport(nil, nil) clone — its blocking behavior is covered
-// by source.TestNewHTTPTransport_ResponseHeaderTimeout; here we pin that the
-// default actually carries the backstop.
 func TestDefaultClientIsBounded(t *testing.T) {
 	t.Parallel()
 	if boundedHTTPSTransport == nil {
 		t.Fatal("bounded default transport not initialized")
 	}
-	if got, want := boundedHTTPSTransport.ResponseHeaderTimeout, source.ResponseHeaderTimeout; got != want {
-		t.Fatalf("default HTTPS transport ResponseHeaderTimeout = %v; want source.ResponseHeaderTimeout %v", got, want)
+	if got, want := boundedHTTPSTransport.ResponseHeaderTimeout, 120*time.Second; got != want {
+		t.Fatalf("default HTTPS transport ResponseHeaderTimeout = %v; want 120*time.Second %v", got, want)
 	}
 	if client.Protocols["https"] != boundedHTTPSClient {
 		t.Fatal("bounded HTTPS client is not installed")

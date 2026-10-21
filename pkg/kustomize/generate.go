@@ -3,13 +3,6 @@ package kustomize
 // generate.go mirrors fluxcd/pkg/kustomize.Generator.GenerateManifest on an
 // injected filesystem. The upstream generator constructs its own disk filesystem,
 // so flate merges Flux specs into private construction overlays in memory.
-//
-// Scope: this mirrors flux's auto-generate (path: ./) case. When the caller
-// passes a non-nil ignore matcher — for working-tree / self-referential sources
-// that never passed through a fetcher — source-controller's file exclusion
-// (.sops.yaml, binaries, …) is applied here while scanning for resources,
-// reproducing flux's NewGeneratorWithIgnore behavior; fetched artifacts were
-// already filtered and pass nil.
 
 import (
 	"encoding/json"
@@ -57,9 +50,8 @@ const (
 //
 // It is a faithful port of Generator.GenerateManifest: same field order, same
 // _placeholder / originAnnotations empty-build guards, same sigs.k8s.io/yaml
-// encoder, so the output is byte-identical to flux's. Source-controller's file
-// exclusions are not consulted here: a working-tree fsys already hides them
-// (see ignorefs.go), so the scan sees the same files a fetched artifact holds.
+// encoder, so the output is byte-identical to flux's. The admitted filesystem
+// already applies source-controller's file exclusions before the scan.
 // CleanedAbs supplies the mounted base path used by the resource scan.
 func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]any) ([]byte, string, error) {
 	data, kfile, foundExisting, err := findOrGenerateKustomization(fsys, dirPath)
@@ -77,7 +69,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 
 	// An existing kustomization with no resources would fail krusty's
 	// "kustomization.yaml is empty" check; originAnnotations keeps it buildable.
-	// (The generated-from-scratch path uses a _placeholder namespace instead —
+	// (The generated-from-scratch path uses a _placeholder namespace instead;
 	// see findOrGenerateKustomization.)
 	if foundExisting && len(kus.Resources) == 0 {
 		kus.BuildMetadata = []string{"originAnnotations"}

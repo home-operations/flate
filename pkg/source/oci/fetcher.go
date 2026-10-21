@@ -38,16 +38,13 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, retry
 			"SecretRef or --registry-config credentials")
 	}
 	prepared := *f
-	if f.Secrets != nil {
-		captured := make(map[string]*manifest.Secret)
+	prepared.Secrets = source.SnapshotSecrets(f.Secrets)
+	if prepared.Secrets != nil {
 		for _, ref := range []*manifest.LocalObjectReference{repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef} {
 			if ref != nil {
-				if _, ok := captured[ref.Name]; !ok {
-					captured[ref.Name] = f.Secrets(repo.Namespace, ref.Name)
-				}
+				prepared.Secrets(repo.Namespace, ref.Name)
 			}
 		}
-		prepared.Secrets = func(_, name string) *manifest.Secret { return captured[name] }
 	}
 
 	credStore, err := prepared.resolveRegistryConfig(ctx, repo, retry)

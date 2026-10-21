@@ -39,7 +39,6 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"syscall"
-	"time"
 )
 
 // restrict is the process-global on/off toggle, read at dial time by control.
@@ -156,14 +155,8 @@ func control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// WrapTransport installs the guard's Control hook on tr's dialer. It mirrors
-// http.DefaultTransport's dialer settings (Timeout/KeepAlive) so that with the
-// guard off the transport behaves identically to an unwrapped one. Idempotent
-// and safe to call on every transport flate builds.
-func WrapTransport(tr *http.Transport) {
-	tr.DialContext = (&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-		Control:   control,
-	}).DialContext
+// WrapTransport attaches the egress control hook to the supplied source-owned dialer.
+func WrapTransport(tr *http.Transport, dialer *net.Dialer) {
+	dialer.Control = control
+	tr.DialContext = dialer.DialContext
 }

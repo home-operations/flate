@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net/url"
 
-	"golang.org/x/net/http/httpproxy"
-
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 
@@ -73,22 +71,8 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, retry cache.Ret
 }
 
 func (f *Fetcher) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error) {
-	var certMaterial any
 	prepared := *f
-	if f.Secrets != nil {
-		captured := make(map[string]*manifest.Secret)
-		prepared.Secrets = func(ns, name string) *manifest.Secret {
-			sec, ok := captured[name]
-			if !ok {
-				sec = f.Secrets(ns, name)
-				captured[name] = sec
-			}
-			if b.CertSecretRef != nil && name == b.CertSecretRef.Name && sec != nil {
-				certMaterial = [2]any{sec.Data, sec.StringData}
-			}
-			return sec
-		}
-	}
+	prepared.Secrets = source.SnapshotSecrets(f.Secrets)
 	creds, err := prepared.resolveCredentials(b)
 	if err != nil {
 		return nil, nil, err
@@ -97,34 +81,25 @@ func (f *Fetcher) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	proxyPolicy := httpproxy.FromEnvironment()
-	transport, err := prepared.resolveTransport(b)
+	owner := b.Named()
+	owner.Name = b.Namespace + "/" + b.Name
+	resolved, err := source.ResolveTransport(prepared.Secrets, owner, []source.TransportInput{
+		{Reference: b.ProxySecretRef, Use: source.TransportProxy},
+		{Reference: b.CertSecretRef, Use: source.TransportCert},
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	transport.ProxyEnvironment = proxyPolicy
+	if _, err := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); err != nil {
+		return nil, nil, fmt.Errorf("%w: resolve bucket proxy: invalid proxy configuration", manifest.ErrInput)
+	}
 	value, _ := creds.GetWithContext(nil)
+	var credentials any
 	if value.AccessKeyID != "" || value.SecretAccessKey != "" {
-		transport.Credentials = value
+		credentials = value
 	}
-	selected, err := proxyPolicy.ProxyFunc()(&url.URL{Scheme: schemeFor(secure), Host: endpoint})
-	if transport.Proxy != nil {
-		selected, err = transport.Proxy.URL()
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: resolve bucket proxy: %w", manifest.ErrInput, err)
-	}
-	var proxyIdentity any
-	if b.ProxySecretRef == nil && (proxyPolicy.HTTPProxy != "" || proxyPolicy.HTTPSProxy != "") {
-		proxyIdentity = proxyPolicy
-	} else if selected != nil {
-		proxyIdentity = selected.String()
-	}
-	var material any
-	if value.AccessKeyID != "" || value.SecretAccessKey != "" || certMaterial != nil || proxyIdentity != nil {
-		material = [3]any{value, certMaterial, proxyIdentity}
-	}
-	tr, err := f.Network.HTTPTransport(transport)
+	material := resolved.Identity(credentials)
+	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Credentials: credentials})
 	if err != nil {
 		return nil, nil, err
 	}

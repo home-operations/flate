@@ -906,16 +906,22 @@ func (b remoteBody) Close() error { return b.close() }
 func TestFetchRemote_CloseJoinsAcquisition(t *testing.T) {
 	t.Parallel()
 	for _, concurrency := range []int{2, 4} {
-		for _, backing := range []string{"memory", "disk"} {
+		for _, storage := range []string{"memory", "disk", "borrowed-network"} {
 			for _, stage := range []string{"headers", "read", "cleanup", "publication", "backoff"} {
-				t.Run(fmt.Sprintf("%d/%s/%s", concurrency, backing, stage), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%d/%s/%s", concurrency, storage, stage), func(t *testing.T) {
 					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
 						root := ""
-						if backing == "disk" {
+						if storage == "disk" {
 							root = t.TempDir()
 						}
-						c := newTestTreeCache(t, root)
+						var network *source.Network
+						if storage == "borrowed-network" {
+							network = new(source.Network)
+							t.Cleanup(network.Close)
+						}
+						c := NewTreeCache(cachetest.New(t, root, sourcecache.New), network, task.NewBounded(concurrency))
+						t.Cleanup(c.Close)
 						entered, canceled, release, completed := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 						hits := 0
 						c.httpClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {

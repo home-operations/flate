@@ -3,24 +3,126 @@ package source
 import (
 	"errors"
 	"github.com/home-operations/flate/internal/testutil"
+	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestResolveTransport_Identity(t *testing.T) {
+	t.Parallel()
+	ca := testutil.SelfSignedCA(t)
+	secret := &manifest.Secret{StringData: map[string]any{"ca.crt": ca, "unused": "first"}}
+	getter := func(_, _ string) *manifest.Secret { return secret }
+	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
+	inputs := []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "tls"}, Use: TransportCert}}
+	first, err := ResolveTransport(getter, owner, inputs)
+	assert.NoError(t, err)
+	firstIdentity := manifest.Fingerprint(first.Identity(nil))
+	secret = &manifest.Secret{StringData: map[string]any{"ca.crt": ca, "unused": "second"}}
+	second, err := ResolveTransport(getter, owner, inputs)
+	assert.NoError(t, err)
+	if manifest.Fingerprint(first.Identity(nil)) == manifest.Fingerprint(second.Identity(nil)) {
+		t.Fatal("full certificate Secret identity lost an unused key")
+	}
+	assert.Equal(t, manifest.Fingerprint(first.Identity(nil)), firstIdentity)
+	if manifest.Fingerprint(first.Identity("first")) == manifest.Fingerprint(first.Identity("second")) {
+		t.Fatal("acquisition identity lost protocol credentials")
+	}
+	assert.Equal(t, first.Certificate(), second.Certificate())
+	var network Network
+	t.Cleanup(network.Close)
+	firstTransport, err := network.HTTPTransport(HTTPTransportConfig{Material: first})
+	assert.NoError(t, err)
+	secondTransport, err := network.HTTPTransport(HTTPTransportConfig{Material: second})
+	assert.NoError(t, err)
+	assert.Equal(t, firstTransport, secondTransport)
+}
+
+func TestResolveTransport_ProxySnapshot(t *testing.T) {
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "REQUEST_METHOD"} {
+		t.Setenv(key, "")
+	}
+	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
+	anonymous, err := ResolveTransport(nil, owner, nil)
+	assert.NoError(t, err)
+	if anonymous.Identity(nil) != nil {
+		t.Fatal("anonymous material gained an acquisition identity")
+	}
+	t.Setenv("HTTP_PROXY", "http://first.invalid:8080")
+	t.Setenv("NO_PROXY", "bypass.invalid")
+	material, err := ResolveTransport(nil, owner, nil)
+	assert.NoError(t, err)
+	t.Setenv("HTTP_PROXY", "http://second.invalid:8080")
+	t.Setenv("NO_PROXY", "other.invalid")
+	selected, err := material.ProxyURL(&url.URL{Scheme: "http", Host: "bypass.invalid"})
+	assert.NoError(t, err)
+	if selected != nil {
+		t.Fatal("captured NO_PROXY changed")
+	}
+	selected, err = material.ProxyURL(&url.URL{Scheme: "http", Host: "chart.invalid"})
+	assert.NoError(t, err)
+	assert.Equal(t, selected.Host, "first.invalid:8080")
+	getter := func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{StringData: map[string]any{"address": "http://explicit.invalid", "username": "user", "password": "password"}}
+	}
+	explicit, err := ResolveTransport(getter, owner, []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "proxy"}, Use: TransportProxy}})
+	assert.NoError(t, err)
+	selected, err = explicit.ProxyURL(&url.URL{Scheme: "http", Host: "other.invalid"})
+	assert.NoError(t, err)
+	assert.Equal(t, selected.Host, "explicit.invalid")
+	assert.Equal(t, selected.User.String(), "user:password")
+	selected.Host = "mutated.invalid"
+	selected, err = explicit.ProxyURL(&url.URL{Scheme: "http", Host: "chart.invalid"})
+	assert.NoError(t, err)
+	assert.Equal(t, selected.Host, "explicit.invalid")
+}
+
+func TestResolveTransport_InputOrder(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, wantLabel, wantError string
+		first, second              transportUse
+	}{
+		{name: "cert before proxy", first: TransportCert, second: TransportProxy, wantLabel: "certSecretRef", wantError: "ca.crt did not parse as PEM"},
+		{name: "proxy before cert", first: TransportProxy, second: TransportCert, wantLabel: "proxySecretRef", wantError: "invalid proxy address"},
+		{name: "secret before proxy", first: TransportSecret, second: TransportProxy, wantLabel: "secretRef", wantError: "ca.crt did not parse as PEM"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			getter := func(_, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"}}
+			}
+			owner := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
+			ref := &manifest.LocalObjectReference{Name: "creds"}
+			_, err := ResolveTransport(getter, owner, []TransportInput{
+				{Reference: ref, Use: tc.first}, {Reference: ref, Use: tc.second},
+			})
+			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), tc.wantLabel) || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("wrong first input diagnostic: %v", err)
+			}
+		})
+	}
+}
 
 func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 	t.Parallel()
 	crt, _ := testutil.SelfSignedClientCert(t)
 	for _, tc := range []struct {
-		name        string
-		data        map[string]any
-		encodedData map[string]any
-		cert        bool
-		missing     bool
-		want        string
+		name                      string
+		data                      map[string]any
+		encodedData               map[string]any
+		cert                      bool
+		optional, absent, success bool
+		missing                   bool
+		want                      string
 	}{
 
+		{name: "optional auth only", cert: true, optional: true, success: true, data: map[string]any{"username": "alice", "password": "p"}},
+		{name: "optional absent TLS", cert: true, optional: true, absent: true, success: true},
+		{name: "required absent TLS", cert: true, absent: true, missing: true, want: "not found"},
 		{name: "wiped CA", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.crt.."}, cert: true, missing: true, want: "TLS material unavailable"},
 		{name: "mixed cert pair", data: map[string]any{"tls.crt": crt, "tls.key": "..PLACEHOLDER_tls.key.."}, cert: true, missing: true, want: "TLS material unavailable"},
 		{name: "empty TLS", cert: true, missing: true, want: "TLS material unavailable"},
@@ -46,16 +148,27 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 			getter := func(ns, name string) *manifest.Secret {
 				lookup = [2]string{ns, name}
 				calls++
+				if tc.absent {
+					return nil
+				}
 				return &manifest.Secret{Name: "metadata-secret", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
 			}
 			owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
 			ref := &manifest.LocalObjectReference{Name: "creds"}
-			var err error
+			use := TransportProxy
 			if tc.cert {
-				_, err = ResolveCertSecret(getter, owner, ref)
-			} else {
-				_, err = ResolveProxy(getter, owner, ref)
+				use = TransportCert
 			}
+			material, err := ResolveTransport(getter, owner, []TransportInput{{Reference: ref, Use: use, OptionalTLS: tc.optional}})
+			if tc.success {
+				assert.NoError(t, err)
+				if material.config != nil || material.Certificate() != [3]string{} {
+					t.Fatal("optional auth-only input supplied TLS")
+				}
+				assert.Equal(t, calls, 1)
+				return
+			}
+
 			if tc.missing {
 				missing, ok := errors.AsType[*MissingSecretError](err)
 				if !ok {

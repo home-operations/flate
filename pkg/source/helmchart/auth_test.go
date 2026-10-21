@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/http/httpproxy"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -52,11 +50,11 @@ func TestHelmRepoTransport_CertSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareHTTP: %v", err)
 	}
-	material, err := source.ResolveCertSecret(f.secrets, r.Named(), r.CertSecretRef)
+	material, err := source.ResolveTransport(f.secrets, r.Named(), []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{TLS: material, DisableCompression: true})
+	expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{Material: material, DisableCompression: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +136,10 @@ func TestHelmRepoTransport_ProxySnapshot(t *testing.T) {
 		t.Fatal("cross-host proxy rotation reused identity")
 	}
 	for i, password := range []string{"first", "second"} {
-		expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true,
-			ProxyEnvironment: &httpproxy.Config{HTTPProxy: "http://proxy:" + password + "@proxy.invalid:8080", NoProxy: "bypass.invalid"}})
+		t.Setenv("http_proxy", "http://proxy:"+password+"@proxy.invalid:8080")
+		material, err := source.ResolveTransport(nil, r.Named(), nil)
+		assert.NoError(t, err)
+		expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true, Material: material})
 		if err != nil {
 			t.Fatal(err)
 		}

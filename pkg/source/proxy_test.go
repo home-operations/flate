@@ -2,6 +2,7 @@ package source
 
 import (
 	"errors"
+	"net/url"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -43,7 +44,7 @@ func TestResolveProxy(t *testing.T) {
 				}
 			}
 			owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "ns", Name: tc.owner}
-			p, err := ResolveProxy(getter, owner, &manifest.LocalObjectReference{Name: "px"})
+			material, err := ResolveTransport(getter, owner, []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "px"}, Use: TransportProxy}})
 			if !tc.unwired {
 				assert.Equal(t, lookup, [2]string{"ns", "px"})
 				assert.Equal(t, calls, 1)
@@ -63,32 +64,10 @@ func TestResolveProxy(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-			assert.Equal(t, *p, ProxyConfig{Address: "http://proxy.example.com:8080", Username: "alice", Password: "hunter2"})
+			assert.Equal(t, material.ProxyComponents(), [3]string{"http://proxy.example.com:8080", "alice", "hunter2"})
+			selected, err := material.ProxyURL(&url.URL{Scheme: "http", Host: "target.invalid"})
+			assert.NoError(t, err)
+			assert.Equal(t, selected.User.String(), "alice:hunter2")
 		})
-	}
-}
-
-func TestProxyConfig_URL_BasicAuth(t *testing.T) {
-	t.Parallel()
-	p := &ProxyConfig{
-		Address:  "http://proxy.example.com:8080",
-		Username: "alice",
-		Password: "hunter2",
-	}
-	u, err := p.URL()
-	if err != nil {
-		t.Fatalf("URL: %v", err)
-	}
-	if u.User == nil {
-		t.Fatalf("expected userinfo in URL")
-	}
-	if u.User.Username() != "alice" {
-		t.Errorf("Username = %q", u.User.Username())
-	}
-	if pw, _ := u.User.Password(); pw != "hunter2" {
-		t.Errorf("Password = %q", pw)
-	}
-	if u.Host != "proxy.example.com:8080" {
-		t.Errorf("Host = %q", u.Host)
 	}
 }

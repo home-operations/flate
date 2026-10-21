@@ -168,11 +168,11 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := source.ResolveCertSecret(f.Secrets, repo.Named(), repo.CertSecretRef)
+	material, err := source.ResolveTransport(f.Secrets, repo.Named(), []source.TransportInput{{Reference: repo.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{TLS: material})
+	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: material})
 	if err != nil {
 		t.Fatal(err)
 	}

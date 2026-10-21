@@ -11,25 +11,19 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"sigs.k8s.io/kustomize/api/provider"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/tree"
 )
-
-// remoteFetchTimeout caps each pre-flight HTTP GET. Kustomize's
-// built-in loader has no timeout knob; we want broken URLs to fail
-// in seconds, not minutes.
-const remoteFetchTimeout = 5 * time.Second
 
 // remoteFetchMaxBytes caps each pre-flight response body. A
 // kustomization resource is almost always under a megabyte of YAML;
@@ -118,8 +112,8 @@ type inputPath struct {
 	descriptor        remoteInput
 }
 
-func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS filesys.FileSystem, subPath string) error {
-	w := inputWalk{cache: cache, fs: memFS.(*treeFS), visited: make(map[controlLocation]controlObservation)}
+func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS *treeFS, subPath string) error {
+	w := inputWalk{cache: cache, fs: memFS, visited: make(map[controlLocation]controlObservation)}
 	_, err := w.directory(ctx, subPath, walkScope{})
 	if err != nil {
 		err = fmt.Errorf("%w: preflight: %w", manifest.ErrFlux, err)
@@ -587,7 +581,7 @@ func findMappingValue(node *yaml.Node, key string) *yaml.Node {
 }
 
 func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
-	fetchCtx, cancel := context.WithTimeout(ctx, remoteFetchTimeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, source.HTTPResource.Timeout())
 	defer cancel()
 	previous, err := w.Previous(fetchCtx)
 	if err != nil {

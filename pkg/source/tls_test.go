@@ -95,14 +95,14 @@ func TestBuildTLSConfig(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := BuildTLSConfig(tc.crt, tc.key, tc.ca)
+			cfg, err := buildTLSConfig(tc.crt, tc.key, tc.ca)
 			if tc.wantError != "" || tc.missing {
 				assert.Equal(t, cfg == nil, true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), !tc.missing)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.missing)
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
-					t.Fatalf("BuildTLSConfig: %v, want %q", err, tc.wantError)
+					t.Fatalf("buildTLSConfig: %v, want %q", err, tc.wantError)
 				}
 				if strings.Contains(err.Error(), "invalid-tls-marker") || strings.Contains(err.Error(), "credential-tls-marker") {
 					t.Fatal("TLS material leaked")

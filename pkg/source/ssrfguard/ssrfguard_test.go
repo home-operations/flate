@@ -1,11 +1,13 @@
 package ssrfguard
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestBlocked is the pure classifier matrix — the unit-testable core of the
@@ -76,7 +78,7 @@ func TestWrapTransport_GatesDialByToggle(t *testing.T) {
 	t.Cleanup(func() { Restrict(false) })
 
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	WrapTransport(tr)
+	WrapTransport(tr, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
 	client := &http.Client{Transport: tr}
 
 	// Guard ON: the loopback dial must be refused with the block error.

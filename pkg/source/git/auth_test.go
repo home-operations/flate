@@ -116,9 +116,9 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				repo.Name, repo.SecretRef = "repo", nil
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
 				_, err = f.resolveTransport(repo)
-				owner.Name, secretName = "ns/repo", "missing"
+				owner.Name, secretName = "repo", "missing"
 			} else if tc.field == "tls.crt" {
-				_, err = f.resolveTLS(repo, sec)
+				_, err = f.resolveTransport(repo)
 			} else {
 				auth, err = f.resolveAuth(repo, sec)
 			}

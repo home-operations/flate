@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -177,8 +176,6 @@ func absChartURL(base, target string) (string, error) {
 func normalizeChartDigest(d string) string {
 	return strings.TrimPrefix(strings.TrimSpace(d), "sha256:")
 }
-
-var helmHTTPTimeout = 120 * time.Second
 
 func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (ocispec.Descriptor, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)

@@ -81,3 +81,21 @@ func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.NamedResource, sec
 	}
 	return username, password, nil
 }
+
+// SnapshotSecrets memoizes one serial operation's lookups, including absent Secrets.
+// A nil getter remains unwired; callers MUST finish preparation before sharing results.
+func SnapshotSecrets(secrets SecretGetter) SecretGetter {
+	if secrets == nil {
+		return nil
+	}
+	captured := make(map[[2]string]*manifest.Secret)
+	return func(namespace, name string) *manifest.Secret {
+		key := [2]string{namespace, name}
+		sec, ok := captured[key]
+		if !ok {
+			sec = secrets(namespace, name)
+			captured[key] = sec
+		}
+		return sec
+	}
+}

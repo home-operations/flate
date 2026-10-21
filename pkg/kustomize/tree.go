@@ -37,10 +37,8 @@ type TreeCache struct {
 	// sourceRoots owns standalone source admission and shaping for this run.
 	sourceRoots sync.Map
 
-	// gitBase resolves a remote kustomize git base (a repo URL at a bare ref)
-	// to an on-disk worktree. The one injected seam: pkg/kustomize cannot import
-	// pkg/source/git (import cycle). nil ⇒ a git-base resource fails with a
-	// clear error. See gitbase.go.
+	// pkg/kustomize cannot import pkg/source/git (import cycle), so gitBase
+	// acquires immutable repository views through the injected fetcher.
 	gitBase GitBaseFetcher
 
 	// owner is borrowed; the caller closes it after renders, workers and readers finish.
@@ -69,16 +67,17 @@ func NewTreeCache(owner *cache.Cache, network *source.Network, tasks *task.Servi
 	if ownNetwork {
 		network = new(source.Network)
 	}
+	client := source.NewHTTPClient(network, source.HTTPResource)
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		req.Header.Del("If-None-Match")
+		req.Header.Del("If-Modified-Since")
+		return nil
+	}
 	return &TreeCache{owner: owner, network: network, tasks: tasks,
-		ownNetwork: ownNetwork, httpClient: &http.Client{Timeout: remoteFetchTimeout, Transport: network,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return errors.New("stopped after 10 redirects")
-				}
-				req.Header.Del("If-None-Match")
-				req.Header.Del("If-Modified-Since")
-				return nil
-			}}}
+		ownNetwork: ownNetwork, httpClient: client}
 }
 
 // Close freezes remote admission, cancels shared work and joins its complete

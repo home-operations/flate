@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"golang.org/x/net/http/httpproxy"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
@@ -19,22 +17,7 @@ type httpRepository struct {
 }
 
 func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
-	secrets := f.secrets
-	var certMaterial any
-	if secrets != nil {
-		captured := make(map[string]*manifest.Secret)
-		secrets = func(ns, name string) *manifest.Secret {
-			sec, ok := captured[name]
-			if !ok {
-				sec = f.secrets(ns, name)
-				captured[name] = sec
-			}
-			if sec != nil && r.CertSecretRef != nil && name == r.CertSecretRef.Name {
-				certMaterial = [2]any{sec.Data, sec.StringData}
-			}
-			return sec
-		}
-	}
+	secrets := source.SnapshotSecrets(f.secrets)
 	prepared := &httpRepository{HelmRepository: r}
 	if r.SecretRef != nil {
 		if secrets == nil {
@@ -52,30 +35,19 @@ func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, erro
 	}
 	owner := r.Named()
 	owner.Name = helmID(r)
-	tlsMaterial, err := source.ResolveCertSecret(secrets, owner, r.CertSecretRef)
+	resolved, err := source.ResolveTransport(secrets, owner, []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		return nil, err
-	}
-	proxyPolicy := httpproxy.FromEnvironment()
-
-	// Chart URLs and redirects may use a proxy even when the index is bypassed.
-	var proxyIdentity any
-	if proxyPolicy.HTTPProxy != "" || proxyPolicy.HTTPSProxy != "" {
-		proxyIdentity = proxyPolicy
-	}
-
-	if prepared.username != "" || prepared.password != "" || certMaterial != nil || proxyIdentity != nil {
-		prepared.material = [4]any{prepared.username, prepared.password, certMaterial, proxyIdentity}
 	}
 	var credentials any
 	if prepared.username != "" || prepared.password != "" {
 		credentials = [2]string{prepared.username, prepared.password}
 	}
-	tr, err := f.network.HTTPTransport(source.HTTPTransportConfig{TLS: tlsMaterial, ProxyEnvironment: proxyPolicy,
-		Credentials: credentials, DisableCompression: true})
+	prepared.material = resolved.Identity(credentials)
+	tr, err := f.network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Credentials: credentials, DisableCompression: true})
 	if err != nil {
 		return nil, err
 	}
-	prepared.client = &http.Client{Transport: tr, Timeout: helmHTTPTimeout}
+	prepared.client = source.NewHTTPClient(tr, source.HTTPChart)
 	return prepared, nil
 }

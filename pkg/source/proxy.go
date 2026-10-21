@@ -7,67 +7,51 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ProxyConfig is the resolved view of a Flux spec.proxySecretRef.
-// Matches source-controller's Secret schema: data.address (required),
-// data.username + data.password (optional, basic-auth).
-type ProxyConfig struct {
+type proxyConfig struct {
 	Address  string
 	Username string
 	Password string
 }
 
-// URL parses Address into a *url.URL with optional basic-auth user
-// info applied. The caller pre-validated non-empty by checking the
-// return of ResolveProxy. Used by NewHTTPTransport when pinning a
-// transport's Proxy function; the OCI / Bucket / HTTP-Git transports
-// pick this up uniformly.
-func (p *ProxyConfig) URL() (*url.URL, error) {
-	u, err := url.Parse(p.Address)
-	if err != nil {
-		return nil, fmt.Errorf("parse proxy address %q: %w", p.Address, err)
-	}
-	if p.Username != "" {
-		u.User = url.UserPassword(p.Username, p.Password)
-	}
-	return u, nil
-}
-
-// ResolveProxy reads the configured proxy address and optional credentials.
-// Missing or wiped material returns MissingSecretError; a nil ref selects environment policy.
-func ResolveProxy(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*ProxyConfig, error) {
+func resolveProxy(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*proxyConfig, *url.URL, error) {
 	if ref == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	sec, err := resolveSecretRef(secrets, owner, "proxySecretRef", ref)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var material [3]string
 	for i, key := range []string{"address", "username", "password"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, fmt.Errorf("%s %s: proxySecretRef %s/%s: %w", owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
+			return nil, nil, fmt.Errorf("%s %s: proxySecretRef %s/%s: %w", owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
 		}
 		material[i] = value
 	}
-	proxy := &ProxyConfig{Address: material[0], Username: material[1], Password: material[2]}
+	proxy := &proxyConfig{Address: material[0], Username: material[1], Password: material[2]}
+	var selected *url.URL
 	if proxy.Address != "" && !manifest.HasValuePlaceholder(proxy.Address) {
-		if _, err := proxy.URL(); err != nil {
-			return nil, fmt.Errorf("%w: %s %s: proxySecretRef %s/%s: invalid proxy address",
-				manifest.ErrInput, owner.Kind, owner.Name, owner.Namespace, ref.Name)
+		var err error
+		selected, err = url.Parse(proxy.Address)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %s %s: proxySecretRef %s/%s: invalid proxy address", manifest.ErrInput, owner.Kind, owner.Name, owner.Namespace, ref.Name)
+		}
+		if proxy.Username != "" {
+			selected.User = url.UserPassword(proxy.Username, proxy.Password)
 		}
 	}
 	for _, value := range material {
 		if manifest.HasValuePlaceholder(value) {
-			return nil, MissingSecretErr(owner, ref.Name, "proxy material unavailable")
+			return nil, nil, MissingSecretErr(owner, ref.Name, "proxy material unavailable")
 		}
 	}
 	if material[0] == "" {
 		if material[1] != "" || material[2] != "" {
-			return nil, fmt.Errorf("%w: proxy secret %s/%s missing required 'address' key", manifest.ErrInput, owner.Namespace, ref.Name)
+			return nil, nil, fmt.Errorf("%w: proxy secret %s/%s missing required 'address' key", manifest.ErrInput, owner.Namespace, ref.Name)
 		}
-		return nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
+		return nil, nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
 	}
-	return proxy, nil
+	return proxy, selected, nil
 }

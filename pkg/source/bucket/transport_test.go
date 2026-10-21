@@ -3,6 +3,7 @@ package bucket
 import (
 	"context"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -38,33 +39,26 @@ func TestFetcher_ResolveTransport(t *testing.T) {
 	for _, cert := range []bool{false, true} {
 		t.Run(fmt.Sprint(cert), func(t *testing.T) {
 			t.Parallel()
-			certPEM, keyPEM := testutil.SelfSignedServerCert(t)
-			f := &Fetcher{Network: newTestNetwork(t), Secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"tls.crt": certPEM, "tls.key": keyPEM, "ca.crt": certPEM}}
-			}}
-			b := &manifest.Bucket{Name: "b", Namespace: "ns"}
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+			var srv *httptest.Server
+			if cert {
+				srv = httptest.NewTLSServer(handler)
+			} else {
+				srv = httptest.NewServer(handler)
+			}
+			t.Cleanup(srv.Close)
+			f := &Fetcher{Network: newTestNetwork(t)}
+			b := &manifest.Bucket{Name: "b", Namespace: "ns", Endpoint: srv.URL, BucketName: "fixture", Region: "us-east-1", Insecure: !cert}
 			if cert {
 				b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+				ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+				f.Secrets = func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}} }
 			}
-			cfg, err := f.resolveTransport(b)
-			if err != nil {
-				t.Fatal(err)
-			}
-			selected, err := f.Network.HTTPTransport(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			material, err := source.ResolveCertSecret(f.Secrets, b.Named(), b.CertSecretRef)
-			if err != nil {
-				t.Fatal(err)
-			}
-			expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{TLS: material})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if selected != expected {
-				t.Fatal("transport does not match the bucket certificate reference")
-			}
+			client, _, err := f.newMinioClient(b)
+			assert.NoError(t, err)
+			exists, err := client.BucketExists(t.Context(), "fixture")
+			assert.NoError(t, err)
+			assert.Equal(t, exists, true)
 		})
 	}
 }
@@ -134,10 +128,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				err = fetchErr
 			case "cert":
 				b.CertSecretRef = ref
-				_, err = f.resolveTransport(b)
+				_, _, err = f.newMinioClient(b)
 			case "proxy":
 				b.ProxySecretRef = ref
-				_, err = f.resolveTransport(b)
+				_, _, err = f.newMinioClient(b)
 			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
@@ -183,7 +177,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
-				b := &manifest.Bucket{Name: "b", Namespace: "ns"}
+				b := &manifest.Bucket{Name: "b", Namespace: "ns", Endpoint: "https://bucket.invalid", BucketName: "fixture"}
 				if tc.auth {
 					b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				}

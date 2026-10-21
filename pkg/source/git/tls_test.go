@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
@@ -41,6 +42,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
+	"golang.org/x/crypto/ssh"
 )
 
 func tlsGitProxy(t *testing.T, authenticated bool) (*httptest.Server, *atomic.Int32) {
@@ -495,6 +497,11 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	crt, key := testutil.SelfSignedClientCert(t)
+	_, private, err := ed25519.GenerateKey(nil)
+	assert.NoError(t, err)
+	block, err := ssh.MarshalPrivateKey(private, "fixture")
+	assert.NoError(t, err)
+	identity := string(pem.EncodeToMemory(block))
 	type tlsCase struct {
 		name, url, secret, wantCA, wantCRT, wantKey, errorKey string
 		data, encodedData                                     map[string]any
@@ -538,14 +545,20 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
+			data := maps.Clone(tc.data)
+			if data == nil {
+				data = map[string]any{}
+			}
+			data["username"], data["password"], data["identity"] = "alice", "p", identity
+			sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: data, Data: tc.encodedData}
 			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { return sec }}
 			url := tc.url
 			if url == "" {
 				url = "https://example.com/x.git"
 			}
 			repo := gitRepoWithSecret("g", url, tc.secret)
-			opts, err := f.resolveTLS(repo, sec)
+			request, err := f.resolveTransport(repo)
+			opts := request.options
 			if tc.wantInput || tc.wantMissing {
 				assert.Diff(t, opts, git.CloneOptions{})
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.wantInput)
@@ -576,6 +589,35 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	}
 }
 
+func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, secret string
+		wantInput    bool
+	}{
+		{name: "without secretRef"},
+		{name: "with secretRef", secret: "creds", wantInput: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p"}}
+			}}
+			repo := gitRepoWithSecret("g", "http://[::1", tc.secret)
+			request, err := f.resolveTransport(repo)
+			if tc.wantInput {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				if err == nil || !strings.Contains(err.Error(), "parse git endpoint") {
+					t.Fatalf("missing endpoint validation: %v", err)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, request.options.URL, repo.URL)
+		})
+	}
+}
+
 func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
@@ -600,8 +642,17 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 			t.Parallel()
 			sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: tc.data, Data: tc.encodedData}
 			lookups := 0
-			f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret { lookups++; return sec }}
+			f := &Fetcher{Secrets: func(_, name string) *manifest.Secret {
+				lookups++
+				if name == "proxy" {
+					return &manifest.Secret{StringData: map[string]any{"address": "http://proxy.invalid/%"}}
+				}
+				return sec
+			}}
 			repo := gitRepoWithSecret("g", "https://host/repo", "creds")
+			if tc.wantInput || tc.wantMissing {
+				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
+			}
 			request, err := f.resolveTransport(repo)
 			assert.Equal(t, lookups, 1)
 			if tc.wantInput || tc.wantMissing {

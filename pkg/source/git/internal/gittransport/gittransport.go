@@ -4,22 +4,15 @@
 package gittransport
 
 import (
-	"net/http"
-
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// boundedHTTPSTransport is the ResponseHeaderTimeout-bounded transport behind
-// the go-git default HTTPS client; kept as a package var for test introspection.
-var boundedHTTPSTransport = func() *http.Transport {
-	tr, _ := source.NewHTTPTransport(nil, nil) // nil/nil never errors
-	return tr
-}()
+var boundedHTTPSTransport = source.NewHTTPTransport(source.TransportMaterial{})
 
-var boundedHTTPSClient = githttp.NewClient(&http.Client{Transport: boundedHTTPSTransport})
+var boundedHTTPSClient = githttp.NewClient(source.NewHTTPClient(boundedHTTPSTransport, source.HTTPStream))
 
 func init() {
 	client.InstallProtocol("https", boundedHTTPSClient)

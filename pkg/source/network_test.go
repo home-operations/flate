@@ -56,7 +56,7 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }))
 			t.Cleanup(srv.Close)
 			var n Network
-			tr, _ := NewHTTPTransport(nil, nil)
+			tr := NewHTTPTransport(TransportMaterial{})
 			tr.Proxy = nil
 			tr.MaxIdleConnsPerHost = concurrency
 			var calls atomic.Int32
@@ -109,7 +109,7 @@ func TestNetwork_AdmissionWave(t *testing.T) {
 			var n Network
 			var calls atomic.Int32
 			cause := networkTimeout()
-			tr, _ := NewHTTPTransport(nil, nil)
+			tr := NewHTTPTransport(TransportMaterial{})
 			tr.Proxy = nil
 			tr.DialContext = func(context.Context, string, string) (net.Conn, error) {
 				calls.Add(1)
@@ -169,7 +169,7 @@ func TestNetwork_RouteIdentity(t *testing.T) {
 			cause, observed := networkTimeout(), errors.New("healthy route attempted")
 			calls, proxyCalls := 0, 0
 			client := func(proxy string, failure error) *http.Client {
-				tr, _ := NewHTTPTransport(nil, nil)
+				tr := NewHTTPTransport(TransportMaterial{})
 				tr.Proxy = func(*http.Request) (*url.URL, error) {
 					proxyCalls++
 					if proxy == "" {
@@ -217,7 +217,7 @@ func TestNetwork_AttemptLiveness(t *testing.T) {
 					entered, release, finished := make(chan struct{}, concurrency), make(chan struct{}), make(chan struct{}, concurrency)
 					calls := 0
 					observed := errors.New("live attempt reached dial")
-					tr, _ := NewHTTPTransport(nil, nil)
+					tr := NewHTTPTransport(TransportMaterial{})
 					tr.Proxy = nil
 					tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 						calls++
@@ -282,7 +282,7 @@ func TestNetwork_AttemptLiveness(t *testing.T) {
 			t.Parallel()
 			var n Network
 			calls := 0
-			tr, _ := NewHTTPTransport(nil, nil)
+			tr := NewHTTPTransport(TransportMaterial{})
 			tr.Proxy = nil
 			tr.DialContext = func(context.Context, string, string) (net.Conn, error) { calls++; return nil, tc.err }
 			client := &http.Client{Transport: n.wrapHTTPTransport(tr)}
@@ -319,7 +319,7 @@ func TestNetwork_DeadlinePublicationRace(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		var network Network
-		tr, _ := NewHTTPTransport(nil, nil)
+		tr := NewHTTPTransport(TransportMaterial{})
 		tr.Proxy = nil
 		calls := 0
 		cause := networkTimeout()
@@ -356,7 +356,7 @@ func TestNetwork_RedirectEndpoint(t *testing.T) {
 		_, _ = io.WriteString(w, "healthy")
 	}))
 	t.Cleanup(srv.Close)
-	tr, _ := NewHTTPTransport(nil, nil)
+	tr := NewHTTPTransport(TransportMaterial{})
 	tr.Proxy = nil
 	dial := tr.DialContext
 	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -398,7 +398,7 @@ func TestNetwork_ResponseFailures(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			var network Network
-			tr, _ := NewHTTPTransport(nil, nil)
+			tr := NewHTTPTransport(TransportMaterial{})
 			client := &http.Client{Transport: network.wrapHTTPTransport(tr)}
 			t.Cleanup(tr.CloseIdleConnections)
 			for range 2 {
@@ -433,11 +433,18 @@ func TestNetwork_TransportReuse(t *testing.T) {
 				t.Parallel()
 				var n Network
 				t.Cleanup(n.Close)
-				first, err := n.HTTPTransport(HTTPTransportConfig{Proxy: &ProxyConfig{Address: "http://proxy.invalid", Username: "user", Password: "first"}})
+				first, err := n.HTTPTransport(HTTPTransportConfig{Material: TransportMaterial{proxyURL: &url.URL{Scheme: "http", Host: "proxy.invalid", User: url.UserPassword("user", "first")}}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				second, err := n.HTTPTransport(HTTPTransportConfig{Proxy: &ProxyConfig{Address: tc.address, Username: "user", Password: tc.password}})
+				second, err := n.HTTPTransport(HTTPTransportConfig{Material: func() TransportMaterial {
+					selected, err := url.Parse(tc.address)
+					if err != nil {
+						t.Fatal(err)
+					}
+					selected.User = url.UserPassword("user", tc.password)
+					return TransportMaterial{proxyURL: selected}
+				}()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -519,7 +526,7 @@ func TestNetwork_TransportReuse(t *testing.T) {
 		}
 		srv.EnableHTTP2 = true
 		srv.StartTLS()
-		material := &TLSMaterial{config: srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()}
+		material := TransportMaterial{config: srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), environment: &httpproxy.Config{}}
 		material.config.NextProtos = []string{"h2", "http/1.1"}
 		t.Cleanup(srv.Close)
 		start := make(chan struct{})
@@ -529,7 +536,7 @@ func TestNetwork_TransportReuse(t *testing.T) {
 		for i := range clients {
 			wg.Go(func() {
 				<-start
-				clients[i].Transport, errs[i] = n.HTTPTransport(HTTPTransportConfig{TLS: material, ProxyEnvironment: &httpproxy.Config{}})
+				clients[i].Transport, errs[i] = n.HTTPTransport(HTTPTransportConfig{Material: material})
 			})
 		}
 		close(start)
@@ -579,31 +586,38 @@ func TestNetwork_TransportReuse(t *testing.T) {
 		ca, otherCA := testutil.SelfSignedCA(t), testutil.SelfSignedCA(t)
 		crt, key := testutil.SelfSignedClientCert(t)
 		otherCrt, otherKey := testutil.SelfSignedClientCert(t)
-		resolve := func(crt, key, ca string) *TLSMaterial {
-			cfg, err := BuildTLSConfig(crt, key, ca)
+		resolve := func(crt, key, ca string) TransportMaterial {
+			cfg, err := buildTLSConfig(crt, key, ca)
 			if err != nil {
 				t.Fatal(err)
 			}
-			return &TLSMaterial{config: cfg, pem: [3]string{crt, key, ca}}
+			return TransportMaterial{config: cfg, certificate: [3]string{crt, key, ca}}
 		}
 		for _, tc := range []struct {
 			name   string
 			change func(*HTTPTransportConfig)
 			equal  bool
 		}{
-			{name: "equivalent-certificates", equal: true, change: func(cfg *HTTPTransportConfig) { cfg.TLS = resolve(crt, key, ca) }},
-			{name: "ca", change: func(cfg *HTTPTransportConfig) { cfg.TLS = resolve(crt, key, otherCA) }},
-			{name: "client-certificate", change: func(cfg *HTTPTransportConfig) { cfg.TLS = resolve(otherCrt, otherKey, ca) }},
+			{name: "equivalent-certificates", equal: true, change: func(cfg *HTTPTransportConfig) { cfg.Material.config = resolve(crt, key, ca).config }},
+			{name: "ca", change: func(cfg *HTTPTransportConfig) {
+				cfg.Material.config = resolve(crt, key, otherCA).config
+				cfg.Material.certificate[2] = otherCA
+			}},
+			{name: "client-certificate", change: func(cfg *HTTPTransportConfig) {
+				cfg.Material.config = resolve(otherCrt, otherKey, ca).config
+				cfg.Material.certificate = [3]string{otherCrt, otherKey, ca}
+			}},
 			{name: "credentials", change: func(cfg *HTTPTransportConfig) { cfg.Credentials = [2]string{"user", "rotated"} }},
 			{name: "insecure", change: func(cfg *HTTPTransportConfig) { cfg.Insecure = true }},
 			{name: "proxy", change: func(cfg *HTTPTransportConfig) {
-				cfg.Proxy = &ProxyConfig{Address: "http://proxy.invalid", Username: "user", Password: "first"}
+				cfg.Material.proxyURL = &url.URL{Scheme: "http", Host: "proxy.invalid", User: url.UserPassword("user", "first")}
+				cfg.Material.environment = nil
 			}},
 			{name: "proxy-credentials", change: func(cfg *HTTPTransportConfig) {
-				cfg.ProxyEnvironment = &httpproxy.Config{HTTPProxy: "http://user:rotated@proxy.invalid"}
+				cfg.Material.environment = &httpproxy.Config{HTTPProxy: "http://user:rotated@proxy.invalid"}
 			}},
 			{name: "no-proxy", change: func(cfg *HTTPTransportConfig) {
-				cfg.ProxyEnvironment = &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid", NoProxy: "*.example.com"}
+				cfg.Material.environment = &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid", NoProxy: "*.example.com"}
 			}},
 			{name: "compression", change: func(cfg *HTTPTransportConfig) { cfg.DisableCompression = true }},
 		} {
@@ -611,7 +625,8 @@ func TestNetwork_TransportReuse(t *testing.T) {
 				t.Parallel()
 				var n Network
 				t.Cleanup(n.Close)
-				cfg := HTTPTransportConfig{TLS: resolve(crt, key, ca), Credentials: [2]string{"user", "first"}, ProxyEnvironment: &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid"}}
+				cfg := HTTPTransportConfig{Material: resolve(crt, key, ca), Credentials: [2]string{"user", "first"}}
+				cfg.Material.environment = &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid"}
 				first, err := n.HTTPTransport(cfg)
 				if err != nil {
 					t.Fatal(err)
@@ -623,6 +638,9 @@ func TestNetwork_TransportReuse(t *testing.T) {
 				}
 				if (first == second) != tc.equal {
 					t.Fatal("transport selection did not follow effective material")
+				}
+				if cfg.Material.config.InsecureSkipVerify || len(cfg.Material.config.NextProtos) != 0 {
+					t.Fatal("transport publication mutated borrowed TLS configuration")
 				}
 			})
 		}

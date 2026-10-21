@@ -1,6 +1,7 @@
 package source
 
 import (
+	"cmp"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/mldsa"
@@ -15,51 +16,50 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// TLSMaterial retains resolved certificate bytes and their validated TLS configuration.
-// Values returned by ResolveCertSecret are immutable.
-type TLSMaterial struct {
-	config *tls.Config
-	pem    [3]string
-}
-
-// ResolveCertSecret resolves TLS from the configured Secret's client pair or CA.
-// Missing or wiped material returns MissingSecretError; malformed real material
-// remains a failure. A nil ref leaves TLS unconfigured.
-func ResolveCertSecret(secrets SecretGetter, owner manifest.NamedResource, ref *manifest.LocalObjectReference) (*TLSMaterial, error) {
-	if ref == nil {
-		return nil, nil
-	}
-	sec, err := resolveSecretRef(secrets, owner, "certSecretRef", ref)
+func resolveTLS(secrets SecretGetter, owner manifest.NamedResource, input TransportInput) (*tls.Config, [3]string, any, error) {
+	ref := input.Reference
+	sec, err := resolveSecretRef(secrets, owner, input.Use.label(), ref)
 	if err != nil {
-		return nil, err
+		if input.OptionalTLS && errors.Is(err, manifest.ErrMissingSecret) {
+			return nil, [3]string{}, nil, nil
+		}
+		return nil, [3]string{}, nil, err
 	}
-
 	var material [3]string
 	for i, key := range []string{"tls.crt", "tls.key", "ca.crt"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w", owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
+			return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, ref.Name, input.Use.label(), err)
 		}
 		material[i] = value
 	}
-	if material[0] == "" && material[1] == "" && material[2] == "" {
-		return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+	if input.CAFallback {
+		caFile, _, err := sec.Value("caFile")
+		if err != nil {
+			return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, ref.Name, input.Use.label(), err)
+		}
+		material[2] = cmp.Or(material[2], caFile)
 	}
-	cfg, err := BuildTLSConfig(material[0], material[1], material[2])
+	if material == [3]string{} {
+		if input.OptionalTLS {
+			return nil, material, nil, nil
+		}
+		return nil, material, nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+	}
+	cfg, err := buildTLSConfig(material[0], material[1], material[2])
 	if errors.Is(err, manifest.ErrMissingSecret) {
-		return nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+		return nil, [3]string{}, nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: certSecretRef %s/%s: %w",
-			owner.Kind, owner.Name, owner.Namespace, ref.Name, err)
+		return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, ref.Name, input.Use.label(), err)
 	}
-	return &TLSMaterial{config: cfg, pem: material}, nil
+	return cfg, material, [2]any{sec.Data, sec.StringData}, nil
 }
 
-// BuildTLSConfig builds TLS from a client pair, a CA bundle, or both.
+// buildTLSConfig builds TLS from a client pair, a CA bundle, or both.
 // Independently malformed real material returns manifest.ErrInput before placeholders
 // return manifest.ErrMissingSecret; omitted client components must appear together.
-func BuildTLSConfig(crt, key, ca string) (*tls.Config, error) {
+func buildTLSConfig(crt, key, ca string) (*tls.Config, error) {
 	if crt == "" && key == "" && ca == "" {
 		return nil, fmt.Errorf("%w: no TLS material (tls.crt, tls.key, ca.crt) provided", manifest.ErrInput)
 	}

@@ -5,11 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"os"
-
-	"golang.org/x/net/http/httpproxy"
 
 	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
@@ -43,57 +40,28 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 			return nil, nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
 		}
 	}
-	var certMaterial any
-	prepared := *f
-	if f.Secrets != nil {
-		prepared.Secrets = func(ns, name string) *manifest.Secret {
-			sec := f.Secrets(ns, name)
-			if sec != nil {
-				certMaterial = [2]any{sec.Data, sec.StringData}
-			}
-			return sec
-		}
-	}
 	owner := repo.Named()
 	owner.Name = repo.Namespace + "/" + repo.Name
-	tlsMaterial, err := source.ResolveCertSecret(prepared.Secrets, owner, repo.CertSecretRef)
+	resolved, err := source.ResolveTransport(f.Secrets, owner, []source.TransportInput{
+		{Reference: repo.CertSecretRef, Use: source.TransportCert},
+		{Reference: repo.ProxySecretRef, Use: source.TransportProxy},
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	proxy, err := source.ResolveProxy(f.Secrets, owner, repo.ProxySecretRef)
-	if err != nil {
-		return nil, nil, err
-	}
-	proxyPolicy := httpproxy.FromEnvironment()
-	target := &url.URL{Scheme: "https", Host: client.Reference.Host()}
-	selected, err := proxyPolicy.ProxyFunc()(target)
-	if proxy != nil {
-		selected, err = proxy.URL()
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: resolve registry proxy: %w", manifest.ErrInput, err)
-	}
-	var proxyIdentity any
-	if proxy == nil && (proxyPolicy.HTTPProxy != "" || proxyPolicy.HTTPSProxy != "") {
-		proxyIdentity = proxyPolicy
-	} else if selected != nil {
-		proxyIdentity = selected.String()
-	}
-	var material any
-	if cred != auth.EmptyCredential || certMaterial != nil || proxyIdentity != nil {
-		material = [3]any{cred, certMaterial, proxyIdentity}
+	if _, err := resolved.ProxyURL(&url.URL{Scheme: "https", Host: client.Reference.Host()}); err != nil {
+		return nil, nil, fmt.Errorf("%w: resolve registry proxy: invalid proxy configuration", manifest.ErrInput)
 	}
 	var credentials any
 	if cred != auth.EmptyCredential {
 		credentials = cred
 	}
-	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{TLS: tlsMaterial, Insecure: repo.Insecure,
-		Proxy: proxy, ProxyEnvironment: proxyPolicy, Credentials: credentials})
+	material := resolved.Identity(credentials)
+	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Insecure: repo.Insecure, Credentials: credentials})
 	if err != nil {
 		return nil, nil, err
 	}
-	client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache),
-		Credential: auth.StaticCredential(client.Reference.Registry, cred)}
+	client.Client = &auth.Client{Client: source.NewHTTPClient(tr, source.HTTPStream), Cache: tr.(auth.Cache), Credential: auth.StaticCredential(client.Reference.Registry, cred)}
 	return client, material, nil
 }
 

@@ -7,8 +7,50 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestSnapshotSecrets_References(t *testing.T) {
+	t.Parallel()
+	if SnapshotSecrets(nil) != nil {
+		t.Fatal("unwired getter became wired")
+	}
+	ca := testutil.SelfSignedCA(t)
+	first := &manifest.Secret{StringData: map[string]any{
+		"username": "alice", "password": "first", "ca.crt": ca, "address": "http://proxy.invalid",
+	}}
+	current := first
+	absent := true
+	calls := make(map[[2]string]int)
+	secrets := SnapshotSecrets(func(namespace, name string) *manifest.Secret {
+		calls[[2]string{namespace, name}]++
+		if name == "missing" && absent {
+			return nil
+		}
+		return current
+	})
+	assert.Equal(t, secrets("ns", "shared"), first)
+	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
+	current = &manifest.Secret{StringData: map[string]any{"username": "rotated"}}
+	absent = false
+	assert.Equal(t, secrets("ns", "shared"), first)
+	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
+	assert.Equal(t, secrets("other", "shared"), current)
+	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
+	username, password, err := BasicAuthFromSecret(secrets("ns", "shared"), owner, "shared")
+	assert.NoError(t, err)
+	assert.Equal(t, username, "alice")
+	assert.Equal(t, password, "first")
+	ref := &manifest.LocalObjectReference{Name: "shared"}
+	material, err := ResolveTransport(secrets, owner, []TransportInput{
+		{Reference: ref, Use: TransportCert}, {Reference: ref, Use: TransportProxy},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, material.Certificate()[2], ca)
+	assert.Diff(t, calls, map[[2]string]int{{"ns", "shared"}: 1, {"ns", "missing"}: 1, {"other", "shared"}: 1})
+}
 
 func TestMissingSecretErr(t *testing.T) {
 	t.Parallel()

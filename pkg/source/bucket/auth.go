@@ -9,17 +9,6 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-func (f *Fetcher) resolveTransport(b *manifest.Bucket) (source.HTTPTransportConfig, error) {
-	owner := b.Named()
-	owner.Name = b.Namespace + "/" + b.Name
-	proxy, err := source.ResolveProxy(f.Secrets, owner, b.ProxySecretRef)
-	if err != nil {
-		return source.HTTPTransportConfig{}, err
-	}
-	tlsMaterial, err := source.ResolveCertSecret(f.Secrets, owner, b.CertSecretRef)
-	return source.HTTPTransportConfig{TLS: tlsMaterial, Proxy: proxy}, err
-}
-
 // resolveCredentials picks up accesskey/secretkey from the SecretRef
 // or falls back to anonymous (which is valid for public buckets).
 func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {

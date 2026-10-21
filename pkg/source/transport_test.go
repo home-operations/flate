@@ -1,21 +1,86 @@
 package source
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
-// TestNewHTTPTransport_ResponseHeaderTimeout is the liveness-backstop
-// regression: a host that accepts the connection but never sends response
-// headers (a black-hole) must not hang the fetch forever — the consumer's
-// dependency wait is now bound to fetch completion, so an unbounded fetch
-// would wedge the whole run. NewHTTPTransport always returns a transport
-// carrying ResponseHeaderTimeout; the request fails fast instead of hanging.
+type requestBoundTransport struct{}
+
+func (requestBoundTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: requestBoundBody{ctx: r.Context()}, Header: make(http.Header), Request: r}, nil
+}
+
+type requestBoundBody struct{ ctx context.Context }
+
+func (b requestBoundBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (requestBoundBody) Close() error { return nil }
+
+func TestNewHTTPClient_RequestBounds(t *testing.T) {
+	t.Parallel()
+	for _, purpose := range []HTTPPurpose{HTTPStream, HTTPChart, HTTPResource} {
+		t.Run([]string{"stream", "chart", "resource"}[purpose], func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				client := NewHTTPClient(requestBoundTransport{}, purpose)
+				want := time.Duration(0)
+				if purpose == HTTPChart {
+					want = 120 * time.Second
+				}
+				if client.Timeout != want {
+					t.Fatalf("client timeout = %v, want %v", client.Timeout, want)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://fixture.invalid", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				done := make(chan error, 1)
+				go func() { _, err := io.ReadAll(resp.Body); done <- err }()
+				synctest.Wait()
+				time.Sleep(120 * time.Second)
+				synctest.Wait()
+				if purpose != HTTPChart {
+					select {
+					case err := <-done:
+						t.Fatalf("stream gained a whole-body deadline: %v", err)
+					default:
+					}
+					cancel()
+				}
+				err = <-done
+				if purpose == HTTPChart && !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("chart body was not bounded: %v", err)
+				}
+				if purpose != HTTPChart && !errors.Is(err, context.Canceled) {
+					t.Fatalf("caller cancellation was lost: %v", err)
+				}
+			})
+		})
+	}
+	if HTTPResource.Timeout() != 5*time.Second || HTTPStream.Timeout() != 0 {
+		t.Fatal("context operation bounds changed")
+	}
+}
+
 func TestNewHTTPTransport_ResponseHeaderTimeout(t *testing.T) {
 	// A server that reads the request but never writes a response header.
 	block := make(chan struct{})
@@ -26,19 +91,16 @@ func TestNewHTTPTransport_ResponseHeaderTimeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { close(block) })
 
-	orig := ResponseHeaderTimeout
-	ResponseHeaderTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { ResponseHeaderTimeout = orig })
+	orig := requestBounds.header
+	requestBounds.header = 50 * time.Millisecond
+	t.Cleanup(func() { requestBounds.header = orig })
 
-	tr, err := NewHTTPTransport(nil, nil)
-	if err != nil {
-		t.Fatalf("NewHTTPTransport: %v", err)
-	}
+	tr := NewHTTPTransport(TransportMaterial{})
 	if tr == nil {
-		t.Fatal("NewHTTPTransport(nil, nil) = nil; want a bounded transport")
+		t.Fatal("NewHTTPTransport(TransportMaterial{}) = nil; want a bounded transport")
 	}
 	if tr.ResponseHeaderTimeout != 50*time.Millisecond {
-		t.Fatalf("ResponseHeaderTimeout = %v; want 50ms", tr.ResponseHeaderTimeout)
+		t.Fatalf("requestBounds.header = %v; want 50ms", tr.ResponseHeaderTimeout)
 	}
 
 	start := time.Now()
@@ -60,8 +122,6 @@ func TestNewHTTPTransport_ResponseHeaderTimeout(t *testing.T) {
 	}
 }
 
-// TestNewHTTPTransport_AppliesTLSAndStaysBounded confirms TLS customization
-// still composes onto the bounded clone (the custom-CA / OCI / bucket paths).
 func TestNewHTTPTransport_AppliesTLSAndStaysBounded(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -69,12 +129,9 @@ func TestNewHTTPTransport_AppliesTLSAndStaysBounded(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	tr, err := NewHTTPTransport(srv.Client().Transport.(*http.Transport).TLSClientConfig, nil)
-	if err != nil {
-		t.Fatalf("NewHTTPTransport: %v", err)
-	}
-	if tr.ResponseHeaderTimeout != ResponseHeaderTimeout {
-		t.Fatalf("ResponseHeaderTimeout = %v; want %v", tr.ResponseHeaderTimeout, ResponseHeaderTimeout)
+	tr := NewHTTPTransport(TransportMaterial{config: srv.Client().Transport.(*http.Transport).TLSClientConfig})
+	if tr.ResponseHeaderTimeout != requestBounds.header {
+		t.Fatalf("requestBounds.header = %v; want %v", tr.ResponseHeaderTimeout, requestBounds.header)
 	}
 	if tr.TLSClientConfig == nil {
 		t.Fatal("TLSClientConfig not applied onto the bounded clone")

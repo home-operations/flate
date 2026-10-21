@@ -7,7 +7,7 @@
 //   - Prepare: the standard pre-render dance (Clone + expand
 //     postBuild.substituteFrom + overlay) for embedders rendering a single
 //     Kustomization. Symmetric to helm.Prepare for HelmReleases, minus
-//     a values cache — the substituteFrom path has no YAML parse to
+//     a values cache; the substituteFrom path has no YAML parse to
 //     memoize; see Prepare's docstring.
 //   - Substitute: envsubst-style "${VAR}" / "${VAR:=default}" used
 //     for Flux post-build substitutions.
@@ -17,14 +17,10 @@
 // krusty's package-global state (the openapi schema registry, builtin
 // plugin/transformer factories) is still not goroutine-safe, so the
 // process-wide internal/kustomize.BuildMutex serializes EVERY krusty invocation flate
-// runs — including the helm post-renderer's krusty.Run in pkg/helm.
+// runs, including the helm post-renderer's krusty.Run in pkg/helm.
 // fluxcd/pkg/kustomize guards its own Build for the same reason; every
 // flate-owned krusty entrypoint MUST hold that same mutex.
 //
-// Caching boundary. kustomize output caching is deferred to the controller
-// layer (the Kustomization controller's spec+source fingerprint dedup), NOT
-// memoized inside this package the way helm.Client caches template output.
-// krusty plugins/generators are not guaranteed deterministic, so the stable
-// point to memoize is the coarse spec+source hash the controller already
-// computes — not the render engine's fluid internals.
+// RenderFlux persists rendered output with its input read-set snapshot and
+// validates that snapshot against the source view before reusing a frame.
 package kustomize

@@ -7,18 +7,21 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"runtime/pprof"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/task"
 
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -51,8 +54,97 @@ func newTestTreeCache(tb testing.TB, root string) *TreeCache {
 	return c
 }
 
+//nolint:tparallel // The lazy-selection subtest mutates the process proxy environment.
 func TestTreeCache_Close(t *testing.T) {
-	t.Parallel()
+	t.Run("lazy-selection", func(t *testing.T) {
+		var hits atomic.Int32
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			_, _ = io.WriteString(w, "proxied")
+		}))
+		defer proxy.Close()
+		t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+		t.Setenv("http_proxy", "")
+		t.Setenv("NO_PROXY", "")
+		t.Setenv("no_proxy", "")
+		var network source.Network
+		defer network.Close()
+		c := NewTreeCache(cachetest.New(t, "", cache.New), &network, task.NewBounded(2))
+		defer c.Close()
+		t.Setenv("HTTP_PROXY", proxy.URL)
+		if c.httpClient.Timeout != 0 {
+			t.Fatalf("resource client has a second timer: %v", c.httpClient.Timeout)
+		}
+		var body strings.Builder
+		_, err := c.httpGetURL(t.Context(), "http://lazy.test/resource", cache.ProducerInput{Writer: &body})
+		if err != nil || body.String() != "proxied" || hits.Load() != 1 {
+			t.Fatalf("lazy Network policy: %q hits=%d err=%v", body.String(), hits.Load(), err)
+		}
+	})
+	for _, borrowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("network-borrowed-%t", borrowed), func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int32
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprintf(w, "%d", requests.Load())
+			}))
+			srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					requests.Add(1)
+				}
+			}
+			srv.Start()
+			defer srv.Close()
+			var network *source.Network
+			if borrowed {
+				network = new(source.Network)
+			}
+			c := NewTreeCache(cachetest.New(t, "", cache.New), network, task.NewBounded(2))
+			if !borrowed {
+				network = c.network
+			}
+			defer network.Close()
+			defer c.Close()
+			client := source.NewHTTPClient(network, source.HTTPStream)
+			fetch := func() string {
+				t.Helper()
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(resp.Body)
+				if err := errors.Join(err, resp.Body.Close()); err != nil {
+					t.Fatal(err)
+				}
+				return string(body)
+			}
+			first := fetch()
+			workers := &remoteWorkers{drain: make(chan struct{})}
+			workers.state.Store(1)
+			c.workers.Store(workers)
+			canceled := make(chan struct{})
+			cancel := context.CancelFunc(func() { close(canceled) })
+			rf := &remoteFetch{}
+			rf.cancel.Store(&cancel)
+			c.remoteFetches.Store(remoteKey{url: srv.URL}, rf)
+			closed := make(chan struct{})
+			go func() { c.Close(); close(closed) }()
+			<-canceled
+			// Private idle connections MUST survive until all admitted work has joined.
+			during := fetch()
+			workers.state.Add(^uint64(0))
+			close(workers.drain)
+			<-closed
+			after := fetch()
+			if during != first || (after == first) != borrowed {
+				t.Fatalf("Network cleanup order: first=%s during=%s after=%s borrowed=%t", first, during, after, borrowed)
+			}
+		})
+	}
 	for _, concurrency := range []int{2, 4} {
 		for _, stage := range []string{"unused", "idle", "published", "admitted-before-launch", "retired"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, stage), func(t *testing.T) {

@@ -188,7 +188,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// namespace KSes a cluster-config KS re-emits, so the store collapses
 	// them to one advisory line per secret name.
 	for _, name := range values.UnreadableSubstituteSecrets(ks, provider) {
-		c.Store.AddWarning(manifest.Warning{
+		c.Store.AddWarning(id, manifest.Warning{
 			Category: manifest.WarnUnresolvedSubstitution,
 			Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; "+
 				"its variables are unavailable, so their ${VAR} references may remain unsubstituted "+

@@ -28,7 +28,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context, repoRoot string) e
 		return nil
 	}
 	if changes.Len() == 0 && (o.cfg.PathOrig != "" || o.cfg.BaseInput != nil) {
-		o.store.AddWarning(manifest.Warning{
+		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{
 			Category: manifest.WarnPathConfig,
 			Message:  "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots",
 		})
@@ -53,7 +53,7 @@ func (o *Orchestrator) computeChangeSet(ctx context.Context, repoRoot string) (*
 	// Directory admission reuses one artifact for the same-root exception.
 	// Equal labels on distinct authoritative readers MUST still compare bytes.
 	if o.cfg.BaseInput == o.cfg.Input {
-		o.store.AddWarning(manifest.Warning{
+		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{
 			Category: manifest.WarnPathConfig,
 			Message:  "--path and --path-orig resolve to the same root; ignoring --path-orig",
 			Detail:   []string{repoRoot},

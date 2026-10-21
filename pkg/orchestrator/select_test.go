@@ -23,6 +23,41 @@ func selectedRun(res *Result) Rendered {
 	return Rendered{Orchestrator: &Orchestrator{store: store.New(), index: indexForTest(nil)}, Result: res}
 }
 
+func TestSelect_RenderWarningScope(t *testing.T) {
+	t.Parallel()
+	warnings := []manifest.Warning{
+		{Category: manifest.WarnUnresolvedSubstitution, Message: "shared Secret", Count: 2},
+		{Category: manifest.WarnStaleValues, Resource: testutil.HelmReleaseID("apps", "app"), Message: "stale", Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: testutil.HelmReleaseID("other", "app"), Message: "foreign", Count: 1},
+		{Category: manifest.WarnOmittedValues, Resource: testutil.HelmReleaseID("apps", "app"), Message: "selected", Count: 1},
+		{Category: manifest.WarnOmittedValues, Resource: testutil.HelmReleaseID("apps", "sibling"), Message: "other name", Count: 1},
+		{Category: manifest.WarnOmittedValues, Resource: testutil.KustomizationID("apps", "app"), Message: "other kind", Count: 1},
+	}
+	for _, tc := range []struct {
+		name  string
+		sides int
+		want  []manifest.Warning
+	}{
+		{name: "single", sides: 1, want: slices.Concat(warnings[:2], warnings[3:])},
+		{name: "comparison", sides: 2, want: slices.Concat(warnings[:2], warnings[3:4])},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runs := make([]Rendered, tc.sides)
+			for i := range runs {
+				runs[i] = selectedRun(&Result{Warnings: slices.Clone(warnings)})
+			}
+			selected, err, remainder := Select(runs, nil, []manifest.NamedResource{testutil.HelmReleaseID("apps", "app")}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, remainder)
+			assert.Equal(t, len(selected), tc.sides)
+			for _, res := range selected {
+				assert.Diff(t, res.Warnings, tc.want)
+			}
+		})
+	}
+}
+
 func TestMatchesLabels_Matches(t *testing.T) {
 	t.Parallel()
 	ks := &manifest.Kustomization{

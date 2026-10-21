@@ -145,8 +145,8 @@ type Store struct {
 	// reads them once at finalize. Its own mutex keeps advisory writes off the
 	// shard locks' hot path. See warning.go.
 	warnMu    sync.Mutex
-	warnOrder []manifest.Warning
-	warnIndex map[warningKey]int // canonical warning → index into warnOrder (Count bump)
+	warnOrder []warningRecord
+	warnIndex map[warningKey]int
 }
 
 // New constructs an empty Store.

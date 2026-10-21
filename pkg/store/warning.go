@@ -1,46 +1,57 @@
 package store
 
 import (
+	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// AddWarning records a render advisory for Result.Warnings. Identical warnings
-// (same resource, category, message, and detail) collapse into one entry whose
-// Count is incremented — so a producer that fires the same advisory N times
-// (e.g. across retries) surfaces once with "(×N)". Producers leave Count unset
-// (the zero value normalizes to 1); it exists for the collector's tally.
-// Concurrency-safe via a dedicated mutex, off the shard locks' hot path.
-func (s *Store) AddWarning(w manifest.Warning) {
-	if w.Count <= 0 {
-		w.Count = 1
+// AddWarning records one advisory per origin and complete warning payload.
+// Count reports distinct origins sharing a resource, category, message and
+// ordered detail; incoming Count is ignored. A zero origin identifies a
+// render-global advisory independently of the displayed Resource.
+func (s *Store) AddWarning(origin manifest.NamedResource, w manifest.Warning) {
+	detail := ""
+	if len(w.Detail) > 0 {
+		detail = fmt.Sprintf("%q", w.Detail)
+		w.Detail = slices.Clone(w.Detail)
+	} else {
+		w.Detail = nil
 	}
-	w.Detail = slices.Clone(w.Detail) // defensive: caller can't mutate stored state
-	key := warningKey{w.Resource, w.Category, w.Message, strings.Join(w.Detail, "\x00")}
+	key := warningKey{w.Resource, w.Category, w.Message, detail}
 
 	s.warnMu.Lock()
 	defer s.warnMu.Unlock()
 	if i, ok := s.warnIndex[key]; ok {
-		s.warnOrder[i].Count += w.Count
+		record := &s.warnOrder[i]
+		if _, seen := record.origins[origin]; !seen {
+			record.origins[origin] = struct{}{}
+			record.warning.Count = len(record.origins)
+		}
 		return
 	}
 	if s.warnIndex == nil {
 		s.warnIndex = make(map[warningKey]int)
 	}
+	w.Count = 1
 	s.warnIndex[key] = len(s.warnOrder)
-	s.warnOrder = append(s.warnOrder, w)
+	s.warnOrder = append(s.warnOrder, warningRecord{
+		warning: w,
+		origins: map[manifest.NamedResource]struct{}{origin: {}},
+	})
 }
 
-// Warnings returns a deterministically-sorted copy of the collected advisories
-// (by category, then resource, then message — see manifest.CompareWarning), or
-// nil when none were recorded. The orchestrator copies this into
-// Result.Warnings at finalize.
+// Warnings returns a copy of the collected advisories ordered by
+// manifest.CompareWarning, or nil when none were recorded.
 func (s *Store) Warnings() []manifest.Warning {
 	s.warnMu.Lock()
-	out := slices.Clone(s.warnOrder)
-	for i, w := range s.warnOrder {
+	var out []manifest.Warning
+	if len(s.warnOrder) > 0 {
+		out = make([]manifest.Warning, len(s.warnOrder))
+	}
+	for i, record := range s.warnOrder {
+		w := record.warning
 		w.Detail = slices.Clone(w.Detail)
 		out[i] = w
 	}
@@ -88,6 +99,11 @@ func (s *Store) Warnings() []manifest.Warning {
 	}
 	slices.SortFunc(out, manifest.CompareWarning)
 	return out
+}
+
+type warningRecord struct {
+	warning manifest.Warning
+	origins map[manifest.NamedResource]struct{}
 }
 
 type warningKey struct {

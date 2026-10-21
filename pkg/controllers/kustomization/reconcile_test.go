@@ -240,6 +240,95 @@ data: {greeting: '%s'}
 	}
 }
 
+func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
+	t.Parallel()
+	for _, replay := range []bool{false, true} {
+		name := "metadata before dispatch"
+		if replay {
+			name = "metadata after completion"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c, s, _ := newControllerWithFixture(t)
+			consumers := make([]*manifest.Kustomization, 2)
+			for i := range consumers {
+				obj, _, _, err := manifest.ParseDoc(map[string]any{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+					"kind":       "Kustomization",
+					"metadata":   map[string]any{"name": fmt.Sprintf("apps-%d", i), "namespace": "flux-system"},
+					"spec": map[string]any{
+						"path":      "./apps",
+						"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system"},
+						"postBuild": map[string]any{"substituteFrom": []any{
+							map[string]any{"kind": "Secret", "name": "cluster-secrets"},
+						}},
+					},
+				}, manifest.ParseDocOptions{})
+				assert.NoError(t, err)
+				consumers[i] = obj.(*manifest.Kustomization)
+				s.AddObject(consumers[i])
+			}
+			first := consumers[0].Named()
+			start := make(chan struct{})
+			completed := make(chan struct{})
+			var accepted *store.Emission
+			for i, ks := range consumers {
+				c.Tasks.Go(t.Context(), ks.Named().String(), func(ctx context.Context) {
+					<-start
+					if deps := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone); len(deps) != 0 {
+						t.Errorf("blocked dependencies = %v", deps)
+					}
+					if i == 0 {
+						accepted, _ = s.GetArtifact(first).(*store.Emission)
+						close(completed)
+					}
+				})
+			}
+			stamped := consumers[0].Clone()
+			stamped.Labels = map[string]string{"kustomize.toolkit.fluxcd.io/name": "parent"}
+			if replay {
+				close(start)
+				<-completed
+			}
+			s.AddObject(stamped)
+			assert.Equal(t, s.GetObject(first), manifest.BaseManifest(stamped))
+			if !replay {
+				close(start)
+			} else {
+				c.Tasks.Go(t.Context(), "metadata replay", func(ctx context.Context) {
+					if deps := c.ReconcileNode(ctx, first, manifest.DrainNone); len(deps) != 0 {
+						t.Errorf("replay blocked dependencies = %v", deps)
+					}
+				})
+			}
+			c.Tasks.BlockTillDone()
+			assert.Equal(t, c.Tasks.Failures(), int64(0))
+			if accepted == nil || accepted.Fingerprint == "" || len(accepted.Manifests) != 1 {
+				t.Fatalf("first emission = %+v", accepted)
+			}
+			if got := s.GetArtifact(first); got != accepted {
+				t.Fatalf("metadata replay replaced accepted output/fingerprint: %p -> %p", accepted, got)
+			}
+			for _, ks := range consumers {
+				info, _ := s.GetStatus(ks.Named())
+				assert.Equal(t, info.Status, store.StatusReady)
+				other := s.GetArtifact(ks.Named()).(*store.Emission)
+				if other.Fingerprint == "" || len(other.Manifests) != 1 {
+					t.Fatalf("consumer emission = %+v", other)
+				}
+				assert.Diff(t, other.Manifests[0]["data"], map[string]any{"greeting": "hi"})
+			}
+			warnings := s.Warnings()
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnUnresolvedSubstitution {
+				t.Fatalf("warnings = %+v, want one unresolved Secret group", warnings)
+			}
+			assert.Equal(t, warnings[0].Resource, manifest.NamedResource{})
+			assert.Equal(t, warnings[0].Count, 2)
+			t.Logf("replay=%t; both consumers Ready; accepted output reused; warning=%+v", replay, warnings[0])
+		})
+	}
+}
+
 // TestReconcile_FingerprintDedup_SkipsRender locks the dedup
 // short-circuit from PR #220: a second AddObject with byte-equal
 // post-Prepare spec must not re-run kustomize.RenderFlux. We force

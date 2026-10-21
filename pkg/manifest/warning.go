@@ -1,6 +1,9 @@
 package manifest
 
-import "cmp"
+import (
+	"cmp"
+	"slices"
+)
 
 // Warning is a non-fatal render advisory: a user-actionable signal ABOUT the
 // rendered output that flate surfaces at end-of-run and that a library consumer
@@ -27,8 +30,8 @@ type Warning struct {
 	// Detail is an optional structured payload — e.g. the dotted value key paths
 	// a WarnStaleValues advisory lists.
 	Detail []string
-	// Count is the number of times an identical warning was emitted, set by the
-	// collector's de-duplication (1 for a unique warning).
+	// Count is the number of distinct advisory origins sharing this payload,
+	// set by the collector. Repeated submissions by one origin count once.
 	Count int
 }
 
@@ -61,12 +64,12 @@ const (
 	WarnUnresolvedSubstitution = "UnresolvedSubstitution"
 )
 
-// CompareWarning orders warnings deterministically by category, then resource,
-// then message — so the footer and Result.Warnings are stable across runs.
+// CompareWarning orders warnings by category, resource, message and ordered detail.
 func CompareWarning(a, b Warning) int {
 	return cmp.Or(
 		cmp.Compare(a.Category, b.Category),
 		a.Resource.Compare(b.Resource),
 		cmp.Compare(a.Message, b.Message),
+		slices.Compare(a.Detail, b.Detail),
 	)
 }

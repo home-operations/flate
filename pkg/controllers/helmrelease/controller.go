@@ -238,7 +238,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 		// container, chart 404) re-fails and falls through to the error below.
 		if rescued, paths, ok := c.renderBestEffort(ctx, id, hr); ok {
 			docs, err = rescued, nil
-			c.Store.AddWarning(manifest.Warning{
+			c.Store.AddWarning(id, manifest.Warning{
 				Resource: id,
 				Category: manifest.WarnUnresolvedSubstitution,
 				Message:  "rendered best-effort: unresolved substitution values replaced with placeholders",
@@ -254,7 +254,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// override is a stale no-op. Advisory only; rides Result.Warnings to the
 	// footer + konflate. See StaleValuePaths.
 	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values); len(stale) > 0 {
-		c.Store.AddWarning(manifest.Warning{
+		c.Store.AddWarning(id, manifest.Warning{
 			Resource: id,
 			Category: manifest.WarnStaleValues,
 			Message:  "values not used by the chart",

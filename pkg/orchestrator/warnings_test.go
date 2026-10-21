@@ -155,16 +155,17 @@ spec:
 	}
 }
 
-// TestRender_UnresolvedSubstitutionWarning is the konflate-facing contract: a
-// Kustomization whose postBuild.substituteFrom Secret can't be read offline
-// (absent here, as an ExternalSecret-backed one is) surfaces a structured
-// Result.Warnings entry (Category WarnUnresolvedSubstitution, attributed to the
-// Secret): its variables are unavailable, so references may remain unsubstituted
-// or resolve to defaults or empty values. The render
-// itself still succeeds: Secret refs are not hard dependency edges.
 func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cluster-secrets
+`))
+	testutil.WriteFile(t, dir, "kubernetes/flux/other-apps.yaml", testutil.KustomizationYAML("other-apps", "other", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
@@ -176,30 +177,30 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+	res, err := o.Render(t.Context())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 
-	found := false
+	var warnings []manifest.Warning
 	for _, w := range res.Warnings {
-		if w.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(w.Message, `"cluster-secrets"`) {
-			found = true
-			want := `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
-				"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
-				"or resolve to defaults or empty values"
-			if w.Message != want {
-				t.Errorf("warning Message = %q, want %q", w.Message, want)
-			}
+		if w.Category == manifest.WarnUnresolvedSubstitution {
+			warnings = append(warnings, w)
 		}
 	}
-	if !found {
-		t.Fatalf("missing UnresolvedSubstitution warning naming cluster-secrets; Warnings=%+v", res.Warnings)
+	want := manifest.Warning{
+		Category: manifest.WarnUnresolvedSubstitution,
+		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
+			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
+			"or resolve to defaults or empty values",
+		Count: 2,
 	}
+	assert.Diff(t, warnings, []manifest.Warning{want})
 }
 
 // TestRender_BestEffortRescue: a HelmRelease whose required value rendered empty

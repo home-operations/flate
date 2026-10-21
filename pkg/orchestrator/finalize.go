@@ -168,10 +168,9 @@ func (o *Orchestrator) warnMissingCRDs() {
 		for i, id := range dependents {
 			names[i] = id.String()
 		}
-		o.store.AddWarning(manifest.Warning{
+		o.store.AddWarning(crd, manifest.Warning{
 			Resource: crd,
 			Category: manifest.WarnMissingCRD,
-			Count:    1,
 			Message:  fmt.Sprintf("CRD %s absent from offline inputs; accepted for %s", crd.String(), strings.Join(names, ", ")),
 		})
 	}
@@ -187,7 +186,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 	// the "typo'd --path that happens to be an empty directory" case
 	// where flate would otherwise look like a silent success.
 	if ksCount == 0 && hrCount == 0 {
-		o.store.AddWarning(manifest.Warning{
+		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{
 			Category: manifest.WarnEmptyScan,
 			Message:  "no Flux Kustomization or HelmRelease objects found under --path; check the path is correct",
 		})

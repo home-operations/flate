@@ -14,8 +14,6 @@ func hrID(name string) manifest.NamedResource {
 	return testutil.HelmReleaseID("default", name)
 }
 
-// TestWarnings_Empty: a fresh store reports nil (not empty slice) — matching
-// the nil-when-empty convention Result.Warnings consumers rely on.
 func TestWarnings_Empty(t *testing.T) {
 	t.Parallel()
 	if got := New().Warnings(); got != nil {
@@ -23,119 +21,184 @@ func TestWarnings_Empty(t *testing.T) {
 	}
 }
 
-// TestAddWarning_DedupAndCount: identical advisories collapse and accumulate a
-// Count; a differing resource or detail is a distinct entry.
 func TestAddWarning_DedupAndCount(t *testing.T) {
 	t.Parallel()
 	s := New()
-	w := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues,
+	origin := hrID("app")
+	w := manifest.Warning{Resource: origin, Category: manifest.WarnStaleValues, Count: 42,
 		Message: "values not defined by the chart schema", Detail: []string{"a", "b"}}
-	s.AddWarning(w)
-	s.AddWarning(w)
+	s.AddWarning(origin, w)
+	s.AddWarning(origin, w)
+	w.Count = -1
+	s.AddWarning(hrID("other"), w)
+	w.Count = 0
+	s.AddWarning(origin, w)
 	detail := w
 	detail.Detail = []string{"c"}
-	s.AddWarning(detail)
+	s.AddWarning(origin, detail)
+	message := w
+	message.Message = "another advisory"
+	s.AddWarning(origin, message)
 	foreign := w
 	foreign.Resource.Group = "example.test"
-	s.AddWarning(foreign)
+	s.AddWarning(origin, foreign)
 	core := w
 	core.Resource.Kind += "." + core.Resource.Group
 	core.Resource.Group = ""
 	assert.Equal(t, core.Resource.String(), w.Resource.String())
-	s.AddWarning(core)
+	s.AddWarning(origin, core)
 
 	got := s.Warnings()
-	if len(got) != 4 {
-		t.Fatalf("want 4 distinct warnings, got %d: %+v", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("want 5 distinct warnings, got %d: %+v", len(got), got)
 	}
 	for _, warning := range got {
 		want := 1
-		if warning.Resource == w.Resource && slices.Equal(warning.Detail, w.Detail) {
+		if warning.Resource == w.Resource && warning.Message == w.Message && slices.Equal(warning.Detail, w.Detail) {
 			want = 2
 		}
 		assert.Equal(t, warning.Count, want)
 	}
 }
 
-// TestAddWarning_DetailCollision: two warnings whose Detail elements would
-// collide under a naive comma-join ([a,b] vs [a","b]) stay distinct entries.
+func TestAddWarning_OriginIdentity(t *testing.T) {
+	t.Parallel()
+	origin := hrID("app")
+	core := origin
+	core.Kind += "." + core.Group
+	core.Group = ""
+	assert.Equal(t, core.String(), origin.String())
+	for _, tc := range []struct {
+		name     string
+		resource manifest.NamedResource
+		origins  []manifest.NamedResource
+		want     int
+	}{
+		{name: "structured origins in global group", origins: []manifest.NamedResource{origin, core, origin, core}, want: 2},
+		{name: "global advisory replay", origins: []manifest.NamedResource{{}, {}}, want: 1},
+		{name: "zero origin independent of display", resource: origin, origins: []manifest.NamedResource{{}, {}, origin, origin}, want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			w := manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Resource: tc.resource, Message: "m"}
+			for _, id := range tc.origins {
+				s.AddWarning(id, w)
+			}
+			w.Count = tc.want
+			assert.Diff(t, s.Warnings(), []manifest.Warning{w})
+		})
+	}
+}
+
 func TestAddWarning_DetailCollision(t *testing.T) {
 	t.Parallel()
-	s := New()
-	base := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues, Message: "m"}
-	w1 := base
-	w1.Detail = []string{"a,b"}
-	w2 := base
-	w2.Detail = []string{"a", "b"}
-	s.AddWarning(w1)
-	s.AddWarning(w2)
-	if got := s.Warnings(); len(got) != 2 {
-		t.Fatalf("distinct Detail must not collide; want 2 warnings, got %d: %+v", len(got), got)
+	for _, tc := range []struct {
+		name string
+		a, b []string
+		want int
+	}{
+		{name: "comma", a: []string{"a,b"}, b: []string{"a", "b"}, want: 2},
+		{name: "empty element", b: []string{""}, want: 2},
+		{name: "embedded NUL", a: []string{"a\x00b"}, b: []string{"a", "b"}, want: 2},
+		{name: "element order", a: []string{"a", "b"}, b: []string{"b", "a"}, want: 2},
+		{name: "invalid UTF-8", a: []string{"\xff"}, b: []string{"\xfe"}, want: 2},
+		{name: "nil and empty", b: []string{}, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			w := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues, Message: "m", Detail: tc.a}
+			s.AddWarning(w.Resource, w)
+			w.Detail = tc.b
+			s.AddWarning(w.Resource, w)
+			got := s.Warnings()
+			assert.Equal(t, len(got), tc.want)
+			for _, warning := range got {
+				assert.Equal(t, warning.Count, 1)
+			}
+		})
 	}
 }
 
-// TestWarnings_Sorted: output is ordered by (category, resource, message),
-// independent of insertion order — deterministic for the footer + Result.
 func TestWarnings_Sorted(t *testing.T) {
 	t.Parallel()
-	s := New()
-	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("z"), Message: "m"})
-	s.AddWarning(manifest.Warning{Category: manifest.WarnEmptyScan, Message: "scan"})
-	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "m"})
-
-	got := s.Warnings()
-	want := []string{manifest.WarnEmptyScan, manifest.WarnStaleValues, manifest.WarnStaleValues}
-	for i, w := range got {
-		if w.Category != want[i] {
-			t.Fatalf("order[%d] category = %q, want %q (%+v)", i, w.Category, want[i], got)
-		}
+	want := []manifest.Warning{
+		{Category: manifest.WarnEmptyScan, Message: "scan", Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "m", Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "m", Detail: []string{""}, Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "m", Detail: []string{"a"}, Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "m", Detail: []string{"a", "b"}, Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "z", Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("z"), Message: "m", Count: 1},
 	}
-	// Within WarnStaleValues, resource "a" precedes "z".
-	if got[1].Resource.Name != "a" || got[2].Resource.Name != "z" {
-		t.Errorf("resource tiebreak wrong: %q then %q", got[1].Resource.Name, got[2].Resource.Name)
+	for _, reverse := range []bool{false, true} {
+		name := "forward"
+		if reverse {
+			name = "reverse"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			input := slices.Clone(want)
+			if reverse {
+				slices.Reverse(input)
+			}
+			for _, w := range input {
+				s.AddWarning(w.Resource, w)
+			}
+			assert.Diff(t, s.Warnings(), want)
+		})
 	}
 }
 
-// TestAddWarning_DefensiveCopy: mutating the caller's Detail slice after Add
-// does not change stored state, and the returned slice is a copy.
 func TestAddWarning_DefensiveCopy(t *testing.T) {
 	t.Parallel()
 	s := New()
 	detail := []string{"x"}
-	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
+	s.AddWarning(hrID("app"), manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
 	detail[0] = "MUTATED"
 
 	got := s.Warnings()
 	if len(got) != 1 || got[0].Detail[0] != "x" {
 		t.Fatalf("stored detail aliased caller slice: %+v", got)
 	}
-	got[0].Detail[0] = "ALSO_MUTATED" // mutating the returned copy must not affect the store
-	if again := s.Warnings(); again[0].Detail[0] != "x" {
-		t.Errorf("Warnings() returned aliased internal slice: %q", again[0].Detail[0])
+	got[0].Detail[0] = "ALSO_MUTATED"
+	got[0].Count = 100
+	if again := s.Warnings(); again[0].Detail[0] != "x" || again[0].Count != 1 {
+		t.Errorf("Warnings() returned aliased internal state: %+v", again)
 	}
 }
 
-// TestAddWarning_Concurrent: concurrent producers don't race (run with -race)
-// and every emission is accounted for via Count.
 func TestAddWarning_Concurrent(t *testing.T) {
 	t.Parallel()
-	s := New()
-	const goroutines, each = 8, 50
-	var wg sync.WaitGroup
-	for range goroutines {
-		wg.Go(func() {
-			for range each {
-				s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues,
-					Resource: hrID("shared"), Message: "m", Detail: []string{"k"}})
+	for _, first := range []int{0, 1} {
+		name := "app first"
+		if first == 1 {
+			name = "other first"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			start := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			added := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			w := manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Message: "m", Detail: []string{"k"}}
+			var wg sync.WaitGroup
+			for i, id := range []manifest.NamedResource{hrID("app"), hrID("other")} {
+				wg.Go(func() {
+					<-start[i]
+					s.AddWarning(id, w)
+					close(added[i])
+					<-added[1-i]
+					s.AddWarning(id, w)
+				})
 			}
+			close(start[first])
+			<-added[first]
+			close(start[1-first])
+			wg.Wait()
+			w.Count = 2
+			assert.Diff(t, s.Warnings(), []manifest.Warning{w})
 		})
-	}
-	wg.Wait()
-	got := s.Warnings()
-	if len(got) != 1 {
-		t.Fatalf("want 1 deduped warning, got %d", len(got))
-	}
-	if got[0].Count != goroutines*each {
-		t.Errorf("Count = %d, want %d", got[0].Count, goroutines*each)
 	}
 }

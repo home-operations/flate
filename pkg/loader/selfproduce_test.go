@@ -466,9 +466,10 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 		emitters                     []manifest.NamedResource
 		wantParent                   manifest.NamedResource
 		strict, repeated, graphAdded bool
-		nonStructural                bool
+		nonStructural, seeded        bool
 	}{
 		{name: "unique owner", emitters: []manifest.NamedResource{parent}, wantParent: parent},
+		{name: "bootstrap origin gains owner", emitters: []manifest.NamedResource{parent}, wantParent: parent, seeded: true},
 		{name: "non structural record", emitters: []manifest.NamedResource{parent}, nonStructural: true},
 		{name: "missing owner"},
 		{name: "ambiguous owners", emitters: []manifest.NamedResource{other, parent}},
@@ -519,6 +520,9 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 				}
 				if !tc.graphAdded {
 					l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: path, File: file}
+					if tc.seeded {
+						l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: path, File: file, Productions: []manifest.Production{{Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID}}}
+					}
 				}
 				return l
 			}

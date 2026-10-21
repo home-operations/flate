@@ -75,6 +75,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					o.store.UpdateStatus(gate, store.StatusReady, store.ReasonSuspended, "suspended")
 					o.store.UpdateStatus(child, store.StatusPending, "", "queued")
 					o.configureControllers()
+					o.ksc.Emit(gate, &store.Emission{Children: []store.Child{{Obj: original}}, Complete: true})
 					var result schedule.Result
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
 						result = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.DrainNone)

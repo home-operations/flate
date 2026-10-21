@@ -96,7 +96,8 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 	var blocked []manifest.NamedResource
 	var failed *manifest.DependencyFailedError
 	for dep := range e.Reads.Gates() {
-		switch cl := w.Classify(ctx, dep, level); cl.Kind {
+		w.Materializer = dep.Materializer
+		switch cl := w.Classify(ctx, dep.DependencyRef, level); cl.Kind {
 		case schedule.DependencyFailed:
 			if failed == nil {
 				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Reasons: make(map[manifest.NamedResource]string)}
@@ -123,6 +124,9 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 
 // Settle classifies retained unresolved gates without rendering again.
 func (e *Execution) Settle(ctx context.Context, level manifest.DrainLevel) {
+	if !e.Reads.Valid() {
+		return
+	}
 	if pending, ok := e.pending.(interface {
 		Settle(context.Context, manifest.DrainLevel) error
 	}); ok {
@@ -190,13 +194,8 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		}
 	}()
 	obj, ok := e.Reads.Get[T](id)
-	if !ok {
-		if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-			e.Store.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "object not in store at reconcile time")
-		}
-		return
-	}
-	if e.preGate(obj) {
+
+	if ok && e.preGate(obj) {
 		e.withdrawInvalid()
 		e.Reads.Accept()
 		return
@@ -214,13 +213,70 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		e.finish(fmt.Errorf("%w: %s", manifest.ErrInput, message))
 		return
 	}
+	if !ok {
+		e.resume = e.requireDeclaration
+		err := e.requireDeclaration(ctx, level)
+		if !errors.Is(err, manifest.ErrSourceSkipped) {
+			e.finish(err)
+		} else if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
+			e.Store.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "object not in store at reconcile time")
+		}
+		return
+	}
+
 	e.initial, _ = e.Store.GetStatus(id)
 	e.recovering = e.initial.IsDependencyFailure() || e.initial.Status == store.StatusFailed && e.Reads.ReplacesInvalid()
-	err := reconcile(ctx, obj, level)
+	run := func(ctx context.Context, level manifest.DrainLevel) error {
+		if !e.Reads.Valid() {
+			return nil
+		}
+		if err := e.requireDeclaration(ctx, level); err != nil {
+			return err
+		}
+		return reconcile(ctx, obj, level)
+	}
+	err := run(ctx, level)
 	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
-		e.resume = func(ctx context.Context, level manifest.DrainLevel) error { return reconcile(ctx, obj, level) }
+		e.resume = run
 	}
 	e.finish(err)
+}
+
+func (e *Execution) requireDeclaration(ctx context.Context, level manifest.DrainLevel) error {
+	id := e.Reads.ID()
+	if e.Reads.GetDeclaration(id) != nil {
+		return nil
+	}
+	var owners []manifest.NamedResource
+	for _, production := range e.Reads.Productions(id, nil) {
+		if production.Owner != (manifest.NamedResource{}) && production.Owner != id {
+			owners = append(owners, production.Owner)
+		}
+	}
+	slices.SortFunc(owners, manifest.NamedResource.Compare)
+	owners = slices.Compact(owners)
+	if len(owners) == 0 {
+		return fmt.Errorf("%w: object not in store at reconcile time", manifest.ErrSourceSkipped)
+	}
+	for _, owner := range owners {
+		e.Reads.RequireMaterializer(owner)
+	}
+	err := e.classify(ctx, level)
+	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+		e.SetPendingUnlessReady(id, "waiting for declaration")
+		return err
+	}
+	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+	if !ok {
+		failed = &manifest.DependencyFailedError{Parent: id, Reasons: make(map[manifest.NamedResource]string)}
+	}
+	failed.Failed = owners
+	for _, owner := range owners {
+		if _, exists := failed.Reasons[owner]; !exists {
+			failed.Reasons[owner] = "declaration not emitted"
+		}
+	}
+	return failed
 }
 
 // KeepOrderingDep retains changed or unresolved authored prerequisites.
@@ -239,10 +295,16 @@ func (e *Execution) SourceSkipped(id manifest.NamedResource, label string) error
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
 func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, error) {
+	if err := e.PreflightError(id); err != nil {
+		return "", true, err
+	}
 	if content == nil {
 		return "", false, nil
 	}
 	fp := manifest.Fingerprint(content)
+	if err := e.PreflightError(id); err != nil {
+		return "", true, err
+	}
 	if fp == "" {
 		return "", false, nil
 	}

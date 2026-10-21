@@ -3,17 +3,20 @@ package base_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
-
-	"github.com/home-operations/flate/pkg/schedule"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestRequire_Classifications(t *testing.T) {
@@ -297,7 +300,151 @@ func TestExecution_ResumedPredicates(t *testing.T) {
 	if execution.Outcome() != schedule.DependencyFailed || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{dependency.Named()}) {
 		t.Fatalf("resumed execution lost its false predicate: %+v", info)
 	}
-	if got := slices.Collect(execution.Reads.Gates()); !slices.Equal(got, deps) {
+	want := make([]store.Gate, len(deps))
+	for i, dep := range deps {
+		want[i].DependencyRef = dep
+	}
+	if got := slices.Collect(execution.Reads.Gates()); !slices.Equal(got, want) {
 		t.Fatalf("resumption duplicated or lost predicates: %v", got)
+	}
+}
+
+func TestDispatch_ExactMaterializers(t *testing.T) {
+	t.Parallel()
+	for _, state := range []store.Status{store.StatusPending, store.StatusFailed, store.StatusReady} {
+		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			id := testutil.HelmReleaseID("apps", "missing")
+			owner := &manifest.ResourceSet{Name: "a-owner", Namespace: "apps"}
+			peer := &manifest.ResourceSet{Name: "z-failed", Namespace: "apps"}
+			unrelated := &manifest.ResourceSet{Name: "unrelated", Namespace: "other"}
+			st.AddObjects([]manifest.BaseManifest{owner, peer, unrelated})
+			st.UpdateStatus(owner.Named(), state, "", "owner state")
+			st.UpdateStatus(peer.Named(), store.StatusFailed, "", "peer failed")
+			st.UpdateStatus(unrelated.Named(), store.StatusPending, "", "unrelated")
+			a := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "a"}
+			z := a
+			z.Name = "z"
+			other := id
+			other.Namespace = "other"
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id:    {Productions: []manifest.Production{{Owner: owner.Named(), Source: z}, {Owner: peer.Named(), Source: a}, {Owner: owner.Named(), Source: a}, {}, {Owner: id}}},
+				other: {Productions: []manifest.Production{{Owner: unrelated.Named(), Source: a}}},
+			}})
+			run := controllertest.NewExecution(base.New(st, nil, "test"), id)
+			run.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+				t.Error("missing declaration reached body")
+				return nil
+			})
+			info, _ := st.GetStatus(id)
+			if state == store.StatusPending {
+				blocked, isBlocked := run.Blocked, run.Outcome() == schedule.Blocked
+				if !isBlocked || !slices.Equal(blocked, []manifest.NamedResource{owner.Named()}) {
+					t.Fatalf("blocked=%v error=%v, want exact pending owner once", blocked, info)
+				}
+			} else {
+				failed, isFailed := info.BlockedBy(), info.IsDependencyFailure()
+				if !isFailed || !slices.Equal(failed, []manifest.NamedResource{owner.Named(), peer.Named()}) {
+					t.Fatalf("failure=%v, want sorted exact owners once", info)
+				}
+				if state == store.StatusReady && !strings.Contains(info.Message, "declaration not emitted") {
+					t.Fatalf("ready owner reason = %q", info.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestDispatch_ArrivalDuringClassification(t *testing.T) {
+	t.Parallel()
+	for _, suspended := range []bool{false, true} {
+		t.Run(fmt.Sprint(suspended), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			tasks := task.NewBounded(2)
+			parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
+			child := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			st.AddObject(child)
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}}}})
+			entered, published := make(chan struct{}), make(chan struct{})
+			c := base.New(st, tasks, "test")
+			c.Configure(base.Options{Existence: declarationPromotion(func(id manifest.NamedResource) bool {
+				if id != parent.Named() {
+					t.Errorf("unrelated promotion: %s", id)
+					return false
+				}
+				close(entered)
+				tasks.YieldSlot(func() { <-published })
+				return true
+			})})
+			var run *base.Execution
+			var bodies atomic.Int64
+			tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
+				run = controllertest.NewExecution(c, child.Named())
+				run.Dispatch(ctx, manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { bodies.Add(1); return nil })
+			})
+			tasks.Go(t.Context(), "publish", func(context.Context) {
+				tasks.YieldSlot(func() { <-entered })
+				st.AddObject(parent)
+				accepted := child.Clone()
+				accepted.Suspend = suspended
+				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}})
+				st.UpdateStatus(parent.Named(), store.StatusPending, "", "materializing peers")
+				close(published)
+			})
+			tasks.BlockTillDone()
+			if tasks.Failures() != 0 || run.Valid() || bodies.Load() != 0 {
+				t.Fatalf("stale dispatch continued: bodies=%d valid=%t", bodies.Load(), run.Valid())
+			}
+			run.Close()
+			fresh := controllertest.NewExecution(c, child.Named())
+			fresh.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { bodies.Add(1); return nil })
+			info, _ := st.GetStatus(child.Named())
+			if suspended && (bodies.Load() != 0 || info.Outcome() != store.OutcomeSuspended) || !suspended && bodies.Load() != 1 {
+				t.Fatalf("fresh declaration gate: bodies=%d status=%+v", bodies.Load(), info)
+			}
+		})
+	}
+}
+
+type declarationPromotion func(manifest.NamedResource) bool
+
+func (declarationPromotion) IsFileIndexed(manifest.NamedResource) bool { return false }
+func (p declarationPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) bool {
+	return p(id)
+}
+
+func TestRequire_MaterializerPurpose(t *testing.T) {
+	t.Parallel()
+	for _, materializerFirst := range []bool{false, true} {
+		t.Run(fmt.Sprint(materializerFirst), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			owner := &manifest.ResourceSet{Name: "owner", Namespace: "apps"}
+			st.AddObjects([]manifest.BaseManifest{consumer, owner})
+			st.UpdateStatus(owner.Named(), store.StatusPending, "", "materializing")
+			run := controllertest.NewExecution(base.New(st, nil, "test"), consumer.Named())
+			deps := []manifest.DependencyRef{{NamedResource: owner.Named()}, {NamedResource: owner.Named(), ReadyExpr: "false"}}
+			if materializerFirst {
+				run.Reads.RequireMaterializer(owner.Named())
+			}
+			for _, dep := range deps {
+				run.Reads.Require(dep)
+			}
+			run.Reads.RequireMaterializer(owner.Named())
+			run.Dispatch(t.Context(), manifest.DrainNone, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+				return run.Require(ctx, deps, level)
+			})
+			if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{owner.Named()}) || len(slices.Collect(run.Reads.Gates())) != 3 {
+				t.Fatal("authored existence gate erased materializer readiness")
+			}
+			run.Settle(t.Context(), manifest.DrainForce)
+			info, _ := st.GetStatus(consumer.Named())
+			if !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) {
+				t.Fatalf("settlement lost gate purpose: %+v", info)
+			}
+		})
 	}
 }

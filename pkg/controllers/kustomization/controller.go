@@ -1,5 +1,5 @@
 // Package kustomization reconciles Flux Kustomizations: wait on
-// dependsOn / sourceRef / structural parent, resolve postBuild
+// dependsOn / sourceRef, resolve postBuild
 // substitutions, run the kustomize SDK, parse the result back into the
 // Store, and publish an Emission. Failures bubble up to
 // the orchestrator.
@@ -23,7 +23,7 @@ import (
 )
 
 // Controller orchestrates Kustomization reconciliation. Reconcile-
-// shaping state (Filter, ParentOf) flows in via Configure exactly once
+// shaping state flows in via Configure exactly once
 // before StartLifecycle. The invariant — "config is read-only after StartLifecycle" — is
 // encoded in the embedded *base.Controller, not just in code review.
 type Controller struct {
@@ -37,7 +37,6 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	index               *manifest.DiscoveryIndex
 	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
 	substitute          map[string]string
 	strictSubstitutions bool
@@ -84,7 +83,6 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.retry = retry
-	c.index = opts.Index
 	c.substitutionSources = opts.SubstituteFrom
 	c.substitute = opts.Substitute
 	c.strictSubstitutions = opts.StrictSubstitutions
@@ -125,6 +123,9 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
+	if err := c.run.PreflightError(id); err != nil {
+		return err
+	}
 	source, applyIgnore, err := c.resolveSource(ks, level)
 	if err != nil {
 		return err
@@ -155,6 +156,9 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 
 func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, source *store.SourceArtifact, applyIgnore bool) error {
 	id := ks.Named()
+	if err := c.run.PreflightError(id); err != nil {
+		return err
+	}
 	ks, err := kustomize.Prepare(ks, c.data, c.substitute)
 	if err != nil {
 		return err
@@ -235,16 +239,6 @@ func (c *execution) collectDeps(ks *manifest.Kustomization) []manifest.Dependenc
 		if ref.Use == "source" {
 			source = ref.DependencyRef
 		}
-	}
-	record, _ := c.index.Lookup(ks.Named())
-	start := len(deps)
-	for _, p := range c.run.Reads.Productions(ks.Named(), c.index) {
-		if p.Path == "" && p.Owner != (manifest.NamedResource{}) && p.Owner != ks.Named() {
-			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
-		}
-	}
-	if len(deps) == start && record.Parent != (manifest.NamedResource{}) && record.Parent != ks.Named() {
-		deps = append(deps, manifest.DependencyRef{NamedResource: record.Parent})
 	}
 	if source.Kind != "" && source.Name != "" {
 		deps = append(deps, source)

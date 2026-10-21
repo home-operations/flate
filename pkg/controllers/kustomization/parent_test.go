@@ -5,70 +5,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
-	t.Parallel()
-
-	parent := testutil.KustomizationID("flux-system", "cluster-apps")
-	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
-	for _, name := range []string{"predicted", "provisional seed", "file evidence", "self declared", "accepted supporter", "self declared with accepted supporter"} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			index := parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent})
-			if name != "predicted" {
-				r := index.Records[child.Named()]
-				r.Productions = []manifest.Production{{Source: manifest.BootstrapSourceID}}
-				index.Records[child.Named()] = r
-			}
-			if name == "file evidence" {
-				r := index.Records[child.Named()]
-				r.Productions = []manifest.Production{{Owner: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "file-owner"}, Path: "child.yaml"}}
-				index.Records[child.Named()] = r
-			}
-			if strings.HasPrefix(name, "self declared") {
-				r := index.Records[child.Named()]
-				r.Productions = []manifest.Production{{Owner: child.Named(), Source: manifest.BootstrapSourceID}}
-				index.Records[child.Named()] = r
-			}
-			st := store.New()
-			want := parent
-			if strings.Contains(name, "accepted supporter") {
-				st.AddObject(child)
-				st.SetDiscoveryIndex(index)
-				other := &manifest.Kustomization{Name: "other", Namespace: child.Namespace}
-				st.AddObject(other)
-				st.RecordEmitted(other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
-				want = other.Named()
-			}
-			c := New(st, nil, nil, false)
-			c.Configure(Options{Index: index}, sourcecache.RetryConfig{})
-			deps := c.newExecution(child.Named()).collectDeps(child)
-			var count int
-			for _, d := range deps {
-				if d.NamedResource == want {
-					count++
-				}
-			}
-			if count != 1 || len(deps) != 1 {
-				t.Fatalf("dependency %s occurrences=%d in deps %v", want, count, deps)
-			}
-		})
-	}
-}
 
 func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	t.Parallel()
@@ -306,6 +252,49 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 				}
 			} else if info.Status != store.StatusReady || output == nil || len(output.Manifests) != 1 || rendered == nil {
 				t.Fatalf("true owner gate prevented output: status=%+v artifact=%+v rendered=%v", info, output, rendered)
+			}
+		})
+	}
+}
+
+func TestCollectDeps_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
+	t.Parallel()
+
+	parent := testutil.KustomizationID("flux-system", "cluster-apps")
+	child := &manifest.Kustomization{Name: "karma", Namespace: "observability"}
+	for _, name := range []string{"predicted", "provisional seed", "file evidence", "self declared", "accepted supporter", "self declared with accepted supporter"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			index := parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent})
+			if name != "predicted" {
+				r := index.Records[child.Named()]
+				r.Productions = []manifest.Production{{Source: manifest.BootstrapSourceID}}
+				index.Records[child.Named()] = r
+			}
+			if name == "file evidence" {
+				r := index.Records[child.Named()]
+				r.Productions = []manifest.Production{{Owner: manifest.NamedResource{Kind: manifest.KindKustomization, Name: "file-owner"}, Path: "child.yaml"}}
+				index.Records[child.Named()] = r
+			}
+			if strings.HasPrefix(name, "self declared") {
+				r := index.Records[child.Named()]
+				r.Productions = []manifest.Production{{Owner: child.Named(), Source: manifest.BootstrapSourceID}}
+				index.Records[child.Named()] = r
+			}
+			st := store.New()
+			if strings.Contains(name, "accepted supporter") {
+				st.AddObject(child)
+				st.SetDiscoveryIndex(index)
+				other := &manifest.Kustomization{Name: "other", Namespace: child.Namespace}
+				st.AddObject(other)
+				st.RecordEmitted(other.Named(), captureEmission(st, other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}))
+			}
+			c := New(st, nil, nil, false)
+			c.Configure(Options{Index: index}, sourcecache.RetryConfig{})
+			deps := c.newExecution(child.Named()).collectDeps(child)
+			if len(deps) != 0 {
+				t.Fatalf("structural declaration owners leaked into authored dependencies: %v", deps)
 			}
 		})
 	}

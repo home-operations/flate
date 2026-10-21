@@ -16,7 +16,7 @@ import (
 )
 
 // Controller orchestrates HelmRelease reconciliation. Reconcile-shaping
-// state (Filter, ParentOf) flows in via Configure exactly once before Start.
+// state flows in via Configure exactly once before Start.
 type Controller struct {
 	*base.Controller
 
@@ -105,21 +105,6 @@ func (c *execution) reconcile(ctx context.Context, hr *manifest.HelmRelease, lev
 		return err
 	}
 
-	for _, production := range c.run.Reads.Productions(id, nil) {
-		parent := production.Owner
-		if parent == (manifest.NamedResource{}) || parent == id {
-			continue
-		}
-		c.SetPendingUnlessReady(id, "waiting for parent KS")
-		err := c.run.Require(ctx, []manifest.DependencyRef{{NamedResource: parent}}, level)
-		if err != nil {
-			return err
-		}
-	}
-	if err := c.run.PreflightError(id); err != nil {
-		return err
-	}
-
 	if deps := c.collectDeps(hr); len(deps) > 0 {
 		c.SetPendingUnlessReady(id, "resolving dependencies")
 		err := c.run.Require(ctx, deps, level)
@@ -141,6 +126,9 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	}
 
 	c.SetPendingUnlessReady(id, "resolving chart")
+	if err := c.run.PreflightError(id); err != nil {
+		return err
+	}
 	hr, unavailable, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).HelmChart, c.data, c.Helm.ValuesCache())
 	omitted = append(omitted, unavailable...)
 	slices.SortFunc(omitted, manifest.NamedResource.Compare)
@@ -165,6 +153,9 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	// chart from the HelmChart artifact, never fetching inline. Waiting
 	// first makes the repoint deterministic — no loop, no "absent → retry"
 	// dance.
+	if err := c.run.PreflightError(id); err != nil {
+		return err
+	}
 	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
 		if err := c.awaitChartSource(ctx, hr, level); err != nil {

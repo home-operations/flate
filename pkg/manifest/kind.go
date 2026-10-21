@@ -67,10 +67,11 @@ const (
 	kindResourceSetInputProvider
 	kindConfigMap
 	kindSecret
+	kindArtifactGenerator
 )
 
 var (
-	kindTable [kindSecret + 1]kindEntry
+	kindTable [kindArtifactGenerator + 1]kindEntry
 	kindIndex map[string]int
 )
 
@@ -92,7 +93,8 @@ func init() {
 		kindConfigMap: {KindInfo: KindInfo{Group: "", Kind: KindConfigMap, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) {
 			return parseConfigMap(d)
 		}},
-		kindSecret: {KindInfo: KindInfo{Group: "", Kind: KindSecret, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
+		kindArtifactGenerator: {KindInfo: KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) }},
+		kindSecret:            {KindInfo: KindInfo{Group: "", Kind: KindSecret, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
 	}
 
 	kindIndex = make(map[string]int, len(kindTable))
@@ -151,11 +153,11 @@ func (n NamedResource) DecodeIdentity() (BaseManifest, error) {
 
 // Projection stays allocation-free; document admission validates API versions.
 func apiGroup(apiVersion string) string {
-	group, _, ok := strings.Cut(apiVersion, "/")
+	before, _, ok := strings.Cut(apiVersion, "/")
 	if !ok {
 		return ""
 	}
-	return group
+	return before
 }
 
 func referenceGroup(kind, apiVersion string) string {

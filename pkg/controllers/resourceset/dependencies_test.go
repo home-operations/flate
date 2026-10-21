@@ -69,6 +69,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 				manifest.DependencyRef{Group: "example.test", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"},
 				manifest.DependencyRef{Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "named"},
 				manifest.DependencyRef{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "named"})
+			manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization}).Namespaced()
 			if hasParent {
 				c.Store.AddObject(rs)
 				for _, name := range []string{"z-parent", "a-parent"} {
@@ -83,7 +84,6 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 				first.Name, last.Name = "a-parent", "z-parent"
 				want = append(want, manifest.DependencyRef{NamedResource: first}, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{NamedResource: last})
 			}
-			manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization}).Namespaced()
 			deps := c.collectDeps(rs)
 			assert.Diff(t, deps, want)
 			w := &depwait.Waiter{Store: c.Store}

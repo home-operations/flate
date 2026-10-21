@@ -24,12 +24,11 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 	if repoRoot == "" {
 		return
 	}
-	b := &selfProduceBuilder{idx: l.Index,
-		emittedFiles: emittedFiles,
-		store:        l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
-		secrets: map[manifest.NamedResource]*manifest.Secret{}}
+	b := &selfProduceBuilder{idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
+		secrets: map[manifest.NamedResource]*manifest.Secret{}, emittedFiles: emittedFiles}
 	var generators []generatorRecord
 	incomplete := map[manifest.NamedResource][]string{}
+	var declarations []producerDeclaration
 	remaining := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
 		if doc.body != nil && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
@@ -62,7 +61,7 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 			return
 		}
 		if v.readable {
-			b.recordProduced(v, l.documents.cache[v.file].objects)
+			declarations = b.recordProduced(v, l.documents.cache[v.file].objects, declarations)
 		}
 	}
 	for _, contribution := range l.scopes.contributions {
@@ -70,6 +69,8 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 			v.owner, v.source = contribution.owner, contribution.source
 			record(v)
 		}
+		b.joinProductions(declarations, contribution.visits)
+		declarations = nil
 	}
 	if len(incomplete) != 0 {
 		for _, owner := range slices.SortedFunc(maps.Keys(incomplete), manifest.NamedResource.Compare) {
@@ -84,10 +85,14 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 	if len(remaining) != 0 {
 		for _, dir := range l.unreachedGeneratorRoots(repoRoot, remaining) {
 			root := graphVisit{root: repoRoot, dir: dir}
-			for _, v := range l.visitScope(root) {
+			walks := l.visitScope(root)
+			for _, v := range walks {
 				v.owner = manifest.NamedResource{}
+				v.source = manifest.BootstrapSourceID
 				record(v)
 			}
+			b.joinProductions(declarations, walks)
+			declarations = nil
 		}
 	}
 	l.addGenerated(generators)
@@ -393,6 +398,12 @@ func (w *graphWalker) uncertain(v graphVisit, reason string, yield func(graphVis
 	return yield(v)
 }
 
+type producerDeclaration struct {
+	obj      manifest.BaseManifest
+	authored manifest.NamedResource
+	visit    graphVisit
+}
+
 type selfProduceBuilder struct {
 	reader       documentReader
 	idx          *manifest.DiscoveryIndex
@@ -402,7 +413,7 @@ type selfProduceBuilder struct {
 	wipeSecrets  bool
 }
 
-func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.BaseManifest) {
+func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.BaseManifest, declarations []producerDeclaration) []producerDeclaration {
 	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
 	record := func(obj manifest.BaseManifest) {
 		id := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
@@ -425,7 +436,15 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 		}
 		b.idx.Records[id] = r
 		if !v.deferMaterialization {
-			b.recordProducer(obj, v.namespace, v.fallback, v.owner)
+			declaration := producerDeclaration{obj: obj, authored: obj.Named(), visit: v}
+			if manifest.ProducerNeedsCandidates(obj) {
+				if id.Namespace != obj.Named().Namespace {
+					declaration.obj = obj.WithNamespace(id.Namespace)
+				}
+				declarations = append(declarations, declaration)
+			} else {
+				b.recordProducer(declaration, nil)
+			}
 		}
 		info := manifest.KindOf(obj)
 		switch {
@@ -441,9 +460,10 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 		for _, obj := range objects {
 			record(obj)
 		}
-		return
+		return declarations
 	}
 	_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, record)
+	return declarations
 }
 
 // materializeSecret retains SOPS stand-ins under the rendered namespace so
@@ -464,42 +484,61 @@ func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootN
 	}
 }
 
-func (b *selfProduceBuilder) recordProducer(raw manifest.BaseManifest, baseNS, rootNS string, ks manifest.NamedResource) {
-	for _, target := range manifest.ProducerTargets(raw) {
-		target.NamedResource = manifest.Resolve(target.NamedResource, baseNS, rootNS)
+func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration, scope []graphVisit) {
+	if len(declarations) == 0 {
+		return
+	}
+	var candidates []manifest.NamedResource
+	for _, v := range scope {
+		if v.role != kustomizeinput.Resource || v.deferMaterialization || v.document != nil || !v.readable {
+			continue
+		}
+		record := func(obj manifest.BaseManifest) {
+			ns := manifest.Resolve(obj.Named(), v.namespace, v.fallback).Namespace
+			if ns != obj.Named().Namespace {
+				obj = obj.WithNamespace(ns)
+			}
+			for ref := range manifest.References(obj) {
+				candidates = append(candidates, ref.NamedResource)
+			}
+		}
+		if objects := b.reader.cache[v.file].objects; objects != nil {
+			for _, obj := range objects {
+				record(obj)
+			}
+		} else {
+			_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, record)
+		}
+	}
+	slices.SortFunc(candidates, manifest.NamedResource.Compare)
+	candidates = slices.Compact(candidates)
+	for _, declaration := range declarations {
+		b.recordProducer(declaration, candidates)
+	}
+}
+
+func (b *selfProduceBuilder) recordProducer(declaration producerDeclaration, candidates []manifest.NamedResource) {
+	obj, authored, v := declaration.obj, declaration.authored, declaration.visit
+	projected := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
+	for _, target := range manifest.ProducerTargets(obj, candidates...) {
+		target.NamedResource = manifest.Resolve(target.NamedResource, v.namespace, v.fallback)
 		if target.Namespace == "" {
 			continue
 		}
-		producer := raw.Named()
-		projected := manifest.Resolve(producer, baseNS, rootNS)
+		p := manifest.Production{Owner: v.owner, Declaration: projected, Authored: authored, Source: v.source, File: v.coordinate}
 		r := b.idx.Records[target.NamedResource]
-		p := manifest.Production{Owner: ks, Declaration: projected, Authored: producer, File: b.idx.Records[projected].File}
-		if owner, ok := b.store.Get[*manifest.Kustomization](ks); ok {
-			p.Source = owner.SourceID()
-			if p.Source.Name == "" || p.Source.Kind == "" {
-				p.Source = manifest.BootstrapSourceID
-			}
-		}
 		if !slices.Contains(r.Productions, p) {
 			r.Productions = append(r.Productions, p)
 		}
 		b.idx.Records[target.NamedResource] = r
-		for _, producer := range []manifest.NamedResource{producer, projected} {
-			if ks == (manifest.NamedResource{}) {
-				continue
-			}
-			r := b.idx.Records[producer]
-			p := manifest.Production{Owner: ks, Declaration: projected}
-			if owner, ok := b.store.Get[*manifest.Kustomization](ks); ok {
-				p.Source = owner.SourceID()
-				if p.Source.Name == "" || p.Source.Kind == "" {
-					p.Source = manifest.BootstrapSourceID
+		if v.owner != (manifest.NamedResource{}) {
+			for _, producer := range []manifest.NamedResource{authored, projected} {
+				r := b.idx.Records[producer]
+				if !slices.Contains(r.Productions, p) {
+					r.Productions = append(r.Productions, p)
 				}
+				b.idx.Records[producer] = r
 			}
-			if !slices.Contains(r.Productions, p) {
-				r.Productions = append(r.Productions, p)
-			}
-			b.idx.Records[producer] = r
 		}
 		if len(target.DeclaredKeys) > 0 && target.Kind == manifest.KindSecret {
 			b.synthesizePlaceholderSecret(target.NamedResource, target.DeclaredKeys)

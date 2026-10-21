@@ -190,7 +190,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{Filter: f, Index: index}, sourcecache.RetryConfig{})
-	if owners := slices.Collect(c.Store.Productions(cmID, index)); len(owners) != 1 || owners[0].Owner != self {
+	if owners := c.Store.Productions(cmID, index); len(owners) != 1 || owners[0].Owner != self {
 		t.Fatalf("missing self evidence: %v", owners)
 	}
 	deps := c.collectDeps(selfObj)

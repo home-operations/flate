@@ -755,11 +755,11 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			l.FinalizeIndex(root)
 			shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
 			exclusive := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "exclusive"}
-			if len(slices.Collect(s.Productions(exclusive, l.Index))) == 0 {
+			if len(s.Productions(exclusive, l.Index)) == 0 {
 				t.Fatal("missing frozen coverage")
 			}
 			for _, id := range []manifest.NamedResource{shared, exclusive} {
-				for p := range s.Productions(id, l.Index) {
+				for _, p := range s.Productions(id, l.Index) {
 					if p.Path != "" {
 						loader.Promote(s, id, p, loader.PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }})
 					}

@@ -399,7 +399,7 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
 		return record.Parent, true
 	}
-	for p := range o.store.Productions(id, o.index) {
+	for _, p := range o.store.Productions(id, o.index) {
 		if p.Owner != (manifest.NamedResource{}) && p.Owner != id && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
 			return p.Owner, true
 		}
@@ -414,7 +414,7 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
 	children := map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, obj := range o.store.ListObjects("", "") {
-		for p := range o.store.Productions(obj.Named(), o.index) {
+		for _, p := range o.store.Productions(obj.Named(), o.index) {
 			if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
 				children[p.Owner] = append(children[p.Owner], obj.Named())
 			}
@@ -442,7 +442,7 @@ func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource)
 	deps := map[manifest.NamedResource]struct{}{}
 	addOwners := func(id manifest.NamedResource) {
 		record, _ := o.index.Lookup(id)
-		for p := range o.store.Productions(id, o.index) {
+		for _, p := range o.store.Productions(id, o.index) {
 			if p.Owner != (manifest.NamedResource{}) {
 				deps[p.Owner] = struct{}{}
 			}

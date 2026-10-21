@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -43,7 +45,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 	accept(t, s, p, &Emission{Children: []Child{a}, Manifests: []map[string]any{a.Doc}, Complete: true})
 	accept(t, s, q, &Emission{Children: []Child{a}, Manifests: []map[string]any{a.Doc}, Complete: true})
-	if got := slices.Collect(s.Productions(a.Obj.Named(), nil)); len(got) != 2 {
+	if got := s.Productions(a.Obj.Named(), nil); len(got) != 2 {
 		t.Fatalf("independent supports: %v", got)
 	}
 	bad := emissionChild("a", "unequal")
@@ -219,7 +221,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 				if obj, _ := s.Snapshot(id); obj == nil || obj.Named() != id {
 					t.Fatal("reverse position changed snapshot identity")
 				}
-				if got := slices.Collect(s.Productions(id, nil)); len(got) != 2 || got[0].Owner != p || got[1].Owner != q {
+				if got := s.Productions(id, nil); len(got) != 2 || got[0].Owner != p || got[1].Owner != q {
 					t.Fatalf("reverse position changed production: %v", got)
 				}
 			}
@@ -227,7 +229,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 			s.UpdateStatus(covered.Obj.Named(), StatusReady, "", "")
 			accept(t, s, p, &Emission{Complete: true})
 			for _, child := range accepted.Children {
-				if got := slices.Collect(s.Productions(child.Obj.Named(), nil)); len(got) != 1 || got[0].Owner != q {
+				if got := s.Productions(child.Obj.Named(), nil); len(got) != 1 || got[0].Owner != q {
 					t.Fatalf("withdrawal changed surviving contributor: %v", got)
 				}
 			}
@@ -413,7 +415,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 							attempt.Finish()
 							t.Fatal("hidden attempt leaked")
 						}
-						if len(slices.Collect(s.Productions(id, nil))) != 0 {
+						if len(s.Productions(id, nil)) != 0 {
 							t.Fatal("hidden productions leaked")
 						}
 						if _, ok := s.FailedResources()[id]; ok {
@@ -517,11 +519,11 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	}
 	fresh := emissionChild("fresh", "value")
 	accept(t, s, p, &Emission{Children: []Child{fresh}, Manifests: []map[string]any{fresh.Doc}, binding: second})
-	oldProductions := slices.Collect(s.Productions(a.Obj.Named(), nil))
+	oldProductions := s.Productions(a.Obj.Named(), nil)
 	if !slices.ContainsFunc(oldProductions, func(p manifest.Production) bool { return p.Owner == ownerID("p") && p.Source == first.source }) {
 		t.Fatal("partial update rebound predecessor context")
 	}
-	if got := slices.Collect(s.Productions(fresh.Obj.Named(), nil)); len(got) != 1 || got[0].Source != second.source {
+	if got := s.Productions(fresh.Obj.Named(), nil); len(got) != 1 || got[0].Source != second.source {
 		t.Fatal("partial update lost new source context")
 	}
 	_, attempt := s.GetEmission(p)
@@ -792,7 +794,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				accept(t, s, p, &empty)
 				empty.Finish()
 				assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), manifest.NamedResource{})
-				if got := slices.Collect(s.Productions(seed.Obj.Named(), nil)); s.GetObject(seed.Obj.Named()) != seed.Obj || len(got) != 1 || got[0] != productions[len(productions)-1] {
+				if got := s.Productions(seed.Obj.Named(), nil); s.GetObject(seed.Obj.Named()) != seed.Obj || len(got) != 1 || got[0] != productions[len(productions)-1] {
 					t.Fatalf("complete empty retired independent source/input anchor: %v", got)
 				}
 				return
@@ -801,7 +803,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				if got := s.GetObject(seed.Obj.Named()); got != actual.Obj || len(events) != 1 || events[0] != actual.Obj {
 					t.Fatalf("bootstrap replacement not published: %v, events %v", got, events)
 				}
-				if got := slices.Collect(s.Productions(seed.Obj.Named(), nil)); len(got) != 1 || got[0].Owner != p {
+				if got := s.Productions(seed.Obj.Named(), nil); len(got) != 1 || got[0].Owner != p {
 					t.Fatalf("retired bootstrap support: %v", got)
 				}
 			}
@@ -810,7 +812,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			empty.Manifests = nil
 			empty.Complete = true
 			accept(t, s, p, &empty)
-			if s.GetObject(seed.Obj.Named()) != nil || len(slices.Collect(s.Productions(seed.Obj.Named(), nil))) != 0 {
+			if s.GetObject(seed.Obj.Named()) != nil || len(s.Productions(seed.Obj.Named(), nil)) != 0 {
 				t.Fatal("complete empty resurrected covered prediction")
 			}
 			s.AddObject(seed.Obj)
@@ -1096,7 +1098,7 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 				bare.Namespace = ""
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: renderer, Source: source}}}, bare: {Productions: []manifest.Production{{Owner: fileOwner, Source: other, Authored: authored, Path: "source/input.yaml", File: "input.yaml"}}}}}
 				s.SetDiscoveryIndex(index)
-				result := slices.Collect(s.Productions(target, index))
+				result := s.Productions(target, index)
 				want := !differentSource && !explicitNamespace
 				if got := slices.ContainsFunc(result, func(p manifest.Production) bool { return p.Owner == fileOwner && p.Path != "" }); got != want {
 					t.Fatalf("scoped bridge=%t want %t: %v", got, want, result)
@@ -1188,7 +1190,7 @@ func TestStore_AddListener_ReplayWithdrawnDeclaredSecret(t *testing.T) {
 	}
 	assert.Equal(t, s.EmissionOwner(secret.Named()), manifest.NamedResource{})
 	assert.Equal(t, s.EmissionOwner(external.Named()), q)
-	proofs := slices.Collect(s.Productions(secret.Named(), nil))
+	proofs := s.Productions(secret.Named(), nil)
 	if len(proofs) != 1 || proofs[0].Owner != q || proofs[0].Declaration != external.Named() {
 		t.Fatalf("withdrawal lost declaration evidence: %v", proofs)
 	}
@@ -1227,12 +1229,20 @@ func TestStore_AddListener_ReplayWithdrawnDeclaredSecret(t *testing.T) {
 	unsub()
 }
 
-func TestStore_ProductionsEmptyQueryAllocations(t *testing.T) {
+func TestStore_ProductionsQueryAllocations(t *testing.T) {
 	s := New()
-	if got := testing.AllocsPerRun(10, func() {
-		s.Productions(ownerID("missing"), nil)
-	}); got != 0 {
-		t.Fatalf("empty production query allocations=%v, want 0", got)
+	id := ownerID("known")
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		id: {Productions: []manifest.Production{{Owner: ownerID("parent")}}},
+	}})
+	for _, target := range []manifest.NamedResource{ownerID("missing"), id} {
+		t.Run(target.Name, func(t *testing.T) {
+			if got := testing.AllocsPerRun(10, func() {
+				s.Productions(target, nil)
+			}); got != 0 {
+				t.Fatalf("production query allocations=%v, want 0", got)
+			}
+		})
 	}
 }
 
@@ -1260,7 +1270,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 		snapshot := s.Productions(child.Obj.Named(), nil)
 		want := []manifest.Production{proof, {Owner: q}}
 		accept(t, s, q, &Emission{Complete: true})
-		if got := slices.Collect(snapshot); !slices.Equal(got, want) {
+		if got := snapshot; !slices.Equal(got, want) {
 			t.Fatalf("frozen/runtime snapshot changed: got %v, want %v", got, want)
 		}
 		if !slices.Equal(backing, original) {
@@ -1274,7 +1284,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 				child.Obj.Named(): {Productions: evidence},
 			}}
 			original = slices.Clone(evidence)
-			if got := slices.Collect(s.Productions(child.Obj.Named(), index)); !slices.Equal(got, want) {
+			if got := s.Productions(child.Obj.Named(), index); !slices.Equal(got, want) {
 				t.Fatalf("query did not sort/deduplicate frozen evidence: got %v, want %v", got, want)
 			}
 			if !slices.Equal(evidence, original) {
@@ -1314,10 +1324,10 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 				accept(t, s, id, &attempt)
 				attempt.Finish()
 			}
-			if got := slices.Collect(snapshot); !slices.Equal(got, want) {
+			if got := snapshot; !slices.Equal(got, want) {
 				t.Fatalf("filtered snapshot changed after withdrawal: got %v, want %v", got, want)
 			}
-			if got := slices.Collect(s.Productions(child.Obj.Named(), nil)); len(got) != 0 {
+			if got := s.Productions(child.Obj.Named(), nil); len(got) != 0 {
 				t.Fatalf("hidden frozen evidence remains visible: %v", got)
 			}
 		})
@@ -1350,11 +1360,11 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			})
 		}
 		wg.Wait()
-		got := slices.Collect(snapshot)
+		got := snapshot
 		if !slices.Equal(got, want) {
 			t.Fatalf("captured productions changed after concurrent replacement/withdrawal: got %v, want %v", got, want)
 		}
-		if got := slices.Collect(s.Productions(child.Obj.Named(), nil)); len(got) != 0 {
+		if got := s.Productions(child.Obj.Named(), nil); len(got) != 0 {
 			t.Fatalf("withdrawn productions remain visible: %v", got)
 		}
 		for range snapshot {
@@ -1375,7 +1385,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			}
 			child.Productions = []manifest.Production{proof}
 			accept(t, s, p, &Emission{Children: []Child{child}, Manifests: []map[string]any{child.Doc}, Complete: true})
-			got := slices.Collect(s.Productions(child.Obj.Named(), nil))
+			got := s.Productions(child.Obj.Named(), nil)
 			want := 2
 			if ownEvidence {
 				want = 1
@@ -1384,7 +1394,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 				t.Fatalf("accepted owner lost or redundant thin evidence added: %v", got)
 			}
 			accept(t, s, p, &Emission{Complete: true})
-			if got := slices.Collect(s.Productions(child.Obj.Named(), nil)); len(got) != 0 || s.GetObject(child.Obj.Named()) != nil {
+			if got := s.Productions(child.Obj.Named(), nil); len(got) != 0 || s.GetObject(child.Obj.Named()) != nil {
 				t.Fatalf("withdrawal retained accepted evidence: %v", got)
 			}
 		})
@@ -1716,7 +1726,7 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 	if len(accepted.Manifests) != 1 || !specValueEqual(accepted.Manifests[0], doc) {
 		t.Fatal("suppressed arrival lost authoritative document")
 	}
-	if got := slices.Collect(s.Productions(obj.Named(), nil)); len(got) != 1 || got[0].Owner != p {
+	if got := s.Productions(obj.Named(), nil); len(got) != 1 || got[0].Owner != p {
 		t.Fatalf("accepted support = %v", got)
 	}
 	next := manifest.DeepCopyMap(doc)
@@ -1725,4 +1735,273 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 	if arrivals != 1 {
 		t.Fatalf("changed authoritative document arrivals = %d, want 1", arrivals)
 	}
+}
+
+type admissionBarrier struct {
+	*manifest.ConfigMap
+	calls    atomic.Int64
+	prepared chan struct{}
+	release  <-chan struct{}
+}
+
+func (b *admissionBarrier) Named() manifest.NamedResource {
+	// Two collection lookups and one proven-target lookup precede prepareEmission indexing.
+	if b.calls.Add(1) == 4 {
+		close(b.prepared)
+		<-b.release
+	}
+	return b.ConfigMap.Named()
+}
+
+func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
+	t.Parallel()
+	generator := func(template string) Child {
+		return Child{Obj: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": template}}}}}
+	}
+	consumer := func(name string) Child {
+		return Child{Obj: &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: name}}}
+	}
+	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
+	for _, mode := range []string{"proposal", "frozen", "other-owner", "other-source", "other-pin"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			s.AddObject(owner)
+			binding := sourceBinding{source: manifest.BootstrapSourceID, key: "pin", root: "/view"}
+			g, c := generator("app-{app}"), consumer(target.Name)
+			s.SetArtifact(binding.source, &SourceArtifact{Key: binding.key, LocalPath: binding.root})
+			if mode != "proposal" {
+				provenance := manifest.Production{Owner: owner.Named(), Source: binding.source, File: "consumer.yaml", Path: "/view/consumer.yaml"}
+				if mode == "other-owner" {
+					provenance.Owner.Name = "other"
+				}
+				if mode == "other-source" {
+					provenance.Source.Name = "other"
+				}
+				decl := provenance
+				decl.Declaration, decl.File, decl.Path = g.Obj.Named(), "generator.yaml", ""
+				s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					c.Obj.Named(): {File: provenance.File, Path: provenance.Path, Refs: []manifest.NamedResource{target}, Productions: []manifest.Production{provenance}},
+					target:        {Productions: []manifest.Production{decl}},
+				}})
+				// The frozen source identity and pin are captured before publication.
+				if contribution := s.coverage[owner.Named()]; contribution != nil {
+					contribution.binding = binding
+				}
+			}
+			proposal := &Emission{Children: []Child{g}, Complete: true, binding: binding}
+			if mode == "proposal" {
+				proposal.Children = append(proposal.Children, c)
+			}
+			if contribution := s.coverage[owner.Named()]; contribution != nil {
+				proposal.coverage = contribution.records
+			}
+			if mode == "other-pin" {
+				proposal.binding.key = "other-pin"
+			}
+			s.RecordEmitted(owner.Named(), proposal)
+			want := mode == "proposal" || mode == "frozen"
+			check := func(want bool) {
+				t.Helper()
+				_, current := s.GetEmission(owner.Named())
+				defer current.Finish()
+				var predicted bool
+				for _, a := range s.GetArtifact(owner.Named()).(*Emission).entries {
+					for _, p := range a.targets {
+						predicted = predicted || p.NamedResource == target
+					}
+				}
+				if predicted != want {
+					t.Fatalf("predicted = %t, want %t", predicted, want)
+				}
+				if s.GetObject(target) != nil || s.GetArtifact(target) != nil {
+					t.Fatal("prediction supplied content")
+				}
+			}
+			check(want)
+			_, next := s.GetEmission(owner.Named())
+			next.Children = []Child{g}
+			next.Complete = true
+			next.binding = proposal.binding
+			s.RecordEmitted(owner.Named(), &next)
+			check(want)
+			next.Finish()
+			if mode == "frozen" {
+				_, replacement := s.GetEmission(owner.Named())
+				replacement.Children, replacement.Complete, replacement.binding = []Child{g, consumer("app-web")}, true, proposal.binding
+				s.RecordEmitted(owner.Named(), &replacement)
+				check(false)
+				replacement.Finish()
+				for range 2 {
+					_, withoutConsumer := s.GetEmission(owner.Named())
+					withoutConsumer.Children, withoutConsumer.Complete, withoutConsumer.binding = []Child{g}, true, proposal.binding
+					s.RecordEmitted(owner.Named(), &withoutConsumer)
+					check(false)
+					withoutConsumer.Finish()
+				}
+			}
+			_, next = s.GetEmission(owner.Named())
+			next.Children, next.Complete, next.binding = []Child{generator("different-{app}")}, true, proposal.binding
+			s.RecordEmitted(owner.Named(), &next)
+			check(false)
+			next.Finish()
+		})
+	}
+
+	t.Run("replacement_and_partial_retention", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+		s.AddObject(owner)
+		g := generator("app-{app}")
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true})
+		replacement := target
+		replacement.Name = "app-web"
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(replacement.Name)}, Complete: true})
+		if len(s.Productions(replacement, nil)) != 1 {
+			t.Fatal("reference replacement lost new prediction")
+		}
+		if len(s.Productions(target, nil)) != 0 {
+			t.Fatal("reference replacement retained old prediction")
+		}
+		_, current := s.GetEmission(owner.Named())
+		if current.Children[0].Obj != g.Obj {
+			t.Fatal("unchanged declaration replaced")
+		}
+		current.Finish()
+		s.RecordEmitted(owner.Named(), &Emission{})
+		if len(s.Productions(replacement, nil)) != 1 {
+			t.Fatal("incomplete empty withdrew prediction")
+		}
+		s.RecordEmitted(owner.Named(), &Emission{Complete: true})
+		if len(s.Productions(replacement, nil)) != 0 {
+			t.Fatal("successful empty retained prediction")
+		}
+	})
+
+	t.Run("retained_consumer", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+		s.AddObject(owner)
+		g, retained := generator("app-{app}"), consumer(target.Name)
+		retained.Obj = &manifest.Kustomization{Name: "retained", Namespace: "apps", SourceRef: retained.Obj.(*manifest.Kustomization).SourceRef}
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name), retained}, Complete: true})
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer("app-web")}, Complete: true})
+		if len(s.Productions(target, nil)) != 1 {
+			t.Fatal("retained consumer lost its declaration's prediction")
+		}
+	})
+
+	t.Run("retry_rebuilds_admissions", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+		s.AddObject(owner)
+		g := generator("app-{app}")
+		binding := sourceBinding{source: manifest.BootstrapSourceID, key: "pin", root: "/view"}
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true, binding: binding})
+		release := make(chan struct{})
+		barrier := &admissionBarrier{
+			ConfigMap: &manifest.ConfigMap{Name: "barrier", Namespace: "apps"},
+			prepared:  make(chan struct{}),
+			release:   release,
+		}
+		barrierID := barrier.ConfigMap.Named()
+		resume := sync.OnceFunc(func() { close(release) })
+		var writers sync.WaitGroup
+		t.Cleanup(func() {
+			resume()
+			writers.Wait()
+		})
+		writers.Go(func() {
+			s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, {Obj: barrier}, {Obj: &manifest.ConfigMap{Name: "inert", Namespace: "apps"}}}, Complete: true, binding: binding})
+		})
+		<-barrier.prepared
+		replacement := target
+		replacement.Name = "app-web"
+		published := make(chan struct{})
+		writers.Go(func() {
+			defer close(published)
+			s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(replacement.Name)}, Complete: true, binding: binding})
+		})
+		<-published
+		check := func() {
+			t.Helper()
+			accepted := s.GetArtifact(owner.Named()).(*Emission)
+			var targets []manifest.ProducerTarget
+			for _, a := range accepted.entries {
+				if a.child.Obj.Named() == g.Obj.Named() {
+					targets = a.targets
+				}
+			}
+			assert.Diff(t, targets, []manifest.ProducerTarget{{NamedResource: replacement}})
+			assert.Diff(t, s.Productions(replacement, nil), []manifest.Production{{Owner: owner.Named(), Declaration: g.Obj.Named(), Source: binding.source}})
+			if len(s.Productions(target, nil)) != 0 {
+				t.Error("retry retained superseded prediction")
+			}
+			for _, id := range []manifest.NamedResource{target, replacement} {
+				if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
+					t.Error("prediction supplied content")
+				}
+			}
+		}
+		check()
+		resume()
+		writers.Wait()
+		if s.GetObject(barrierID) != barrier {
+			t.Fatal("retry did not accept the paused proposal")
+		}
+		check()
+	})
+
+	t.Run("concurrent_proposals", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+		s.AddObject(owner)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, name := range []string{"app-api", "app-web"} {
+			wg.Go(func() {
+				<-start
+				s.RecordEmitted(owner.Named(), &Emission{Children: []Child{generator("app-{app}"), consumer(name)}, Complete: true})
+			})
+		}
+		close(start)
+		wg.Wait()
+		accepted := s.GetArtifact(owner.Named()).(*Emission)
+		var candidates []manifest.NamedResource
+		for _, a := range accepted.entries {
+			for ref := range manifest.References(a.child.Obj) {
+				candidates = append(candidates, ref.NamedResource)
+			}
+		}
+		want := manifest.ProducerTargets(generator("app-{app}").Obj, candidates...)
+		for _, a := range accepted.entries {
+			if a.child.Obj.Named() == generator("").Obj.Named() {
+				assert.Diff(t, a.targets, want)
+			}
+		}
+	})
+}
+
+func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
+	s := New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	s.AddObject(owner)
+	generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"}}
+	next := &Emission{Children: []Child{{Obj: generator}, {Obj: consumer}}, Complete: true}
+	s.RecordEmitted(owner.Named(), next)
+	accepted := s.GetArtifact(owner.Named())
+	if got := testing.AllocsPerRun(10, func() { s.RecordEmitted(owner.Named(), next) }); got != 0 {
+		t.Fatalf("identical dynamic emission allocated %v times, want zero", got)
+	}
+	if s.GetArtifact(owner.Named()) != accepted {
+		t.Fatal("identical emission replaced the accepted proposal")
+	}
+	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
+	assert.Diff(t, s.Productions(target, nil), []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}})
 }

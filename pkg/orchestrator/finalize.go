@@ -35,7 +35,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		}
 		// A resource that any parent's render also emitted is by
 		// definition not orphaned — kustomize-controller saw it.
-		if slices.ContainsFunc(slices.Collect(o.store.Productions(id, o.index)), func(p manifest.Production) bool {
+		if slices.ContainsFunc(o.store.Productions(id, o.index), func(p manifest.Production) bool {
 			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{})
 		}) {
 			continue

@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"iter"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -29,9 +28,9 @@ func ProductionOwners(r manifest.DiscoveryRecord) []manifest.NamedResource {
 }
 
 // Owners returns sorted unique owners from borrowed production evidence.
-func Owners(productions iter.Seq[manifest.Production]) []manifest.NamedResource {
+func Owners(productions []manifest.Production) []manifest.NamedResource {
 	var ids []manifest.NamedResource
-	for p := range productions {
+	for _, p := range productions {
 		if p.Owner != (manifest.NamedResource{}) && !slices.Contains(ids, p.Owner) {
 			ids = append(ids, p.Owner)
 		}
@@ -41,9 +40,9 @@ func Owners(productions iter.Seq[manifest.Production]) []manifest.NamedResource 
 }
 
 // Declarations returns sorted unique declarations from borrowed production evidence.
-func Declarations(productions iter.Seq[manifest.Production]) []manifest.NamedResource {
+func Declarations(productions []manifest.Production) []manifest.NamedResource {
 	var ids []manifest.NamedResource
-	for p := range productions {
+	for _, p := range productions {
 		if p.Declaration != (manifest.NamedResource{}) && !slices.Contains(ids, p.Declaration) {
 			ids = append(ids, p.Declaration)
 		}

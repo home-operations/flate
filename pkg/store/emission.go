@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
-	"iter"
 	"maps"
 	"slices"
 	"sync/atomic"
@@ -141,8 +140,8 @@ func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, E
 	return obj, e
 }
 
-// Productions merges immutable discovery evidence with accepted reverse memberships.
-func (s *Store) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) iter.Seq[manifest.Production] {
+// Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
+func (s *Store) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) []manifest.Production {
 	if index == nil {
 		index = s.index.Load()
 	}
@@ -181,7 +180,7 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 	members := sh.members[id]
 	if len(evidence) == 0 && len(members) == 0 {
 		sh.mu.RUnlock()
-		return func(func(manifest.Production) bool) {}
+		return nil
 	}
 	if !sh.hidden[id] {
 		if sh.static[id] != nil && sh.retired[id] && provisional {
@@ -236,16 +235,7 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 		slices.SortFunc(out, compareProduction)
 		out = slices.Compact(out)
 	}
-	if len(out) == 0 {
-		return func(func(manifest.Production) bool) {}
-	}
-	return func(yield func(manifest.Production) bool) {
-		for _, p := range out {
-			if !yield(p) {
-				return
-			}
-		}
-	}
+	return out
 }
 
 func sameProductionContext(coverage map[manifest.NamedResource]*contributor, a, b manifest.Production) bool {
@@ -329,7 +319,6 @@ func bootstrapSeed(r manifest.DiscoveryRecord) bool {
 // RecordEmitted atomically accepts completed work, replacing complete inventories and
 // merging incomplete progress. The greatest producer identity supplies shared content.
 func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission) {
-	var prepared []admission
 	ps := s.shardFor(id)
 	for {
 		ps.mu.RLock()
@@ -356,17 +345,9 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission) {
 		}
 		proposal := prev
 		if !unchanged || !candidate.sameOutput(prev) {
-			if prepared == nil {
-				prepared = make([]admission, 0, len(next.Children))
-				for _, c := range next.Children {
-					if c.Obj == nil || c.Obj.Named() == id {
-						continue
-					}
-					c.Productions = slices.Clone(c.Productions)
-					prepared = append(prepared, admission{child: c, targets: manifest.ProducerTargets(c.Obj), binding: next.binding})
-				}
-			}
-			proposal = prepareEmission(next, prev, prepared)
+			byID := make(map[manifest.NamedResource]int, len(next.Children))
+			prepared := s.prepareAdmissions(id, next, prev, byID)
+			proposal = prepareEmission(next, prev, prepared, byID)
 		}
 		stable := prev != nil && (proposal == prev || sameMembership(prev, proposal))
 		var seeds []manifest.NamedResource
@@ -396,6 +377,94 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission) {
 			return
 		}
 	}
+}
+
+func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emission, byID map[manifest.NamedResource]int) []admission {
+	var refs, superseded, retained []manifest.NamedResource
+	prepared := make([]admission, 0, len(next.Children))
+	dynamic := false
+	for _, child := range next.Children {
+		if child.Obj == nil {
+			continue
+		}
+		if child.Obj.Named() == id {
+			continue
+		}
+		child.Productions = slices.Clone(child.Productions)
+		byID[child.Obj.Named()] = len(prepared)
+		prepared = append(prepared, admission{child: child, binding: next.binding})
+		dynamic = dynamic || manifest.ProducerNeedsCandidates(child.Obj)
+	}
+	if !dynamic {
+		for i := range prepared {
+			prepared[i].targets = manifest.ProducerTargets(prepared[i].child.Obj)
+		}
+		return prepared
+	}
+	for _, child := range next.Children {
+		if child.Obj != nil {
+			for ref := range manifest.References(child.Obj) {
+				refs = append(refs, ref.NamedResource)
+			}
+		}
+	}
+	var proven map[manifest.NamedResource][]manifest.NamedResource
+	retain := func(declaration, target manifest.NamedResource) {
+		if proven == nil {
+			proven = map[manifest.NamedResource][]manifest.NamedResource{}
+		}
+		proven[declaration] = append(proven[declaration], target)
+	}
+	if next.binding == s.contributionBinding(id) {
+		shadowed := prev.shadows(next.binding)
+		for _, f := range next.coverage {
+			for _, p := range f.record.Productions {
+				if p.Owner != id || p.Source != next.binding.source {
+					continue
+				}
+				if p.File == f.record.File && p.Path == f.record.Path {
+					if _, replaced := byID[f.id]; replaced {
+						superseded = append(superseded, f.record.Refs...)
+					} else if !shadowed {
+						refs = append(refs, f.record.Refs...)
+					}
+				}
+				if !shadowed && p.Declaration != (manifest.NamedResource{}) {
+					retain(p.Declaration, f.id)
+				}
+			}
+		}
+	}
+	if prev != nil {
+		for _, entry := range prev.entries {
+			if entry.binding == next.binding {
+				_, replacement := byID[entry.child.Obj.Named()]
+				for ref := range manifest.References(entry.child.Obj) {
+					if replacement {
+						superseded = append(superseded, ref.NamedResource)
+					} else {
+						retained = append(retained, ref.NamedResource)
+					}
+				}
+				for _, target := range entry.targets {
+					retain(entry.child.Obj.Named(), target.NamedResource)
+				}
+			}
+		}
+	}
+	slices.SortFunc(refs, manifest.NamedResource.Compare)
+	refs = slices.Compact(refs)
+	for i := range prepared {
+		child := prepared[i].child
+		candidates := slices.Clip(refs)
+		for _, target := range proven[child.Obj.Named()] {
+			if !slices.Contains(superseded, target) || slices.Contains(retained, target) {
+				candidates = append(candidates, target)
+			}
+		}
+		prepared[i].targets = manifest.ProducerTargets(child.Obj, candidates...)
+	}
+	return prepared
 }
 
 func (e *Emission) sameContent(other *Emission) bool {
@@ -571,7 +640,7 @@ func changedTargets(prev, proposal *Emission) map[manifest.NamedResource]struct{
 	return changed
 }
 
-func prepareEmission(next, prev *Emission, prepared []admission) *Emission {
+func prepareEmission(next, prev *Emission, prepared []admission, byID map[manifest.NamedResource]int) *Emission {
 	e := *next
 	e.validated = new(atomic.Pointer[manifest.BaseManifest])
 	e.shadowed = nil
@@ -591,7 +660,7 @@ func prepareEmission(next, prev *Emission, prepared []admission) *Emission {
 	e.Manifests = slices.Clone(next.Manifests)
 	e.Render = slices.Clone(next.Render)
 	e.Unreadable = slices.Clone(next.Unreadable)
-	byID := make(map[manifest.NamedResource]int, len(prepared))
+	clear(byID)
 	for i, a := range prepared {
 		byID[a.child.Obj.Named()] = i
 	}

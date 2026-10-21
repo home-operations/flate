@@ -526,7 +526,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 	reader.regular = true
 	objs := []manifest.BaseManifest{}
 	collect := func(obj manifest.BaseManifest) {
-		if raw, ok := obj.(*manifest.RawObject); ok && len(manifest.ProducerTargets(raw)) == 0 {
+		if raw, ok := obj.(*manifest.RawObject); ok && !manifest.KindOf(raw).Tracked && len(manifest.ProducerTargets(raw)) == 0 {
 			return
 		}
 		objs = append(objs, obj)

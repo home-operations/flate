@@ -1,7 +1,6 @@
 package change
 
 import (
-	"iter"
 	"log/slog"
 	"slices"
 	"sync"
@@ -104,14 +103,17 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 }
 
 func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResource {
-	if f == nil || !id.KindInfo().Data {
+	if f == nil {
 		return nil
 	}
 	var out []manifest.NamedResource
 	if f.objs == nil {
 		return nil
 	}
-	for p := range f.objs.Productions(id, f.index) {
+	for _, p := range f.objs.Productions(id, f.index) {
+		if id.KindInfo().Discovery && p.Declaration == (manifest.NamedResource{}) {
+			continue
+		}
 		if p.Owner != (manifest.NamedResource{}) && !slices.Contains(out, p.Owner) {
 			out = append(out, p.Owner)
 		}
@@ -544,7 +546,7 @@ func (f *Filter) acceptedChildren(id manifest.NamedResource) []store.Child {
 // ObjectLister is the Store surface filter resolution needs.
 type ObjectLister interface {
 	GetArtifact(manifest.NamedResource) store.Artifact
-	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) iter.Seq[manifest.Production]
+	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	ListObjects(group, kind string) []manifest.BaseManifest
 }

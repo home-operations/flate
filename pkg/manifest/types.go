@@ -89,7 +89,7 @@ type BaseManifest interface {
 	Named() NamedResource
 	Suspended() bool
 	kind() KindInfo
-	producerTargets() []ProducerTarget
+	producerTargets([]NamedResource) []ProducerTarget
 }
 
 // DependencyRef is a compact prerequisite identity and optional CEL gate.
@@ -246,5 +246,14 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 }
 
 func (r *RawObject) kind() KindInfo {
-	return KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind, apiVersion: r.APIVersion}
+	info := KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind, apiVersion: r.APIVersion}
+	if r.Kind == kindTable[kindArtifactGenerator].Kind && info.Group == kindTable[kindArtifactGenerator].Group {
+		info = kindTable[kindArtifactGenerator].KindInfo
+		info.apiVersion = r.APIVersion
+	}
+	return info
+}
+
+func (r *RawObject) isArtifactGenerator() bool {
+	return r.Kind == kindTable[kindArtifactGenerator].Kind && apiGroup(r.APIVersion) == kindTable[kindArtifactGenerator].Group
 }

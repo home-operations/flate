@@ -1028,7 +1028,7 @@ func TestRawProducerIndex_StoreListener(t *testing.T) {
 
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{})
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}
-	if got := slices.Collect(st.Productions(target, nil)); len(got) != 0 {
+	if got := st.Productions(target, nil); len(got) != 0 {
 		t.Fatalf("empty store reported productions: %v", got)
 	}
 	producer := &manifest.RawObject{
@@ -1037,7 +1037,7 @@ func TestRawProducerIndex_StoreListener(t *testing.T) {
 		Spec: map[string]any{"target": map[string]any{"name": target.Name}},
 	}
 	publishRawFixture(t, c, producer)
-	if got := slices.Collect(st.Productions(target, nil)); len(got) != 1 || got[0].Declaration != producer.Named() {
+	if got := st.Productions(target, nil); len(got) != 1 || got[0].Declaration != producer.Named() {
 		t.Fatalf("productions = %v, want declaration %v", got, producer.Named())
 	}
 }

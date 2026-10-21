@@ -128,12 +128,11 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 		}
 	}
 	deps = deps[:n]
-	parents(func(p manifest.Production) bool {
+	for _, p := range parents {
 		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
 			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
 		}
-		return true
-	})
+	}
 	return deps
 }
 

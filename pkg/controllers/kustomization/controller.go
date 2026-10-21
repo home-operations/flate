@@ -264,13 +264,12 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 	flush := func() {
 		record, _ := c.index.Lookup(ks.Named())
 		start := len(deps)
-		c.Store.Productions(ks.Named(), c.index)(func(p manifest.Production) bool {
+		for _, p := range c.Store.Productions(ks.Named(), c.index) {
 			if p.Path != "" || p.Owner == (manifest.NamedResource{}) || p.Owner == ks.Named() {
-				return true
+				continue
 			}
 			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
-			return true
-		})
+		}
 		if len(deps) == start && record.Parent != (manifest.NamedResource{}) && record.Parent != ks.Named() {
 			deps = append(deps, manifest.DependencyRef{NamedResource: record.Parent})
 		}
@@ -295,7 +294,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 				return true
 			}
 			var producers []manifest.NamedResource
-			for p := range c.Store.Productions(ref.NamedResource, c.index) {
+			for _, p := range c.Store.Productions(ref.NamedResource, c.index) {
 				if p.Declaration != (manifest.NamedResource{}) && !slices.Contains(producers, p.Declaration) {
 					producers = append(producers, p.Declaration)
 				}

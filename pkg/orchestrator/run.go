@@ -26,7 +26,7 @@ type orchestratorExistence struct {
 }
 
 func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
-	for p := range e.store.Productions(id, e.index) {
+	for _, p := range e.store.Productions(id, e.index) {
 		if loader.Promote(e.store, id, p, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit}) {
 			return true
 		}

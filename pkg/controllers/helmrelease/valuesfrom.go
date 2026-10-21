@@ -152,7 +152,7 @@ func (c *Controller) shouldOmitValuesRef(
 	if c.valuesRefExists(id) {
 		return manifest.NamedResource{}, false, false
 	}
-	for p := range c.Store.Productions(id, nil) {
+	for _, p := range c.Store.Productions(id, nil) {
 		if p.Declaration == (manifest.NamedResource{}) && (p.Owner != (manifest.NamedResource{}) || p.Path != "") {
 			return manifest.NamedResource{}, false, false
 		}

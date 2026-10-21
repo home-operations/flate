@@ -28,7 +28,7 @@ func TestKindInfo_Rosters(t *testing.T) {
 		{&Secret{}, KindInfo{Kind: KindSecret, Tracked: true, Data: true}, ""},
 	}
 	registry := slices.Collect(Kinds())
-	assert.Equal(t, len(registry), len(cases))
+	assert.Equal(t, len(registry), len(cases)+1)
 	for i, tc := range cases {
 		t.Run(tc.want.Kind, func(t *testing.T) {
 			t.Parallel()
@@ -75,4 +75,20 @@ func TestNamedResource_ReportHidden(t *testing.T) {
 			assert.Equal(t, tc.id.ReportHidden(), tc.want)
 		})
 	}
+}
+
+func TestKindInfo_ArtifactGenerator(t *testing.T) {
+	t.Parallel()
+	doc := map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "metadata": map[string]any{"name": "generator", "namespace": "apps"}, "spec": map[string]any{}}
+	obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := obj.(*RawObject); !ok {
+		t.Fatalf("generator type = %T", obj)
+	}
+	want := KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Discovery: true}
+	assert.Equal(t, obj.Named().KindInfo(), want)
+	want.apiVersion = "source.extensions.fluxcd.io/v1beta1"
+	assert.Equal(t, KindOf(obj), want)
 }

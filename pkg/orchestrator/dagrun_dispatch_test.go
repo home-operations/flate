@@ -552,7 +552,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					_, next := s.GetEmission(p)
 					next.Children, next.Manifests = base.ParseChildren(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
 					next.Complete = true
-					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, slices.Collect(s.Productions(repo, nil)))
+					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, s.Productions(repo, nil))
 					o.ksc.Emit(p, &next)
 					next.Finish()
 					s.UpdateStatus(p, store.StatusReady, "", "")

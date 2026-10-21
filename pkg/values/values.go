@@ -51,7 +51,7 @@ func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
 	if !p.wipeSecrets {
 		return nil
 	}
-	productions := slices.Collect(p.s.Productions(id, nil))
+	productions := p.s.Productions(id, nil)
 	for _, production := range productions {
 		if production.Declaration == (manifest.NamedResource{}) && (production.Owner != (manifest.NamedResource{}) || production.Path != "") {
 			return nil
@@ -65,7 +65,7 @@ func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
 		if declaration == nil {
 			continue
 		}
-		for _, target := range manifest.ProducerTargets(declaration) {
+		for _, target := range manifest.ProducerTargets(declaration, id) {
 			if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
 				continue
 			}

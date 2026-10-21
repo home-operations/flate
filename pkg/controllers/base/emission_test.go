@@ -2,7 +2,6 @@ package base
 
 import (
 	"fmt"
-	"slices"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -78,7 +77,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				t.Error("selection follows visibility")
 			}
 		}
-		if len(slices.Collect(s.Productions(id, index))) == 0 {
+		if len(s.Productions(id, index)) == 0 {
 			t.Error("provenance follows visibility")
 		}
 	}, false)
@@ -152,7 +151,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 				}
 			}
 			c.Emit(parent.Named(), &store.Emission{Complete: true})
-			if len(slices.Collect(s.Productions(target, nil))) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
+			if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
 				t.Fatal("omitted declaration retained")
 			}
 			if invalidations != 3 {
@@ -197,7 +196,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				publish(root.Named(), doc)
 				for _, target := range tc.targets {
-					if got := slices.Collect(s.Productions(target, nil)); len(got) != 1 || got[0].Declaration.Kind != tc.kind {
+					if got := s.Productions(target, nil); len(got) != 1 || got[0].Declaration.Kind != tc.kind {
 						t.Fatalf("runtime declaration evidence: %v", got)
 					}
 					data := values.NewStoreProvider(s, wipe).Data(target)
@@ -208,7 +207,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				if len(tc.targets) == 0 {
 					for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
-						if got := slices.Collect(s.Productions(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "old"}, nil)); len(got) != 0 {
+						if got := s.Productions(manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "old"}, nil); len(got) != 0 {
 							t.Fatal("lookalike produced a target")
 						}
 					}
@@ -231,11 +230,11 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				publish(root.Named(), renamed)
 				for _, target := range tc.targets {
-					if got := slices.Collect(s.Productions(target, nil)); len(got) != 1 || got[0].Owner != supporter.Named() {
+					if got := s.Productions(target, nil); len(got) != 1 || got[0].Owner != supporter.Named() {
 						t.Fatalf("target rename changed independent contribution: %v", got)
 					}
 					target.Name = "next"
-					if len(slices.Collect(s.Productions(target, nil))) != 1 {
+					if len(s.Productions(target, nil)) != 1 {
 						t.Fatal("target rename lost new contribution")
 					}
 					data := values.NewStoreProvider(s, wipe).Data(target)
@@ -257,17 +256,17 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				c.Emit(root.Named(), &store.Emission{Complete: true})
 				for _, target := range tc.targets {
-					if got := slices.Collect(s.Productions(target, nil)); len(got) != 1 || got[0].Owner != supporter.Named() {
+					if got := s.Productions(target, nil); len(got) != 1 || got[0].Owner != supporter.Named() {
 						t.Fatalf("omission withdrew independent support: %v", got)
 					}
 					target.Name = "next"
-					if len(slices.Collect(s.Productions(target, nil))) != 0 {
+					if len(s.Productions(target, nil)) != 0 {
 						t.Fatal("omission retained cluster-only target")
 					}
 				}
 				c.Emit(supporter.Named(), &store.Emission{Complete: true})
 				for _, target := range tc.targets {
-					if len(slices.Collect(s.Productions(target, nil))) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
+					if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
 						t.Fatal("last supporter withdrawal retained target data")
 					}
 				}

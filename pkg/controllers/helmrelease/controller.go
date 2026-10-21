@@ -108,7 +108,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// parent-patching chain (tholinka/home-ops's cluster KS applies
 	// driftDetection / install.crds / upgrade strategy / rollback to
 	// every HR, so all of them were hit by this).
-	for production := range c.Store.Productions(id, nil) {
+	for _, production := range c.Store.Productions(id, nil) {
 		parent := production.Owner
 		if parent == (manifest.NamedResource{}) || parent == id {
 			continue
@@ -322,7 +322,7 @@ func (c *Controller) renderBestEffort(ctx context.Context, id manifest.NamedReso
 // ${VAR} rather than a genuine empty-field mistake.
 func (c *Controller) parentReadsUnreadableSecret(id manifest.NamedResource) bool {
 	provider := values.NewStoreProvider(c.Store, c.WipeSecrets)
-	for p := range c.Store.Productions(id, nil) {
+	for _, p := range c.Store.Productions(id, nil) {
 		if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
 			continue
 		}

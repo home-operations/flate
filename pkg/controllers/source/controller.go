@@ -177,7 +177,7 @@ func (c *Controller) producerBacked(err error) bool {
 	if !ok {
 		return false
 	}
-	for p := range c.Store.Productions(mse.Secret, nil) {
+	for _, p := range c.Store.Productions(mse.Secret, nil) {
 		if p.Declaration != (manifest.NamedResource{}) {
 			return true
 		}

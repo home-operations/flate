@@ -17,47 +17,23 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](ctx context.Context,
 	if err := e.checkpoint(); err != nil {
 		return canonical, err
 	}
-	parents := e.parents(e.Reads.ID(), canonical)
-	if len(parents) != 0 {
-		e.SetPendingUnlessReady(e.Reads.ID(), "waiting for structural parents")
-	}
-	for _, dep := range parents {
-		e.Reads.Require(dep)
-	}
-	parentErr := e.classify(ctx, level)
-	if parentErr != nil {
-		if _, failed := errors.AsType[*manifest.DependencyFailedError](parentErr); !failed {
-			return canonical, parentErr
+	if err := e.requireDeclaration(ctx, level); err != nil {
+		if _, failed := errors.AsType[*manifest.DependencyFailedError](err); !failed {
+			return canonical, err
 		}
 	}
-	message := "resolving dependencies"
-	if stage == manifest.GateArtifacts {
-		message = "resolving source artifact"
+	if stage != manifest.GateParents {
+		message := "resolving dependencies"
+		if stage == manifest.GateArtifacts {
+			message = "resolving source artifact"
+		}
+		e.SetPendingUnlessReady(e.Reads.ID(), message)
 	}
-	e.SetPendingUnlessReady(e.Reads.ID(), message)
 	deps := e.dependencies(effective, stage)
 	if err := e.Require(ctx, deps, level); err != nil {
 		return canonical, err
 	}
 	return canonical, e.checkpoint()
-}
-
-func (e *Execution) parents(id manifest.NamedResource, obj manifest.BaseManifest) []manifest.DependencyRef {
-	var deps []manifest.DependencyRef
-	productions := e.Reads.Productions(id, e.index)
-	structural := manifest.KindOf(obj).Structural
-	for _, p := range productions {
-		if p.Owner == (manifest.NamedResource{}) || p.Owner == id || structural && p.Path != "" {
-			continue
-		}
-		deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
-	}
-	if structural && len(deps) == 0 {
-		if record, _ := e.index.Lookup(id); record.Parent != (manifest.NamedResource{}) && record.Parent != id {
-			deps = append(deps, manifest.DependencyRef{NamedResource: record.Parent})
-		}
-	}
-	return deps
 }
 
 func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateStage) []manifest.DependencyRef {

@@ -631,3 +631,130 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestFingerprintDedup_InputReplacement(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{"artifact", "borrowed", "nil", "unmarshalable", "absent", "suspended", "borrowed_capture"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			c := base.New(st, nil)
+			input := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "A"}
+			st.AddObject(input)
+			_, prior := st.GetEmission(input.Named())
+			defer prior.Finish()
+			prior.Fingerprint, prior.Complete = manifest.Fingerprint("A"), true
+			prior.Manifests = []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "A"}}}
+			st.RecordEmitted(input.Named(), &prior)
+			run := controllertest.NewExecution(c, input.Named())
+			run.Reads.GetDeclaration(input.Named())
+			replacement := input.Clone()
+			replacement.Path, replacement.Suspend = "B", path == "suspended"
+			if path != "borrowed_capture" {
+				st.AddObject(replacement)
+			}
+			var content any = "A"
+			switch path {
+			case "artifact":
+				st.SetArtifact(input.Named(), &store.Emission{Fingerprint: prior.Fingerprint, Manifests: prior.Manifests})
+			case "borrowed", "borrowed_capture":
+				st.SetArtifact(input.Named(), nil)
+			case "nil":
+				content = nil
+			case "unmarshalable":
+				content = []any{make(chan int)}
+			case "absent":
+				st.DeleteObject(input.Named())
+			}
+			before := st.GetArtifact(input.Named())
+			var fp string
+			var handled bool
+			var err error
+			if path == "borrowed_capture" {
+				tasks := task.NewBounded(2)
+				entered, replaced := make(chan struct{}), make(chan struct{})
+				content = blockedFingerprintContent{tasks: tasks, entered: entered, replaced: replaced}
+				tasks.Go(t.Context(), "dedup", func(context.Context) { fp, handled, err = run.FingerprintDedup(input.Named(), content) })
+				tasks.Go(t.Context(), "replace", func(context.Context) {
+					tasks.YieldSlot(func() { <-entered })
+					st.AddObject(replacement)
+					close(replaced)
+				})
+				tasks.BlockTillDone()
+				if tasks.Failures() != 0 {
+					t.Fatal("fingerprint task panicked")
+				}
+			} else {
+				fp, handled, err = run.FingerprintDedup(input.Named(), content)
+			}
+			if fp != "" || !handled || err == nil || st.GetArtifact(input.Named()) != before {
+				t.Fatalf("stale A accepted: key=%q handled=%t err=%v", fp, handled, err)
+			}
+			if path != "absent" && path != "suspended" {
+				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).FingerprintDedup(replacement.Named(), "B")
+				if fp != manifest.Fingerprint("B") || handled || err != nil {
+					t.Fatalf("replacement B cannot prepare: %q %t %v", fp, handled, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDispatchNode_EffectiveSuspension(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	tasks := task.NewBounded(2)
+	c := base.New(st, tasks)
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	input := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{parent, input})
+	publish := func(obj *manifest.HelmRelease) {
+		t.Helper()
+		_, next := st.GetEmission(parent.Named())
+		defer next.Finish()
+		next.Children, next.Complete = []store.Child{{Obj: obj}}, true
+		st.RecordEmitted(parent.Named(), &next)
+	}
+	publish(input)
+	entered, replaced := make(chan struct{}), make(chan struct{})
+	c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
+		if id == input.Named() {
+			close(entered)
+			tasks.YieldSlot(func() { <-replaced })
+		}
+		return "", false
+	}})
+	c.StartLifecycle()
+	var bodies atomic.Int64
+	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
+		run := controllertest.NewExecution(c, input.Named())
+		run.Dispatch(ctx, manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+			bodies.Add(1)
+			return nil
+		})
+	})
+	tasks.Go(t.Context(), "replace", func(context.Context) {
+		tasks.YieldSlot(func() { <-entered })
+		replacement := input.Clone()
+		replacement.Suspend = true
+		publish(replacement)
+		close(replaced)
+	})
+	tasks.BlockTillDone()
+	info, _ := st.GetStatus(input.Named())
+	if tasks.Failures() != 0 || bodies.Load() != 0 || info.Outcome() != store.OutcomeSuspended || input.Suspend {
+		t.Fatalf("effective suspension: bodies=%d status=%+v", bodies.Load(), info)
+	}
+}
+
+type blockedFingerprintContent struct {
+	tasks    *task.Service
+	entered  chan struct{}
+	replaced <-chan struct{}
+}
+
+func (c blockedFingerprintContent) MarshalJSON() ([]byte, error) {
+	close(c.entered)
+	c.tasks.YieldSlot(func() { <-c.replaced })
+	return []byte(`"A"`), nil
+}

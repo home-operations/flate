@@ -26,6 +26,9 @@ type Waiter struct {
 	Store  stateReader
 	Parent manifest.NamedResource
 
+	// Materializer requires readiness even for existence-only dependency kinds.
+	Materializer bool
+
 	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
 	// because the cluster installs them at runtime.
 	AllowMissingCRDs bool

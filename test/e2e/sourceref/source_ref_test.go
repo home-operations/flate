@@ -289,7 +289,11 @@ spec:
 								return
 							}
 							if wantError != "" {
-								if code != 1 || !strings.Contains(stderr, "kustomize build ./apps") || transport.calls.Load() != 0 {
+								wantReason := "kustomize build ./apps"
+								if command == "diff" {
+									wantReason = "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/" + tt.sourcesName + ": declaration not emitted"
+								}
+								if code != 1 || !strings.Contains(stderr, wantReason) || transport.calls.Load() != 0 || (command == "diff" && out != "") {
 									t.Fatalf("unpinned Kustomization failure: exit=%d transport=%d\n%s\nstderr:\n%s", code, transport.calls.Load(), out, stderr)
 								}
 								return

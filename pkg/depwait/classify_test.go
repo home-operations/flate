@@ -125,11 +125,17 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 func TestClassify_EdgeReadiness(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name string
-		obj  manifest.BaseManifest
-		expr string
-		want schedule.Kind
+		name         string
+		materializer bool
+		status       store.Status
+		obj          manifest.BaseManifest
+		expr         string
+		want         schedule.Kind
 	}{
+		{name: "ordinary ResourceSet remains existence", obj: &manifest.ResourceSet{Name: "dependency", Namespace: "apps"}, want: schedule.Terminal},
+		{name: "materializer ResourceSet pending", obj: &manifest.ResourceSet{Name: "dependency", Namespace: "apps"}, materializer: true, want: schedule.Blocked},
+		{name: "materializer ResourceSet ready", obj: &manifest.ResourceSet{Name: "dependency", Namespace: "apps"}, materializer: true, status: store.StatusReady, want: schedule.Terminal},
+		{name: "materializer ResourceSet failed", obj: &manifest.ResourceSet{Name: "dependency", Namespace: "apps"}, materializer: true, status: store.StatusFailed, want: schedule.DependencyFailed},
 		{name: "ready waits for pending", obj: &manifest.Kustomization{Name: "dependency", Namespace: "apps"}, want: schedule.Blocked},
 		{name: "raw Flux group remains existence", obj: &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: manifest.FluxKustomizeDomain + "/v1", Name: "dependency", Namespace: "apps"}, want: schedule.Terminal},
 		{name: "foreign kind remains existence", obj: &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "example.com/v1", Name: "dependency", Namespace: "apps"}, want: schedule.Terminal},
@@ -140,8 +146,12 @@ func TestClassify_EdgeReadiness(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			s.AddObject(tc.obj)
-			s.UpdateStatus(tc.obj.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
-			w := &Waiter{Store: s}
+			status := tc.status
+			if status == "" {
+				status = store.StatusPending
+			}
+			s.UpdateStatus(tc.obj.Named(), store.StatusInfo{Status: status, Message: "working"})
+			w := &Waiter{Store: s, Materializer: tc.materializer}
 			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: new(tc.expr)}, manifest.DrainNone)
 			if got.Kind != tc.want {
 				t.Fatalf("classification = %+v, want %v", got, tc.want)
@@ -164,6 +174,11 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 	if first != (Classification{Kind: schedule.DependencyFailed, Message: failure.Error()}) {
 		t.Fatalf("derived failure: %+v", first)
 	}
+	w.Materializer = true
+	if got := w.Classify(t.Context(), ref, manifest.DrainForce); got != (Classification{Kind: schedule.DependencyFailed, Message: "declaration not emitted"}) {
+		t.Fatalf("materializer recursively expanded its own consumer failure: %+v", got)
+	}
+	w.Materializer = false
 	nested := &manifest.DependencyFailedError{Parent: b, Failed: []manifest.NamedResource{a}, Reasons: map[manifest.NamedResource]string{a: first.Message}}
 	s.UpdateFailure(b, nested)
 	w.Parent = a

@@ -108,7 +108,8 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 	var cause error
 	var causeID manifest.NamedResource
 	for dep := range e.Reads.Gates() {
-		cl := w.Classify(ctx, dep, level)
+		w.Materializer = dep.Materializer
+		cl := w.Classify(ctx, dep.DependencyRef, level)
 		if cl.Err != nil {
 			if cause == nil || dep.Compare(causeID) < 0 {
 				cause, causeID = cl.Err, dep.NamedResource
@@ -145,6 +146,9 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 
 // Settle classifies retained unresolved gates without rendering again.
 func (e *Execution) Settle(ctx context.Context, level manifest.DrainLevel) {
+	if !e.Reads.Valid() {
+		return
+	}
 	if pending, ok := e.pending.(interface {
 		Settle(context.Context, manifest.DrainLevel) error
 	}); ok {
@@ -210,18 +214,13 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		if recovered := recover(); recovered != nil {
 			e.Reads.Retire()
 			slog.Error("base: panic during reconcile", "id", id.String(), "panic", recovered)
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: fmt.Sprintf("panic: %v", recovered)})
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Message: fmt.Sprintf("panic: %v", recovered)})
 			panic(recovered)
 		}
 	}()
 	obj, ok := e.Reads.Get[T](id)
-	if !ok {
-		if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
-		}
-		return
-	}
-	if e.preGate(obj) {
+
+	if ok && e.preGate(obj) {
 		e.withdrawInvalid()
 		e.Reads.Accept()
 		return
@@ -239,13 +238,73 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		e.finish(err)
 		return
 	}
+	if !ok {
+		e.resume = e.requireDeclaration
+		err := e.requireDeclaration(ctx, level)
+		if err != nil && !errors.Is(err, manifest.ErrSourceSkipped) {
+			e.finish(err)
+		} else if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
+		}
+		return
+	}
+
 	e.initial, _ = e.Store.GetStatus(id)
 	e.recovering = e.initial.IsDependencyFailure() || e.initial.Status == store.StatusFailed && e.Reads.ReplacesInvalid()
-	err := reconcile(ctx, obj, level)
+	run := func(ctx context.Context, level manifest.DrainLevel) error {
+		if !e.Reads.Valid() {
+			return nil
+		}
+		if err := e.requireDeclaration(ctx, level); err != nil {
+			return err
+		}
+		return reconcile(ctx, obj, level)
+	}
+	err := run(ctx, level)
 	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
-		e.resume = func(ctx context.Context, level manifest.DrainLevel) error { return reconcile(ctx, obj, level) }
+		e.resume = run
 	}
 	e.finish(err)
+}
+
+func (e *Execution) requireDeclaration(ctx context.Context, level manifest.DrainLevel) error {
+	id := e.Reads.ID()
+	if e.Reads.GetDeclaration(id) != nil {
+		return nil
+	}
+	var owners []manifest.NamedResource
+	for _, production := range e.Reads.Productions(id, nil) {
+		if production.Owner != (manifest.NamedResource{}) && production.Owner != id {
+			owners = append(owners, production.Owner)
+		}
+	}
+	slices.SortFunc(owners, manifest.NamedResource.Compare)
+	owners = slices.Compact(owners)
+	if len(owners) == 0 {
+		return fmt.Errorf("%w: object not in store at reconcile time", manifest.ErrSourceSkipped)
+	}
+	for _, owner := range owners {
+		e.Reads.RequireMaterializer(owner)
+	}
+	err := e.classify(ctx, level)
+	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+		e.SetPendingUnlessReady(id, "waiting for declaration")
+		return err
+	}
+	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+	if !ok && err != nil {
+		return err
+	}
+	if !ok {
+		failed = &manifest.DependencyFailedError{Parent: id, Reasons: make(map[manifest.NamedResource]string)}
+	}
+	failed.Failed = owners
+	for _, owner := range owners {
+		if _, exists := failed.Reasons[owner]; !exists {
+			failed.Reasons[owner] = "declaration not emitted"
+		}
+	}
+	return failed
 }
 
 func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
@@ -255,10 +314,16 @@ func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
 func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, error) {
+	if err := e.checkpoint(); err != nil {
+		return "", true, err
+	}
 	if content == nil {
 		return "", false, e.admitRender()
 	}
 	fp := manifest.Fingerprint(content)
+	if err := e.checkpoint(); err != nil {
+		return "", true, err
+	}
 	if fp == "" {
 		return "", false, e.admitRender()
 	}

@@ -8,9 +8,6 @@ import (
 	"sync"
 	"testing"
 
-	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
-	"sigs.k8s.io/yaml"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -18,6 +15,8 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
+	"sigs.k8s.io/yaml"
 )
 
 func TestLoadChart_ValidationAcrossSources(t *testing.T) {
@@ -142,4 +141,29 @@ func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
 	assert.NoError(t, err)
 	fingerprint := captured.fingerprint()
 	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
+}
+
+func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	parent := &manifest.Kustomization{Name: "materializer", Namespace: "apps"}
+	raw := &manifest.HelmRepository{Name: "covered", Namespace: "apps", URL: "https://raw.example"}
+	st.AddObjects([]manifest.BaseManifest{parent, raw})
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
+	}})
+	resolver := NewSources(st)
+	if resolver.HelmRepository(raw.Namespace, raw.Name) != nil {
+		t.Fatal("provisional source reached shared resolver")
+	}
+	accepted := *raw
+	accepted.URL = "https://accepted.example"
+	_, next := st.GetEmission(parent.Named())
+	defer next.Finish()
+	next.Children = []store.Child{{Obj: &accepted}}
+	st.RecordEmitted(parent.Named(), &next)
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "other children pending"})
+	if resolver.HelmRepository(raw.Namespace, raw.Name) != &accepted {
+		t.Fatal("shared resolver lost effective accepted source")
+	}
 }

@@ -146,30 +146,56 @@ func (s *Store) EmissionOwner(id manifest.NamedResource) manifest.NamedResource 
 	return manifest.NamedResource{}
 }
 
+// GetDeclaration returns the effective input authorized by static or accepted support.
+func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	var view capture
+	sh.captureLocked(id, sh.cells[id], &view)
+	sh.mu.RUnlock()
+	return s.declaration(id, view)
+}
+
+func (s *Store) declaration(id manifest.NamedResource, view capture) manifest.BaseManifest {
+	if view.child.Obj == nil || view.accepted || view.owner != nil {
+		return view.child.Obj
+	}
+	record, _ := s.index.Load().Lookup(id)
+	if len(record.Productions) == 0 || slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+		return p.Owner == (manifest.NamedResource{}) || p.Owner == id
+	}) {
+		return view.child.Obj
+	}
+	return nil
+}
+
 // GetEmission borrows valid accepted inventory and binds an attempt to its current input.
 // Render identity is available through Emission.Replay.
 // OutputReads preserves validity evidence for withdrawal without exposing invalid inventory.
+// Returned slices and their contents MUST be copied before mutation.
 func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, Emission) {
 	return s.getEmission(nil, id)
 }
 
 func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest.BaseManifest, Emission) {
+	var obj manifest.BaseManifest
+	var view capture
 	if reads != nil {
-		reads.GetObject(id)
+		obj = reads.GetDeclaration(id)
+		view = reads.input(id).view
 	}
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
-	obj := view.child.Obj
+	if reads == nil {
+		sh.captureLocked(id, sh.cells[id], &view)
+	}
 	var prev *Emission
-	if slot := sh.slots[id]; slot != nil {
+	if slot := sh.slots[id]; slot != nil && slot.visible.Load() {
 		prev = slot.current.Load()
 	}
 	sh.mu.RUnlock()
-	if reads != nil {
-		view = reads.input(id).view
-		obj = view.child.Obj
+	if reads == nil {
+		obj = s.declaration(id, view)
 	}
 	e := Emission{Reads: reads, input: obj, inputDoc: view.child.Doc, previous: prev,
 		inputHead: inputStamp{owner: view.owner, generation: view.generation}}
@@ -178,6 +204,14 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 			e.inputHead.revision = reads.input(view.owner.id).producer
 		} else {
 			e.inputHead.revision = view.record.publication()
+		}
+	}
+	if prev != nil {
+		e.OutputReads = prev.OutputReads
+		if prev.OutputReads.Valid() {
+			e.Children = prev.Children
+			e.Manifests = prev.Manifests
+			e.Unreadable = prev.Unreadable
 		}
 	}
 	if obj == nil {
@@ -209,14 +243,6 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 			if a.Key == "" {
 				e.binding.mutable = a
 			}
-		}
-	}
-	if prev != nil {
-		e.OutputReads = prev.OutputReads
-		if prev.OutputReads.Valid() {
-			e.Children = slices.Clone(prev.Children)
-			e.Manifests = slices.Clone(prev.Manifests)
-			e.Unreadable = slices.Clone(prev.Unreadable)
 		}
 	}
 	return obj, e
@@ -577,12 +603,17 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission) {
 				}
 			}
 		}
+		var result publicationResult
 		if stable {
-			if !s.commitStable(slot, prev, proposal, generation) {
-				continue
-			}
-		} else if !s.commitReplacement(id, prev, proposal, generation) {
+			result = s.commitStable(slot, prev, proposal, generation)
+		} else {
+			result = s.commitReplacement(id, prev, proposal, generation)
+		}
+		switch result {
+		case publicationRetry:
 			continue
+		case publicationRejected:
+			return
 		}
 		if prev != nil && proposal.OutputReads != prev.OutputReads {
 			prev.OutputReads.Retire()
@@ -701,16 +732,31 @@ func (e *Emission) sameOutput(other *Emission) bool {
 		})
 }
 
-func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, generation uint64) bool {
+type publicationResult uint8
+
+const (
+	publicationRetry publicationResult = iota
+	publicationRejected
+	publicationAccepted
+)
+
+func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, generation uint64) publicationResult {
+	if !proposal.Reads.Valid() {
+		return publicationRejected
+	}
 	ps := s.shardFor(slot.id)
 	ps.mu.Lock()
 	if slot.current.Load() != prev || slot.generation != generation {
 		ps.mu.Unlock()
-		return false
+		return publicationRetry
+	}
+	if proposal.Reads != nil && ps.cells[slot.id].generation != proposal.inputHead.generation {
+		ps.mu.Unlock()
+		return publicationRejected
 	}
 	if proposal == prev && (!slot.visible.Load() || ps.artifacts[slot.id].value == proposal) {
 		ps.mu.Unlock()
-		return true
+		return publicationAccepted
 	}
 	if proposal != prev && proposal.revision == prev.revision {
 		slot.current.Store(proposal)
@@ -720,7 +766,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 			ps.artifacts[slot.id] = record
 		}
 		ps.mu.Unlock()
-		return true
+		return publicationAccepted
 	}
 	if slot.generation == ^uint64(0) || ps.artifacts[slot.id].generation == ^uint64(0) || ps.artifacts[slot.id].generation == 0 && !ps.canAdmit(1) {
 		ps.mu.Unlock()
@@ -757,10 +803,13 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 	ps.mu.Unlock()
 	dispatchEvents(events)
 	artifact.run()
-	return true
+	return publicationAccepted
 }
 
-func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emission, generation uint64) bool {
+func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emission, generation uint64) publicationResult {
+	if !proposal.Reads.Valid() {
+		return publicationRejected
+	}
 	var storage [4]regionState
 	changed := changedTargets(prev, proposal, storage[:])
 	if proposal.shadows(s.contributionBinding(id)) {
@@ -773,7 +822,11 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 	slot := ps.slots[id]
 	if slot != nil && (slot.current.Load() != prev || slot.generation != generation) || slot == nil && prev != nil {
 		s.unlockAll()
-		return false
+		return publicationRetry
+	}
+	if proposal.Reads != nil && ps.cells[id].generation != proposal.inputHead.generation {
+		s.unlockAll()
+		return publicationRejected
 	}
 	if slot != nil && slot.generation == ^uint64(0) || ps.artifacts[id].generation == ^uint64(0) {
 		s.unlockAll()
@@ -842,7 +895,7 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 	}
 	s.unlockAll()
 	dispatchPublications(publications)
-	return true
+	return publicationAccepted
 }
 
 func changedTargets(prev, proposal *Emission, storage []regionState) objectRegion {

@@ -19,22 +19,14 @@ import (
 
 func BenchmarkCollectDeps_Scope(b *testing.B) {
 	for _, target := range []struct{ api, kind string }{{"apiextensions.k8s.io/v1", manifest.KindCustomResourceDefinition}, {"v1", manifest.KindConfigMap}, {"example.com/v1", "Widget"}} {
-		for _, hasParent := range []bool{false, true} {
-			b.Run(fmt.Sprintf("%s/parent=%t", target.kind, hasParent), func(b *testing.B) {
-				c := gateExecution(New(store.New(), task.NewBounded(2)), manifest.NamedResource{})
-				opts := Options{}
-				if hasParent {
-					opts.Index = parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "app", Namespace: "ns"}: {Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "parent", Namespace: "ns"}})
-				}
-				c.Configure(opts)
-				rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: target.api, Kind: target.kind, Name: "dependency"}}}
-				manifest.KindOf(&manifest.RawObject{APIVersion: target.api, Kind: target.kind}).Namespaced()
-				for b.Loop() {
-					c.parents(rs.Named(), rs)
-					c.dependencies(rs, manifest.GateInputs)
-				}
-			})
-		}
+		b.Run(target.kind, func(b *testing.B) {
+			c := gateExecution(New(store.New(), task.NewBounded(2)), manifest.NamedResource{})
+			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: target.api, Kind: target.kind, Name: "dependency"}}}
+			manifest.KindOf(&manifest.RawObject{APIVersion: target.api, Kind: target.kind}).Namespaced()
+			for b.Loop() {
+				c.dependencies(rs, manifest.GateInputs)
+			}
+		})
 	}
 }
 
@@ -66,7 +58,7 @@ func TestDependencies_Resourceset_ScopeAndImmutability(t *testing.T) {
 	}
 }
 
-func TestDependencies_Resourceset_ParentAndInputs(t *testing.T) {
+func TestCollectDeps_ParentAndInputs(t *testing.T) {
 	t.Parallel()
 	for _, hasParent := range []bool{false, true} {
 		t.Run(fmt.Sprint(hasParent), func(t *testing.T) {
@@ -80,7 +72,7 @@ func TestDependencies_Resourceset_ParentAndInputs(t *testing.T) {
 			c.Configure(Options{Index: parentIndexForTest(parents)})
 			dependency := &manifest.Kustomization{Name: "pending", Namespace: "apps"}
 			c.Store.AddObject(dependency)
-			c.Store.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
+			c.Store.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusPending, Message: "working"})
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: "pending"}}, InputsFrom: []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "named"}, {Kind: manifest.KindResourceSetInputProvider}}}
 			rs.InputsFrom = append(rs.InputsFrom, rs.InputsFrom[0],
 				fluxopv1.InputProviderReference{APIVersion: "example.test/v1", Name: "named"},
@@ -102,13 +94,10 @@ func TestDependencies_Resourceset_ParentAndInputs(t *testing.T) {
 						{Path: "file.yaml"},
 					}}}, Complete: true})
 				}
-				first, last := parent, parent
-				first.Name, last.Name = "a-parent", "z-parent"
-				want = append(want, manifest.DependencyRef{NamedResource: first}, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{NamedResource: last})
+
 			}
-			manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization}).Namespaced()
-			deps := c.dependenciesForTest(rs)
-			assert.Diff(t, sortedDependencies(deps), sortedDependencies(want))
+			deps := c.dependencies(rs, manifest.GateInputs)
+			assert.Diff(t, deps, want)
 			w := &depwait.Waiter{Store: c.Store}
 			assert.Equal(t, rs.DependsOn[0].Ready, false)
 			assert.Equal(t, w.Classify(t.Context(), deps[0], manifest.DrainNone).Kind, schedule.Blocked)

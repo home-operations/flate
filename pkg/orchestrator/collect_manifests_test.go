@@ -2,20 +2,18 @@ package orchestrator
 
 import (
 	"fmt"
-	"slices"
-	"strings"
-	"sync"
-	"testing"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
 )
 
 func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
@@ -430,4 +428,39 @@ func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource
 		}
 	}
 	return out
+}
+
+func TestCollectManifests_CoveredRetainedOutput(t *testing.T) {
+	t.Parallel()
+	for _, survivor := range []bool{false, true} {
+		t.Run(fmt.Sprint(survivor), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			peer := &manifest.Kustomization{Name: "peer", Namespace: "apps"}
+			raw := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
+			st.AddObjects([]manifest.BaseManifest{parent, peer, raw})
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}, {Owner: peer.Named(), Source: manifest.BootstrapSourceID}}},
+			}})
+			accepted := raw.Clone()
+			accepted.Chart.Name = "accepted"
+			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}))
+			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "accepted-output"}}
+			st.RecordEmitted(raw.Named(), captureEmission(st, raw.Named(), &store.Emission{Manifests: []map[string]any{doc}, Complete: true}))
+			if survivor {
+				st.RecordEmitted(peer.Named(), captureEmission(st, peer.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}))
+			}
+			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Complete: true}))
+			st.UpdateStatus(raw.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "failed successor"})
+			o := &Orchestrator{store: st}
+			docs := outputByParent(o.collectManifests())[raw.Named()]
+			if survivor && (len(docs) != 1 || docs[0]["kind"] != "ConfigMap") || !survivor && len(docs) != 0 {
+				t.Fatalf("retained output survivor=%t docs=%v", survivor, docs)
+			}
+			if !survivor && (st.GetObject(raw.Named()) == nil || st.GetDeclaration(raw.Named()) != nil) {
+				t.Fatal("coverage visibility and runnable authority were conflated")
+			}
+		})
+	}
 }

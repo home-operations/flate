@@ -12,26 +12,26 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func newControllerWithFixture(t *testing.T) (*Controller, *store.Store, string) {
@@ -960,6 +960,108 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			s.RecordEmitted(ks.Named(), &empty)
 			if s.GetObject(newID) != nil || s.GetObject(shared) == nil {
 				t.Fatal("complete empty did not retire only its contribution")
+			}
+		})
+	}
+}
+
+func TestReconcile_DeclarationChangeBeforeCapture(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"withdrawn", "suspended", "replacement"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			c, st, root := newControllerWithFixture(t)
+			testutil.WriteFile(t, root, "b/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "b/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-b, namespace: flux-system}\n")
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
+			peer := &manifest.Kustomization{Name: "peer", Namespace: "flux-system"}
+			parsed, _, _, err := manifest.ParseDoc(map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "input", "namespace": "flux-system"}, "spec": map[string]any{"path": "./apps", "sourceRef": map[string]any{"kind": manifest.KindGitRepository, "name": "flux-system"}}}, manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := parsed.(*manifest.Kustomization)
+			st.AddObjects([]manifest.BaseManifest{parent, peer, input})
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}}}})
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing"})
+			publish := func(obj *manifest.Kustomization) {
+				t.Helper()
+				next := captureEmission(st, peer.Named(), &store.Emission{Complete: true})
+				defer next.Finish()
+				if obj != nil {
+					next.Children = []store.Child{{Obj: obj}}
+				}
+				st.RecordEmitted(peer.Named(), next)
+			}
+			publish(input)
+			entered, changed, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var once atomic.Bool
+			var expansions atomic.Int64
+			stop := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+				if id != input.Named() {
+					return
+				}
+				info := payload.(store.StatusInfo)
+				if info.Message == "expanding substitutions" {
+					expansions.Add(1)
+				}
+				if info.Message == "resolving source artifact" && once.CompareAndSwap(false, true) {
+					close(entered)
+					c.Tasks.YieldSlot(func() { <-changed })
+				}
+			}, false)
+			defer stop()
+			var run *base.Execution
+			c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
+				defer close(finished)
+				run = c.ReconcileNode(ctx, input.Named(), manifest.DrainNone)
+			})
+			c.Tasks.Go(t.Context(), "replace", func(context.Context) {
+				reached := false
+				c.Tasks.YieldSlot(func() {
+					select {
+					case <-entered:
+						reached = true
+					case <-finished:
+					}
+				})
+				if !reached {
+					t.Error("reconcile never reached source capture")
+					return
+				}
+				defer close(changed)
+				if state == "withdrawn" {
+					publish(nil)
+				} else {
+					replacement := input.Clone()
+					replacement.Path, replacement.Suspend = "./b", state == "suspended"
+					publish(replacement)
+				}
+			})
+			c.Tasks.BlockTillDone()
+			if c.Tasks.Failures() != 0 {
+				t.Fatal("capture worker panicked")
+			}
+			if run.Valid() || expansions.Load() != 0 || st.GetArtifact(input.Named()) != nil {
+				t.Fatalf("stale source capture continued: valid=%t expansions=%d", run.Valid(), expansions.Load())
+			}
+			run.Close()
+			run = c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
+
+			switch state {
+			case "withdrawn":
+				if !slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) || expansions.Load() != 0 || st.GetArtifact(input.Named()) != nil {
+					t.Fatalf("lost authority: blocked=%v expansions=%d", run.Blocked, expansions.Load())
+				}
+			case "suspended":
+				info, _ := st.GetStatus(input.Named())
+				if run.Outcome() == schedule.Blocked || expansions.Load() != 0 || info.Outcome() != store.OutcomeSuspended || st.GetArtifact(input.Named()) != nil {
+					t.Fatalf("suspended capture continued: blocked=%v expansions=%d status=%v", run.Blocked, expansions.Load(), info)
+				}
+			default:
+				emission, ok := st.GetArtifact(input.Named()).(*store.Emission)
+				if run.Outcome() == schedule.Blocked || !ok || !emission.Complete || len(emission.Manifests) != 1 || emission.Manifests[0]["metadata"].(map[string]any)["name"] != "from-b" {
+					t.Fatalf("replacement did not prepare B: blocked=%v output=%v", run.Blocked, emission)
+				}
 			}
 		})
 	}

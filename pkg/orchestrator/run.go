@@ -204,8 +204,11 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 				continue
 			}
 		}
-		_, attempt := o.store.GetEmission(id)
+		effective, attempt := o.store.GetEmission(id)
 		attempt.Finish()
+		if effective == nil {
+			continue
+		}
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
 		for _, child := range attempt.Children {
 			if child.Doc != nil {

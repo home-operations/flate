@@ -10,21 +10,18 @@ import (
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
-
 	"time"
-
-	"github.com/google/go-cmp/cmp"
-
-	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/controllers/base"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -989,6 +986,40 @@ func TestRawProducerIndex_StoreListener(t *testing.T) {
 }
 
 func (c *execution) requireChartForTest(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+	c.Store.AddObject(hr)
 	_, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
 	return err
+}
+
+func TestMaterializeHelmChartSource_RequiresCapturedInput(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"replacement", "absent", "suspended"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			c, st := newTestController(t, nil)
+			input := &manifest.HelmRelease{Name: "input", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: "absent"}}}
+			st.AddObject(input)
+			run := c.newExecution(input.Named())
+			run.run.Reads.GetDeclaration(input.Named())
+			attempt := captureEmission(st, input.Named(), &store.Emission{})
+			defer attempt.Finish()
+			replacement := input.Clone()
+			replacement.Chart.Name, replacement.Suspend = "replacement", state == "suspended"
+			if state == "absent" {
+				st.DeleteObject(input.Named())
+			} else {
+				st.AddObject(replacement)
+			}
+			var entered bool
+			run.run.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, hr *manifest.HelmRelease, _ manifest.DrainLevel) error {
+				entered = true
+				run.materializeHelmChartSource(hr.Named(), hr.Clone())
+				return nil
+			})
+			if entered || run.run.Valid() || st.GetArtifact(input.Named()) != nil {
+				t.Fatalf("stale synthesis reached body: entered=%t valid=%t", entered, run.run.Valid())
+			}
+
+		})
+	}
 }

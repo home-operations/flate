@@ -97,6 +97,9 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if err != nil {
 		return err
 	}
+	if _, err := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); err != nil {
+		return err
+	}
 	source, applyIgnore, err := c.resolveSource(ks)
 	if err != nil {
 		return err

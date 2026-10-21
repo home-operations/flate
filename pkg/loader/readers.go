@@ -89,6 +89,15 @@ func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]mani
 				r.Productions = []manifest.Production{{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID}}
 			}
 		}
+		// Owner evidence MUST survive compaction while provisional origins are removed.
+		r.Productions = slices.DeleteFunc(r.Productions, func(p manifest.Production) bool {
+			if p.Owner != (manifest.NamedResource{}) || p.Path == "" {
+				return false
+			}
+			return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
+				return owner.Owner != (manifest.NamedResource{}) && owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File
+			})
+		})
 		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
 		l.Index.Records[id] = r
 	}

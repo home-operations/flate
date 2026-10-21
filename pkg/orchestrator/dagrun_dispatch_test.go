@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -229,6 +231,58 @@ data: {key: fixed}
 			})
 		}
 	}
+	for _, mode := range []string{"pending_peer", "ready_without_child", "failed_without_child", "accepted_pending_owner", "self_owned", "rooted"} {
+		t.Run("covered/"+mode, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			tasks := task.NewBounded(2)
+			parent := &manifest.ResourceSet{Name: "a-owner", Namespace: "apps"}
+			peer := &manifest.ResourceSet{Name: "z-peer", Namespace: "apps"}
+			child := &manifest.ResourceSet{Name: "child", Namespace: "apps", ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n"}
+			s.AddObjects([]manifest.BaseManifest{parent, peer, child})
+			proofs := []manifest.Production{{Owner: parent.Named()}, {Owner: peer.Named()}}
+			if mode == "self_owned" {
+				proofs = append(proofs, manifest.Production{Owner: child.Named()})
+			}
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: proofs}}})
+			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			s.UpdateStatus(peer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			switch mode {
+			case "pending_peer":
+				s.UpdateStatus(peer.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing"})
+			case "failed_without_child":
+				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "owner failed"})
+			case "accepted_pending_owner", "rooted":
+				s.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}}})
+				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+				if mode == "rooted" {
+					s.AddObject(child)
+				}
+			}
+			c := resourceset.New(s, tasks, true)
+			c.Configure(base.Options{})
+			c.StartLifecycle()
+			result := (dagDispatcher{&Orchestrator{store: s, rsc: c}}).Dispatch(t.Context(), child.Named(), manifest.DrainNone)
+			defer result.Assessment.Close()
+			run := result.Assessment.(*base.Execution)
+			info, _ := s.GetStatus(child.Named())
+			switch mode {
+			case "pending_peer":
+				if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{peer.Named()}) || s.GetArtifact(child.Named()) != nil {
+					t.Fatalf("pending materializer did not park exact peer: outcome=%v blocked=%v", run.Outcome(), run.Blocked)
+				}
+			case "ready_without_child", "failed_without_child":
+				if run.Outcome() != schedule.DependencyFailed || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) || s.GetArtifact(child.Named()) != nil {
+					t.Fatalf("non-supplying owners lost provenance: %+v", info)
+				}
+			default:
+				if run.Outcome() != schedule.Terminal || info.Status != store.StatusReady || s.GetArtifact(child.Named()) == nil {
+					t.Fatalf("effective declaration did not render: %+v", info)
+				}
+			}
+		})
+	}
+
 }
 
 func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
@@ -567,6 +621,14 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					s.UpdateStatus(p, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					close(published)
 				})
+				if scenario == "withdrawal_reanchor" {
+					_, initial := s.GetEmission(p)
+					initial.Children = children
+					o.ksc.Emit(p, &initial)
+					initial.Finish()
+				} else {
+					publish()
+				}
 				d := dagDispatcher{o}
 				dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 					if id != p {
@@ -578,7 +640,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 								}
 							})
 						}
-						hidden := id == repo && s.GetObject(id) == nil
+						hidden := id == repo && s.GetDeclaration(id) == nil
 						result := d.Dispatch(ctx, id, level)
 						if hidden && scenario == "withdrawal_reanchor" {
 							publish()
@@ -593,14 +655,13 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					})
 					if scenario == "withdrawal_reanchor" {
 						_, empty := s.GetEmission(p)
+						empty.Children, empty.Manifests = nil, nil
 						empty.Complete = true
 						o.ksc.Emit(p, &empty)
-						if s.GetObject(repo) != nil {
-							t.Error("withdrawal retained repository")
+						if s.GetDeclaration(repo) != nil {
+							t.Error("withdrawal retained repository authority")
 						}
-						if _, ok := s.GetStatus(repo); ok {
-							t.Error("withdrawal retained Ready")
-						}
+
 						return schedule.Result{}
 					}
 					publish()
@@ -728,4 +789,71 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 || output.Manifests[0]["data"].(map[string]any)["value"] != "pinned" {
 		t.Fatalf("after-drain transitive output: blocked=%t settled=%t output=%+v", blocked.Load(), settled.Load(), output)
 	}
+}
+
+func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		s := store.New()
+		tasks := task.NewBounded(2)
+		publisher, child := testutil.KustomizationID("apps", "publisher"), testutil.KustomizationID("apps", "child")
+		s.AddObject(&manifest.Kustomization{Name: publisher.Name, Namespace: publisher.Namespace})
+		s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: child.Name, Namespace: child.Namespace}}}, Complete: true}))
+		doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "withdrawn", "namespace": "apps"}}
+		_, accepted := s.GetEmission(child)
+		accepted.Children, accepted.Manifests = base.New(s, tasks).ParseChildren(s.GetObject(child), []map[string]any{doc}, manifest.ParseDocOptions{})
+		accepted.Complete = true
+		s.RecordEmitted(child, &accepted)
+		accepted.Finish()
+		o := &Orchestrator{store: s}
+		if len(outputByParent(o.collectManifests())[child]) != 1 {
+			t.Fatal("fixture has no accepted child output")
+		}
+		entered, release, harvested := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		resume := sync.OnceFunc(func() { close(release) })
+		defer resume()
+		unsubBarrier := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+			if id == child && payload == nil {
+				close(entered)
+				tasks.YieldSlot(func() { <-release })
+			}
+		}, false)
+		defer unsubBarrier()
+		dispatch := fixtureDispatcher{store: s, dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+			s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Complete: true}))
+			return schedule.Result{}
+		}}
+		scheduler := schedule.New(tasks, dispatch)
+		unsubscribe := o.watchDAG(scheduler)
+		defer unsubscribe()
+		scheduler.Seed([]schedule.NodeID{publisher})
+		var output map[manifest.NamedResource][]map[string]any
+		done := make(chan error, 1)
+		go func() {
+			err := scheduler.Run(ctx)
+			close(harvested)
+			output = outputByParent(o.collectManifests())
+			done <- err
+		}()
+		<-entered
+		if s.GetObject(child) != nil || s.GetObject(accepted.Children[0].Obj.Named()) != nil {
+			t.Fatal("paused notification precedes the withdrawal commit")
+		}
+		cancel()
+		synctest.Wait()
+		select {
+		case <-harvested:
+			t.Fatal("cancellation harvested before committed notification delivery")
+		default:
+		}
+		resume()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want cancellation", err)
+		}
+		if len(output) != 0 || tasks.Failures() != 0 {
+			t.Fatalf("withdrawn output survived final harvest: %v; task failures=%d", output, tasks.Failures())
+		}
+	})
 }

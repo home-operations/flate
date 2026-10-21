@@ -196,6 +196,20 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 	source := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "source"}
 	a := manifest.Production{Owner: first, Declaration: id, Authored: id, Path: "declared.yaml", File: "declared.yaml", Source: source}
 	z := manifest.Production{Owner: last, Declaration: id, Authored: id, Path: "declared.yaml", File: "declared.yaml", Source: source}
+	root := a
+	root.Owner, root.Declaration = manifest.NamedResource{}, manifest.NamedResource{}
+	otherSource := root
+	otherSource.Source.Name = "other"
+	otherFile := root
+	otherFile.Path = "other.yaml"
+	otherCoordinate := root
+	otherCoordinate.File = "other.yaml"
+	otherAuthored := root
+	otherAuthored.Authored.Namespace = "other"
+	generatorRoot := root
+	generatorRoot.Path = ""
+	generatorOwner := a
+	generatorOwner.Path = ""
 	for _, tc := range []struct {
 		name         string
 		record, want manifest.DiscoveryRecord
@@ -212,6 +226,13 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 			want: manifest.DiscoveryRecord{Authored: id, Path: "raw.yaml", File: "raw.yaml", Refs: []manifest.NamedResource{source}, Parent: first, Pinned: true, Excluded: true, Productions: []manifest.Production{a, z}}},
 		{name: "existing non file evidence is sorted", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{z, a}},
 			want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a, z}}},
+		{name: "file origin gains owner", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{root, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a}}},
+		{name: "file origin follows owners", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{z, root, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{a, z}}},
+		{name: "independent source survives", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherSource, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherSource, a}}},
+		{name: "independent path survives", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherFile, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherFile, a}}},
+		{name: "independent file coordinate survives", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherCoordinate, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherCoordinate, a}}},
+		{name: "independent authored identity survives", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherAuthored, a}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{otherAuthored, a}}},
+		{name: "generator origin remains", record: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{generatorRoot, generatorOwner}}, want: manifest.DiscoveryRecord{Authored: id, Productions: []manifest.Production{generatorRoot, generatorOwner}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

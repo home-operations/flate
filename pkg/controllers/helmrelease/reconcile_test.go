@@ -393,7 +393,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 		name, message    string
 		parent, retained bool
 	}{
-		{"parent", "waiting for structural parents", true, false},
+		{"parent", "resolving dependencies", true, false},
 		{"dependencies_after_parent", "resolving dependencies", true, false},
 		{"dependencies_without_parent", "resolving dependencies", false, false},
 		{"pre_render", "resolving values inputs", false, false},
@@ -448,6 +448,9 @@ data: {greeting: hi}
 					hr := obj.(*manifest.HelmRelease)
 					original := hr.Clone()
 					st.AddObject(hr)
+					if site.parent {
+						c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true})
+					}
 					st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 					var retained *store.Emission
 					if site.retained {
@@ -493,7 +496,7 @@ data: {greeting: hi}
 					if observations.Load() < 1 || !published.Load() || c.Tasks.Failures() != 0 {
 						t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), c.Tasks.Failures())
 					}
-					if site.parent && parentEvents.Load() < 1 || !site.parent && parentEvents.Load() != 0 {
+					if parentEvents.Load() != 0 {
 						t.Fatalf("parent refresh events = %d", parentEvents.Load())
 					}
 					fresh, ok := st.Get[*manifest.HelmRelease](id)

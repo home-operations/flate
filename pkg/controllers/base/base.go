@@ -22,7 +22,6 @@ type Controller struct {
 
 	started   atomic.Bool
 	filter    *change.Filter
-	index     *manifest.DiscoveryIndex
 	skipKinds []string
 
 	dependencySubstitutions values.DependencySubstitutions
@@ -83,7 +82,6 @@ func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.dependencySubstitutions = opts.DependencySubstitutions
 	c.filter = opts.Filter
-	c.index = opts.Index
 	c.SubstituteFrom = opts.SubstituteFrom
 	c.skipKinds = opts.SkipKinds
 	c.existence = opts.Existence

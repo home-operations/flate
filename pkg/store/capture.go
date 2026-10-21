@@ -26,28 +26,37 @@ type ReadSet struct {
 // Input co-owns a captured dependency and its authority registrations.
 // Its reference MUST remain immutable until retirement is swept.
 type Input struct {
-	Ref         manifest.DependencyRef
-	gates       *readinessGate
-	next        *Input
-	cells       [5]registration
-	view        capture
-	producer    uint64
-	settled     bool
-	gate        bool
-	required    bool
-	productions []manifest.Production
-	objects     []manifest.BaseManifest
-	artifact    Artifact
-	conditions  []Condition
-	status      StatusInfo
-	hasStatus   bool
-	derived     uint8
+	Ref          manifest.DependencyRef
+	gates        *readinessGate
+	next         *Input
+	cells        [5]registration
+	view         capture
+	producer     uint64
+	settled      bool
+	gate         bool
+	materializer bool
+	declaration  bool
+	required     bool
+	productions  []manifest.Production
+	objects      []manifest.BaseManifest
+	artifact     Artifact
+	conditions   []Condition
+	status       StatusInfo
+	hasStatus    bool
+	derived      uint8
 }
 
 type readinessGate struct {
 	expr                                       *string
 	artifact, unknownArtifactRoot, chartSource bool
+	materializer                               bool
 	next                                       *readinessGate
+}
+
+// Gate retains a readiness expression and its dependency purpose.
+type Gate struct {
+	manifest.DependencyRef
+	Materializer bool
 }
 
 // Init starts an execution using caller-owned dependency storage.
@@ -120,6 +129,14 @@ func (r *ReadSet) activateProducers() {
 // GetObject captures a named object, including its absence and supplying producer.
 func (r *ReadSet) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	return r.Capture(r.input(id))
+}
+
+// GetDeclaration captures the effective input authorized by static or accepted support.
+func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest {
+	input := r.input(id)
+	r.Capture(input)
+	input.declaration = true
+	return r.store.declaration(id, input.view)
 }
 
 // Capture records a caller-owned named input without reconstructing its identity index.
@@ -339,39 +356,49 @@ func (r *ReadSet) ID() manifest.NamedResource { return r.id }
 
 // Require retains each distinct readiness gate in the execution footprint.
 func (r *ReadSet) Require(ref manifest.DependencyRef) {
+	r.require(ref, false)
+}
+
+// RequireMaterializer retains a supplier's status-aware readiness assessment.
+func (r *ReadSet) RequireMaterializer(id manifest.NamedResource) {
+	r.require(manifest.DependencyRef{NamedResource: id}, true)
+}
+
+func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	input := r.input(ref.NamedResource)
 	input.required = true
 	if !input.gate {
 		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
 		input.Ref.Artifact, input.Ref.UnknownArtifactRoot, input.Ref.ChartSource = ref.Artifact, ref.UnknownArtifactRoot, ref.ChartSource
+		input.materializer = materializer
 		return
 	}
-	if sameReadinessGate(input.Ref, ref) {
+	if sameReadinessGate(input.Ref, ref) && input.materializer == materializer {
 		return
 	}
 	for gate := &input.gates; ; gate = &(*gate).next {
 		if *gate == nil {
-			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource}
+			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource, materializer: materializer}
 			return
 		}
-		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, UnknownArtifactRoot: (*gate).unknownArtifactRoot, ChartSource: (*gate).chartSource}, ref) {
+		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, UnknownArtifactRoot: (*gate).unknownArtifactRoot, ChartSource: (*gate).chartSource}, ref) && (*gate).materializer == materializer {
 			return
 		}
 	}
 }
 
 // Gates enumerates the retained readiness assessments.
-func (r *ReadSet) Gates() iter.Seq[manifest.DependencyRef] {
-	return func(yield func(manifest.DependencyRef) bool) {
+func (r *ReadSet) Gates() iter.Seq[Gate] {
+	return func(yield func(Gate) bool) {
 		for input := r.inputs; input != nil; input = input.next {
 			if !input.gate {
 				continue
 			}
-			if !yield(input.Ref) {
+			if !yield(Gate{DependencyRef: input.Ref, Materializer: input.materializer}) {
 				return
 			}
 			for gate := input.gates; gate != nil; gate = gate.next {
-				if !yield(manifest.DependencyRef{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource}) {
+				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
 					return
 				}
 			}
@@ -500,6 +527,12 @@ func (r *ReadSet) Promotions(id manifest.NamedResource, index *manifest.Discover
 
 // Bind attaches consumed provenance and retains prospective children before publication.
 func (r *ReadSet) Bind(emission *Emission) {
+	if emission.Reads != r {
+		_, captured := r.GetEmission(r.id)
+		emission.input, emission.inputDoc, emission.inputHead = captured.input, captured.inputDoc, captured.inputHead
+		emission.binding, emission.coverage = captured.binding, captured.coverage
+		captured.Finish()
+	}
 	emission.Reads = r
 	r.produced = emission.Children
 }
@@ -512,6 +545,9 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 	for input := previous.inputs; input != nil; input = input.next {
 		id := input.Ref.NamedResource
 		if input.derived&1 != 0 && !semanticEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
+			return false
+		}
+		if input.declaration && (r.GetDeclaration(id) == nil) != (r.store.declaration(id, input.view) == nil) {
 			return false
 		}
 		if input.derived&2 != 0 {

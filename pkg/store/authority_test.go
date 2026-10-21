@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 type authorityHeads struct {
@@ -380,32 +383,60 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 
 func TestFeasibility_PointerOnlyExistingSection(t *testing.T) {
 	t.Parallel()
-	s := New()
-	p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-	s.AddObject(p)
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("cut", "a")}, Complete: true})
-	sh := s.shardFor(p.Named())
-	sh.mu.RLock()
-	slot := sh.slots[p.Named()]
-	previous, generation := slot.current.Load(), slot.generation
-	sh.mu.RUnlock()
-	_, proposed := s.GetEmission(p.Named())
-	proposed.Children = append(proposed.Children, emissionChild("new", "b"))
-	prepared := make([]admission, len(proposed.Children))
-	for i, child := range proposed.Children {
-		prepared[i] = admission{child: child, targets: manifest.ProducerTargets(child.Obj)}
-	}
-	proposal := prepareEmission(&proposed, previous, prepared, make(map[manifest.NamedResource]int, len(prepared)))
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("cut", "changed")}, Complete: true})
-	})
-	wg.Wait()
-	if s.commitReplacement(p.Named(), previous, proposal, generation) {
-		t.Fatal("replacement accepted a stale protected predecessor")
-	}
-	if s.GetObject(proposed.Children[1].Obj.Named()) != nil {
-		t.Fatal("rejected replacement installed a target")
+	for _, route := range []string{"stable", "replacement"} {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			s.AddObject(p)
+			s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("cut", "a")}, Complete: true})
+			tasks := task.NewBounded(2)
+			captured, replaced := make(chan struct{}), make(chan struct{})
+			tasks.Go(t.Context(), "retry", func(context.Context) {
+				sh := s.shardFor(p.Named())
+				sh.mu.RLock()
+				slot := sh.slots[p.Named()]
+				previous, generation := slot.current.Load(), slot.generation
+				sh.mu.RUnlock()
+				_, proposed := s.GetEmission(p.Named())
+				defer proposed.Finish()
+				if route == "stable" {
+					proposed.Children = []Child{emissionChild("cut", "proposed")}
+				} else {
+					proposed.Children = append(slices.Clone(proposed.Children), emissionChild("new", "b"))
+				}
+				prepared := make([]admission, len(proposed.Children))
+				for i, child := range proposed.Children {
+					prepared[i] = admission{child: child, targets: manifest.ProducerTargets(child.Obj)}
+				}
+				proposal := prepareEmission(&proposed, previous, prepared, make(map[manifest.NamedResource]int, len(prepared)))
+				close(captured)
+				tasks.YieldSlot(func() { <-replaced })
+				var result publicationResult
+				if route == "stable" {
+					result = s.commitStable(slot, previous, proposal, generation)
+				} else {
+					result = s.commitReplacement(p.Named(), previous, proposal, generation)
+				}
+				assert.Equal(t, result, publicationRetry)
+			})
+			changed := emissionChild("cut", "changed")
+			tasks.Go(t.Context(), "replace", func(context.Context) {
+				defer close(replaced)
+				tasks.YieldSlot(func() { <-captured })
+				s.RecordEmitted(p.Named(), &Emission{Children: []Child{changed}, Complete: true})
+			})
+			tasks.BlockTillDone()
+			if tasks.Failures() != 0 {
+				t.Fatal("publication task panicked")
+			}
+			_, retained := s.GetEmission(p.Named())
+			defer retained.Finish()
+			assert.Diff(t, retained.Children, []Child{changed})
+			if s.GetObject(emissionChild("new", "b").Obj.Named()) != nil {
+				t.Fatal("retry installed a proposed target")
+			}
+		})
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -58,6 +59,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 	}})
 	st.AddObjects([]manifest.BaseManifest{parent, repo, secret})
+	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
 	var pending int
 	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); id == repo.Named() && ok && info.Status == store.StatusPending {
@@ -235,8 +237,12 @@ func TestSource_DeclarationProgress(t *testing.T) {
 				t.Fatal(err)
 			}
 			info, _ := st.GetStatus(repo.Named())
-			if info.Status != store.StatusReady || f.calls != 1 {
-				t.Fatalf("status=%v acquisitions=%d, want ready with one acquisition", info, f.calls)
+			if name == "absent producer" {
+				if info.Status != store.StatusReady || f.calls != 1 {
+					t.Fatalf("independent source: status=%+v acquisitions=%d", info, f.calls)
+				}
+			} else if !info.IsDependencyFailure() || f.calls != 0 || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) {
+				t.Fatalf("covered source acquired raw bytes or lost cause: status=%+v acquisitions=%d", info, f.calls)
 			}
 		})
 	}

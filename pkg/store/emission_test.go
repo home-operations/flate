@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -161,6 +162,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			_, attempt := s.GetEmission(p)
 			defer attempt.Finish()
 			attempt.Complete, attempt.Fingerprint = initial.Complete, initial.Fingerprint
+			attempt.Children, attempt.Manifests, attempt.Unreadable = slices.Clone(attempt.Children), slices.Clone(attempt.Manifests), slices.Clone(attempt.Unreadable)
 			tc.edit(&attempt)
 			checkPredecessor := func() {
 				t.Helper()
@@ -371,6 +373,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 							defer next.Finish()
 							next.Complete = true
 							if labels {
+								next.Children, next.Manifests = slices.Clone(next.Children), slices.Clone(next.Manifests)
 								doc := manifest.DeepCopyMap(child.Doc)
 								doc["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": fmt.Sprint(i)}
 								next.Children[0].Doc, next.Manifests[0] = doc, doc
@@ -767,9 +770,7 @@ func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 				s.AddObject(p.Obj)
 			}
 			s.AddObject(l.Obj)
-			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				l.Obj.Named(): {Productions: []manifest.Production{{Owner: k.Obj.Named(), Source: source, Authored: l.Obj.Named(), Path: "source/l.yaml", File: "l.yaml"}}},
-			}})
+
 			publish := func(owner Child, children ...Child) {
 				t.Helper()
 				obj, attempt := s.GetEmission(owner.Obj.Named())
@@ -796,8 +797,11 @@ func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 			if mode == "other-source-current" {
 				publish(gp, p)
 			}
-			publish(p, k)
 			publish(l, m)
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				l.Obj.Named(): {Productions: []manifest.Production{{Owner: k.Obj.Named(), Source: source, Authored: l.Obj.Named(), Path: "source/l.yaml", File: "l.yaml"}}},
+			}})
+			publish(p, k)
 			for _, child := range []Child{k, l, m} {
 				check("initial", child, true)
 			}
@@ -2675,6 +2679,108 @@ func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
 	}
 }
 
+func TestRecordEmitted_RejectedPublicationPreservesOutputWatches(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{"stable", "replacement"} {
+		for _, rejection := range []string{"invalid_reads", "stale_generation"} {
+			t.Run(route+"/"+rejection, func(t *testing.T) {
+				t.Parallel()
+				s := New()
+				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+				a := &manifest.Kustomization{Name: "input-a", Namespace: "apps", Path: "old"}
+				b := &manifest.Kustomization{Name: "input-b", Namespace: "apps", Path: "old"}
+				s.AddObjects([]manifest.BaseManifest{owner, a, b})
+				var first, second ReadSet
+				first.Init(s, owner.Named(), nil)
+				second.Init(s, owner.Named(), nil)
+				defer first.Retire()
+				defer second.Retire()
+				_, output := first.GetEmission(owner.Named())
+				assert.Equal(t, first.GetObject(a.Named()), manifest.BaseManifest(a))
+				child := emissionChild("output", "accepted")
+				output.Children, output.Manifests = []Child{child}, []map[string]any{child.Doc}
+				output.Fingerprint = manifest.Fingerprint(output.Manifests)
+				output.Complete = true
+				first.Bind(&output)
+				s.RecordEmitted(owner.Named(), &output)
+				output.Finish()
+				accepted := s.GetArtifact(owner.Named()).(*Emission)
+
+				tasks := task.NewBounded(2)
+				captured, stale := make(chan struct{}), make(chan struct{})
+				var next Emission
+				tasks.Go(t.Context(), "publish", func(context.Context) {
+					_, next = second.GetEmission(owner.Named())
+					defer next.Finish()
+					assert.Equal(t, second.GetObject(b.Named()), manifest.BaseManifest(b))
+					proposedChild := emissionChild("output", "proposed")
+					if route == "replacement" {
+						proposedChild = emissionChild("replacement", "proposed")
+					}
+					next.Children, next.Manifests = []Child{proposedChild}, []map[string]any{proposedChild.Doc}
+					next.Fingerprint = manifest.Fingerprint(next.Manifests)
+					next.Complete = true
+					second.Bind(&next)
+					close(captured)
+					tasks.YieldSlot(func() { <-stale })
+					if rejection == "stale_generation" {
+						if !second.Valid() || next.inputHead.generation == output.inputHead.generation {
+							t.Error("fixture did not isolate stale generation with valid reads")
+						}
+					} else if second.Valid() {
+						t.Error("fixture did not invalidate proposal reads")
+					}
+					s.RecordEmitted(owner.Named(), &next)
+				})
+				tasks.Go(t.Context(), "stale", func(context.Context) {
+					defer close(stale)
+					tasks.YieldSlot(func() { <-captured })
+					if rejection == "invalid_reads" {
+						changed := b.Clone()
+						changed.Path = "new"
+						s.AddObject(changed)
+					} else {
+						next.inputHead.generation--
+					}
+				})
+				tasks.BlockTillDone()
+				if tasks.Failures() != 0 {
+					t.Fatal("publication task panicked")
+				}
+				current := s.GetArtifact(owner.Named()).(*Emission)
+				if current != accepted || current.OutputReads != &first {
+					t.Fatal("rejection replaced the accepted emission or borrower")
+				}
+				if first.retired.Load() || !first.Valid() {
+					t.Error("rejection retired or invalidated the accepted output borrower")
+				}
+				for id := range s.Sweep() {
+					t.Errorf("rejection invalidated unchanged accepted owner %v", id)
+				}
+				_, retained := s.GetEmission(owner.Named())
+				defer retained.Finish()
+				assert.Diff(t, retained.Children, []Child{child})
+				assert.Diff(t, retained.Manifests, output.Manifests)
+
+				changed := a.Clone()
+				changed.Path = "new"
+				s.AddObject(changed)
+				if delivered := slices.Collect(s.Sweep()); !slices.Contains(delivered, owner.Named()) {
+					t.Error("accepted input change did not deliver its owner through Sweep")
+				}
+				if first.Valid() {
+					t.Error("accepted output remained valid after its input changed")
+				}
+				_, invalid := s.GetEmission(owner.Named())
+				defer invalid.Finish()
+				if len(invalid.Children) != 0 || len(invalid.Manifests) != 0 {
+					t.Fatal("invalid accepted output retained children or manifests")
+				}
+			})
+		}
+	}
+}
+
 func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"changed", "missing", "source_hidden"} {
@@ -2762,4 +2868,304 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecordEmitted_IndirectAuthorityArrival(t *testing.T) {
+	t.Parallel()
+	st := New()
+	root := &manifest.Kustomization{Name: "root", Namespace: "apps"}
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	child := &manifest.OCIRepository{Name: "child", Namespace: "apps", URL: "oci://accepted.example"}
+	st.AddObject(root)
+	accept(t, st, root.Named(), &Emission{Children: []Child{{Obj: producer}}, Complete: true})
+	accept(t, st, producer.Named(), &Emission{Children: []Child{{Obj: child}}, Complete: true})
+	var arrivals atomic.Int64
+	unsub := st.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == child.Named() {
+			arrivals.Add(1)
+		}
+	}, false)
+	defer unsub()
+	accept(t, st, root.Named(), &Emission{Children: []Child{{Obj: producer.Clone()}, emissionChild("sibling", "new")}, Complete: true})
+	if st.GetDeclaration(child.Named()) != child || arrivals.Load() != 0 {
+		t.Fatalf("unchanged descendant arrivals=%d, want 0", arrivals.Load())
+	}
+}
+
+func TestGetDeclaration_CoveredAuthority(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"covered", "failed", "empty", "accepted", "accepted failed", "surviving", "withdrawn", "self", "independent", "root"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			peer := &manifest.Kustomization{Name: "peer", Namespace: "apps"}
+			raw := &manifest.OCIRepository{Name: "source", Namespace: "apps", URL: "oci://raw.example"}
+			st.AddObjects([]manifest.BaseManifest{parent, peer, raw})
+			proofs := []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}
+			switch state {
+			case "self":
+				proofs = append(proofs, manifest.Production{Owner: raw.Named()})
+			case "independent":
+				proofs = append(proofs, manifest.Production{Source: manifest.BootstrapSourceID})
+			}
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: proofs}}})
+			st.UpdateStatus(parent.Named(), StatusInfo{Status: StatusPending, Reason: "", Message: "other children"})
+			var want manifest.BaseManifest
+			switch state {
+			case "self", "independent":
+				want = raw
+			case "root":
+				accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: raw}}})
+				st.AddObject(raw)
+				want = raw
+			case "failed":
+				st.UpdateStatus(parent.Named(), StatusInfo{Status: StatusFailed, Reason: "", Message: "failed before child"})
+			case "empty":
+				accept(t, st, parent.Named(), &Emission{Complete: true})
+			case "accepted", "accepted failed", "surviving", "withdrawn":
+				accepted := *raw
+				accepted.URL = "oci://accepted.example"
+				accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: &accepted}}})
+				want = &accepted
+				if state == "accepted failed" {
+					st.UpdateStatus(parent.Named(), StatusInfo{Status: StatusFailed, Reason: "", Message: "failed successor"})
+				}
+				if state == "surviving" {
+					accept(t, st, peer.Named(), &Emission{Children: []Child{{Obj: &accepted}}})
+				}
+				if state == "surviving" || state == "withdrawn" {
+					accept(t, st, parent.Named(), &Emission{Complete: true})
+				}
+				if state == "withdrawn" {
+					want = nil
+				}
+			}
+			if got := st.GetDeclaration(raw.Named()); got != want {
+				t.Fatalf("effective=%v want=%v", got, want)
+			}
+			got, inventory := st.GetEmission(raw.Named())
+			defer inventory.Finish()
+			if got != want {
+				t.Fatalf("emission input=%v want=%v", got, want)
+			}
+			if state == "covered" && st.GetObject(raw.Named()) != raw {
+				t.Fatal("coverage hid raw admission identity")
+			}
+		})
+	}
+}
+
+func TestRecordEmitted_ReplacedInputRejected(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{"entry_stable", "entry_replacement", "locked_stable", "locked_replacement"} {
+		for _, loss := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/loss_%t", route, loss), func(t *testing.T) {
+				t.Parallel()
+				st := New()
+				owner, peer := &manifest.Kustomization{Name: "owner", Namespace: "apps"}, &manifest.Kustomization{Name: "peer", Namespace: "apps"}
+				input := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "A"}
+				st.AddObjects([]manifest.BaseManifest{owner, peer, input})
+				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}}}})
+				accept(t, st, peer.Named(), &Emission{Children: []Child{{Obj: input}}, Complete: true})
+				child := emissionChild("prior", "A")
+				accept(t, st, input.Named(), &Emission{Children: []Child{child}, Manifests: []map[string]any{child.Doc}, Complete: true})
+				tasks := task.NewBounded(2)
+				captured, replaced := make(chan struct{}), make(chan struct{})
+				tasks.Go(t.Context(), "publish", func(context.Context) {
+					var reads ReadSet
+					reads.Init(st, input.Named(), nil)
+					defer reads.Retire()
+					_, next := reads.GetEmission(input.Named())
+					defer next.Finish()
+					next.Fingerprint = "stale"
+					if strings.HasSuffix(route, "replacement") {
+						next.Children = []Child{emissionChild("stale", "A")}
+					}
+					sh := st.shardFor(input.Named())
+					sh.mu.RLock()
+					slot := sh.slots[input.Named()]
+					previous := slot.current.Load()
+					generation := slot.generation
+					sh.mu.RUnlock()
+					var proposal *Emission
+					if strings.HasPrefix(route, "locked_") {
+						var prepared []admission
+						for _, c := range next.Children {
+							prepared = append(prepared, admission{child: c, targets: manifest.ProducerTargets(c.Obj), binding: next.binding})
+						}
+						proposal = prepareEmission(&next, previous, prepared, make(map[manifest.NamedResource]int, len(prepared)))
+					}
+					close(captured)
+					tasks.YieldSlot(func() { <-replaced })
+					result := publicationRejected
+					switch route {
+					case "locked_stable":
+						result = st.commitStable(slot, previous, proposal, generation)
+					case "locked_replacement":
+						result = st.commitReplacement(input.Named(), previous, proposal, generation)
+					default:
+						st.RecordEmitted(input.Named(), &next)
+					}
+					if result != publicationRejected || reads.Valid() {
+						t.Error("stale inventory accepted")
+					}
+				})
+				tasks.Go(t.Context(), "replace", func(context.Context) {
+					tasks.YieldSlot(func() { <-captured })
+					if loss {
+						accept(t, st, peer.Named(), &Emission{Complete: true})
+						if st.GetObject(input.Named()) != input || st.GetDeclaration(input.Named()) != nil {
+							t.Error("fixture did not retain raw input without authority")
+						}
+					} else {
+						replacement := input.Clone()
+						replacement.Path = "B"
+						accept(t, st, peer.Named(), &Emission{Children: []Child{{Obj: replacement}}, Complete: true})
+					}
+					close(replaced)
+				})
+				tasks.BlockTillDone()
+				if tasks.Failures() != 0 {
+					t.Fatal("publication task panicked")
+				}
+				_, retained := st.GetEmission(input.Named())
+				defer retained.Finish()
+				if retained.Fingerprint == "stale" || len(retained.Children) != 1 || retained.Children[0].Obj != child.Obj {
+					t.Fatal("rejection replaced accepted output")
+				}
+				assert.Diff(t, retained.Children[0].Doc, child.Doc)
+				assert.Diff(t, retained.Manifests, []map[string]any{child.Doc})
+			})
+		}
+	}
+}
+
+func TestRecordEmitted_EqualDeclarationRetainsCapture(t *testing.T) {
+	t.Parallel()
+	st := New()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	input := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+	st.AddObject(parent)
+	accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: input}}, Fingerprint: "parent-A", Complete: true})
+	captured, inventory := st.GetEmission(input.Named())
+	defer inventory.Finish()
+	if captured != input {
+		t.Fatal("fixture did not capture accepted child")
+	}
+	var arrivals atomic.Int64
+	stop := st.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == input.Named() {
+			arrivals.Add(1)
+		}
+	}, false)
+	defer stop()
+	equivalent := input.Clone()
+	accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: equivalent}}, Fingerprint: "parent-B", Complete: true})
+	if !objectEqual(st.GetDeclaration(input.Named()), captured) || arrivals.Load() != 0 {
+		t.Fatalf("equal publication invalidated capture without arrival: arrivals=%d", arrivals.Load())
+	}
+	inventory.Fingerprint, inventory.Complete = "child-A", true
+	st.RecordEmitted(input.Named(), &inventory)
+}
+
+func TestRecordEmitted_SameOutputUsesCurrentInput(t *testing.T) {
+	t.Parallel()
+	s := New()
+	a := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "A"}
+	s.AddObject(a)
+	_, first := s.GetEmission(a.Named())
+	defer first.Finish()
+	first.Children = []Child{emissionChild("child", "same")}
+	first.Fingerprint, first.Complete = manifest.Fingerprint("same"), true
+	s.RecordEmitted(a.Named(), &first)
+	b := a.Clone()
+	b.Path = "B"
+	s.AddObject(b)
+	_, next := s.GetEmission(b.Named())
+	defer next.Finish()
+	next.Complete, next.Fingerprint = true, first.Fingerprint
+	s.RecordEmitted(b.Named(), &next)
+	current := s.GetArtifact(b.Named()).(*Emission)
+	if current.input != b || current.Fingerprint != first.Fingerprint || s.GetObject(first.Children[0].Obj.Named()) == nil {
+		t.Fatalf("equal output retained obsolete input: input=%v fingerprint=%q", current.input, current.Fingerprint)
+	}
+}
+
+func TestReferenceFacts_PendingPeerAfterEmptySupplier(t *testing.T) {
+	t.Parallel()
+	s := New()
+	first := &manifest.Kustomization{Name: "first", Namespace: "apps"}
+	empty := &manifest.Kustomization{Name: "empty", Namespace: "apps"}
+	s.AddObjects([]manifest.BaseManifest{first, empty})
+	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		target: {Productions: []manifest.Production{{Owner: first.Named()}, {Owner: empty.Named()}}},
+	}})
+	s.UpdateStatus(first.Named(), StatusInfo{Status: StatusPending, Reason: "", Message: "pending supplier"})
+	_, next := s.GetEmission(empty.Named())
+	defer next.Finish()
+	next.Complete = true
+	s.RecordEmitted(empty.Named(), &next)
+	facts := s.ReferenceFacts(target, nil)
+	if len(facts.Productions) != 1 || facts.Productions[0].Owner != first.Named() || facts.Data != nil || facts.Accepted {
+		t.Fatalf("pending peer lost after empty supplier: facts=%+v", facts)
+	}
+}
+
+func TestRecordEmitted_CrossGroupSeedDocumentArrival(t *testing.T) {
+	t.Parallel()
+
+	s := New()
+	p := ownerID("publisher")
+	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+	doc := map[string]any{
+		"apiVersion": manifest.SourceDomain + "/v1", "kind": manifest.KindHelmRepository,
+		"metadata": map[string]any{"name": "shared", "namespace": "apps"},
+		"spec":     map[string]any{"url": "https://charts.example"},
+	}
+	obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddObject(obj)
+	foreignDoc := manifest.DeepCopyMap(doc)
+	foreignDoc["apiVersion"] = "example.test/v1"
+	foreign, _, _, err := manifest.ParseDoc(foreignDoc, manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddObject(foreign)
+	var arrivals int
+	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == obj.Named() {
+			arrivals++
+		}
+	}, false)
+	defer unsub()
+	s.RecordEmitted(p, captureEmission(s, p, &Emission{Children: []Child{{Obj: obj, Doc: doc}, {Obj: foreign, Doc: foreignDoc}}, Manifests: []map[string]any{foreignDoc, doc}, Complete: true}))
+	if arrivals != 0 {
+		t.Fatalf("equal seed acquired document with %d arrivals", arrivals)
+	}
+	_, accepted := s.GetEmission(p)
+	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], foreignDoc) || !specValueEqual(accepted.Manifests[1], doc) {
+		t.Fatal("suppressed arrival lost authoritative document")
+	}
+	if got := s.Productions(obj.Named(), nil); len(got) != 1 || got[0].Owner != p {
+		t.Fatalf("accepted support = %v", got)
+	}
+	next := manifest.DeepCopyMap(doc)
+	next["apiVersion"] = manifest.SourceDomain + "/v1beta2"
+	s.RecordEmitted(p, captureEmission(s, p, &Emission{Children: []Child{{Obj: obj, Doc: next}, emissionChild("other", "value")}, Manifests: []map[string]any{next}}))
+	if arrivals != 1 {
+		t.Fatalf("changed authoritative document arrivals = %d, want 1", arrivals)
+	}
+	_, accepted = s.GetEmission(p)
+	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], next) || !specValueEqual(accepted.Manifests[1], foreignDoc) {
+		t.Fatalf("partial version update lost cross-group documents: %v", accepted.Manifests)
+	}
+	if got := s.Productions(foreign.Named(), nil); len(got) != 1 || got[0].Owner != p {
+		t.Fatalf("cross-group support = %v", got)
+	}
+
 }

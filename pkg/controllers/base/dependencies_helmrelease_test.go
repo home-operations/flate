@@ -111,3 +111,31 @@ func TestDependencies_HelmRelease_ArtifactStages(t *testing.T) {
 		})
 	}
 }
+
+func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	c := New(st, nil)
+	parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
+	child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{parent, child})
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		child.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
+	}})
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+	_, next := st.GetEmission(parent.Named())
+	defer next.Finish()
+	next.Children = []store.Child{{Obj: child}}
+	st.RecordEmitted(parent.Named(), &next)
+	run := gateExecution(c, child.Named())
+	deps := run.dependencies(child, manifest.GateInputs)
+	if len(deps) != 0 {
+		t.Fatalf("structural declaration owners leaked into authored dependencies: %v", deps)
+	}
+	fresh := run.Reads.GetDeclaration(child.Named())
+	err := run.Require(t.Context(), deps, manifest.DrainNone)
+	ok := fresh != nil
+	if !ok || fresh != child || err != nil {
+		t.Fatalf("accepted child waited for Pending owner: %v %t %v", fresh, ok, err)
+	}
+}

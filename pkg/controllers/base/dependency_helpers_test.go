@@ -28,8 +28,8 @@ func parentIndexForTest(parents map[manifest.NamedResource]manifest.NamedResourc
 	return index
 }
 
-func (configured *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.DependencyRef {
-	c := gateExecution(configured.Controller, obj.Named())
+func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.DependencyRef {
+	c := gateExecution(e.Controller, obj.Named())
 	defer c.Reads.Retire()
 	deps := c.dependencies(obj, manifest.GateInputs)
 	provider := values.NewStoreProvider(&c.Reads, false, c.SubstituteFrom)
@@ -49,7 +49,6 @@ func (configured *Execution) dependenciesForTest(obj manifest.BaseManifest) []ma
 		}
 	}
 
-	deps = append(deps, c.parents(obj.Named(), obj)...)
 	artifacts := c.dependencies(obj, manifest.GateArtifacts)
 	for _, dep := range artifacts {
 		dep.Artifact, dep.ChartSource, dep.UnknownArtifactRoot = false, false, false
@@ -77,10 +76,24 @@ func gateExecution(c *Controller, id manifest.NamedResource) *Execution {
 	return e
 }
 
-func dependencyStore(objects ...manifest.BaseManifest) *store.Store {
-	s := store.New()
-	for _, obj := range objects {
-		s.AddObject(obj)
+func (e *Execution) authoredDependenciesForTest(obj manifest.BaseManifest) []manifest.DependencyRef {
+	deps := e.dependencies(obj, manifest.GateInputs)
+	for ref := range manifest.References(obj, manifest.ReferenceAll) {
+		if ref.Use == "" && ref.Artifact {
+			deps = slices.DeleteFunc(deps, func(dep manifest.DependencyRef) bool { return dep.NamedResource == ref.NamedResource && dep.Artifact })
+		}
 	}
-	return s
+	slices.SortStableFunc(deps, func(a, b manifest.DependencyRef) int {
+		if a.Artifact == b.Artifact {
+			return 0
+		}
+		if a.Artifact {
+			return 1
+		}
+		return -1
+	})
+	for i := range deps {
+		deps[i].Artifact, deps[i].ChartSource, deps[i].UnknownArtifactRoot = false, false, false
+	}
+	return deps
 }

@@ -15,23 +15,22 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 	t.Parallel()
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+	for _, boundary := range []string{"capture", "render"} {
+		t.Run(boundary, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			tasks := task.NewBounded(workers)
+			tasks := task.NewBounded(2)
 			c := New(st, tasks, false)
-			c.Configure(base.Options{})
-			c.StartLifecycle()
 			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(resume) })
-			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
+			t.Cleanup(func() { release(); tasks.BlockTillDone() })
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			st.AddObject(parent)
 			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
@@ -62,8 +61,14 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			execution := c.newExecution(id)
-			defer execution.run.Close()
+			if boundary == "capture" {
+				pause := sync.OnceFunc(func() { close(started); tasks.YieldSlot(func() { <-resume }) })
+				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { pause(); return "", false }})
+			} else {
+				c.Configure(base.Options{})
+			}
+			c.StartLifecycle()
+			var runState *execution
 			var accepted atomic.Pointer[store.Emission]
 			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
 				if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
@@ -89,13 +94,18 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			})
 			tasks.Go(t.Context(), "render", func(context.Context) {
 				defer close(rendered)
-				var attempt store.Emission
-				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(st), func(content any) (bool, error) {
-					fp, hit, err := execution.run.FingerprintDedup(id, content)
+				runState = c.newExecution(id)
+				defer runState.run.Close()
+				if boundary == "capture" {
+					runState.run.Dispatch(t.Context(), manifest.DrainNone, runState.reconcile)
+					return
+				}
+				_, attempt := runState.run.Reads.GetEmission(id)
+				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&runState.run.Reads), func(content any) (bool, error) {
+					fp, hit, err := runState.run.FingerprintDedup(id, content)
 					if hit || err != nil {
 						return hit, err
 					}
-					_, attempt = st.GetEmission(id)
 					attempt.Fingerprint = fp
 					close(started)
 					tasks.YieldSlot(func() { <-resume })
@@ -107,37 +117,34 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					return
 				}
 				for _, warning := range warnings {
-					st.AddWarning(id, warning)
+					runState.run.Reads.AddWarning(id, warning)
 				}
 				attempt.Children, attempt.Manifests = c.ParseChildren(c.Store.GetObject(id), docs, manifest.ParseDocOptions{})
 				attempt.Complete = true
-				c.Emit(id, &attempt)
+				runState.run.Emit(id, &attempt)
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 {
 				t.Fatalf("task failures = %d", tasks.Failures())
 			}
-			emission := accepted.Load()
-			if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint != wantFingerprint {
-				t.Fatalf("accepted A emission = %+v; fingerprint want %s", emission, wantFingerprint)
-			}
-			if !hasRenderedDoc(emission, manifest.KindConfigMap, "from-a") {
-				t.Fatal("accepted emission did not render input A")
+			if boundary == "render" {
+				if runState.run.Reads.Valid() || accepted.Load() != nil || st.GetArtifact(id) != nil {
+					t.Fatal("replaced input A published stale output")
+				}
+			} else if emission := accepted.Load(); emission == nil || !hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") {
+				t.Fatalf("capture did not use replacement B: %+v", emission)
 			}
 			current, ok := st.Get[*manifest.ResourceSet](id)
 			if !ok || string(current.Inputs[0]["name"].Raw) != `"from-b"` {
 				t.Fatalf("current input is not B: %+v", current)
 			}
-			if st.GetArtifact(id) != nil {
-				t.Error("input B incorrectly accepts the output rendered from A")
+			run := c.ReconcileNode(t.Context(), id, manifest.DrainNone)
+			if run.Outcome() == schedule.Blocked {
+				t.Fatalf("replacement blocked: %v", run.Blocked)
 			}
-			publish(docA)
-			if st.GetArtifact(id) != emission {
-				t.Error("restoring exact input A did not expose the captured emission")
-			}
-			publish(docB)
-			if st.GetArtifact(id) != nil {
-				t.Error("restored input B incorrectly accepts A's emission")
+			emission := accepted.Load()
+			if emission == nil || !emission.Complete || emission.Fingerprint == wantFingerprint || !hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") || hasRenderedDoc(emission, manifest.KindConfigMap, "from-a") {
+				t.Fatalf("replacement B did not render: %+v", emission)
 			}
 			if string(rs.Inputs[0]["name"].Raw) != `"from-a"` {
 				t.Fatal("render mutated input A")

@@ -14,44 +14,29 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
-// parseFile opens path and returns the recognized Flux CRs in document order —
-// a thin collector over decodeFileObjects with keepRaw=false, so unmodeled
-// kinds (manifest.RawObject) are dropped. See decodeFileObjects for the shared
-// decode + filter contract.
 func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([]manifest.BaseManifest, error) {
-	if cached, ok := r.cache[path]; ok && cached.objects != nil {
-		return slices.DeleteFunc(slices.Clone(cached.objects), func(obj manifest.BaseManifest) bool {
-			return !manifest.KindOf(obj).Tracked
-		}), nil
-	}
-	var out []manifest.BaseManifest
-	err := r.decodeFileObjects(path, opts, r.cache != nil, func(obj manifest.BaseManifest) {
-		out = append(out, obj)
-	})
-	if err == nil && r.cache != nil {
-		r.cache[path] = document{objects: out}
+	out := r.cache[path].objects
+	var err error
+	if out == nil {
+		cached := r.cache[path]
+		err = r.decodeFileObjects(path, opts, r.cache != nil, func(obj manifest.BaseManifest) {
+			out = append(out, obj)
+		})
+		if r.cache == nil {
+			return out, err
+		}
+		if err == nil {
+			cached.objects = out
+			r.cache[path] = cached
+		}
 	}
 	return slices.DeleteFunc(slices.Clone(out), func(obj manifest.BaseManifest) bool {
 		return !manifest.KindOf(obj).Tracked
 	}), err
 }
 
-// decodeFileObjects opens path, decodes every YAML/JSON doc, and yields each
-// parsed object that survives the canonical loader filters — the one place
-// "what counts as a loadable doc" is defined, shared by the file-walk load, the
-// lazy promotion path, and the discovery-time producer scan:
-//
-//   - API-version admission errors retain the source path for deferred ownership
-//     policy; other per-document parse errors are skipped.
-//   - Objects whose name/namespace still carry `${VAR}` are dropped as
-//     templates: a parent KS's postBuild.substitute(From) resolves them at
-//     render time, and Kubernetes rejects `$` in metadata.name, so the
-//     unsubstituted copy would never reach the API server in real Flux either.
-//   - manifest.RawObject results (kinds flate doesn't model) are dropped unless
-//     keepRaw is set — parseFile only persists understood kinds, while the
-//     producer scan keeps them to read ExternalSecret / SealedSecret targets.
-//
-// Parse, open and decode errors carry their source path to the caller.
+// Raw objects must be retained for producer scans when keepRaw is set.
+// API-version admission errors retain their source path for deferred ownership policy.
 func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(manifest.BaseManifest)) error {
 	input, name := r.input(path)
 	path = r.localPath(path)

@@ -179,71 +179,7 @@ func isKustomizeComponent(k *types.Kustomization) bool {
 	return k != nil && k.Kind == types.ComponentKind && strings.HasPrefix(k.APIVersion, manifest.KustomizeDomain+"/")
 }
 
-// dataFilesFor returns the set of file paths declared as
-// configMapGenerator/secretGenerator data in k, resolved against
-// dir. The caller's walkKustomize uses this to exclude generator
-// inputs from the resource-scan — kustomize reads them at render
-// time and they aren't Flux manifests.
-//
-// When a path appears in both the generator list AND k.Resources,
-// the resource interpretation wins (the data exclusion is dropped):
-// kustomize doesn't forbid the overlap, and the resource
-// declaration is the more authoritative "this IS a Flux manifest"
-// signal. The overlap-resolve runs per-kustomization, scoped to one
-// directory — there's no cross-tree state to manage anymore.
-func dataFilesFor(dir string, k *types.Kustomization) map[string]struct{} {
-	if k == nil || (len(k.ConfigMapGenerator) == 0 && len(k.SecretGenerator) == 0) {
-		return nil
-	}
-	resources := map[string]struct{}{}
-	for _, r := range k.Resources {
-		if abs, ok := resolveDataPath(dir, r); ok {
-			resources[abs] = struct{}{}
-		}
-	}
-	data := map[string]struct{}{}
-	addEntries := func(entries []string, parseKey bool) {
-		for _, e := range entries {
-			p := e
-			if parseKey {
-				p = stripFileEntryKey(e)
-			}
-			abs, ok := resolveDataPath(dir, p)
-			if !ok {
-				continue
-			}
-			if _, isRes := resources[abs]; isRes {
-				continue
-			}
-			data[abs] = struct{}{}
-		}
-	}
-	for _, g := range k.ConfigMapGenerator {
-		addEntries(g.FileSources, true)
-		addEntries(g.EnvSources, false)
-	}
-	for _, g := range k.SecretGenerator {
-		addEntries(g.FileSources, true)
-		addEntries(g.EnvSources, false)
-	}
-	return data
-}
-
-// stripFileEntryKey returns the path portion of a kustomize
-// configMapGenerator/secretGenerator `files:` entry. Per the spec
-// (sigs.k8s.io/kustomize/api/types/kvsources.go), entries take the
-// form "[KEY=]PATH"; the first `=` separates an optional ConfigMap
-// key from the on-disk path. Entries with no `=` are pure paths.
-func stripFileEntryKey(s string) string {
-	if _, after, ok := strings.Cut(s, "="); ok {
-		return after
-	}
-	return s
-}
-
-// resolveDataPath joins rel against base and cleans the result, for
-// references that get *opened and read*: configMapGenerator /
-// secretGenerator data files and file `resources:`. An empty rel is
+// resolveDataPath joins rel against base for file resources. An empty rel is
 // rejected (kustomize would reject it too). Absolute paths pass
 // through verbatim — kustomize doesn't forbid them and some generated
 // manifests use them. Relative paths that escape base via `..` are

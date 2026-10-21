@@ -254,23 +254,7 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 	return w.walkAdHoc(ctx, dir)
 }
 
-// walkKustomize traverses the kustomize resource graph rooted at dir.
-// File resources load via loadFile; directory resources recurse via
-// descend. configMapGenerator / secretGenerator data files are
-// excluded since they're consumed at render time, not loaded as
-// Flux manifests.
-//
-// kustomization.yaml itself is loadFile'd so parseFile can decide
-// whether it's a Flux Kustomization CR (different apiVersion than
-// kustomize's own Kustomization). If not, parseFile returns no
-// objects and the count is unchanged.
-//
-// patches / replacements / transformers / generators (the rest of
-// kustomize's directive fields) reference YAMLs that are kustomize
-// directives, NOT Flux manifests — they're not in `resources:` so
-// they don't load. Matches `kustomize build` precisely.
 func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomization, kpath string) (int, error) {
-	dataFiles := dataFilesFor(dir, k)
 	count := 0
 
 	// Load the kustomization.yaml itself — preserves source-file
@@ -324,9 +308,6 @@ func (w *walker) walkKustomize(ctx context.Context, dir string, k *types.Kustomi
 			continue
 		}
 		if !isManifestFile(abs) {
-			continue
-		}
-		if _, isData := dataFiles[abs]; isData {
 			continue
 		}
 		if w.ignoreMatches(abs, false) {

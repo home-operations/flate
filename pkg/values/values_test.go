@@ -1,14 +1,18 @@
 package values
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	"sigs.k8s.io/yaml"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
@@ -39,14 +43,6 @@ func (p *SliceProvider) Data(id manifest.NamedResource) manifest.Data {
 	return nil
 }
 
-// TestDeepMergeInto_MutatesDstPreservesSemantics pins the in-place
-// variant's contract: dst is mutated, override is read-only, and
-// the resulting tree matches Helm's output for the same inputs.
-// Sub-maps from override are inserted by reference when no key
-// collides (matching Helm); on a collision the recursive merge
-// produces a single in-place result, not a fresh allocation per
-// level. Used in ExpandValueReferences's hot path to avoid O(N²)
-// clones across N valuesFrom refs.
 func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 	t.Parallel()
 	dst := map[string]any{
@@ -58,6 +54,9 @@ func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 		"b": map[string]any{"y": 99, "z": 3},
 		"c": []any{1, 2},
 	}
+	borrowed := dst["b"].(map[string]any)
+	before := manifest.DeepCopyMap(borrowed)
+	overrideBefore := manifest.DeepCopyMap(override)
 	result := DeepMergeInto(dst, override)
 	if result["a"] != 2 {
 		t.Errorf("scalar override failed: %v", result["a"])
@@ -66,9 +65,6 @@ func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 	if bb["x"] != 1 || bb["y"] != 99 || bb["z"] != 3 {
 		t.Errorf("nested merge wrong: %v", bb)
 	}
-	// In-place semantics: dst is mutated AND returned. Maps don't
-	// have native pointer identity, but the two share state — write
-	// through dst, observe in result.
 	dst["sentinel"] = "v"
 	if result["sentinel"] != "v" {
 		t.Error("DeepMergeInto must return dst itself, got distinct map")
@@ -76,6 +72,8 @@ func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
 	if dst["a"] != 2 || dst["b"].(map[string]any)["y"] != 99 {
 		t.Error("dst not mutated as expected")
 	}
+	assert.Diff(t, borrowed, before)
+	assert.Diff(t, override, overrideBefore)
 }
 
 func TestExpandValueReferences_ConfigMap(t *testing.T) {
@@ -262,6 +260,10 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 		{"empty configmap", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default"}, manifest.ErrObjectNotFound},
 		{"empty secret", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default"}, manifest.ErrObjectNotFound},
 		{"empty bags", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{}, StringData: map[string]any{}}, manifest.ErrObjectNotFound},
+		{"empty configmap value", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default", Data: map[string]any{"v": ""}}, nil},
+		{"empty secret data value", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{"v": ""}}, nil},
+		{"empty secret stringdata value", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", StringData: map[string]any{"v": ""}}, nil},
+		{"empty secret shadow value", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{"v": "!"}, StringData: map[string]any{"v": ""}}, nil},
 		{"nonempty configmap", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default", Data: map[string]any{"other": "!"}}, manifest.ErrInvalidValuesReference},
 		{"nonempty secret data", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{"other": "!"}}, manifest.ErrInvalidValuesReference},
 		{"nonempty secret stringdata", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", StringData: map[string]any{"other": ""}}, manifest.ErrInvalidValuesReference},
@@ -279,13 +281,17 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"existing": "kept"},
 					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional}}}
 				err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
-				if optional && tc.kind != "Deployment" {
+				if optional && tc.kind != "Deployment" && tc.want != nil {
 					assert.NoError(t, err)
 					assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})
 					return
 				}
 				if !errors.Is(err, tc.want) {
 					t.Fatalf("got %v, want %v", err, tc.want)
+				}
+				if err == nil {
+					assert.Diff(t, hr.Values, map[string]any{"existing": "kept", "k": ""})
+					return
 				}
 				if tc.kind != "Deployment" && strings.Contains(err.Error(), `key "v"`) != errors.Is(tc.want, manifest.ErrInvalidValuesReference) {
 					t.Fatalf("wrong missing-resource/key disposition: %v", err)
@@ -535,19 +541,23 @@ func TestUnreadableSubstituteSecrets(t *testing.T) {
 			{Name: "sops-vars", Namespace: "flux-system", StringData: map[string]any{"Y": fmt.Sprintf(manifest.ValuePlaceholderTemplate, "Y")}},
 			// A real, readable Secret.
 			{Name: "real", Namespace: "flux-system", StringData: map[string]any{"Z": "z"}},
+			{Name: "empty", Namespace: "flux-system"},
+			{Name: "empty-value", Namespace: "flux-system", StringData: map[string]any{"Z": ""}},
 		},
 	}
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-			{Kind: manifest.KindSecret, Name: "absent-vars"},                // unreadable → reported
-			{Kind: manifest.KindSecret, Name: "sops-vars"},                  // placeholder data → readable
+			{Kind: manifest.KindSecret, Name: "absent-vars"}, // unreadable → reported
+			{Kind: manifest.KindSecret, Name: "sops-vars"},   // placeholder data → readable
+			{Kind: manifest.KindSecret, Name: "empty"},
+			{Kind: manifest.KindSecret, Name: "empty-value"},
 			{Kind: manifest.KindSecret, Name: "real"},                       // real data → readable
 			{Kind: manifest.KindConfigMap, Name: "cm"},                      // not a Secret → skipped
 			{Kind: manifest.KindSecret, Name: "opt-absent", Optional: true}, // optional → skipped
 		}},
 	}
-	if got, want := UnreadableSubstituteSecrets(ks, provider), []string{"absent-vars"}; !reflect.DeepEqual(got, want) {
+	if got, want := UnreadableSubstituteSecrets(ks, provider), []string{"absent-vars", "empty"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("UnreadableSubstituteSecrets = %v, want %v", got, want)
 	}
 	if got := UnreadableSubstituteSecrets(&manifest.Kustomization{Name: "x", Namespace: "ns"}, provider); got != nil {
@@ -555,34 +565,18 @@ func TestUnreadableSubstituteSecrets(t *testing.T) {
 	}
 }
 
-// TestReplaceValueAtPath_SingleCharQuoteNoPanic pins the
-// len(value) >= 2 guard: a single `'` or `"` previously slipped past
-// the prefix+suffix check (prefix == suffix on a single byte) and
-// then tripped a value[1:0] slice — runtime panic. Now treated as a
-// plain scalar by ParseInto, which returns either ok or a sensible
-// error — never a panic.
 func TestReplaceValueAtPath_SingleCharQuoteNoPanic(t *testing.T) {
 	t.Parallel()
-	for _, val := range []string{"'", `"`, "''"} {
-		// Wrap in func() so a panic surfaces as test failure rather
-		// than aborting the whole test binary.
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("replaceValueAtPath panicked on value %q: %v", val, r)
-				}
-			}()
-			_, _ = replaceValueAtPath(map[string]any{}, "leaf", val)
-		}()
+	for _, tc := range []struct{ value, want string }{{"'", "'"}, {`"`, `"`}, {"''", ""}} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Parallel()
+			values := map[string]any{}
+			assert.NoError(t, replaceValueAtPath(values, "leaf", tc.value))
+			assert.Equal(t, values["leaf"], any(tc.want))
+		})
 	}
 }
 
-// TestReplaceValueAtPath_TypeCoercion locks the upstream Flux contract
-// (chartutil.ReplacePathValue → strvals.ParseInto): a value flowing
-// in through ValuesReference.TargetPath is parsed as a Helm CLI
-// `--set foo=value` would be, with full type coercion. Without this,
-// `replicaCount` came back as the string "3" and chart schemas with
-// `replicaCount: integer` rejected the HR.
 func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -601,11 +595,11 @@ func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := replaceValueAtPath(map[string]any{}, tc.path, tc.val)
+			got := map[string]any{}
+			err := replaceValueAtPath(got, tc.path, tc.val)
 			if err != nil {
 				t.Fatalf("replaceValueAtPath: %v", err)
 			}
-			// Walk got along path to extract the leaf.
 			leaf := walkPath(t, got, tc.path)
 			if !equalish(leaf, tc.want) {
 				t.Errorf("path %q: got %v (%T), want %v (%T)", tc.path, leaf, leaf, tc.want, tc.want)
@@ -656,16 +650,20 @@ func equalish(a, b any) bool {
 	return a == b
 }
 
-// TestDeepMergeInto_MatchesHelmMerge pins flate's in-place merge against Helm.
 func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name           string
 		base, override map[string]any
 	}{
+		{"nil-inputs", nil, nil},
+		{"nil-base", nil, map[string]any{"m": map[string]any{"x": 1.0}}},
+		{"empty-override", map[string]any{"m": map[string]any{"x": 1.0}}, map[string]any{}},
 		{"disjoint", map[string]any{"a": 1.0}, map[string]any{"b": 2.0}},
 		{"scalar-over-scalar", map[string]any{"a": 1.0}, map[string]any{"a": 2.0}},
 		{"nested-collision", map[string]any{"m": map[string]any{"x": 1.0, "y": 2.0}}, map[string]any{"m": map[string]any{"y": 9.0, "z": 3.0}}},
+		{"deep-collision", map[string]any{"m": map[string]any{"n": map[string]any{"x": 1.0}}}, map[string]any{"m": map[string]any{"n": map[string]any{"y": 2.0}}}},
+		{"list-map-replace", map[string]any{"l": []any{map[string]any{"x": 1.0}}}, map[string]any{"l": []any{map[string]any{"y": 2.0}}}},
 		{"list-replace", map[string]any{"l": []any{1.0, 2.0}}, map[string]any{"l": []any{3.0}}},
 		{"scalar-over-map", map[string]any{"k": map[string]any{"x": 1.0}}, map[string]any{"k": "scalar"}},
 		{"map-over-scalar", map[string]any{"k": "scalar"}, map[string]any{"k": map[string]any{"x": 1.0}}},
@@ -674,12 +672,13 @@ func TestDeepMergeInto_MatchesHelmMerge(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			functional := loader.MergeMaps(tc.base, tc.override)
-			eager := manifest.DeepCopyMap(tc.base)
-			DeepMergeInto(eager, manifest.DeepCopyMap(tc.override))
-			if !reflect.DeepEqual(functional, eager) {
-				t.Errorf("Helm MergeMaps != DeepMergeInto\n functional=%#v\n eager=%#v", functional, eager)
-			}
+			baseBefore := manifest.DeepCopyMap(tc.base)
+			overrideBefore := manifest.DeepCopyMap(tc.override)
+			want := loader.MergeMaps(tc.base, tc.override)
+			got := DeepMergeInto(maps.Clone(tc.base), tc.override)
+			assert.Diff(t, got, want)
+			assert.Diff(t, tc.base, baseBefore)
+			assert.Diff(t, tc.override, overrideBefore)
 		})
 	}
 }
@@ -700,95 +699,164 @@ func wholeDocHR() *manifest.HelmRelease {
 	}
 }
 
-// TestExpandValueReferences_ConcurrentSharedCache pins the concurrency
-// contract: many HRs referencing the same ConfigMap share ONE cached parsed
-// tree by reference (the optimization), and concurrent expansion must be
-// race-free and correct. Run under -race, this fails if any goroutine writes
-// through a shared cache sub-tree.
 func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 	t.Parallel()
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{nestedValuesCM()}}
+	cm := nestedValuesCM()
+	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
+		Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
+	}}}
 	cache := NewCache()
-	const n = 64
-	var wg sync.WaitGroup
-	errs := make([]error, n)
-	for i := range n {
-		wg.Go(func() {
+	prior := wholeDocHR()
+	assert.NoError(t, ExpandValueReferences(prior, provider, cache))
+	before := manifest.DeepCopyMap(prior.Values)
+	canonical, ok := cache.lookup(cm.Data["values.yaml"].(string))
+	if !ok {
+		t.Fatal("missing cached document")
+	}
+	cases := []struct {
+		name    string
+		refs    []manifest.ValuesReference
+		inline  map[string]any
+		want    map[string]any
+		wantErr bool
+	}{
+		{name: "ordinary", inline: map[string]any{"image": map[string]any{"tag": "inline"}},
+			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "inline"}, "env": []any{map[string]any{"name": "A", "value": "1"}}}},
+		{name: "target map", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.tag"}},
+			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "Always"}, "env": []any{map[string]any{"name": "A", "value": "1"}}}},
+		{name: "target list map", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"}},
+			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{map[string]any{"name": "A", "value": "Always"}}}},
+		{name: "target list element", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0]"}},
+			want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{"Always"}}},
+		{name: "yaml between writes", refs: []manifest.ValuesReference{
+			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].name", Literal: true},
+			{Kind: "ConfigMap", Name: "platform"},
+			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"},
+		}, want: map[string]any{"image": map[string]any{"repository": "nginx", "tag": "v1"}, "env": []any{map[string]any{"name": "A", "value": "Always"}}}},
+		{name: "partial ordinary failure", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value=changed,broken[bad]"}},
+			inline: map[string]any{"untouched": true}, want: map[string]any{"untouched": true}, wantErr: true},
+		{name: "partial literal failure", refs: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value=changed,broken[bad]", Literal: true}},
+			inline: map[string]any{"untouched": true}, want: map[string]any{"untouched": true}, wantErr: true},
+	}
+	start := make(chan struct{})
+	var ready, done sync.WaitGroup
+	ready.Add(len(cases))
+	for _, tc := range cases {
+		done.Go(func() {
 			hr := wholeDocHR()
-			if err := ExpandValueReferences(hr, provider, cache); err != nil {
-				errs[i] = err
+			hr.ValuesFrom = append(hr.ValuesFrom, tc.refs...)
+			hr.Values = tc.inline
+			inlineBefore := manifest.DeepCopyMap(tc.inline)
+			ready.Done()
+			<-start
+			err := ExpandValueReferences(hr, provider, cache)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("%s: error = %v, want error %v", tc.name, err, tc.wantErr)
 				return
 			}
-			img, ok := hr.Values["image"].(map[string]any)
-			if !ok || img["tag"] != "v1" || img["repository"] != "nginx" {
-				errs[i] = errInvalidResult
-				return
+			assert.Diff(t, hr.Values, tc.want)
+			assert.Diff(t, tc.inline, inlineBefore)
+		})
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	assert.Diff(t, canonical, before)
+	assert.Diff(t, prior.Values, before)
+	after := wholeDocHR()
+	assert.NoError(t, ExpandValueReferences(after, provider, cache))
+	assert.Diff(t, after.Values, before)
+}
+
+func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		literal, cached bool
+	}{{false, false}, {false, true}, {true, false}, {true, true}} {
+		t.Run(fmt.Sprintf("literal=%t/cache=%t", tc.literal, tc.cached), func(t *testing.T) {
+			t.Parallel()
+			var cache *Cache
+			if tc.cached {
+				cache = NewCache()
 			}
-			env, ok := hr.Values["env"].([]any)
-			if !ok || len(env) != 1 {
-				errs[i] = errInvalidResult
+			hr := wholeDocHR()
+			cm := nestedValuesCM()
+			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
+				Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
+			}}}
+			assert.NoError(t, ExpandValueReferences(hr, provider, cache))
+			before := manifest.DeepCopyMap(hr.Values)
+			hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{
+				Kind: "ConfigMap", Name: "inject", ValuesKey: "v",
+				TargetPath: "env[0].value=changed,broken[bad]", Literal: tc.literal,
+			})
+			err := ExpandValueReferences(hr, provider, cache)
+			if err == nil {
+				t.Fatal("malformed target path succeeded")
+			}
+			assert.Diff(t, hr.Values, before)
+			after := wholeDocHR()
+			assert.NoError(t, ExpandValueReferences(after, provider, cache))
+			assert.Diff(t, after.Values, before)
+			if tc.cached {
+				canonical, _ := cache.lookup(cm.Data["values.yaml"].(string))
+				assert.Diff(t, canonical, before)
 			}
 		})
 	}
-	wg.Wait()
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("goroutine %d: %v", i, err)
-		}
-	}
 }
 
-var errInvalidResult = errors.New("unexpected merged values")
-
-// TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache pins HOLE 1/2
-// of the design: an HR with a TargetPath ref takes the eager fully-owned path,
-// so its in-place strvals write into a key that ALSO exists in the cached
-// canonical must NOT leak into the cache (which whole-doc-only HRs share).
-func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T) {
+func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 	t.Parallel()
-	secret := &manifest.ConfigMap{
-		Name: "inject", Namespace: "default",
-		Data: map[string]any{"v": "Always"},
-	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{nestedValuesCM(), secret}}
-	cache := NewCache()
-
-	// Prime the cache with a whole-doc-only HR (shares the canonical).
-	a := wholeDocHR()
-	if err := ExpandValueReferences(a, provider, cache); err != nil {
-		t.Fatalf("prime: %v", err)
-	}
-
-	// HR with a TargetPath ref writing image.pullPolicy — image already
-	// exists in the cached canonical, so a sharing+in-place write would
-	// corrupt it. The TargetPath presence must force the eager path.
-	b := &manifest.HelmRelease{
-		Name: "demo", Namespace: "default",
-		ValuesFrom: []manifest.ValuesReference{
-			{Kind: "ConfigMap", Name: "platform"},
-			{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.pullPolicy"},
-		},
-	}
-	if err := ExpandValueReferences(b, provider, cache); err != nil {
-		t.Fatalf("targetpath: %v", err)
-	}
-	if img := b.Values["image"].(map[string]any); img["pullPolicy"] != "Always" {
-		t.Fatalf("targetpath write did not land: image=%#v", img)
-	}
-
-	// A third whole-doc-only HR must NOT see the injected pullPolicy — i.e.
-	// b's in-place write never reached the shared cache canonical.
-	c := wholeDocHR()
-	if err := ExpandValueReferences(c, provider, cache); err != nil {
-		t.Fatalf("recheck: %v", err)
-	}
-	img := c.Values["image"].(map[string]any)
-	if _, leaked := img["pullPolicy"]; leaked {
-		t.Errorf("TargetPath write corrupted the shared cache canonical: image=%#v", img)
-	}
-	// And the priming HR's view is likewise uncorrupted.
-	if _, leaked := a.Values["image"].(map[string]any)["pullPolicy"]; leaked {
-		t.Errorf("TargetPath write leaked into a prior HR's shared values: %#v", a.Values["image"])
+	for _, literal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("literal=%t", literal), func(t *testing.T) {
+			t.Parallel()
+			first := nestedValuesCM()
+			second := &manifest.ConfigMap{Name: "later", Namespace: "default", Data: map[string]any{
+				"values.yaml": "later:\n  image:\n    tag: v2\n  env:\n    - name: B\n      value: two\n",
+			}}
+			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{first, second, {
+				Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
+			}}}
+			cache := NewCache()
+			priorFirst := wholeDocHR()
+			priorSecond := &manifest.HelmRelease{Name: "prior", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: second.Name}}}
+			assert.NoError(t, ExpandValueReferences(priorFirst, provider, cache))
+			assert.NoError(t, ExpandValueReferences(priorSecond, provider, cache))
+			firstBefore := manifest.DeepCopyMap(priorFirst.Values)
+			secondBefore := manifest.DeepCopyMap(priorSecond.Values)
+			hr := wholeDocHR()
+			hr.Values = map[string]any{"image": map[string]any{"tag": "inline"}}
+			hr.ValuesFrom = append(hr.ValuesFrom,
+				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "image.pullPolicy"},
+				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "env[0].value"},
+				manifest.ValuesReference{Kind: "ConfigMap", Name: "missing", Optional: true},
+				manifest.ValuesReference{Kind: "ConfigMap", Name: second.Name},
+				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "later.image.tag", Literal: literal},
+				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "later.env[0].value", Literal: literal},
+			)
+			assert.NoError(t, ExpandValueReferences(hr, provider, cache))
+			assert.Diff(t, hr.Values, map[string]any{
+				"image": map[string]any{"repository": "nginx", "tag": "inline", "pullPolicy": "Always"},
+				"env":   []any{map[string]any{"name": "A", "value": "Always"}},
+				"later": map[string]any{
+					"image": map[string]any{"tag": "Always"},
+					"env":   []any{map[string]any{"name": "B", "value": "Always"}},
+				},
+			})
+			assert.Diff(t, priorFirst.Values, firstBefore)
+			assert.Diff(t, priorSecond.Values, secondBefore)
+			for _, document := range []struct {
+				cm   *manifest.ConfigMap
+				want map[string]any
+			}{{first, firstBefore}, {second, secondBefore}} {
+				canonical, ok := cache.lookup(document.cm.Data["values.yaml"].(string))
+				if !ok {
+					t.Fatal("missing cached document")
+				}
+				assert.Diff(t, canonical, document.want)
+			}
+		})
 	}
 }
 
@@ -850,5 +918,78 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 	}
 	if len(hr.Values) != 0 {
 		t.Errorf("expected empty values, got %v", hr.Values)
+	}
+}
+
+func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, document string
+		typeError      bool
+	}{
+		{"syntax", "a: [", false},
+		{"document type", "- name: demo", true},
+	} {
+		for _, optional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/optional=%t", tc.name, optional), func(t *testing.T) {
+				t.Parallel()
+				st := store.New()
+				st.AddObject(&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"requested.yaml": tc.document}})
+				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional}}}
+				err := ExpandValueReferences(hr, NewStoreProvider(st, true), NewCache())
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("malformed values must retain input/domain identity: %v", err)
+				}
+				for _, detail := range []string{"HelmRelease default/demo", "extra", "requested.yaml"} {
+					if !strings.Contains(err.Error(), detail) {
+						t.Errorf("error lacks %q: %v", detail, err)
+					}
+				}
+				wrapped, ok := errors.AsType[interface {
+					error
+					Unwrap() []error
+				}](err)
+				if !ok {
+					t.Fatalf("parser cause is not wrapped beside ErrInput: %v", err)
+				}
+				causes := wrapped.Unwrap()
+				var decoded map[string]any
+				parseErr := yaml.Unmarshal([]byte(tc.document), &decoded)
+				if len(causes) != 2 || parseErr == nil || causes[1].Error() != parseErr.Error() {
+					t.Fatalf("parser cause changed: %v", err)
+				}
+				if tc.typeError {
+					if _, ok := errors.AsType[*json.UnmarshalTypeError](err); !ok {
+						t.Fatalf("typed parser cause lost: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
+	t.Parallel()
+	for _, literal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("literal=%t", literal), func(t *testing.T) {
+			t.Parallel()
+			const path = "env[bad].value"
+			cm := &manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"value": "replacement"}}
+			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"retained": "yes"}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: cm.Name, ValuesKey: "value", TargetPath: path, Literal: literal, Optional: true}}}
+			err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, strconv.ErrSyntax) {
+				t.Fatalf("target parser identities lost: %v", err)
+			}
+			cause, ok := errors.AsType[*strconv.NumError](err)
+			if !ok || cause.Num != "bad" {
+				t.Fatalf("original index parser cause lost: %v", err)
+			}
+			for _, detail := range []string{"HelmRelease default/demo", `targetPath "` + path + `"`} {
+				if !strings.Contains(err.Error(), detail) {
+					t.Errorf("error lacks %q: %v", detail, err)
+				}
+			}
+			assert.Diff(t, hr.Values, map[string]any{"retained": "yes"})
+		})
 	}
 }

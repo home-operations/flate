@@ -110,6 +110,28 @@ counts:
 	}
 }
 
+func BenchmarkExpandValueReferences_TargetPaths(b *testing.B) {
+	for _, count := range []int{1, 5} {
+		b.Run(fmt.Sprintf("targets=%d", count), func(b *testing.B) {
+			cm := &manifest.ConfigMap{Name: "platform", Namespace: "default", Data: map[string]any{"values.yaml": bigPlatformValuesYAML()}}
+			inject := &manifest.ConfigMap{Name: "inject", Namespace: "default", Data: map[string]any{"value": "replacement"}}
+			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, inject}}
+			refs := []manifest.ValuesReference{{Kind: "ConfigMap", Name: cm.Name}}
+			for i := range count {
+				refs = append(refs, manifest.ValuesReference{Kind: "ConfigMap", Name: inject.Name, ValuesKey: "value", TargetPath: fmt.Sprintf("app%d.image.tag", i)})
+			}
+			cache := NewCache()
+			b.ReportAllocs()
+			for b.Loop() {
+				hr := &manifest.HelmRelease{Name: "app", Namespace: "default", ValuesFrom: refs}
+				if err := ExpandValueReferences(hr, provider, cache); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkExpandValueReferences_ManyKeyCM is the gate for the single-key
 // valuesFrom lookup. An HR references ONE key of a ConfigMap whose data bag
 // carries many keys (the shared-settings / shared-secret shape). The values

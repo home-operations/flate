@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/strvals"
 	"sigs.k8s.io/yaml"
 
@@ -79,8 +80,8 @@ func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
 }
 
 // DeepMergeInto merges override into dst using Helm's merge semantics.
-// Callers MUST own dst and its sub-maps. Non-colliding override sub-maps
-// are inserted by reference; override remains read-only.
+// Callers MUST own dst. Nested inputs remain read-only; non-colliding
+// maps and lists may be borrowed by reference.
 func DeepMergeInto(dst, override map[string]any) map[string]any {
 	if dst == nil {
 		dst = map[string]any{}
@@ -90,44 +91,9 @@ func DeepMergeInto(dst, override map[string]any) map[string]any {
 			ebm, eok := existing.(map[string]any)
 			vbm, vok := v.(map[string]any)
 			if eok && vok {
-				dst[k] = DeepMergeInto(ebm, vbm)
+				dst[k] = loader.MergeMaps(ebm, vbm)
 				continue
 			}
-		}
-		dst[k] = v
-	}
-	return dst
-}
-
-// deepMergeShared merges override's keys into dst IN PLACE, treating
-// override (and every map reachable from it) as read-only. dst's
-// top-level map is owned by the caller and mutated directly; its
-// sub-maps may be BORROWED by reference from a previous override (e.g.
-// a shared cache canonical). To preserve that read-only borrow, a
-// map/map key collision shallow-clones the existing dst node into a
-// fresh owned map BEFORE recursing — copy-on-write — so the recursion
-// never writes through a borrowed (shared) sub-tree. Non-colliding
-// override sub-maps are inserted by reference.
-//
-// The accumulator is owned, but its sub-maps may alias immutable cache
-// entries. Clone colliding maps before writing through a borrowed node.
-func deepMergeShared(dst, override map[string]any) map[string]any {
-	for k, v := range override {
-		existing, ok := dst[k]
-		if !ok {
-			dst[k] = v
-			continue
-		}
-		ebm, eok := existing.(map[string]any)
-		vbm, vok := v.(map[string]any)
-		if eok && vok {
-			// existing may be borrowed from a shared canonical: shallow-
-			// clone it into an owned map before merging override's sub-map
-			// in, so we never mutate the borrowed (read-only) node.
-			owned := make(map[string]any, len(ebm)+len(vbm))
-			maps.Copy(owned, ebm)
-			dst[k] = deepMergeShared(owned, vbm)
-			continue
 		}
 		dst[k] = v
 	}
@@ -146,10 +112,6 @@ type Cache struct {
 // orchestrator run and pass to ExpandValueReferences.
 func NewCache() *Cache { return &Cache{} }
 
-// lookup returns the cached parsed-values map for key. Callers MUST
-// NOT mutate the returned map; the cache's defensive-clone happens at
-// the call site (ExpandValueReferences) which knows whether the value
-// will be merged through DeepMergeInto (mutating) or read-only.
 func (c *Cache) lookup(key string) (map[string]any, bool) {
 	if c == nil {
 		return nil, false
@@ -188,17 +150,8 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 	if hr == nil || len(hr.ValuesFrom) == 0 {
 		return nil
 	}
-	// A TargetPath ref writes through the accumulator in place (strvals
-	// navigates and mutates existing nodes), which is unsafe once the
-	// accumulator aliases shared cache sub-trees. Decide the merge
-	// strategy once for the whole HR: if NO ref has a TargetPath, share
-	// the cached canonicals by reference (cheap, the common platform-CM
-	// pattern); if ANY ref has one, keep the eager fully-owned copy so the
-	// in-place write can't reach the cache. See updateHelmReleaseValues.
-	share := !slices.ContainsFunc(hr.ValuesFrom, func(ref manifest.ValuesReference) bool {
-		return ref.TargetPath != ""
-	})
 	values := map[string]any{}
+	owned := true
 	for edge := range manifest.References(hr) {
 		if edge.Use != "valuesFrom" {
 			continue
@@ -211,27 +164,26 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			}
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
-		if values, err = cache.updateHelmReleaseValues(ref, found, values, share); err != nil {
+		if ref.TargetPath != "" {
+			if !owned {
+				// Cached nested values may be borrowed; strvals mutates them in place.
+				values = manifest.DeepCopyMap(values)
+				owned = true
+			}
+			if ref.Literal {
+				err = replaceLiteralValueAtPath(values, ref.TargetPath, found)
+			} else {
+				err = replaceValueAtPath(values, ref.TargetPath, found)
+			}
+		} else {
+			err = cache.updateHelmReleaseValues(ref, found, values)
+			owned = false
+		}
+		if err != nil {
 			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}
-	if len(hr.Values) > 0 {
-		// hr.Values is the inline-values map decoded from the HR manifest.
-		// The Prepare path clones hr before calling here, so its sub-trees
-		// are owned by this reconcile. Build the inline layer ON TOP of
-		// values (inline wins on collision). In the share path values may
-		// alias cache sub-trees, so use deepMergeShared (copy-on-write, so a
-		// shared node is cloned before it is written through); in the owned
-		// path DeepMergeInto is fine and avoids that clone.
-		if share {
-			// Owned accumulator, read-only hr.Values: merge in place with
-			// copy-on-write so sub-maps still aliasing the cache canonical
-			// are cloned before the inline layer writes into them.
-			deepMergeShared(values, hr.Values)
-		} else {
-			DeepMergeInto(values, hr.Values)
-		}
-	}
+	DeepMergeInto(values, hr.Values)
 	hr.Values = values
 	return nil
 }
@@ -251,25 +203,31 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 		return "", err
 	}
 	if !ok {
+		if !hasData(data) {
+			return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
+		}
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name, key: key}
 	}
 	return value, nil
 }
 
-// Empty bags retain the same missing-resource disposition as absent objects.
 func resourceData(kind, namespace, name string, p Provider) (manifest.Data, error) {
 	switch kind {
 	case manifest.KindSecret, manifest.KindConfigMap:
 	default:
 		return nil, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
 	}
-	data := p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name})
+	return p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}), nil
+}
+
+// Empty bags retain the same missing-resource disposition as absent objects.
+func hasData(data manifest.Data) bool {
 	if data != nil {
 		for range data.Keys() {
-			return data, nil
+			return true
 		}
 	}
-	return nil, nil
+	return false
 }
 
 type missingValueRefError struct {
@@ -294,91 +252,29 @@ func (e *missingValueRefError) Unwrap() error {
 	return manifest.ErrObjectNotFound
 }
 
-// updateHelmReleaseValues merges one valuesFrom ref into the values
-// accumulator and returns the (possibly new) accumulator.
-//
-// When ref.TargetPath is set, write through Helm's strvals parser
-// (path=value form). This matches upstream Flux's
-// chartutil.ChartValuesFromReferences (which calls strvals.ParseInto)
-// and gives the correct type coercion: "3" → int 3, "true" → bool,
-// "null" → nil. Single/double-quoted values force string-coercion
-// (strvals.ParseIntoString). A naive `inner[k] = found` left every
-// targetPath value as a literal string, which broke chart-schema
-// validation against `replicaCount: integer` and similar. The targetPath
-// path bypasses the cache — strvals parsing already mutates values in
-// place per-call and is comparatively cheap (no map allocation for the
-// parsed tree). A ref with `literal: true` skips all of that syntax and
-// lands the value verbatim as a string (`helm --set-literal` semantics,
-// via replaceLiteralValueAtPath).
-//
-// Otherwise the found YAML is parsed (memoized in cache when non-nil, keyed
-// by content) and deep-merged.
-//
-// share selects the merge strategy, decided once per HR by the caller:
-//   - share=true (the HR has NO TargetPath ref): deepMergeShared, which
-//     folds the canonical into the owned accumulator in place and SHARES
-//     its non-colliding sub-trees by reference instead of deep-copying
-//     them (map collisions copy-on-write so the canonical is never
-//     mutated). Safe because nothing in this HR mutates a shared node and
-//     the cache canonical is read-only downstream (helm copies the input
-//     on entry). M HRs referencing the same ConfigMap then share one
-//     parsed tree instead of each deep-copying it.
-//   - share=false (the HR has a TargetPath ref somewhere): eager
-//     DeepMergeInto over a DeepCopyMap of the canonical, so the
-//     accumulator is FULLY OWNED and the in-place strvals write that a
-//     TargetPath ref performs can't reach (and corrupt) the shared cache.
-func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any, share bool) (map[string]any, error) {
-	if ref.TargetPath != "" {
-		// Only reached when share==false (the caller sets share false the
-		// moment any ref carries a TargetPath), so `values` is owned and
-		// the in-place strvals write below is safe.
-		if ref.Literal {
-			_, err := replaceLiteralValueAtPath(values, ref.TargetPath, found)
-			return values, err
-		}
-		_, err := replaceValueAtPath(values, ref.TargetPath, found)
-		return values, err
-	}
-
+func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) error {
 	parsed, ok := c.lookup(found)
 	if !ok {
-		if err := yaml.Unmarshal([]byte(found), &parsed); err != nil {
-			// Wiped Secret values surface here as the literal placeholder
-			// string. yaml.Unmarshal of a scalar string into a map errors out
-			// — treat as empty so a wiped values-file (common pattern: kustomize
-			// `secretGenerator` wrapping a SOPS-encrypted values.yaml) doesn't
-			// block the whole HR render.
+		var decoded map[string]any
+		if err := yaml.Unmarshal([]byte(found), &decoded); err != nil {
+			// Wiped scalar placeholders MUST act as empty values files.
 			if manifest.HasValuePlaceholder(found) {
-				return values, nil
+				return nil
 			}
-			return values, fmt.Errorf("expected '%s' values to be valid YAML: %w", ref.Name, err)
+			return fmt.Errorf("%w: expected '%s' values key %q to be valid YAML: %w", manifest.ErrInput, ref.Name, ref.GetValuesKey(), err)
 		}
-		if parsed == nil {
-			return values, nil
+		if decoded == nil {
+			return nil
 		}
-		// Cache the parsed tree (canonical, never mutated) before merging.
+		parsed = decoded
 		c.put(found, parsed)
 	}
-	if share {
-		// Folds parsed into the owned accumulator in place: non-colliding
-		// sub-trees are shared by reference; map collisions copy-on-write
-		// so the cache canonical (parsed) is never mutated. Avoids the
-		// per-ref full clone of the growing top-level map across N valuesFrom refs.
-		return deepMergeShared(values, parsed), nil
-	}
-	// Owned-accumulator path: clone the canonical so the later in-place
-	// TargetPath write can't corrupt the shared cache entry.
-	DeepMergeInto(values, manifest.DeepCopyMap(parsed))
-	return values, nil
+	DeepMergeInto(values, parsed)
+	return nil
 }
 
-// replaceValueAtPath writes value into values at path using Helm's
-// strvals parser. Matches upstream Flux's chartutil.ReplacePathValue:
-// single/double-quoted values use ParseIntoString (forced string);
-// bare values use ParseInto (type-coerced: "3" → int, "true" → bool,
-// "null" → nil). Strvals also handles list indices (foo.bar[0]) and
-// escaped dot keys (foo\\.bar).
-func replaceValueAtPath(values map[string]any, path, value string) (map[string]any, error) {
+// Matching quotes MUST force strings instead of Helm's ordinary type coercion.
+func replaceValueAtPath(values map[string]any, path, value string) error {
 	var err error
 	if unquoted, ok := stripMatchingQuotes(value); ok {
 		err = strvals.ParseIntoString(path+"="+unquoted, values)
@@ -386,19 +282,13 @@ func replaceValueAtPath(values map[string]any, path, value string) (map[string]a
 		err = strvals.ParseInto(path+"="+value, values)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("targetPath %q: %w", path, err)
+		return fmt.Errorf("%w: targetPath %q: %w", manifest.ErrInput, path, err)
 	}
-	return values, nil
+	return nil
 }
 
-// replaceLiteralValueAtPath writes value verbatim at the dot-notation path,
-// mirroring upstream Flux's chartutil.ReplacePathLiteralValue. Flux does not
-// use helm's strvals.ParseLiteralInto here: that parser has no backslash
-// escape support in the path, which would break `\.` targetPath segments
-// (e.g. `annotations.prometheus\.io/scrape`). Instead the value has its
-// strvals metacharacters pre-escaped and goes through ParseIntoString, which
-// keeps escape-aware path parsing while the value round-trips verbatim.
-func replaceLiteralValueAtPath(values map[string]any, path, value string) (map[string]any, error) {
+// ParseIntoString preserves escaped path separators; ParseLiteralInto does not.
+func replaceLiteralValueAtPath(values map[string]any, path, value string) error {
 	// Backslash must be escaped first so the escapes added for the other
 	// metacharacters aren't themselves re-escaped.
 	escaper := strings.NewReplacer(
@@ -410,16 +300,12 @@ func replaceLiteralValueAtPath(values map[string]any, path, value string) (map[s
 		`}`, `\}`,
 	)
 	if err := strvals.ParseIntoString(path+"="+escaper.Replace(value), values); err != nil {
-		return nil, fmt.Errorf("targetPath %q: %w", path, err)
+		return fmt.Errorf("%w: targetPath %q: %w", manifest.ErrInput, path, err)
 	}
-	return values, nil
+	return nil
 }
 
-// stripMatchingQuotes reports whether value is wrapped in a matching pair
-// of single or double quotes and, if so, returns the inner contents. The
-// len >= 2 guard is load-bearing: a single-char "'" or `"` has its first
-// byte equal to its last, which would otherwise pass the match and then
-// trip a value[1:0] slice — a runtime panic on untrusted Secret data.
+// A single quote MUST remain a scalar; stripping it would produce an invalid slice.
 func stripMatchingQuotes(value string) (string, bool) {
 	if len(value) >= 2 {
 		if q := value[0]; (q == '\'' || q == '"') && value[len(value)-1] == q {
@@ -464,7 +350,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 			}
 			return err
 		}
-		if data == nil {
+		if !hasData(data) {
 			if !ref.Optional && ref.Kind != manifest.KindSecret {
 				slog.Debug("values: SubstituteReference not found",
 					"id", ks.Named().String(), "ref", ref.Name)
@@ -540,7 +426,7 @@ func UnreadableSubstituteSecrets(ks *manifest.Kustomization, p Provider) []strin
 		if ref.Kind != manifest.KindSecret || ref.Optional {
 			continue
 		}
-		if data, err := resourceData(ref.Kind, ref.Namespace, ref.Name, p); err == nil && data == nil {
+		if data, err := resourceData(ref.Kind, ref.Namespace, ref.Name, p); err == nil && !hasData(data) {
 			unreadable = append(unreadable, ref.Name)
 		}
 	}

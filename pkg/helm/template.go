@@ -16,7 +16,6 @@ import (
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
-	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -69,7 +68,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if err != nil {
 			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
-		finalValues = loader.MergeMaps(base, hrValues)
+		finalValues = values.DeepMergeInto(base, hrValues)
 	}
 
 	key := computeTemplateKey(loaded, finalValues, opts, hr)

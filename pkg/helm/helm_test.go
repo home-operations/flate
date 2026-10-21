@@ -3,7 +3,6 @@ package helm
 import (
 	"context"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -67,23 +66,16 @@ data:
 	}
 }
 
-// TestTemplate_DoesNotMutateInputValues guards the copy-on-collision
-// optimization's load-bearing assumption. ExpandValueReferences now SHARES
-// cached valuesFrom sub-trees into hr.Values by reference (instead of a full
-// per-HR deep copy), so the render pipeline MUST treat the passed values as
-// immutable — an in-place mutation would corrupt the shared cache canonical
-// across HRs. helm v4 deep-copies the input on entry (CoalesceValues ->
-// copystructure.Copy); this test renders with a nested map + slice values
-// tree and asserts it is byte-identical afterward, catching a future helm
-// bump that mutates the caller's map/sub-maps/slices.
 func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml",
 		"apiVersion: v2\nname: mychart\nversion: 0.1.0\ndescription: t\n")
 	testutil.WriteFile(t, dir, "mychart/values.yaml", "image:\n  tag: default\n")
+	testutil.WriteFile(t, dir, "mychart/first.yaml", "image:\n  tag: first\n  repository: file-repo\n  pullPolicy: Always\n")
+	testutil.WriteFile(t, dir, "mychart/second.yaml", "image:\n  tag: second\n  repository: nginx-file\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
-		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n")
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n  repository: {{ .Values.image.repository }}\n  pullPolicy: {{ .Values.image.pullPolicy }}\n")
 
 	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	if err != nil {
@@ -101,19 +93,23 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 		"image": map[string]any{"tag": "v1", "repository": "nginx"},
 		"env":   []any{map[string]any{"name": "A", "value": "1"}},
 	}
-	hr.ChartValuesFiles = []string{"mychart/values.yaml"}
+	hr.ChartValuesFiles = []string{"mychart/values.yaml", "mychart/first.yaml", "mychart/second.yaml"}
 	snapshot := manifest.DeepCopyMap(vals)
+	hrBefore := hr.Clone()
 	canonical, err := cli.loadChart(t.Context(), hr)
 	assert.NoError(t, err)
 	chartSnapshot := manifest.DeepCopyMap(canonical.chart.Values)
 	start := make(chan struct{})
 	var ready, done sync.WaitGroup
+	outputs := make([]string, 2)
 	ready.Add(2)
-	for range 2 {
+	for i := range 2 {
 		done.Go(func() {
 			ready.Done()
 			<-start
-			if _, err := cli.Template(t.Context(), hr, vals, Options{}); err != nil {
+			var err error
+			outputs[i], err = cli.Template(t.Context(), hr, vals, Options{})
+			if err != nil {
 				t.Error(err)
 			}
 		})
@@ -122,9 +118,22 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	close(start)
 	done.Wait()
 	assert.Diff(t, canonical.chart.Values, chartSnapshot)
-	if !reflect.DeepEqual(vals, snapshot) {
-		t.Errorf("render mutated the input values map (helm no longer copies on entry?)\n before=%#v\n after =%#v", snapshot, vals)
+	assert.Diff(t, vals, snapshot)
+	assert.Diff(t, hr, hrBefore)
+	assert.Equal(t, outputs[1], outputs[0])
+	for _, want := range []string{"tag: v1", "repository: nginx", "pullPolicy: Always"} {
+		if !strings.Contains(outputs[0], want) {
+			t.Errorf("missing %q in render: %s", want, outputs[0])
+		}
 	}
+	cachedBefore := make(map[string]map[string]any, len(cli.chartValuesCache))
+	for key, value := range cli.chartValuesCache {
+		cachedBefore[key] = manifest.DeepCopyMap(value)
+	}
+	repeated, err := cli.Template(t.Context(), hr, vals, Options{})
+	assert.NoError(t, err)
+	assert.Equal(t, repeated, outputs[0])
+	assert.Diff(t, cli.chartValuesCache, cachedBefore)
 }
 
 func helmChartFixture(t *testing.T) *Client {

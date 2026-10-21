@@ -113,7 +113,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 		if parent == (manifest.NamedResource{}) || parent == id {
 			continue
 		}
-		c.Store.UpdateStatus(id, store.StatusPending, "waiting for parent KS")
+		c.Store.UpdateStatus(id, store.StatusPending, "", "waiting for parent KS")
 		// The parent's render may have replaced this HR in the store
 		// with a patched copy; re-read so the rest of reconcile uses
 		// the canonical spec instead of the pre-patch snapshot we
@@ -134,7 +134,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
 	// each dependency reaching Ready before this HR reconciles.
 	if deps := c.collectDeps(hr); len(deps) > 0 {
-		c.Store.UpdateStatus(id, store.StatusPending, "resolving dependencies")
+		c.Store.UpdateStatus(id, store.StatusPending, "", "resolving dependencies")
 		// RequireRefresh fuses the dependsOn gate with the load-bearing
 		// re-read: the parent KS may have re-rendered (e.g. its own
 		// dependsOn cleared in the meantime, freeing up parent-render-time
@@ -218,7 +218,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 
 	_, attempt := c.Store.GetEmission(id)
 	defer attempt.Finish()
-	c.Store.UpdateStatus(id, store.StatusPending, "rendering chart")
+	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering chart")
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	helm.ApplyHROriginLabels(docs, hr)
 	docs = manifest.DropKinds(docs, c.Options.SkipResourceKinds())
 
-	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	c.Store.UpdateStatus(id, store.StatusPending, "", fmt.Sprintf("applying %d objects", len(docs)))
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}

@@ -50,7 +50,7 @@ func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainL
 			// Nil dependencies alone do not prove success: gates and skips
 			// may preserve an artifact and an informative Ready status.
 			// deleteLocked removes conditions with the object; Ready implies prior presence on this path.
-			if ok && info.Status == store.StatusReady && info.Message == "" {
+			if ok && info.Outcome() == store.OutcomePassed && info.Message == "" {
 				return schedule.OutcomeTerminalNoop, nil
 			}
 		}

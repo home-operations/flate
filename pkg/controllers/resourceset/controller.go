@@ -88,7 +88,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, le
 	defer attempt.Finish()
 	docs, err := resourceset.Render(rs, resolve)
 	if err != nil {
-		c.Store.UpdateStatus(id, store.StatusFailed, err.Error())
+		c.Store.UpdateStatus(id, store.StatusFailed, "", err.Error())
 		return err
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: id.Namespace})

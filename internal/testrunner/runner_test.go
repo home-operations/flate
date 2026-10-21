@@ -18,8 +18,8 @@ func TestRun_AllPass(t *testing.T) {
 	o, s := newRunner(t)
 	s.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system"})
 	s.AddObject(&manifest.HelmRelease{Name: "demo", Namespace: "apps"})
-	s.UpdateStatus(testutil.KustomizationID("flux-system", "apps"), store.StatusReady, "")
-	s.UpdateStatus(testutil.HelmReleaseID("apps", "demo"), store.StatusReady, "")
+	s.UpdateStatus(testutil.KustomizationID("flux-system", "apps"), store.StatusReady, "", "")
+	s.UpdateStatus(testutil.HelmReleaseID("apps", "demo"), store.StatusReady, "", "")
 	raw := &manifest.RawObject{Kind: manifest.KindKustomization, APIVersion: "foreign.example/v1", Namespace: "apps", Name: "raw"}
 	s.AddObject(raw)
 
@@ -39,7 +39,7 @@ func TestRun_AllPass(t *testing.T) {
 func TestRun_OneFailed(t *testing.T) {
 	o, s := newRunner(t)
 	s.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system"})
-	s.UpdateStatus(testutil.KustomizationID("flux-system", "apps"), store.StatusFailed, "boom")
+	s.UpdateStatus(testutil.KustomizationID("flux-system", "apps"), store.StatusFailed, "", "boom")
 
 	rep := runSelected(t, o)
 	if !rep.AnyFailed() {
@@ -52,28 +52,33 @@ func TestRun_OneFailed(t *testing.T) {
 
 func TestRun_SkippedReasonReportedAsSkipped(t *testing.T) {
 	for _, tc := range []struct {
-		name, message, reason string
+		name          string
+		reason        store.StatusReason
+		message, want string
+		skipped       bool
 	}{
-		{"source skipped", "skipped: source GitRepository.source.toolkit.fluxcd.io/flux-system/sealed missing auth", "missing auth"},
-		{"unchanged", store.MsgUnchanged, store.MsgUnchanged},
-		{"suspended", store.MsgSuspended, store.MsgSuspended},
+		{name: "source skipped", reason: store.ReasonSkipped, message: "source GitRepository.source.toolkit.fluxcd.io/flux-system/sealed missing auth", want: "source GitRepository.source.toolkit.fluxcd.io/flux-system/sealed missing auth", skipped: true},
+		{name: "nested skip", reason: store.ReasonSkipped, message: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth", want: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth", skipped: true},
+		{name: "boundary whitespace", reason: store.ReasonSkipped, message: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth", want: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth", skipped: true},
+		{name: "explanatory prefix", reason: store.ReasonSkipped, message: "skipped: missing auth", want: "skipped: missing auth", skipped: true},
+		{name: "empty skip", reason: store.ReasonSkipped, skipped: true},
+		{name: "unchanged", reason: store.ReasonUnchanged, message: "different words", want: "unchanged", skipped: true},
+		{name: "suspended", reason: store.ReasonSuspended, want: "suspended", skipped: true},
+		{name: "misleading skip", message: "skipped: diagnostic"},
+		{name: "misleading unchanged", message: "unchanged"},
+		{name: "misleading suspended", message: "suspended"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o, s := newRunner(t)
 			ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system"}
 			s.AddObject(ks)
-			s.UpdateStatus(ks.Named(), store.StatusReady, tc.message)
-
+			s.UpdateStatus(ks.Named(), store.StatusReady, tc.reason, tc.message)
 			rep := runSelected(t, o)
-			if rep.AnyFailed() {
-				t.Errorf("skipped-reason case must not fail: %+v", rep)
+			if rep.AnyFailed() || rep.Matched != 1 || len(rep.Cases) != 1 || (rep.Skipped == 1) != tc.skipped || (rep.Passed == 1) == tc.skipped {
+				t.Fatalf("unexpected typed outcome report: %+v", rep)
 			}
-			if rep.Skipped != 1 || rep.Passed != 0 {
-				t.Errorf("expected 1 skipped, 0 passed; got %+v", rep)
-			}
-			if !strings.Contains(rep.Cases[0].Reason, tc.reason) {
-				t.Errorf("skip reason should carry %q; got %q", tc.reason, rep.Cases[0].Reason)
-			}
+			assert.Equal(t, rep.Cases[0].Reason, tc.want)
+			assert.Diff(t, runSelected(t, o), rep)
 		})
 	}
 }
@@ -112,8 +117,8 @@ func TestRun_SelectedNamespace(t *testing.T) {
 	beta := testutil.KustomizationID("beta", "apps")
 	s.AddObject(&manifest.Kustomization{Name: alpha.Name, Namespace: alpha.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: beta.Name, Namespace: beta.Namespace})
-	s.UpdateStatus(alpha, store.StatusReady, "")
-	s.UpdateStatus(beta, store.StatusReady, "")
+	s.UpdateStatus(alpha, store.StatusReady, "", "")
+	s.UpdateStatus(beta, store.StatusReady, "", "")
 
 	rep := runSelected(t, o, testutil.KustomizationID("alpha", ""))
 	if rep.Passed != 1 || len(rep.Cases) != 1 || rep.Cases[0].ID != alpha {
@@ -129,17 +134,17 @@ func TestRun_DeterministicOrderAndMatchCount(t *testing.T) {
 		testutil.KustomizationID("m", "middle"),
 	} {
 		s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-		s.UpdateStatus(id, store.StatusReady, "")
+		s.UpdateStatus(id, store.StatusReady, "", "")
 	}
 	for _, name := range []string{"extra-z", "extra-a"} {
 		rs := &manifest.ResourceSet{Name: name, Namespace: "ns"}
 		s.AddObject(rs)
-		s.UpdateStatus(rs.Named(), store.StatusFailed, "boom")
+		s.UpdateStatus(rs.Named(), store.StatusFailed, "", "boom")
 	}
 
 	foreign := manifest.NamedResource{Group: "example.test", Kind: manifest.KindResourceSet, Namespace: "ns", Name: "extra-z"}
 	s.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: foreign.Kind, Namespace: foreign.Namespace, Name: foreign.Name})
-	s.UpdateStatus(foreign, store.StatusFailed, "foreign failure")
+	s.UpdateStatus(foreign, store.StatusFailed, "", "foreign failure")
 
 	rep := runSelected(t, o, testutil.KustomizationID("", ""))
 
@@ -172,7 +177,7 @@ func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 	child := testutil.KustomizationID("media", "plex")
 	s.AddObject(&manifest.Kustomization{Name: root.Name, Namespace: root.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
-	s.UpdateStatus(root, store.StatusFailed, "kustomize build boom") // primary
+	s.UpdateStatus(root, store.StatusFailed, "", "kustomize build boom") // primary
 	s.UpdateFailure(child, &manifest.DependencyFailedError{Parent: child, Failed: []manifest.NamedResource{root}})
 
 	rep := runSelected(t, o)
@@ -216,16 +221,16 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 	rs := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "broken-rs"}
 	s.AddObject(&manifest.Kustomization{Name: ks.Name, Namespace: ks.Namespace})
 	s.AddObject(&manifest.ResourceSet{Name: rs.Name, Namespace: rs.Namespace})
-	s.UpdateStatus(ks, store.StatusReady, "")
-	s.UpdateStatus(rs, store.StatusFailed, `parse template: function "nope" not defined`)
+	s.UpdateStatus(ks, store.StatusReady, "", "")
+	s.UpdateStatus(rs, store.StatusFailed, "", `parse template: function "nope" not defined`)
 
 	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "same"}
 	s.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
-	s.UpdateStatus(chart, store.StatusFailed, "synthetic chart failure")
+	s.UpdateStatus(chart, store.StatusFailed, "", "synthetic chart failure")
 	foreignChart := chart
 	foreignChart.Group = "example.test"
 	s.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: foreignChart.Kind, Namespace: foreignChart.Namespace, Name: foreignChart.Name})
-	s.UpdateStatus(foreignChart, store.StatusFailed, "foreign chart failure")
+	s.UpdateStatus(foreignChart, store.StatusFailed, "", "foreign chart failure")
 
 	rep := runSelected(t, o)
 	if rep.Matched != 1 || rep.Passed != 1 || rep.Failed != 2 {
@@ -269,7 +274,7 @@ func TestRun_SameNameDiagnosticDoesNotMatchRequestedKind(t *testing.T) {
 	o, s := newRunner(t)
 	hr := &manifest.HelmRelease{Name: "missing", Namespace: "ns"}
 	s.AddObject(hr)
-	s.UpdateStatus(hr.Named(), store.StatusFailed, "boom")
+	s.UpdateStatus(hr.Named(), store.StatusFailed, "", "boom")
 	rep := runSelected(t, o, testutil.KustomizationID("", hr.Name))
 	if rep.Matched != 0 || rep.Failed != 1 || len(rep.Cases) != 1 || rep.Cases[0].ID != hr.Named() {
 		t.Fatalf("same-name diagnostic must not count as a requested root: %+v", rep)
@@ -309,7 +314,7 @@ func TestRun_BlockedRootReason(t *testing.T) {
 			s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
 			s.AddObject(tc.root)
 			s.UpdateFailure(hr, &manifest.DependencyFailedError{Parent: hr, Failed: []manifest.NamedResource{root}})
-			s.UpdateStatus(root, store.StatusFailed, "flux error: input error: fetch artifact: 404 Not Found")
+			s.UpdateStatus(root, store.StatusFailed, "", "flux error: input error: fetch artifact: 404 Not Found")
 
 			rep := runSelected(t, o, testutil.HelmReleaseID(tc.namespace, ""))
 			if rep.Matched != 1 || rep.Failed != tc.wantFailed || len(rep.Blocked) != 1 || !rep.AnyFailed() {

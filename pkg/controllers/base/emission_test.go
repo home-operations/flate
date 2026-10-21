@@ -353,7 +353,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	s.RecordEmitted(childID, &next)
 	next.Finish()
 	before := s.GetArtifact(childID)
-	s.UpdateStatus(childID, store.StatusReady, "")
+	s.UpdateStatus(childID, store.StatusReady, "", "")
 	publish("second", "app")
 	var arrivals, statuses int
 	stopObjects := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
@@ -504,11 +504,11 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 		Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoNamespace: "apps", RepoName: "chart"}}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
-		s.UpdateStatus(obj.Named(), store.StatusReady, "unchanged")
+		s.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonUnchanged, "unchanged")
 	}
 	foreignProducer := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Name: producer.Name, Namespace: producer.Namespace}
 	s.AddObject(foreignProducer)
-	s.UpdateStatus(foreignProducer.Named(), store.StatusReady, "foreign unchanged")
+	s.UpdateStatus(foreignProducer.Named(), store.StatusReady, "", "foreign unchanged")
 	foreignSettings := settings
 	foreignSettings.Group = "example.test"
 	index := &manifest.DiscoveryIndex{
@@ -554,7 +554,7 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 			c := New(s, nil, "test")
 			obj := tc.obj.WithNamespace("apps")
 			s.AddObject(obj)
-			s.UpdateStatus(obj.Named(), store.StatusReady, "unchanged")
+			s.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonUnchanged, "unchanged")
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 			}

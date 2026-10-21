@@ -104,7 +104,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 
 	// RSIP arrives → re-dispatch renders the Widget from its inputs.
 	s.AddObject(staticRSIP("rsip", "flux-system", nil, map[string]string{"user": "alice"}))
-	s.UpdateStatus(want, store.StatusReady, "")
+	s.UpdateStatus(want, store.StatusReady, "", "")
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
@@ -365,7 +365,7 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 				t.Fatalf("disabled ResourceSet blocked on %v", blocked)
 			}
 			info, _ := s.GetStatus(obj.Named())
-			if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+			if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 				t.Fatalf("status = %+v, want Ready/suspended", info)
 			}
 			if art := s.GetArtifact(obj.Named()); art != nil {
@@ -389,10 +389,10 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			t.Cleanup(c.Close)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 			st.AddObject(parent)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "")
+			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
 			provider := staticRSIP("provider", "flux-system", nil, map[string]string{"user": "rs-refresh-output"})
 			st.AddObject(provider)
-			st.UpdateStatus(provider.Named(), store.StatusReady, "")
+			st.UpdateStatus(provider.Named(), store.StatusReady, "", "")
 			doc := map[string]any{
 				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "fleet", "namespace": "flux-system"},
@@ -410,7 +410,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			st.UpdateStatus(rs.Named(), store.StatusPending, "")
+			st.UpdateStatus(rs.Named(), store.StatusPending, "", "")
 			replacement := manifest.DeepCopyMap(doc)
 			replacement["spec"].(map[string]any)["resourcesTemplate"] = "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n")
 			if suspended {
@@ -454,7 +454,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			art, _ := st.GetArtifact(rs.Named()).(*store.Emission)
 			child := testutil.KustomizationID("flux-system", "rs-refresh-child")
 			if suspended {
-				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+				if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 					t.Errorf("status = %+v, want Ready/suspended", info)
 				}
 				_, inventory := st.GetEmission(rs.Named())

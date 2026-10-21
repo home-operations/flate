@@ -205,7 +205,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		return err
 	}
 
-	c.Store.UpdateStatus(id, store.StatusPending, "rendering")
+	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering")
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		}
 	}
 
-	c.Store.UpdateStatus(id, store.StatusPending, fmt.Sprintf("applying %d objects", len(docs)))
+	c.Store.UpdateStatus(id, store.StatusPending, "", fmt.Sprintf("applying %d objects", len(docs)))
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization, level manifest.Dr
 	art := c.Store.GetArtifact(srcID)
 	if art == nil {
 		// A source that soft-skipped (--allow-missing-secrets) reports
-		// Ready with a "skipped:" reason but writes no artifact. Surface
+		// Ready with ReasonSkipped but writes no artifact. Surface
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
 		if err := c.SourceSkipped(srcID, "source"); err != nil {

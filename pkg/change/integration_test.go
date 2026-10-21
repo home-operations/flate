@@ -30,7 +30,7 @@ import (
 //     parent-injected patches reach plex — but they don't promote
 //     unrelated children into keep (the #308 cascade fix).
 //   - db-apps and postgres land in the Store with StatusReady,
-//     Message=MsgUnchanged — proof that PreGate short-circuited
+//     Outcome=OutcomeUnchanged — proof that PreGate short-circuited
 //     them and no kustomize build / no helm template / no source
 //     fetch happened for the unrelated subtree.
 //
@@ -139,7 +139,7 @@ data:
 	}
 
 	// Resolve every KS's final status. The keep-cascade fix means
-	// the db side stays MsgUnchanged — proof its reconcile body
+	// the db side stays OutcomeUnchanged — proof its reconcile body
 	// never ran.
 	plex := testutil.KustomizationID("media", "plex")
 	postgres := testutil.KustomizationID("db", "postgres")
@@ -152,19 +152,19 @@ data:
 			t.Errorf("%s: no status reported (expected reconciled)", id)
 			return
 		}
-		if store.IsUnchanged(info) {
-			t.Errorf("%s: expected reconciled, got MsgUnchanged — keep-cascade fix did not pull this into keep", id)
+		if info.Outcome() == store.OutcomeUnchanged {
+			t.Errorf("%s: expected reconciled, got OutcomeUnchanged — keep-cascade fix did not pull this into keep", id)
 		}
 	}
 	requireUnchanged := func(id manifest.NamedResource) {
 		t.Helper()
 		info, ok := o.Store().GetStatus(id)
 		if !ok {
-			t.Errorf("%s: no status reported (expected MsgUnchanged)", id)
+			t.Errorf("%s: no status reported (expected OutcomeUnchanged)", id)
 			return
 		}
-		if !store.IsUnchanged(info) {
-			t.Errorf("%s: keep-cascade leaked; expected MsgUnchanged, got Status=%s Message=%q",
+		if info.Outcome() != store.OutcomeUnchanged {
+			t.Errorf("%s: keep-cascade leaked; expected OutcomeUnchanged, got Status=%s Message=%q",
 				id, info.Status, info.Message)
 		}
 	}

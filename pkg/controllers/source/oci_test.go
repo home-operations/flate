@@ -131,7 +131,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			}
 			ts.BlockTillDone()
 			for _, repo := range repos {
-				if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || store.IsSkipped(info) || st.GetArtifact(repo.Named()) == nil {
+				if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped || st.GetArtifact(repo.Named()) == nil {
 					t.Errorf("source %s status = %+v, want Ready with artifact", repo.Name, info)
 				}
 			}

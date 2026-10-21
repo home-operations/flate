@@ -71,8 +71,8 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if !ok || original.Suspend {
 						t.Fatal("active child missing")
 					}
-					o.store.UpdateStatus(gate, store.StatusReady, store.MsgSuspended)
-					o.store.UpdateStatus(child, store.StatusPending, "queued")
+					o.store.UpdateStatus(gate, store.StatusReady, store.ReasonSuspended, "suspended")
+					o.store.UpdateStatus(child, store.StatusPending, "", "queued")
 					o.configureControllers()
 					var outcome schedule.Outcome
 					var blocked []manifest.NamedResource
@@ -122,7 +122,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					}
 					info, _ := o.store.GetStatus(child)
 					fresh, _ := o.store.Get[*manifest.Kustomization](child)
-					if publication.Load() != 1 || arrivals.Load() != 0 || !store.IsSuspended(info) || !fresh.Suspend || original.Suspend {
+					if publication.Load() != 1 || arrivals.Load() != 0 || info.Outcome() != store.OutcomeSuspended || !fresh.Suspend || original.Suspend {
 						t.Fatalf("late suspension: publications=%d arrivals=%d status=%+v original=%+v fresh=%+v", publication.Load(), arrivals.Load(), info, original, fresh)
 					}
 					if owners := testutil.Owners(o.store.Productions(child, nil)); !slices.Contains(owners, gate) {

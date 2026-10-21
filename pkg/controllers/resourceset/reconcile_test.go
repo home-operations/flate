@@ -66,7 +66,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			st.AddObject(parent)
 			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
 			st.AddObject(provider)
-			st.UpdateStatus(provider.Named(), store.StatusReady, "")
+			st.UpdateStatus(provider.Named(), store.StatusReady, "", "")
 			docA := map[string]any{
 				"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "binding", "namespace": "apps"},
@@ -82,7 +82,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 			}
 			publish(docA)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "")
+			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
 			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "binding"}
 			rs, ok := st.Get[*manifest.ResourceSet](id)
 			if !ok {

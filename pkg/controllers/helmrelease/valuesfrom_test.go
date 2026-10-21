@@ -47,9 +47,9 @@ data:
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 			})
-			st.UpdateStatus(src.Named(), store.StatusPending, "fetching")
+			st.UpdateStatus(src.Named(), store.StatusPending, "", "fetching")
 			if tc.waitValues {
-				st.UpdateStatus(src.Named(), store.StatusReady, "")
+				st.UpdateStatus(src.Named(), store.StatusReady, "", "")
 			}
 			publishRawFixture(t, c, &manifest.RawObject{
 				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
@@ -89,7 +89,7 @@ data:
 			if tc.fail {
 				status = store.StatusFailed
 			}
-			st.UpdateStatus(src.Named(), status, "chart source")
+			st.UpdateStatus(src.Named(), status, "", "chart source")
 			assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, status)
 			assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
 			for _, warning := range st.Warnings() {
@@ -112,7 +112,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	c, s := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
-	s.UpdateStatus(chart.Named(), store.StatusFailed, "chart unavailable")
+	s.UpdateStatus(chart.Named(), store.StatusFailed, "", "chart unavailable")
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{
 		RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmChart, RepoName: chart.Name, RepoNamespace: chart.Namespace,
 	}}
@@ -125,7 +125,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 				t.Fatal("retried a failed chartRef with no removable valuesFrom refs")
 			}
 			// Identical status writes suppress events, so reset the progress message.
-			s.UpdateStatus(id, store.StatusPending, "checking references")
+			s.UpdateStatus(id, store.StatusPending, "", "checking references")
 		}
 	}, false)
 	t.Cleanup(unsub)

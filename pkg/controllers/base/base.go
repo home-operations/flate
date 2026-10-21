@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -189,7 +190,7 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 	if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusReady {
 		return
 	}
-	c.Store.UpdateStatus(id, store.StatusPending, msg)
+	c.Store.UpdateStatus(id, store.StatusPending, "", msg)
 }
 
 // FingerprintDedup derives the replay key from content and reuses accepted children.
@@ -237,8 +238,8 @@ func (c *Controller) KeepOrderingDep(id manifest.NamedResource) bool {
 
 // SourceSkipped converts a referenced source's soft skip into the caller's skip.
 func (c *Controller) SourceSkipped(id manifest.NamedResource, label string) error {
-	if info, ok := c.Store.GetStatus(id); ok && store.IsSkipped(info) {
-		return fmt.Errorf("%w: %s %s %s", manifest.ErrSourceSkipped, label, id.String(), info.Message)
+	if info, ok := c.Store.GetStatus(id); ok && info.Outcome() == store.OutcomeSkipped {
+		return fmt.Errorf("%w: %s %s skipped: %s", manifest.ErrSourceSkipped, label, id.String(), info.Message)
 	}
 	return nil
 }
@@ -299,7 +300,7 @@ func (c *Controller) Close() {
 // preGate marks suspended objects Ready; refresh MUST never apply changed-only filtering.
 func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 	if obj.Suspended() {
-		c.Store.UpdateStatus(obj.Named(), store.StatusReady, store.MsgSuspended)
+		c.Store.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
 		return true
 	}
 	return false
@@ -390,7 +391,7 @@ func recoverPanic(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
 		return
 	}
 	log.Error("panic during reconcile", "id", id.String(), "panic", r)
-	s.UpdateStatus(id, store.StatusFailed, fmt.Sprintf("panic: %v", r))
+	s.UpdateStatus(id, store.StatusFailed, "", fmt.Sprintf("panic: %v", r))
 	panic(r)
 }
 
@@ -414,7 +415,7 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		// the testrunner reports cleanly — a vanished resource is the same
 		// outcome real Flux sees when the CR is deleted.
 		if info, has := s.GetStatus(id); has && info.Status != store.StatusReady {
-			s.UpdateStatus(id, store.StatusReady, store.SkippedPrefix+" object not in store at reconcile time")
+			s.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "object not in store at reconcile time")
 		}
 		return nil
 	}
@@ -428,13 +429,9 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 			return blocked.Deps
 		}
-		// ErrSourceSkipped propagates a soft-skip from a referenced source
-		// (--allow-missing-secrets on its auth secret). Mark Ready+"skipped:"
-		// rather than Failed so dependents treat us as ready and the runner
-		// reports SKIPPED, matching the source's outcome.
 		if errors.Is(err, manifest.ErrSourceSkipped) {
-			s.UpdateStatus(id, store.StatusReady,
-				store.SkippedPrefix+" "+manifest.TrimSentinelPrefix(err.Error()))
+			s.UpdateStatus(id, store.StatusReady, store.ReasonSkipped,
+				strings.TrimSpace(manifest.TrimSentinelPrefix(err.Error())))
 			return nil
 		}
 		s.UpdateFailure(id, err)
@@ -444,13 +441,12 @@ func RunWithStatusOutcome[T manifest.BaseManifest](
 		if existing.Status == store.StatusFailed {
 			return nil
 		}
-		if existing.Status == store.StatusReady && existing.Message != "" {
-			// Informative Ready message (skipped:, unchanged, suspended) —
-			// don't clobber.
+		if existing.Status == store.StatusReady &&
+			(existing.Message != "" || existing.Outcome() != store.OutcomePassed) {
 			return nil
 		}
 	}
-	s.UpdateStatus(id, store.StatusReady, "")
+	s.UpdateStatus(id, store.StatusReady, "", "")
 	return nil
 }
 
@@ -478,15 +474,15 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 		return nil
 	}
 	if c.filterActive() && !c.filter.ShouldReconcile(id) {
-		c.Store.UpdateStatus(id, store.StatusReady, store.MsgUnchanged)
+		c.Store.UpdateStatus(id, store.StatusReady, store.ReasonUnchanged, "unchanged")
 		return nil
 	}
 	if msg, failed := c.PreflightFailure(id); failed {
-		c.Store.UpdateStatus(id, store.StatusFailed, msg)
+		c.Store.UpdateStatus(id, store.StatusFailed, "", msg)
 		return nil
 	}
 	if prior.IsDependencyFailure() {
-		c.Store.UpdateStatus(id, store.StatusPending, "")
+		c.Store.UpdateStatus(id, store.StatusPending, "", "")
 	}
 	return RunWithStatusOutcome[T](ctx, c, id, reconcile)
 }

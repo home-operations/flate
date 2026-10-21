@@ -207,7 +207,7 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, ks *manifes
 		return
 	}
 	info, _ := s.run.store.GetStatus(id)
-	if !store.IsUnchanged(info) && !store.IsSkipped(info) {
+	if info.Outcome() != store.OutcomeUnchanged && info.Outcome() != store.OutcomeSkipped {
 		return
 	}
 	src := ks.SourceID()

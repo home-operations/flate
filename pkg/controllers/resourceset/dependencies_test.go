@@ -58,7 +58,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			c.Configure(base.Options{Index: parentIndexForTest(parents)})
 			dependency := &manifest.Kustomization{Name: "pending", Namespace: "apps"}
 			c.Store.AddObject(dependency)
-			c.Store.UpdateStatus(dependency.Named(), store.StatusPending, "working")
+			c.Store.UpdateStatus(dependency.Named(), store.StatusPending, "", "working")
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", DependsOn: []fluxopv1.Dependency{{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: "pending"}}, InputsFrom: []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "named"}, {Kind: manifest.KindResourceSetInputProvider}}}
 			rs.InputsFrom = append(rs.InputsFrom, rs.InputsFrom[0],
 				fluxopv1.InputProviderReference{APIVersion: "example.test/v1", Name: "named"},

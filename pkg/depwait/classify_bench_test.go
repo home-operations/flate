@@ -26,7 +26,7 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 				id.Group = manifest.FluxKustomizeDomain
 				id.Kind = manifest.KindKustomization
 				id.Namespace = "ns"
-				s.UpdateStatus(id, store.StatusPending, "")
+				s.UpdateStatus(id, store.StatusPending, "", "")
 			}
 			w := &Waiter{Store: s}
 			dep := manifest.DependencyRef{NamedResource: id}

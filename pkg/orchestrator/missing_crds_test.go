@@ -250,7 +250,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		}
 		s.AddObject(rs)
 		if tc.hasStatus {
-			s.UpdateStatus(rs.Named(), tc.status, "")
+			s.UpdateStatus(rs.Named(), tc.status, "", "")
 		}
 		if tc.artifact {
 			s.SetArtifact(rs.Named(), &store.Emission{})
@@ -271,7 +271,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 			}
 			st.AddObject(rs)
-			st.UpdateStatus(rs.Named(), store.StatusReady, "")
+			st.UpdateStatus(rs.Named(), store.StatusReady, "", "")
 			st.SetArtifact(rs.Named(), &store.Emission{})
 			cfg := Config{AllowMissingCRDs: true}
 			switch state {
@@ -280,7 +280,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			case "foreign status":
 				foreign := crdA
 				foreign.Group = "example.test"
-				st.UpdateStatus(foreign, store.StatusReady, "")
+				st.UpdateStatus(foreign, store.StatusReady, "", "")
 			case "object":
 				st.AddObject(&manifest.RawObject{APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name})
 			case "disabled":
@@ -293,7 +293,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				if state == "failed" {
 					status = store.StatusFailed
 				}
-				st.UpdateStatus(crdA, status, "")
+				st.UpdateStatus(crdA, status, "", "")
 			}
 			(&Orchestrator{store: st, cfg: cfg}).warnMissingCRDs()
 			want := 0
@@ -314,7 +314,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			tasks := task.NewBounded(2)
 			o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
 			parent := testutil.KustomizationID("flux-system", "parent")
-			s.UpdateStatus(parent, store.StatusReady, "")
+			s.UpdateStatus(parent, store.StatusReady, "", "")
 			opts := base.Options{AllowMissingCRDs: true}
 			c := resourcesetctrl.New(s, tasks, true)
 			c.Configure(opts)

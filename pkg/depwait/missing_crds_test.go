@@ -68,7 +68,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						if state == "failed status" {
 							status = store.StatusFailed
 						}
-						s.UpdateStatus(ref.NamedResource, status, "state")
+						s.UpdateStatus(ref.NamedResource, status, "", "state")
 						want = ClassReady
 						msg = ""
 					case "promoted", "promotion miss":

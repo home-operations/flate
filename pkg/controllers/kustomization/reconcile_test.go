@@ -56,7 +56,7 @@ data: {greeting: hi}
 	input, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
 	s.SetArtifact(bootstrap.Named(), input)
-	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "ready")
+	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "", "ready")
 
 	owner := cachetest.New(t, "", sourcecache.New)
 	tasks := task.NewBounded(2)
@@ -538,7 +538,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	dep := &manifest.Kustomization{Name: "dep", Namespace: "flux-system"}
 	s.AddObject(dep)
-	s.UpdateStatus(dep.Named(), store.StatusFailed, "synthetic dep failure")
+	s.UpdateStatus(dep.Named(), store.StatusFailed, "", "synthetic dep failure")
 
 	ks := &manifest.Kustomization{
 		Name: "depender", Namespace: "flux-system",
@@ -577,7 +577,7 @@ func TestReconcile_Suspension(t *testing.T) {
 		if info.Status != store.StatusReady {
 			t.Fatalf("status = %+v, want StatusReady", info)
 		}
-		if info.Message != "suspended" {
+		if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 			t.Errorf("expected Ready/suspended, got %+v", info)
 		}
 		if s.GetArtifact(ks.Named()) != nil {
@@ -604,7 +604,7 @@ data: {greeting: hi}
 `)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 			st.AddObject(parent)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "")
+			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
 			doc := map[string]any{
 				"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization,
 				"metadata": map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -616,7 +616,7 @@ data: {greeting: hi}
 			level := manifest.DrainNone
 			if tt.cascade {
 				doc["spec"].(map[string]any)["sourceRef"] = map[string]any{"kind": manifest.KindOCIRepository, "name": "missing"}
-				st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "")
+				st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "", "")
 				level = manifest.DrainCascade
 			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
@@ -626,7 +626,7 @@ data: {greeting: hi}
 			ks := obj.(*manifest.Kustomization)
 			original := ks.Clone()
 			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: ks, Doc: doc}}, Complete: true})
-			st.UpdateStatus(ks.Named(), store.StatusPending, "")
+			st.UpdateStatus(ks.Named(), store.StatusPending, "", "")
 			replacement := manifest.DeepCopyMap(doc)
 			spec := replacement["spec"].(map[string]any)
 			spec["suspend"] = suspended
@@ -669,7 +669,7 @@ data: {greeting: hi}
 			art, _ := st.GetArtifact(ks.Named()).(*store.Emission)
 			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "refreshed", Name: "ks-refresh-output"}
 			if suspended {
-				if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+				if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 					t.Errorf("status = %+v, want Ready/suspended", info)
 				}
 				_, inventory := st.GetEmission(ks.Named())
@@ -741,7 +741,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			next.Key, next.FS = "different-pin", input.FS
 			s.AddObject(&manifest.GitRepository{Name: sourceID.Name, Namespace: sourceID.Namespace, URL: "file://" + root})
 			s.SetArtifact(sourceID, &initial)
-			s.UpdateStatus(sourceID, store.StatusReady, "")
+			s.UpdateStatus(sourceID, store.StatusReady, "", "")
 			docs, err := manifest.DecodeDocs(strings.NewReader("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: apps, namePrefix: 'first-', sourceRef: {kind: GitRepository, name: source, namespace: apps}}\n"))
 			assert.NoError(t, err)
 			obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})

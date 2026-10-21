@@ -81,7 +81,7 @@ spec:
 			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || len(blocked) != 0 || rerun {
 				t.Fatalf("foreign %s entered a Flux controller", kind)
 			}
-			o.store.UpdateStatus(foreign.Named(), store.StatusPending, "foreign status")
+			o.store.UpdateStatus(foreign.Named(), store.StatusPending, "", "foreign status")
 			(dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
 			if info, _ := o.store.GetStatus(foreign.Named()); info.Status != store.StatusPending || info.Message != "foreign status" {
 				t.Fatalf("foreign %s status was rewritten by a Flux controller: %+v", kind, info)

@@ -3,63 +3,11 @@ package store
 import (
 	"errors"
 	"slices"
-	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
-
-// Canonical StatusReady message vocabulary. flate overloads
-// StatusReady with several "ready but…" sub-states encoded in the
-// message text — depwait treats them uniformly as ready (so deps
-// unblock), while consumers branch on the message to decide UI /
-// propagation.
-//
-// Three sub-states exist today:
-//
-//   - SkippedPrefix — a resource soft-skipped by --allow-missing-
-//     secrets (or by a consumer propagating a source-skip). Detect
-//     via IsSkipped. Message format: "skipped: <reason>".
-//   - MsgUnchanged — the change-filter excluded this resource
-//     because its sources weren't in the diff. Detect via
-//     IsUnchanged. Used by `flate test` for SKIPPED outcomes.
-//   - MsgSuspended — spec.suspend was honored. Detect via
-//     IsSuspended.
-//
-// All three are kept in one place so the literal-vs-helper drift
-// (testrunner's `info.Message == "unchanged"` direct compare, etc.)
-// has exactly one source of truth and a future rephrasing in
-// controllers/base only requires updating the constant here.
-const (
-	SkippedPrefix = "skipped:"
-	MsgUnchanged  = "unchanged"
-	MsgSuspended  = "suspended"
-	// MsgRefetching is the Pending-message Refire writes before
-	// re-dispatching EventObjectAdded. Surfaced as a distinct sentinel
-	// (vs. the source controller's own "fetching" mid-reconcile) so log
-	// scraping can distinguish a Refire-triggered re-pull from a
-	// first-time fetch.
-	MsgRefetching = "re-fetching"
-)
-
-// IsSkipped reports whether info represents a soft-skip — i.e. a
-// StatusReady whose message starts with SkippedPrefix.
-func IsSkipped(info StatusInfo) bool {
-	return info.Status == StatusReady && strings.HasPrefix(info.Message, SkippedPrefix)
-}
-
-// IsUnchanged reports whether info represents a change-filter
-// exclusion (StatusReady + MsgUnchanged).
-func IsUnchanged(info StatusInfo) bool {
-	return info.Status == StatusReady && info.Message == MsgUnchanged
-}
-
-// IsSuspended reports whether info represents a spec.suspend honor
-// (StatusReady + MsgSuspended).
-func IsSuspended(info StatusInfo) bool {
-	return info.Status == StatusReady && info.Message == MsgSuspended
-}
 
 // Status is the processing state of a resource as projected from its
 // Ready condition. Kept as a high-level rollup for callers (depwait,
@@ -73,17 +21,71 @@ const (
 	StatusFailed  Status = "Failed"
 )
 
-// StatusInfo bundles a status with an optional descriptive message.
-// Derived from the Ready condition; see Store.GetStatus.
+// StatusInfo projects readiness, reason, message and failure provenance from a Ready condition.
 type StatusInfo struct {
 	Status  Status
+	Reason  StatusReason
 	Message string
 	failure *dependencyFailure
 }
 
+// StatusReason identifies a Ready condition's machine-readable reason.
+type StatusReason string
+
+// Special Ready condition reasons.
+const (
+	ReasonSkipped    StatusReason = "Skipped"
+	ReasonUnchanged  StatusReason = "Unchanged"
+	ReasonSuspended  StatusReason = "Suspended"
+	ReasonRefetching StatusReason = "Refetching"
+)
+
+// Outcome classifies a resource's readiness and failure provenance.
+type Outcome string
+
+// Resource outcomes.
+const (
+	OutcomePending   Outcome = "Pending"
+	OutcomePassed    Outcome = "Passed"
+	OutcomeFailed    Outcome = "Failed"
+	OutcomeBlocked   Outcome = "Blocked"
+	OutcomeSkipped   Outcome = "Skipped"
+	OutcomeUnchanged Outcome = "Unchanged"
+	OutcomeSuspended Outcome = "Suspended"
+)
+
+// Outcome returns the semantic outcome independently of diagnostic text.
+func (i StatusInfo) Outcome() Outcome {
+	switch i.Status {
+	case StatusFailed:
+		if i.IsDependencyFailure() {
+			return OutcomeBlocked
+		}
+		return OutcomeFailed
+	case StatusReady:
+		switch i.Reason {
+		case ReasonSkipped:
+			return OutcomeSkipped
+		case ReasonUnchanged:
+			return OutcomeUnchanged
+		case ReasonSuspended:
+			return OutcomeSuspended
+		default:
+			return OutcomePassed
+		}
+	default:
+		return OutcomePending
+	}
+}
+
 // IsUnavailable reports whether a producer's output cannot be compared.
 func (i StatusInfo) IsUnavailable() bool {
-	return i.Status == StatusFailed || IsSkipped(i) || IsSuspended(i)
+	switch i.Outcome() {
+	case OutcomeFailed, OutcomeBlocked, OutcomeSkipped, OutcomeSuspended:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsDependencyFailure reports whether the Failed status came from failed dependencies.
@@ -145,10 +147,7 @@ const (
 	ReasonReconciling = "Reconciling"
 )
 
-// readyCondition builds the Ready condition that corresponds to the
-// (status, message) pair UpdateStatus accepts. Reason is derived from
-// Status; Message is passed through verbatim.
-func readyCondition(status Status, message string) Condition {
+func readyCondition(status Status, reason StatusReason, message string) Condition {
 	c := Condition{
 		Type:    ConditionReady,
 		Message: message,
@@ -164,6 +163,9 @@ func readyCondition(status Status, message string) Condition {
 		c.Status = metav1.ConditionUnknown
 		c.Reason = ReasonReconciling
 	}
+	if reason != "" {
+		c.Reason = string(reason)
+	}
 	return c
 }
 
@@ -178,11 +180,11 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 		}
 		switch c.Status {
 		case metav1.ConditionTrue:
-			return StatusInfo{Status: StatusReady, Message: c.Message}, true
+			return StatusInfo{Status: StatusReady, Reason: StatusReason(c.Reason), Message: c.Message}, true
 		case metav1.ConditionFalse:
-			return StatusInfo{Status: StatusFailed, Message: c.Message, failure: r.failure}, true
+			return StatusInfo{Status: StatusFailed, Reason: StatusReason(c.Reason), Message: c.Message, failure: r.failure}, true
 		default:
-			return StatusInfo{Status: StatusPending, Message: c.Message}, true
+			return StatusInfo{Status: StatusPending, Reason: StatusReason(c.Reason), Message: c.Message}, true
 		}
 	}
 	return StatusInfo{}, false
@@ -190,14 +192,14 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 
 // UpdateStatus records a Ready-condition transition and dispatches a
 // StatusUpdated event when the StatusInfo rollup changes. Snapshot
-// exposes the full condition state.
-func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, message string) {
-	s.SetCondition(id, readyCondition(status, message))
+// exposes the full condition state. An empty reason derives the normal reason from status.
+func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, reason StatusReason, message string) {
+	s.SetCondition(id, readyCondition(status, reason, message))
 }
 
 // UpdateFailure atomically records a terminal error and its immediate failed dependencies.
 func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
-	s.setCondition(id, readyCondition(StatusFailed, err.Error()), newDependencyFailure(err))
+	s.setCondition(id, readyCondition(StatusFailed, "", err.Error()), newDependencyFailure(err))
 }
 
 // SetCondition upserts cond into the resource's condition list keyed

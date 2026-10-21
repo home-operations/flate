@@ -39,7 +39,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			dep := manifest.NamedResource{Group: tc.group, Kind: tc.kind, Namespace: "ns", Name: "infra"}
-			s.UpdateStatus(dep, store.StatusReady, "")
+			s.UpdateStatus(dep, store.StatusReady, "", "")
 			expr := fmt.Sprintf(`dep.status.observedGeneration == dep.metadata.generation && dep.apiVersion == %q`, tc.version)
 			ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
 			if err != nil || !ok {
@@ -56,7 +56,7 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "infra")
-	s.UpdateStatus(dep, store.StatusFailed, "still rolling out") // built-in says Failed
+	s.UpdateStatus(dep, store.StatusFailed, "", "still rolling out") // built-in says Failed
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
 	w := &Waiter{Store: s}
@@ -75,7 +75,7 @@ func TestReadyExpr_CompileError(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "x")
-	s.UpdateStatus(dep, store.StatusReady, "ok")
+	s.UpdateStatus(dep, store.StatusReady, "", "ok")
 
 	if _, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep); err == nil {
 		t.Fatal("expected compile error")
@@ -94,7 +94,7 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "x")
-	s.UpdateStatus(dep, store.StatusReady, "ok")
+	s.UpdateStatus(dep, store.StatusReady, "", "ok")
 
 	_, err := evaluateReadyExpr(`dep.metadata.name`, s, manifest.NamedResource{}, dep) // string, not bool
 	if err == nil || !strings.Contains(err.Error(), "must return bool") {
@@ -113,7 +113,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "infra")
-	s.UpdateStatus(dep, store.StatusReady, "")
+	s.UpdateStatus(dep, store.StatusReady, "", "")
 
 	w := &Waiter{Store: s}
 	const expr = `dep.status.conditions[100].type == "Ready"` // index out of range → runtime eval error
@@ -137,7 +137,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 		Labels:      map[string]string{"tier": "data"},
 		Annotations: map[string]string{"app.kubernetes.io/version": "1.2.3"},
 	})
-	s.UpdateStatus(dep, store.StatusReady, "")
+	s.UpdateStatus(dep, store.StatusReady, "", "")
 
 	for _, expr := range []string{
 		`dep.metadata.labels["tier"] == "data"`,
@@ -157,10 +157,10 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	s := store.New()
 	self := testutil.KustomizationID("ns", "parent")
 	dep := testutil.KustomizationID("ns", "child")
-	s.UpdateStatus(self, store.StatusReady, "")
-	s.UpdateStatus(dep, store.StatusReady, "")
+	s.UpdateStatus(self, store.StatusReady, "", "")
+	s.UpdateStatus(dep, store.StatusReady, store.ReasonSkipped, "changed diagnostic")
 
-	ok, err := evaluateReadyExpr(`self.metadata.namespace == dep.metadata.namespace`, s, self, dep)
+	ok, err := evaluateReadyExpr(`self.metadata.namespace == dep.metadata.namespace && self.status.conditions.exists(c, c.type == "Ready" && c.reason == "Succeeded") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`, s, self, dep)
 	if err != nil || !ok {
 		t.Errorf("self/dep binding: ok=%v err=%v, want true/nil", ok, err)
 	}
@@ -173,7 +173,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 			if ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep); err != nil || !ok {
 				t.Fatalf("foreign projection borrowed Flux identity or conditions: ok=%v err=%v", ok, err)
 			}
-			s.UpdateStatus(foreignDep, store.StatusPending, "foreign")
+			s.UpdateStatus(foreignDep, store.StatusPending, "", "foreign")
 			if ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep); err != nil || !ok {
 				t.Fatalf("status-only projection borrowed Flux identity: ok=%v err=%v", ok, err)
 			}

@@ -17,15 +17,23 @@ func TestClassify_CoreStates(t *testing.T) {
 	statusless := manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
 	absent := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "absent")}
 	s.AddObject(&manifest.Kustomization{Name: ready.Name, Namespace: ready.Namespace})
-	s.UpdateStatus(ready.NamedResource, store.StatusReady, "")
-	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "boom")
-	s.UpdateStatus(pending.NamedResource, store.StatusPending, "working")
+	s.UpdateStatus(ready.NamedResource, store.StatusReady, "", "")
+	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "", "boom")
+	s.UpdateStatus(pending.NamedResource, store.StatusPending, "", "working")
 	s.AddObject(&manifest.HelmChartSource{Name: "statusless", Namespace: "ns"})
 
 	w := &Waiter{Store: s}
 
 	if got := w.Classify(ready, manifest.DrainNone); got.Kind != ClassReady {
 		t.Errorf("ready: got %+v, want ClassReady", got)
+	}
+	for _, reason := range []store.StatusReason{store.ReasonSkipped, store.ReasonUnchanged, store.ReasonSuspended} {
+		t.Run(string(reason), func(t *testing.T) {
+			s.UpdateStatus(ready.NamedResource, store.StatusReady, reason, "")
+			if got := w.Classify(ready, manifest.DrainNone); got.Kind != ClassReady {
+				t.Fatalf("typed Ready reason %s blocked dependency: %+v", reason, got)
+			}
+		})
 	}
 	if got := w.Classify(failed, manifest.DrainNone); got.Kind != ClassFailed || got.Message != "boom" {
 		t.Errorf("failed: got %+v, want ClassFailed 'boom'", got)
@@ -68,7 +76,7 @@ func TestClassify_CoreStates(t *testing.T) {
 			if got := w.Classify(foreign, manifest.DrainCascade); got.Kind != ClassFailed || got.Message != "dependency not found" {
 				t.Fatalf("absent lookalike at drain: %+v", got)
 			}
-			s.UpdateStatus(foreign.NamedResource, store.StatusPending, "foreign status")
+			s.UpdateStatus(foreign.NamedResource, store.StatusPending, "", "foreign status")
 			if got := w.Classify(foreign, manifest.DrainNone); got.Kind != ClassReady {
 				t.Fatalf("status-only lookalike acquired Flux readiness: %+v", got)
 			}
@@ -99,7 +107,7 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "infra")}
-	s.UpdateStatus(dep.NamedResource, store.StatusReady, "")
+	s.UpdateStatus(dep.NamedResource, store.StatusReady, "", "")
 	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
 
 	w := &Waiter{Store: s}
@@ -130,7 +138,7 @@ func TestClassify_EdgeReadiness(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			s.AddObject(tc.obj)
-			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "working")
+			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "", "working")
 			w := &Waiter{Store: s}
 			got := w.Classify(manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: tc.expr}, manifest.DrainNone)
 			if got.Kind != tc.want {

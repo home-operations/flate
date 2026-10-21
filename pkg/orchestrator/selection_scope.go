@@ -356,8 +356,12 @@ func nonResourceErrors(err error) error {
 	if err == nil {
 		return nil
 	}
-	if _, ok := errors.AsType[*FailuresError](err); !ok {
+	failure, ok := errors.AsType[*FailuresError](err)
+	if !ok {
 		return err
+	}
+	if err == failure { //nolint:errorlint // Prune only the concrete aggregate node, preserving joined siblings.
+		return nil
 	}
 	if e, ok := errors.AsType[interface {
 		error

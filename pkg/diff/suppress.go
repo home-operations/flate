@@ -72,8 +72,10 @@ func selectedSuppressionPlans(left, right map[manifest.NamedResource]store.Statu
 }
 
 func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
-	lf, rf := left.Status == store.StatusFailed, right.Status == store.StatusFailed
-	ls, rs := store.IsSuspended(left), store.IsSuspended(right)
+	lo, ro := left.Outcome(), right.Outcome()
+	lf := lo == store.OutcomeFailed || lo == store.OutcomeBlocked
+	rf := ro == store.OutcomeFailed || ro == store.OutcomeBlocked
+	ls, rs := lo == store.OutcomeSuspended, ro == store.OutcomeSuspended
 	lu, ru := left.IsUnavailable(), right.IsUnavailable()
 	plan := suppressionPlan{}
 	switch {
@@ -91,14 +93,14 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 		plan.discloseEmpty = true
 	case lu && !ru:
 		plan.note.Side = SideOrig
-		plan.note.Reason = renderReason(left)
+		plan.note.Reason = left.Message
 		if ls {
 			plan.note.Reason = "suspended on orig"
 			plan.discloseEmpty = true
 		}
 	case ru && !lu:
 		plan.note.Side = SideCurrent
-		plan.note.Reason = renderReason(right)
+		plan.note.Reason = right.Message
 		if rs {
 			plan.note.Reason = "suspended on current"
 			plan.discloseEmpty = true
@@ -109,18 +111,11 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 	return plan, true
 }
 
-func renderReason(info store.StatusInfo) string {
-	if store.IsSkipped(info) {
-		return strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))
-	}
-	return info.Message
-}
-
 func unavailableReason(info store.StatusInfo, side Side) string {
-	if store.IsSuspended(info) {
+	if info.Outcome() == store.OutcomeSuspended {
 		return "suspended on " + string(side)
 	}
-	return string(side) + ": " + renderReason(info)
+	return string(side) + ": " + info.Message
 }
 
 // Producer identity excludes paths; counts measure withheld document entries.

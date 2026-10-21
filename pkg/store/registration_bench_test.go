@@ -64,7 +64,7 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 						s.AddObject(&freshCM)
 					})
 					tasks.BlockTillDone()
-					s.UpdateStatus(consumer, StatusReady, "")
+					s.UpdateStatus(consumer, StatusReady, "", "")
 					if mode == "absent" {
 						s.DeleteObject(ids[0])
 					}
@@ -93,7 +93,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 			for i := range consumers {
 				consumers[i] = testutil.KustomizationID("ns", fmt.Sprintf("consumer-%05d", i))
 				s.AddObject(&manifest.Kustomization{Name: consumers[i].Name, Namespace: consumers[i].Namespace})
-				s.UpdateStatus(consumers[i], StatusReady, "")
+				s.UpdateStatus(consumers[i], StatusReady, "", "")
 			}
 			tasks := task.NewBounded(workers)
 			generation := 0
@@ -103,7 +103,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 					tasks.Go(b.Context(), "observe", func(context.Context) {
 						for i := worker; i < len(consumers); i += workers {
 							s.GetObject(ids[i])
-							s.UpdateStatus(consumers[i], StatusReady, "")
+							s.UpdateStatus(consumers[i], StatusReady, "", "")
 						}
 					})
 				}
@@ -120,8 +120,8 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 							if i == 0 {
 								start()
 							}
-							s.UpdateStatus(consumers[i], StatusPending, "completion")
-							s.UpdateStatus(consumers[i], StatusReady, "")
+							s.UpdateStatus(consumers[i], StatusPending, "", "completion")
+							s.UpdateStatus(consumers[i], StatusReady, "", "")
 						}
 						tasks.YieldSlot(func() { <-written })
 					})
@@ -155,7 +155,7 @@ func registrationFixture(tb testing.TB, mode string) (*Store, []manifest.NamedRe
 	if mode == "produced" || mode == "repeated" {
 		producer := &manifest.ResourceSet{Name: "producer", Namespace: "ns"}
 		s.AddObject(producer)
-		s.UpdateStatus(producer.Named(), StatusReady, "")
+		s.UpdateStatus(producer.Named(), StatusReady, "", "")
 		recordForTest(tb, s, producer.Named(), ids)
 	}
 	if mode != "absent" {

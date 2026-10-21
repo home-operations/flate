@@ -107,7 +107,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		t.Fatalf("derived failure = %v/%v, want ghost blocker", out, deps)
 	}
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
-	o.store.UpdateStatus(ghost, store.StatusReady, "")
+	o.store.UpdateStatus(ghost, store.StatusReady, "", "")
 	out, deps, rerun = d.Dispatch(t.Context(), victim, manifest.DrainNone)
 	info, _ := o.store.GetStatus(victim)
 	if rerun || out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
@@ -142,7 +142,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		o.store.AddObject(repo)
 		o.store.AddObject(consumer)
 		o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
-		o.store.UpdateStatus(repo.Named(), store.StatusReady, "")
+		o.store.UpdateStatus(repo.Named(), store.StatusReady, "", "")
 		attempted, acquired := make(chan struct{}), make(chan struct{})
 		dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
 			assert.Equal(t, level, manifest.DrainNone)

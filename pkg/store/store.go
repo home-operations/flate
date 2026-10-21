@@ -410,7 +410,7 @@ func (s *Store) Refire(id manifest.NamedResource) {
 		sh.mu.Unlock()
 		return
 	}
-	updated, changed := sh.setConditionLocked(id, readyCondition(StatusPending, MsgRefetching), nil)
+	updated, changed := sh.setConditionLocked(id, readyCondition(StatusPending, ReasonRefetching, "re-fetching"), nil)
 	dispatchObj := fireUnderLock(s, EventObjectAdded, id, obj)
 	var dispatchStatus func()
 	if changed {

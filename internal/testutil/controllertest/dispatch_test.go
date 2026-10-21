@@ -70,7 +70,7 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 	tasks := task.NewBounded(2)
 	st := store.New()
 	id := testutil.HelmReleaseID("media", "sonarr")
-	st.UpdateStatus(id, store.StatusReady, "ready before reconciliation")
+	st.UpdateStatus(id, store.StatusReady, "", "ready before reconciliation")
 	recorder := &recordingTB{TB: t}
 	d := Dispatch{
 		Tasks: tasks,

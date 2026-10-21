@@ -157,7 +157,7 @@ func BenchmarkUpdateFailure_Write(b *testing.B) {
 			st.UpdateFailure(id, tc.err)
 			b.ReportAllocs()
 			for b.Loop() {
-				st.UpdateStatus(id, StatusPending, "retrying")
+				st.UpdateStatus(id, StatusPending, "", "retrying")
 				st.UpdateFailure(id, tc.err)
 			}
 		})
@@ -171,7 +171,7 @@ func BenchmarkStatusInfo_Read(b *testing.B) {
 		name  string
 		write func(*Store)
 	}{
-		{"Ready", func(st *Store) { st.UpdateStatus(id, StatusReady, "done") }},
+		{"Ready", func(st *Store) { st.UpdateStatus(id, StatusReady, "", "done") }},
 		{"Primary", func(st *Store) { st.UpdateFailure(id, manifest.ErrInput) }},
 		{"Dependency", func(st *Store) {
 			st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{dep}})
@@ -204,8 +204,8 @@ func BenchmarkStatusFlip(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				st.UpdateStatus(id, StatusPending, "x")
-				st.UpdateStatus(id, StatusReady, "y")
+				st.UpdateStatus(id, StatusPending, "", "x")
+				st.UpdateStatus(id, StatusReady, "", "y")
 			}
 		})
 	}
@@ -215,7 +215,7 @@ func BenchmarkGetStatus(b *testing.B) {
 	st := New()
 	id := testutil.HelmReleaseID("a", "b")
 	st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace})
-	st.UpdateStatus(id, StatusReady, "y")
+	st.UpdateStatus(id, StatusReady, "", "y")
 	b.ReportAllocs()
 	for b.Loop() {
 		info, _ := st.GetStatus(id)

@@ -52,7 +52,7 @@ func (c *Controller) resolvePreRenderValuesFrom(ctx context.Context, hr *manifes
 		if len(preDeps) == 0 {
 			break
 		}
-		c.Store.UpdateStatus(id, store.StatusPending, "awaiting pre-render references")
+		c.Store.UpdateStatus(id, store.StatusPending, "", "awaiting pre-render references")
 		fresh, found, err := c.RequireRefresh[*manifest.HelmRelease](ctx, id, preDeps, level)
 		if err != nil {
 			if failed, ok := errors.AsType[*manifest.DependencyFailedError](err); ok && c.allowMissingSecrets {

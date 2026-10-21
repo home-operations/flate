@@ -45,7 +45,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			target := &manifest.Kustomization{Name: "target", Namespace: "apps", Path: "./target"}
 			if tc.present {
 				st.AddObject(target)
-				st.UpdateStatus(target.Named(), tc.status, "fixture")
+				st.UpdateStatus(target.Named(), tc.status, "", "fixture")
 			}
 			var changes *change.Set
 			if tc.active {

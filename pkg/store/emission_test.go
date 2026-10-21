@@ -224,7 +224,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 				}
 			}
 			s.SetArtifact(covered.Obj.Named(), &SourceArtifact{Key: "covered"})
-			s.UpdateStatus(covered.Obj.Named(), StatusReady, "")
+			s.UpdateStatus(covered.Obj.Named(), StatusReady, "", "")
 			accept(t, s, p, &Emission{Complete: true})
 			for _, child := range accepted.Children {
 				if got := slices.Collect(s.Productions(child.Obj.Named(), nil)); len(got) != 1 || got[0].Owner != q {
@@ -336,7 +336,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						accept(t, s, q, &Emission{Children: []Child{data}, Manifests: []map[string]any{data.Doc}, Complete: true})
 					}
 					for _, id := range []manifest.NamedResource{k, l, data.Obj.Named()} {
-						s.UpdateStatus(id, StatusReady, "")
+						s.UpdateStatus(id, StatusReady, "", "")
 					}
 					s.SetArtifact(data.Obj.Named(), &SourceArtifact{Key: "live-data"})
 					if s.GetArtifact(data.Obj.Named()) == nil {
@@ -419,7 +419,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						if _, ok := s.FailedResources()[id]; ok {
 							t.Fatal("hidden failure leaked")
 						}
-						s.UpdateStatus(id, StatusReady, "")
+						s.UpdateStatus(id, StatusReady, "", "")
 						if _, ok := s.GetStatus(id); ok {
 							t.Fatal("hidden late Ready leaked")
 						}
@@ -1120,7 +1120,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		child.Obj.Named(): {Productions: []manifest.Production{{Owner: p}}},
 	}})
 	s.SetArtifact(child.Obj.Named(), &SourceArtifact{Key: "static"})
-	s.UpdateStatus(child.Obj.Named(), StatusReady, "")
+	s.UpdateStatus(child.Obj.Named(), StatusReady, "", "")
 	if s.GetArtifact(child.Obj.Named()) == nil {
 		t.Fatal("fixture has no retained static artifact")
 	}
@@ -1515,7 +1515,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 	seedRetained := func(t *testing.T, s *Store, id manifest.NamedResource) {
 		t.Helper()
 		s.SetArtifact(id, &SourceArtifact{Key: "static-l"})
-		s.UpdateStatus(id, StatusReady, "")
+		s.UpdateStatus(id, StatusReady, "", "")
 		if s.GetObject(id) == nil || s.GetArtifact(id) == nil {
 			t.Fatal("fixture L not initially live with an artifact")
 		}
@@ -1590,7 +1590,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 				checkHidden(t, s, k)
 				checkHidden(t, s, l.Obj.Named())
 				s.SetArtifact(l.Obj.Named(), &SourceArtifact{Key: "private"})
-				s.UpdateStatus(l.Obj.Named(), StatusReady, "")
+				s.UpdateStatus(l.Obj.Named(), StatusReady, "", "")
 				anchor := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
 				if batch {
 					s.AddObjects([]manifest.BaseManifest{anchor})
@@ -1641,7 +1641,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 					checkHidden(t, s, l.Obj.Named())
 					s.RecordEmitted(k, &attempt)
 					s.SetArtifact(l.Obj.Named(), &SourceArtifact{Key: "late-private"})
-					s.UpdateStatus(l.Obj.Named(), StatusReady, "")
+					s.UpdateStatus(l.Obj.Named(), StatusReady, "", "")
 				})
 				tasks.Go(t.Context(), "withdrawal", func(context.Context) {
 					tasks.YieldSlot(func() { <-captured; <-observing })

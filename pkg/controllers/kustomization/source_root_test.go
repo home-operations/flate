@@ -26,9 +26,9 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 				},
 			}
 			st.AddObject(ks)
-			st.UpdateStatus(ks.Named(), store.StatusPending, "")
+			st.UpdateStatus(ks.Named(), store.StatusPending, "", "")
 			if failed {
-				st.UpdateStatus(ks.SourceID(), store.StatusFailed, "fetch failed")
+				st.UpdateStatus(ks.SourceID(), store.StatusFailed, "", "fetch failed")
 			}
 			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
 				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade); len(blocked) != 0 {

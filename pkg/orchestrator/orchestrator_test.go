@@ -36,6 +36,15 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+func TestNew_MissingPath(t *testing.T) {
+	t.Parallel()
+	o, err := New(t.Context(), Config{})
+	if o != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+		t.Fatalf("missing path identity: orchestrator=%v err=%v", o, err)
+	}
+	assert.Equal(t, manifest.TrimSentinelPrefix(err.Error()), "orchestrator: path is required")
+}
+
 // TestDetectOrphans drives the orphan-detection logic in isolation —
 // no controllers, just the store / sourceFiles wiring the orchestrator
 // builds during Bootstrap. Three scenarios:
@@ -716,7 +725,7 @@ func kindsOf(docs []map[string]any) []string {
 
 // TestOrchestrator_AllowMissingSecretsPropagates locks the #190 fix:
 // when --allow-missing-secrets is on AND a source's auth Secret isn't
-// in the offline tree, the source soft-skips (Ready+"skipped:") and
+// in the offline tree, the source soft-skips (Ready/ReasonSkipped) and
 // the downstream KS that consumes it propagates the skip rather than
 // failing with "source artifact not found". `flate test` then reports
 // SKIPPED, not FAILED.
@@ -758,11 +767,11 @@ spec:
 	}
 
 	ociInfo, ok := o.Store().GetStatus(ociID)
-	if !ok || !store.IsSkipped(ociInfo) {
+	if !ok || ociInfo.Outcome() != store.OutcomeSkipped {
 		t.Errorf("OCIRepository should be Ready+skipped; got %+v", ociInfo)
 	}
 	ksInfo, ok := o.Store().GetStatus(ksID)
-	if !ok || !store.IsSkipped(ksInfo) {
+	if !ok || ksInfo.Outcome() != store.OutcomeSkipped {
 		t.Errorf("KS should be Ready+skipped; got %+v", ksInfo)
 	}
 }
@@ -819,7 +828,7 @@ spec:
 		t.Errorf("HR must propagate skip before helm.Template runs; got %v", res.Failed[hrID])
 	}
 	hrInfo, ok := o.Store().GetStatus(hrID)
-	if !ok || !store.IsSkipped(hrInfo) {
+	if !ok || hrInfo.Outcome() != store.OutcomeSkipped {
 		t.Errorf("HR should be Ready+skipped (chart source skipped); got %+v. "+
 			"If status is Failed with a registry-pull error, the pre-check is missing and "+
 			"helm tried an anonymous pull — exactly the silent-downgrade the pre-check exists to prevent.",

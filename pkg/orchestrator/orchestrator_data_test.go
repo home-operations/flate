@@ -145,7 +145,7 @@ func TestOrchestrator_RequiredDataDependencies_Lifecycle(t *testing.T) {
 	clone.Suspend = false
 	clone.ValuesFrom[0].Optional = false
 	o.store.AddObject(clone)
-	o.store.UpdateStatus(id, store.StatusFailed, "required input missing")
+	o.store.UpdateStatus(id, store.StatusFailed, "", "required input missing")
 	_, retained := o.store.GetEmission(id)
 	if o.store.GetArtifact(id) != nil || len(retained.Manifests) != len(artifact.(*store.Emission).Manifests) || o.store.FailedResources()[id].Status != store.StatusFailed {
 		t.Fatal("stale artifact weakened selected failure")
@@ -185,7 +185,7 @@ spec:
 			}
 			id := testutil.HelmReleaseID("apps", "consumer")
 			before, _ := o.store.GetStatus(id)
-			if !store.IsSuspended(before) && !store.IsUnchanged(before) || o.store.GetArtifact(id) != nil {
+			if before.Outcome() != store.OutcomeSuspended && before.Outcome() != store.OutcomeUnchanged || o.store.GetArtifact(id) != nil {
 				t.Fatalf("consumer was rendered: %+v", before)
 			}
 			got := o.requiredDataDependencies(id)

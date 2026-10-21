@@ -14,7 +14,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
@@ -139,7 +138,7 @@ spec:
 				assert.Equal(t, got.Suppressed[0].Count, 1)
 				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")})
 				assert.Equal(t, strings.Contains(got.Suppressed[0].Reason, "missing-ca"), true)
-				assert.Equal(t, strings.HasPrefix(got.Suppressed[0].Reason, store.SkippedPrefix), false)
+				assert.Equal(t, strings.HasPrefix(got.Suppressed[0].Reason, "skipped:"), false)
 				return
 			}
 			if tc.wantSide != "" {

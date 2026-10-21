@@ -27,7 +27,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	st.RecordEmitted(ready, &store.Emission{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "ready-cm"}},
 	}})
-	st.UpdateStatus(ready, store.StatusReady, "")
+	st.UpdateStatus(ready, store.StatusReady, "", "")
 
 	failedHR := testutil.HelmReleaseID("app", "broken")
 	hr := &manifest.HelmRelease{Name: failedHR.Name, Namespace: failedHR.Namespace}
@@ -46,14 +46,14 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		t.Fatal("successor exposed a current-input artifact")
 	}
 	failure := "values don't meet the specifications of the schema(s)"
-	st.UpdateStatus(failedHR, store.StatusFailed, failure)
+	st.UpdateStatus(failedHR, store.StatusFailed, "", failure)
 
 	failedKS := testutil.KustomizationID("flux-system", "apps")
 	st.AddObject(&manifest.Kustomization{Name: failedKS.Name, Namespace: failedKS.Namespace})
 	st.RecordEmitted(failedKS, &store.Emission{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "apps"}},
 	}})
-	st.UpdateStatus(failedKS, store.StatusFailed, "kustomize build boom")
+	st.UpdateStatus(failedKS, store.StatusFailed, "", "kustomize build boom")
 
 	o := &Orchestrator{store: st}
 	got := o.collectManifests()
@@ -93,7 +93,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 			completed.Complete = true
 			st.RecordEmitted(owner.Named(), &completed)
 			completed.Finish()
-			st.UpdateStatus(owner.Named(), store.StatusReady, "")
+			st.UpdateStatus(owner.Named(), store.StatusReady, "", "")
 			winningDocs, winningChild = completed.Manifests, completed.Children[0]
 		}
 		winner := owners[1].Named()
@@ -101,7 +101,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		successor.ResourcesTemplate = "invalid successor"
 		st.AddObject(&successor)
 		assert.Equal(t, st.GetArtifact(winner), store.Artifact(nil))
-		st.UpdateStatus(winner, store.StatusFailed, "invalid ResourceSet template")
+		st.UpdateStatus(winner, store.StatusFailed, "", "invalid ResourceSet template")
 		o := &Orchestrator{store: st, index: index}
 		assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: winningDocs})
 		assert.Equal(t, st.GetObject(winningChild.Obj.Named()), winningChild.Obj)

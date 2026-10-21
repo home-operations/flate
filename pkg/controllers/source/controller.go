@@ -44,7 +44,7 @@ type Controller struct {
 	Fetchers map[string]src.Fetcher
 
 	// allowMissingSecrets converts ErrMissingSecret fetch errors into a
-	// skip (StatusReady with reason starting "skipped: "). Wired from
+	// skip (StatusReady with ReasonSkipped). Wired from
 	// Config.AllowMissingSecrets via Configure.
 	allowMissingSecrets bool
 }
@@ -100,7 +100,7 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 // writes the result through base.RunWithStatusOutcome so panic recovery,
 // final status writes, and ErrSourceSkipped routing match the
 // KS/HR controllers' shape. Returning ErrSourceSkipped yields a
-// Ready+"skipped: ..." status; ErrBlocked parks the fetch for a dependency
+// Ready/ReasonSkipped status; ErrBlocked parks the fetch for a dependency
 // retry; any other error yields Failed.
 func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
@@ -116,7 +116,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 		if art.FS != nil {
 			return nil
 		}
-		c.Store.UpdateStatus(id, store.StatusPending, "acquiring source content")
+		c.Store.UpdateStatus(id, store.StatusPending, "", "acquiring source content")
 	}
 
 	c.SetPendingUnlessReady(id, "fetching")
@@ -135,7 +135,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, l
 	// registry config.
 	missing, isMissing := errors.AsType[*src.MissingSecretError](fetchErr)
 	if isMissing && level == manifest.DrainNone {
-		c.Store.UpdateStatus(id, store.StatusPending, "waiting for source Secret")
+		c.Store.UpdateStatus(id, store.StatusPending, "", "waiting for source Secret")
 		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
 	}
 	if isMissing && missing.RetryWithRegistryConfig != nil && !c.producerBacked(fetchErr) {

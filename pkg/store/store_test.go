@@ -268,34 +268,31 @@ func TestStore_AddListener_Flush(t *testing.T) {
 	assert.Equal(t, len(got), 2) // both seeds replayed
 }
 
-// TestStore_Refire_ResetsStatusBeforeDispatch pins the contract that
-// makes the issue #260 fix race-free: by the time the EventObjectAdded
-// listener fires, the resource's recorded status MUST already be
-// Pending. A consumer's depwait observing status between the two events
-// must never see the stale Ready left by an initial PreGate skip.
 func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "src"}
-	s.AddObject(&manifest.OCIRepository{Name: "src", Namespace: "flux-system"})
-	s.UpdateStatus(id, StatusReady, MsgUnchanged) // simulate PreGate skip
-
+	src := &manifest.OCIRepository{Name: "src", Namespace: "flux-system"}
+	id := src.Named()
+	s.AddObject(src)
+	s.UpdateStatus(id, StatusReady, ReasonUnchanged, "unchanged")
+	var events []EventKind
+	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
+		events = append(events, EventStatusUpdated)
+		info := payload.(StatusInfo)
+		if info.Status != StatusPending || info.Reason != ReasonRefetching || info.Message != "re-fetching" {
+			t.Errorf("Refire status event = %+v", info)
+		}
+	}, false)
 	var observed StatusInfo
 	s.AddListener(EventObjectAdded, func(eventID manifest.NamedResource, _ any) {
-		if eventID != id {
-			return
-		}
-		info, _ := s.GetStatus(eventID)
-		observed = info
+		events = append(events, EventObjectAdded)
+		observed, _ = s.GetStatus(eventID)
 	}, false)
 	s.Refire(id)
-
-	if observed.Status != StatusPending {
-		t.Errorf("listener saw status %+v on Refire; want Pending so depwaits block", observed)
+	if observed.Status != StatusPending || observed.Reason != ReasonRefetching || observed.Message != "re-fetching" {
+		t.Errorf("object listener saw stale status: %+v", observed)
 	}
-	if observed.Message != MsgRefetching {
-		t.Errorf("listener saw message %q; want %q", observed.Message, MsgRefetching)
-	}
+	assert.Diff(t, events, []EventKind{EventStatusUpdated, EventObjectAdded})
 }
 
 // TestStore_Refire_NoopMissingID pins that Refire silently returns
@@ -315,22 +312,81 @@ func TestStore_Refire_NoopMissingID(t *testing.T) {
 	}
 }
 
-func TestStore_UpdateStatus_Idempotent(t *testing.T) {
+func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Subtests exercise one ordered transition history.
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("flux-system", "apps")
-
-	count := 0
-	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
-		count++
+	var events []StatusInfo
+	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
+		events = append(events, payload.(StatusInfo))
 	}, false)
-	s.UpdateStatus(id, StatusPending, "starting")
-	s.UpdateStatus(id, StatusPending, "starting")
-	s.UpdateStatus(id, StatusReady, "done")
-	assert.Equal(t, count, 2)
-	info, ok := s.GetStatus(id)
-	if !ok || info.Status != StatusReady {
-		t.Errorf("status: %+v ok=%v", info, ok)
+	for _, tc := range []struct {
+		name         string
+		status       Status
+		reason, want StatusReason
+		count        int
+	}{
+		{"initial pending", StatusPending, "", ReasonReconciling, 1},
+		{"identical pending", StatusPending, "", ReasonReconciling, 1},
+		{"skip", StatusReady, ReasonSkipped, ReasonSkipped, 2},
+		{"identical skip", StatusReady, ReasonSkipped, ReasonSkipped, 2},
+		{"reason only", StatusReady, ReasonUnchanged, ReasonUnchanged, 3},
+		{"ordinary reset", StatusReady, "", ReasonSucceeded, 4},
+		{"identical ready", StatusReady, "", ReasonSucceeded, 4},
+		{"custom", StatusReady, "Custom", "Custom", 5},
+		{"failed reset", StatusFailed, "", ReasonFailed, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s.UpdateStatus(id, tc.status, tc.reason, "same message")
+			info, ok := s.GetStatus(id)
+			if !ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count {
+				t.Fatalf("status=%+v present=%v events=%d, want reason=%s events=%d", info, ok, len(events), tc.want, tc.count)
+			}
+			if events[len(events)-1] != info {
+				t.Fatal("event lost status projection")
+			}
+			var replay StatusInfo
+			u := s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) { replay = payload.(StatusInfo) }, true)
+			u()
+			if replay != info {
+				t.Fatalf("replay=%+v, want %+v", replay, info)
+			}
+		})
+	}
+	assert.Equal(t, events[1].Reason, ReasonSkipped)
+}
+
+func TestStatusInfo_Outcome(t *testing.T) {
+	t.Parallel()
+	failure := &dependencyFailure{ids: []manifest.NamedResource{testutil.HelmReleaseID("", "dep")}}
+	for _, tc := range []struct {
+		name        string
+		info        StatusInfo
+		outcome     Outcome
+		unavailable bool
+	}{
+		{name: "absent", outcome: OutcomePending},
+		{name: "ready", info: StatusInfo{Status: StatusReady}, outcome: OutcomePassed},
+		{name: "custom ready", info: StatusInfo{Status: StatusReady, Reason: "Custom", Message: "skipped: x"}, outcome: OutcomePassed},
+		{name: "misleading skip", info: StatusInfo{Status: StatusReady, Message: "skipped: x"}, outcome: OutcomePassed},
+		{name: "misleading unchanged", info: StatusInfo{Status: StatusReady, Message: "unchanged"}, outcome: OutcomePassed},
+		{name: "misleading suspended", info: StatusInfo{Status: StatusReady, Message: "suspended"}, outcome: OutcomePassed},
+		{name: "empty skipped", info: StatusInfo{Status: StatusReady, Reason: ReasonSkipped}, outcome: OutcomeSkipped, unavailable: true},
+		{name: "empty unchanged", info: StatusInfo{Status: StatusReady, Reason: ReasonUnchanged}, outcome: OutcomeUnchanged},
+		{name: "empty suspended", info: StatusInfo{Status: StatusReady, Reason: ReasonSuspended}, outcome: OutcomeSuspended, unavailable: true},
+		{name: "skipped diagnostic", info: StatusInfo{Status: StatusReady, Reason: ReasonSkipped, Message: "reworded"}, outcome: OutcomeSkipped, unavailable: true},
+		{name: "unchanged diagnostic", info: StatusInfo{Status: StatusReady, Reason: ReasonUnchanged, Message: "suspended"}, outcome: OutcomeUnchanged},
+		{name: "suspended diagnostic", info: StatusInfo{Status: StatusReady, Reason: ReasonSuspended, Message: "unchanged"}, outcome: OutcomeSuspended, unavailable: true},
+		{name: "failed before skip", info: StatusInfo{Status: StatusFailed, Reason: ReasonSkipped}, outcome: OutcomeFailed, unavailable: true},
+		{name: "blocked before skip", info: StatusInfo{Status: StatusFailed, Reason: ReasonSkipped, failure: failure}, outcome: OutcomeBlocked, unavailable: true},
+		{name: "pending before suspension", info: StatusInfo{Status: StatusPending, Reason: ReasonSuspended}, outcome: OutcomePending},
+		{name: "refetching", info: StatusInfo{Status: StatusPending, Reason: ReasonRefetching, Message: "suspended"}, outcome: OutcomePending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.info.Outcome(), tc.outcome)
+			assert.Equal(t, tc.info.IsUnavailable(), tc.unavailable)
+		})
 	}
 }
 
@@ -338,7 +394,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("ns", "k")
-	s.UpdateStatus(id, StatusPending, "starting")
+	s.UpdateStatus(id, StatusPending, "", "starting")
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
 		statusEvents++
@@ -355,19 +411,24 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("ns", "k")
-	statusEvents := 0
+	var events []StatusInfo
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
-		statusEvents++
-		info, ok := payload.(StatusInfo)
-		if !ok || info.Status != StatusReady {
-			t.Errorf("expected Ready payload, got %+v", payload)
-		}
+		events = append(events, payload.(StatusInfo))
 	}, false)
-	s.SetCondition(id, Condition{
-		Type: ConditionReady, Status: metav1.ConditionTrue,
-		Reason: ReasonSucceeded, Message: "ok",
-	})
-	assert.Equal(t, statusEvents, 1)
+	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: string(ReasonSkipped), Message: "ok"}
+	s.SetCondition(id, cond)
+	_, snapshot := s.Snapshot(id)
+	cond.Reason = "Custom"
+	s.SetCondition(id, cond)
+	s.SetCondition(id, cond)
+	assert.Equal(t, len(events), 2)
+	assert.Equal(t, events[0].Reason, ReasonSkipped)
+	assert.Equal(t, events[1].Reason, StatusReason("Custom"))
+	info, ok := s.GetStatus(id)
+	if !ok || info != events[1] || info.Outcome() != OutcomePassed {
+		t.Fatalf("projected status = %+v", info)
+	}
+	assert.Equal(t, snapshot[0].Reason, string(ReasonSkipped))
 }
 
 func TestStore_SetCondition_IdenticalIsNoOp(t *testing.T) {
@@ -391,14 +452,14 @@ func TestStore_FailedResources(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "x", Namespace: ""}
 	id := ks.Named()
 	s.AddObject(ks)
-	s.UpdateStatus(id, StatusFailed, "boom")
+	s.UpdateStatus(id, StatusFailed, "", "boom")
 	assert.Equal(t, len(s.FailedResources()), 1)
 
 	// Phantom guard: a SetCondition that races after DeleteObject must
 	// not resurrect a failure entry for an id that no longer exists.
 	s.DeleteObject(id)
-	s.UpdateStatus(id, StatusFailed, "phantom")  // simulates the race
-	assert.Equal(t, len(s.FailedResources()), 0) // phantom entry must not leak
+	s.UpdateStatus(id, StatusFailed, "", "phantom") // simulates the race
+	assert.Equal(t, len(s.FailedResources()), 0)    // phantom entry must not leak
 }
 
 func TestStore_ListObjects_ByKindIndex(t *testing.T) {
@@ -887,7 +948,7 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 		if i%2 == 0 {
 			status = StatusReady
 		}
-		s.UpdateStatus(id, status, fmt.Sprintf("iter-%d", i))
+		s.UpdateStatus(id, status, "", fmt.Sprintf("iter-%d", i))
 	}
 
 	_, conds := s.Snapshot(id)
@@ -899,7 +960,7 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	s := New()
 	id := newCM("a", "ns").Named()
 
-	s.UpdateStatus(id, StatusReady, "ok")
+	s.UpdateStatus(id, StatusReady, "", "ok")
 	healthy := Condition{
 		Type:    ConditionHealthy,
 		Status:  metav1.ConditionTrue,
@@ -918,7 +979,7 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	}
 	assert.Diff(t, conds, want)
 
-	s.UpdateStatus(id, StatusFailed, "boom")
+	s.UpdateStatus(id, StatusFailed, "", "boom")
 	assert.Diff(t, conds, want)
 	conds[0].Message = "caller mutation"
 	_, conds = s.Snapshot(id)
@@ -967,7 +1028,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							parent.Name = "parent-" + id.Name
 							s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
 							s.RecordEmitted(parent, &Emission{Children: []Child{{Obj: obj}}, Complete: true})
-							s.UpdateStatus(id, StatusReady, id.Group)
+							s.UpdateStatus(id, StatusReady, "", id.Group)
 							s.SetArtifact(id, &SourceArtifact{URL: id.Group})
 						}
 						for _, obj := range objects {
@@ -1007,7 +1068,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						assert.Equal(t, status.Message, id.Group)
 						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
 						_, conds = s.Snapshot(id)
-						assert.Diff(t, conds, []Condition{readyCondition(StatusReady, id.Group)})
+						assert.Diff(t, conds, []Condition{readyCondition(StatusReady, "", id.Group)})
 						parent = id
 						parent.Name = "parent-" + id.Name
 						s.RecordEmitted(parent, &Emission{Complete: true})
@@ -1061,7 +1122,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 				case 3:
 					ks := &manifest.Kustomization{Name: fmt.Sprintf("ks-w%d-i%d", w, i), Namespace: "ns"}
 					s.AddObject(ks)
-					s.UpdateStatus(ks.Named(), StatusFailed, "boom")
+					s.UpdateStatus(ks.Named(), StatusFailed, "", "boom")
 				case 4:
 					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-w%d-i%d", w, i), Namespace: "ns"}
 					s.AddObject(hr)

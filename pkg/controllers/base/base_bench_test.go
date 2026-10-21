@@ -14,7 +14,7 @@ func BenchmarkDispatchNodeReady(b *testing.B) {
 	st := store.New()
 	obj := &manifest.HelmRelease{Name: "app", Namespace: "apps"}
 	st.AddObject(obj)
-	st.UpdateStatus(obj.Named(), store.StatusReady, "")
+	st.UpdateStatus(obj.Named(), store.StatusReady, "", "")
 	c := base.New(st, nil, "benchmark")
 	reconcile := func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil }
 	b.ReportAllocs()
@@ -29,7 +29,7 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 			st := store.New()
 			obj := &manifest.Kustomization{Name: "dep", Namespace: "apps"}
 			st.AddObject(obj)
-			st.UpdateStatus(obj.Named(), state, "reason")
+			st.UpdateStatus(obj.Named(), state, "", "reason")
 			c := base.New(st, nil, "benchmark")
 			deps := []manifest.DependencyRef{{NamedResource: obj.Named()}}
 			id := testutil.HelmReleaseID("apps", "consumer")

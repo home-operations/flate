@@ -96,7 +96,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	run.store.AddObject(hr)
 	run.store.AddObject(ks)
 	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
-	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.MsgSuspended)
+	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
 	if err != nil {
@@ -141,34 +141,99 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 	t.Parallel()
 	visible := testutil.KustomizationID("media", "plex")
 	hidden := testutil.KustomizationID("default", "other")
-	for _, tc := range []struct {
-		name    string
-		visible bool
-		extra   error
-	}{
-		{name: "visible", visible: true},
-		{name: "outside only"},
-		{name: "unattributed", extra: errors.New("unattributed panic")},
-		{name: "cancellation", extra: context.Canceled},
-		{name: "visible and unattributed", visible: true, extra: errors.New("unattributed panic")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, sides := range []int{1, 2} {
+		t.Run(fmt.Sprintf("sides_%d", sides), func(t *testing.T) {
 			t.Parallel()
-			failed := map[manifest.NamedResource]store.StatusInfo{hidden: {Status: store.StatusFailed, Message: "default failed"}}
-			if tc.visible {
-				failed[visible] = store.StatusInfo{Status: store.StatusFailed, Message: "media failed"}
-			}
-			run := selectedRun(&Result{Failed: failed})
-			run.Err = errors.Join(&FailuresError{Message: "raw resource failures"}, tc.extra)
-			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("media", "")}, nil)
-			if (err != nil) != (tc.visible || tc.extra != nil) || (len(selected[0].Failed) != 0) != tc.visible {
-				t.Fatalf("unexpected scoped failure: %+v %v", selected[0], err)
-			}
-			if tc.extra != nil && !errors.Is(err, tc.extra) {
-				t.Fatalf("non-resource error identity lost: %v", err)
-			}
-			if err != nil && (strings.Contains(err.Error(), "default failed") || strings.Contains(err.Error(), "raw resource failures")) {
-				t.Fatalf("hidden raw failure leaked: %v", err)
+			for _, tc := range []struct {
+				name    string
+				visible bool
+				wrapped bool
+				joined  bool
+				extra   error
+			}{
+				{name: "visible", visible: true},
+				{name: "outside raw"},
+				{name: "outside wrapped", wrapped: true},
+				{name: "outside joined", joined: true},
+				{name: "unattributed", extra: errors.New("unattributed panic")},
+				{name: "cancellation", extra: context.Canceled},
+				{name: "independent input", wrapped: true, extra: fmt.Errorf("%w: independent input", manifest.ErrInput)},
+				{name: "independent domain", extra: fmt.Errorf("%w: independent domain", manifest.ErrFlux)},
+				{name: "visible and unattributed", visible: true, extra: errors.New("unattributed panic")},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					failed := map[manifest.NamedResource]store.StatusInfo{hidden: {Status: store.StatusFailed, Message: "default failed"}}
+					wantRaw := "reconcile completed with 1 failure(s):\n  " + hidden.String() + ": default failed"
+					if tc.visible {
+						failed[visible] = store.StatusInfo{Status: store.StatusFailed, Message: "media failed"}
+						wantRaw = "reconcile completed with 2 failure(s):\n  " + hidden.String() + ": default failed\n  " + visible.String() + ": media failed"
+					}
+					run := selectedRun(&Result{Failed: failed})
+					raw := run.aggregateFailures(failed)
+					run.Err = raw
+					if tc.wrapped {
+						run.Err = fmt.Errorf("wrapped: %w", run.Err)
+					}
+					if tc.joined || tc.extra != nil {
+						run.Err = errors.Join(run.Err, tc.extra)
+					}
+					for _, aggregate := range []error{raw, run.Err} {
+						concrete, ok := errors.AsType[*FailuresError](aggregate)
+						if !ok || !errors.Is(concrete, raw) || !errors.Is(aggregate, manifest.ErrFlux) {
+							t.Fatalf("aggregate identity lost: %v", aggregate)
+						}
+						assert.Equal(t, concrete.Message, wantRaw)
+					}
+					assert.Equal(t, raw.Error(), wantRaw)
+					if errors.Is(raw, manifest.ErrInput) {
+						t.Fatal("aggregate classified heterogeneous failures as input errors")
+					}
+					runs, runErr := []Rendered{run}, run.Err
+					if sides == 2 {
+						runs, runErr = []Rendered{run, run}, joinTreeErrors(run.Err, run.Err)
+					}
+					selected, err, remainder := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("media", "")}, nil)
+					if (err != nil) != (tc.visible || tc.extra != nil) || len(selected) != sides {
+						t.Fatalf("unexpected scoped failure: %+v %v", selected, err)
+					}
+					for _, res := range selected {
+						if (len(res.Failed) != 0) != tc.visible {
+							t.Fatalf("unexpected selected failures: %+v", res.Failed)
+						}
+					}
+					if (remainder != nil) != (tc.extra != nil) {
+						t.Fatalf("unexpected incidental error: %v", remainder)
+					}
+					for _, got := range []error{err, remainder} {
+						if tc.extra != nil && !errors.Is(got, tc.extra) {
+							t.Fatalf("non-resource error identity lost: %v", got)
+						}
+						if errors.Is(got, manifest.ErrInput) != errors.Is(tc.extra, manifest.ErrInput) {
+							t.Fatalf("input identity changed: %v", got)
+						}
+						if errors.Is(got, raw) {
+							t.Fatalf("raw aggregate entered projection: %v", got)
+						}
+					}
+					if errors.Is(err, manifest.ErrFlux) != (tc.visible || errors.Is(tc.extra, manifest.ErrFlux)) ||
+						errors.Is(remainder, manifest.ErrFlux) != errors.Is(tc.extra, manifest.ErrFlux) {
+						t.Fatalf("domain identity changed: selected=%v remainder=%v", err, remainder)
+					}
+					concrete, ok := errors.AsType[*FailuresError](err)
+					if ok != tc.visible {
+						t.Fatalf("selected aggregate identity changed: %v", err)
+					}
+					if tc.visible {
+						assert.Equal(t, concrete.Message, "reconcile completed with 1 failure(s):\n  "+visible.String()+": media failed")
+					}
+					if _, ok := errors.AsType[*FailuresError](remainder); ok {
+						t.Fatalf("aggregate entered incidental error: %v", remainder)
+					}
+					if err != nil && strings.Contains(err.Error(), "default failed") {
+						t.Fatalf("hidden raw failure leaked: %v", err)
+					}
+				})
 			}
 		})
 	}
@@ -263,6 +328,8 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	t.Parallel()
 	closeErr := errors.New("shared cache close")
+	inputErr := fmt.Errorf("%w: independent input", manifest.ErrInput)
+	domainErr := fmt.Errorf("%w: independent domain", manifest.ErrFlux)
 	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{testutil.KustomizationID("flux-system", "failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
 	for _, tc := range []struct {
@@ -277,6 +344,9 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 		{name: "close", shared: closeErr},
 		{name: "joined close", shared: errors.Join(joinTreeErrors(nil, nil), closeErr)},
 		{name: "composed", orig: failed.Err, shared: closeErr, want: "orig snapshot:"},
+		{name: "orig input sibling", orig: errors.Join(failed.Err, inputErr), want: "orig snapshot:"},
+		{name: "current domain sibling", current: errors.Join(failed.Err, domainErr), want: "current snapshot:"},
+		{name: "shared domain siblings", orig: failed.Err, shared: errors.Join(inputErr, domainErr, closeErr), want: "orig snapshot:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -291,11 +361,15 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			if (err != nil) != (tc.orig != nil || tc.current != nil || tc.shared != nil) || (tc.want != "" && !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("snapshot attribution changed: %v", err)
 			}
-			for _, cause := range []error{context.Canceled, closeErr} {
-				want := errors.Is(cause, context.Canceled) && (tc.orig != nil || tc.current != nil) || errors.Is(cause, closeErr) && tc.shared != nil
+			for _, cause := range []error{context.Canceled, closeErr, inputErr, domainErr, manifest.ErrInput} {
+				want := errors.Is(tc.orig, cause) || errors.Is(tc.current, cause) || errors.Is(tc.shared, cause)
 				if errors.Is(err, cause) != want || errors.Is(remainder, cause) != want {
 					t.Fatalf("error identity lost: selected=%v remainder=%v", err, remainder)
 				}
+			}
+			wantDomainRemainder := errors.Is(tc.orig, inputErr) || errors.Is(tc.current, domainErr) || errors.Is(tc.shared, manifest.ErrFlux)
+			if errors.Is(remainder, manifest.ErrFlux) != wantDomainRemainder {
+				t.Fatalf("incidental domain identity changed: %v", remainder)
 			}
 			if _, ok := errors.AsType[*FailuresError](remainder); ok {
 				t.Fatalf("resource failures entered remainder: %v", remainder)
@@ -398,13 +472,16 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 		unavailable bool
 	}{
 		{disposition: store.StatusInfo{Status: store.StatusFailed, Message: "parent failed"}, unavailable: true},
-		{disposition: store.StatusInfo{Status: store.StatusReady, Message: "skipped: absent source"}, unavailable: true},
-		{disposition: store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended}, unavailable: true},
-		{disposition: store.StatusInfo{Status: store.StatusReady, Message: store.MsgUnchanged}},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "absent source"}, unavailable: true},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"}, unavailable: true},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"}},
 		{disposition: store.StatusInfo{Status: store.StatusReady}},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped}, unavailable: true},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Message: "skipped: absent source"}},
+		{disposition: store.StatusInfo{Status: store.StatusReady, Message: "suspended"}},
 		{disposition: store.StatusInfo{Status: store.StatusPending, Message: "fetching"}},
 		{disposition: store.StatusInfo{Status: store.StatusPending, Message: "skipped: absent source"}},
-		{disposition: store.StatusInfo{Status: store.StatusPending, Message: store.MsgSuspended}},
+		{disposition: store.StatusInfo{Status: store.StatusPending, Message: "suspended"}},
 	} {
 		disposition := tc.disposition
 		for _, reverse := range []bool{false, true} {
@@ -415,7 +492,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 				orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
 				setParentsForTest(orig.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child: parent})
 				current.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
-				current.store.UpdateStatus(parent, disposition.Status, disposition.Message)
+				current.store.UpdateStatus(parent, disposition.Status, disposition.Reason, disposition.Message)
 				if disposition.Status == store.StatusFailed {
 					canonical := disposition
 					canonical.Message = "canonical parent failure"
@@ -485,10 +562,10 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	for _, obj := range []manifest.BaseManifest{bootstrap, ordinary, otherNamespace, foreignChart, statusless} {
 		run.store.AddObject(obj)
 	}
-	run.store.UpdateStatus(bootstrap.Named(), store.StatusFailed, "bootstrap failed")
-	run.store.UpdateStatus(ordinary.Named(), store.StatusReady, "")
-	run.store.UpdateStatus(otherNamespace.Named(), store.StatusReady, "")
-	run.store.UpdateStatus(foreignChart.Named(), store.StatusFailed, "foreign chart failed")
+	run.store.UpdateStatus(bootstrap.Named(), store.StatusFailed, "", "bootstrap failed")
+	run.store.UpdateStatus(ordinary.Named(), store.StatusReady, "", "")
+	run.store.UpdateStatus(otherNamespace.Named(), store.StatusReady, "", "")
+	run.store.UpdateStatus(foreignChart.Named(), store.StatusFailed, "", "foreign chart failed")
 	run.Result.Failed = run.store.FailedResources()
 	run.Result.Manifests = make(map[manifest.NamedResource][]map[string]any)
 	for _, obj := range run.store.ListObjects("", "") {
@@ -546,7 +623,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		run := selectedRun(&Result{})
 		obj := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 		run.store.AddObject(obj)
-		run.store.UpdateStatus(obj.Named(), store.StatusReady, "")
+		run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
 		eligible := &manifest.ResourceSet{Name: obj.Name, Namespace: obj.Namespace}
 		for _, extra := range []*manifest.ResourceSet{
 			eligible,
@@ -554,7 +631,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 			{Name: obj.Name, Namespace: "other"},
 		} {
 			run.store.AddObject(extra)
-			run.store.UpdateStatus(extra.Named(), store.StatusFailed, "extra failure")
+			run.store.UpdateStatus(extra.Named(), store.StatusFailed, "", "extra failure")
 		}
 		run.Result.Failed = run.store.FailedResources()
 		selected, _, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
@@ -632,15 +709,15 @@ func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 		run.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 		setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child: parent, parent: child})
 	}
-	current.store.UpdateStatus(child, store.StatusReady, "skipped: own skip")
-	current.store.UpdateStatus(parent, store.StatusFailed, "ancestor failed")
+	current.store.UpdateStatus(child, store.StatusReady, store.ReasonSkipped, "own skip")
+	current.store.UpdateStatus(parent, store.StatusFailed, "", "ancestor failed")
 	results, _, _ := Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
-	assert.Equal(t, results[1].Unavailable[child].Message, "skipped: own skip")
+	assert.Equal(t, results[1].Unavailable[child].Message, "own skip")
 	assert.Equal(t, len(results[0].Unavailable), 0)
-	current.store.UpdateStatus(child, store.StatusReady, store.MsgUnchanged)
+	current.store.UpdateStatus(child, store.StatusReady, store.ReasonUnchanged, "unchanged")
 	results, _, _ = Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
 	assert.Equal(t, results[1].Unavailable[child].Message, "ancestor failed")
-	current.store.UpdateStatus(parent, store.StatusReady, "")
+	current.store.UpdateStatus(parent, store.StatusReady, "", "")
 	results, _, _ = Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
 	assert.Equal(t, len(results[1].Unavailable), 0)
 }
@@ -743,7 +820,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 		orig.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	}
 	current.store.AddObject(&manifest.Kustomization{Name: present.Name, Namespace: present.Namespace})
-	current.store.UpdateStatus(oldRoot, store.StatusFailed, "old ancestor failed")
+	current.store.UpdateStatus(oldRoot, store.StatusFailed, "", "old ancestor failed")
 	setParentsForTest(orig.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{present: middle, absent: middle, middle: oldRoot})
 	setParentsForTest(current.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{present: middle, middle: newRoot})
 	selected, err, _ := Select([]Rendered{orig, current}, nil, []manifest.NamedResource{{Group: present.Group, Kind: present.Kind}}, nil)
@@ -758,13 +835,40 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 	t.Parallel()
-	obj := &manifest.Kustomization{Name: "external", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
-	run := selectedRun(&Result{})
-	run.store.AddObject(obj)
-	run.store.UpdateStatus(obj.Named(), store.StatusReady, "skipped: external source")
-	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Named().Kind}}, nil)
-	if err != nil || selected[0].External != nil {
-		t.Fatalf("single-run external disclosures: %+v %v", selected[0].External, err)
+	for _, tc := range []struct {
+		name    string
+		reason  store.StatusReason
+		message string
+		want    bool
+	}{
+		{name: "typed skipped", reason: store.ReasonSkipped, want: true},
+		{name: "typed unchanged", reason: store.ReasonUnchanged, message: "different words", want: true},
+		{name: "suspended", reason: store.ReasonSuspended},
+		{name: "misleading skip", message: "skipped: external source"},
+		{name: "misleading unchanged", message: "unchanged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			obj := &manifest.Kustomization{Name: "external", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
+			run := selectedRun(&Result{})
+			run.store.AddObject(obj)
+			run.store.AddObject(&manifest.OCIRepository{Name: "source", Namespace: "apps"})
+			run.store.UpdateStatus(obj.Named(), store.StatusReady, tc.reason, tc.message)
+			root := []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Named().Kind}}
+			selected, err, _ := Select([]Rendered{run}, nil, root, nil)
+			if err != nil || selected[0].External != nil {
+				t.Fatalf("single-run external disclosures: %+v %v", selected[0].External, err)
+			}
+			selected, err, _ = Select([]Rendered{run, run}, nil, root, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, res := range selected {
+				if (len(res.External) == 1) != tc.want {
+					t.Fatalf("typed external disclosure = %+v, want=%t", res.External, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -776,7 +880,7 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 			run := selectedRun(&Result{})
 			obj := &manifest.RawObject{Kind: kind, APIVersion: "seaweed.seaweedfs.com/v1", Name: "foreign", Namespace: "apps"}
 			run.store.AddObject(obj)
-			run.store.UpdateStatus(obj.Named(), store.StatusReady, "")
+			run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
 			selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Kind}}, nil)
 			if err != nil || len(selected[0].Statuses) != 0 {
 				t.Fatalf("foreign Flux lookalike entered roster: %+v %v", selected[0].Statuses, err)

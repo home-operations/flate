@@ -115,7 +115,7 @@ metadata: {name: issuer}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: revision, Digest: digest,
 			})
-			st.UpdateStatus(src.Named(), store.StatusReady, "recorded artifact")
+			st.UpdateStatus(src.Named(), store.StatusReady, "", "recorded artifact")
 			st.AddObject(hr)
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("reconcile: %+v", info)
@@ -282,7 +282,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 	c, st := newTestController(t, nil)
 	dep := &manifest.HelmRelease{Name: "dep", Namespace: "flux-system"}
 	st.AddObject(dep)
-	st.UpdateStatus(dep.Named(), store.StatusFailed, "synthetic dep failure")
+	st.UpdateStatus(dep.Named(), store.StatusFailed, "", "synthetic dep failure")
 
 	hr := &manifest.HelmRelease{
 		Name: "depender", Namespace: "flux-system",
@@ -393,10 +393,10 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 					}
 					c, st := newTestControllerWithParentOf(t, parents)
 					st.AddObject(parent)
-					st.UpdateStatus(parent.Named(), store.StatusReady, "")
+					st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
 					dep := &manifest.HelmRelease{Name: "dependency", Namespace: "apps"}
 					st.AddObject(dep)
-					st.UpdateStatus(dep.Named(), store.StatusReady, "")
+					st.UpdateStatus(dep.Named(), store.StatusReady, "", "")
 					dir := t.TempDir()
 					testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: refresh\nversion: 1.0.0\n")
 					testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
@@ -407,7 +407,7 @@ data: {greeting: hi}
 					src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
 					st.AddObject(src)
 					st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8", Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"})
-					st.UpdateStatus(src.Named(), store.StatusReady, "")
+					st.UpdateStatus(src.Named(), store.StatusReady, "", "")
 					doc := map[string]any{
 						"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
 						"metadata": map[string]any{"name": id.Name, "namespace": id.Namespace},
@@ -429,7 +429,7 @@ data: {greeting: hi}
 					hr := obj.(*manifest.HelmRelease)
 					original := hr.Clone()
 					st.AddObject(hr)
-					st.UpdateStatus(id, store.StatusPending, "")
+					st.UpdateStatus(id, store.StatusPending, "", "")
 					var retained *store.Emission
 					if site.retained {
 						retained = &store.Emission{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
@@ -498,7 +498,7 @@ data: {greeting: hi}
 					art, _ := st.GetArtifact(id).(*store.Emission)
 					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hr-refresh-output"}
 					if suspended {
-						if info.Status != store.StatusReady || info.Message != store.MsgSuspended {
+						if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 							t.Errorf("status = %+v, want Ready/suspended", info)
 						}
 						_, inventory := st.GetEmission(id)
@@ -584,7 +584,7 @@ data:
 						Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
 					}
 					st.SetArtifact(src.Named(), source)
-					st.UpdateStatus(src.Named(), store.StatusReady, "")
+					st.UpdateStatus(src.Named(), store.StatusReady, "", "")
 					required := "present"
 					if rescue {
 						required = ""
@@ -603,7 +603,7 @@ data:
 						publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 					}
 					publish(docA)
-					st.UpdateStatus(parent.Named(), store.StatusReady, "")
+					st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
 					id := testutil.HelmReleaseID("apps", "release")
 					hr, ok := st.Get[*manifest.HelmRelease](id)
 					if !ok {

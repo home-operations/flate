@@ -149,10 +149,12 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 					st.AddObject(tc.obj)
 					info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: tc.obj.Named(), ReconcileNode: c.ReconcileNode})
 					message, calls := "", tc.calls
+					outcome := store.OutcomePassed
 					if suspended {
-						message, calls = store.MsgSuspended, 0
+						message, calls = "suspended", 0
+						outcome = store.OutcomeSuspended
 					}
-					if info.Status != store.StatusReady || info.Message != message || f.calls != calls {
+					if info.Outcome() != outcome || info.Message != message || f.calls != calls {
 						t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
 					}
 					if st.GetArtifact(tc.obj.Named()) != nil {
@@ -183,7 +185,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		})
 		tasks.BlockTillDone()
 		info, _ := st.GetStatus(repo.Named())
-		if info.Status != store.StatusReady || info.Message != "unchanged" || f.calls != 0 {
+		if info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || f.calls != 0 {
 			t.Fatalf("status=%+v fetch calls=%d, want Ready/unchanged calls=0", info, f.calls)
 		}
 	})
@@ -301,7 +303,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
 				t.Fatal("source must finish after the Secret arrives")
 			}
-			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || store.IsSkipped(info) {
+			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 				t.Fatalf("status = %+v, want Ready without a skip", info)
 			}
 			if st.GetArtifact(repo.Named()) == nil {
@@ -387,7 +389,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.wantSkip {
 				wantStatus = store.StatusReady
 			}
-			if info.Status != wantStatus || store.IsSkipped(info) != tt.wantSkip || !strings.Contains(info.Message, detail) || !strings.Contains(info.Message, secret.Name) {
+			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip || !strings.Contains(info.Message, detail) || !strings.Contains(info.Message, secret.Name) {
 				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
 			}
 			if st.GetArtifact(repo.Named()) != nil {
@@ -462,7 +464,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, drain) {
 				t.Fatal("source must terminalize")
 			}
-			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || store.IsSkipped(info) {
+			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 				t.Fatalf("status = %+v, want Ready without a skip", info)
 			}
 			if st.GetArtifact(repo.Named()) == nil {
@@ -491,7 +493,7 @@ func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 	st.AddObject(repo)
 
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || !store.IsSkipped(info) {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || info.Outcome() != store.OutcomeSkipped {
 		t.Fatalf("status = %+v, want Ready with a skip", info)
 	}
 	if f.fallbackCalls != 0 {
@@ -510,7 +512,7 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 	st.AddObject(repo)
 
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || !store.IsSkipped(info) {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || info.Outcome() != store.OutcomeSkipped {
 		t.Fatalf("status = %+v, want Ready with a skip", info)
 	}
 	if f.fallbackCalls != 1 {

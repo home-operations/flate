@@ -23,10 +23,10 @@ func TestRequire_Classifications(t *testing.T) {
 			ready := manifest.DependencyRef{NamedResource: testutil.KustomizationID("apps", "ready")}
 			failed := manifest.DependencyRef{NamedResource: testutil.KustomizationID("apps", "failed")}
 			pending := manifest.DependencyRef{NamedResource: testutil.KustomizationID("apps", "pending")}
-			st.UpdateStatus(ready.NamedResource, store.StatusReady, "")
-			st.UpdateStatus(failed.NamedResource, store.StatusFailed, "render failed")
-			st.UpdateStatus(pending.NamedResource, store.StatusPending, "working")
-			st.UpdateStatus(id, store.StatusReady, "informative")
+			st.UpdateStatus(ready.NamedResource, store.StatusReady, "", "")
+			st.UpdateStatus(failed.NamedResource, store.StatusFailed, "", "render failed")
+			st.UpdateStatus(pending.NamedResource, store.StatusPending, "", "working")
+			st.UpdateStatus(id, store.StatusReady, "", "informative")
 			st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace, Suspend: mode != "ready"})
 			deps := []manifest.DependencyRef{ready}
 			level := manifest.DrainNone
@@ -99,7 +99,7 @@ func TestRequireRefresh_CanonicalManifest(t *testing.T) {
 			}
 			info, has := st.GetStatus(obj.Named())
 			if mode == "suspended" {
-				if !has || !store.IsSuspended(info) {
+				if !has || info.Outcome() != store.OutcomeSuspended {
 					t.Fatalf("suspended refresh status: %+v", info)
 				}
 			} else if has {

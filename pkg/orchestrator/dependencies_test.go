@@ -120,7 +120,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					}
 				}
 				excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "excluded-source"}
-				if info, _ := st.GetStatus(excludedSource); !store.IsUnchanged(info) || side.filter.ShouldReconcile(excludedSource) {
+				if info, _ := st.GetStatus(excludedSource); info.Outcome() != store.OutcomeUnchanged || side.filter.ShouldReconcile(excludedSource) {
 					t.Fatalf("discovered excluded source was activated: %+v", info)
 				}
 				if st.GetArtifact(excludedSource) != nil {
@@ -144,7 +144,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					t.Fatalf("required shared chart was not admitted: %s", chart)
 				}
 				otherSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "selected-source"}
-				if info, _ := st.GetStatus(otherSource); !store.IsUnchanged(info) || side.filter.ShouldReconcile(otherSource) {
+				if info, _ := st.GetStatus(otherSource); info.Outcome() != store.OutcomeUnchanged || side.filter.ShouldReconcile(otherSource) {
 					t.Fatalf("excluded source sibling was activated: %+v", info)
 				}
 				if st.GetArtifact(otherSource) != nil {

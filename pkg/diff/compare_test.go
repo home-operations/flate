@@ -67,9 +67,12 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 	t.Parallel()
 	failedOrig := store.StatusInfo{Status: store.StatusFailed, Message: "orig build failed"}
 	failedCurrent := store.StatusInfo{Status: store.StatusFailed, Message: "current build failed"}
-	skipped := store.StatusInfo{Status: store.StatusReady, Message: store.SkippedPrefix + " missing source"}
-	suspended := store.StatusInfo{Status: store.StatusReady, Message: store.MsgSuspended}
-	unchanged := store.StatusInfo{Status: store.StatusReady, Message: store.MsgUnchanged}
+	skipped := store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "missing source"}
+	suspended := store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "operator stopped reconciliation"}
+	unchanged := store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"}
+	st := store.New()
+	st.UpdateFailure(hrParent.NamedResource, &manifest.DependencyFailedError{Parent: hrParent.NamedResource, Failed: []manifest.NamedResource{{Name: "source"}}})
+	blocked, _ := st.GetStatus(hrParent.NamedResource)
 	selectedErr := errors.New("scoped render failure")
 	cases := []struct {
 		name          string
@@ -99,6 +102,12 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 		{name: "failure and skip control", left: failedOrig, right: skipped, leftN: 1, rightN: 1, keepError: true},
 		{name: "skip and failure control", left: skipped, right: failedCurrent, leftN: 1, rightN: 1, keepError: true},
 		{name: "unchanged is available", left: unchanged, right: unchanged, leftN: 1, rightN: 1},
+		{name: "blocked is failed", right: blocked, left: suspended, leftN: 1, rightN: 2, withheld: true, side: SideBoth, count: 3, reason: "suspended on orig; current: " + blocked.Message, keepError: true},
+		{name: "empty typed skip", right: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped}, leftN: 1, withheld: true, side: SideCurrent, count: 1},
+		{name: "nested skip", right: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth"}, leftN: 1, withheld: true, side: SideCurrent, count: 1, reason: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth"},
+		{name: "boundary whitespace", right: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth"}, leftN: 1, withheld: true, side: SideCurrent, count: 1, reason: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth"},
+		{name: "misleading skip", right: store.StatusInfo{Status: store.StatusReady, Message: "skipped: missing source"}, leftN: 1, rightN: 1},
+		{name: "misleading suspension", right: store.StatusInfo{Status: store.StatusReady, Message: "suspended"}, leftN: 1, rightN: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -210,7 +219,7 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 	t.Parallel()
 	for _, unavailable := range []store.StatusInfo{
 		{Status: store.StatusFailed, Message: "failed"},
-		{Status: store.StatusReady, Message: store.SkippedPrefix + " missing source"},
+		{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "missing source"},
 	} {
 		left := selectedSnapshot(hrParent, nil, store.StatusInfo{})
 		right := selectedSnapshot(hrParent, hrDocs(1), unavailable)

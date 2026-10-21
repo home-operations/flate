@@ -161,7 +161,7 @@ spec:
 				{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
 				testutil.HelmReleaseID("flux-system", "demo"),
 			} {
-				if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || store.IsSkipped(info) {
+				if info, ok := o.Store().GetStatus(id); !ok || info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 					t.Errorf("%s status = %+v (present=%t), want Ready without a skip", id, info, ok)
 				}
 			}

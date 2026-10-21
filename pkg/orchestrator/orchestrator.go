@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -86,7 +87,7 @@ type Config struct {
 	// AllowMissingSecrets converts source auth-secret-not-found errors
 	// into skips and omits HelmRelease valuesFrom Secret/ConfigMap refs
 	// that cannot materialize in the offline tree. Skipped source
-	// resources mark Ready with a "skipped:" reason; omitted valuesFrom
+	// resources mark Ready with ReasonSkipped; omitted valuesFrom
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
 	// SubstituteFrom contains CI-side postBuild sources, never stored or emitted.
@@ -304,7 +305,7 @@ type Result struct {
 // Substitution inputs are copied; callers MUST NOT mutate them during New.
 func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	if cfg.Path == "" {
-		return nil, errors.New("orchestrator: path is required")
+		return nil, fmt.Errorf("%w: orchestrator: path is required", manifest.ErrInput)
 	}
 
 	ownNetwork := cfg.Network == nil

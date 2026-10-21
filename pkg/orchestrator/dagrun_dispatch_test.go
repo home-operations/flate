@@ -57,6 +57,11 @@ data: {key: value}
 	if out != schedule.OutcomeTerminalNoop || len(blocked) != 0 || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
 		t.Fatalf("dedup result=%v blocked=%v arrivals=%d artifact changed=%v", out, blocked, arrivals.Load(), s.GetArtifact(rs.Named()) != before)
 	}
+	s.UpdateStatus(rs.Named(), store.StatusReady, store.ReasonSkipped, "")
+	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	if out != schedule.OutcomeTerminal || len(blocked) != 0 || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
+		t.Fatalf("typed skip became a dedup no-op: outcome=%v blocked=%v arrivals=%d", out, blocked, arrivals.Load())
+	}
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
@@ -109,7 +114,7 @@ data: {key: fixed}
 					if name == "failed gate" {
 						gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns"}
 						s.AddObject(gate)
-						s.UpdateStatus(gate.Named(), store.StatusFailed, "gate failed")
+						s.UpdateStatus(gate.Named(), store.StatusFailed, "", "gate failed")
 						want = schedule.OutcomeTerminal
 					}
 				case "preflight failure":
@@ -130,8 +135,8 @@ data: {key: fixed}
 						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 					}
 					s.AddObject(&fresh)
-					s.UpdateStatus(gate.Named(), store.StatusReady, store.MsgSuspended)
-					s.UpdateStatus(rs.Named(), store.StatusPending, "queued")
+					s.UpdateStatus(gate.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
+					s.UpdateStatus(rs.Named(), store.StatusPending, "", "queued")
 					var published atomic.Bool
 					unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
@@ -177,14 +182,14 @@ data: {key: fixed}
 				}
 				if name == "filter skip" {
 					info, ok := s.GetStatus(rs.Named())
-					if !ok || info.Status != store.StatusReady || info.Message != store.MsgUnchanged || s.GetArtifact(rs.Named()) != before {
+					if !ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || s.GetArtifact(rs.Named()) != before {
 						t.Fatalf("filter must preserve artifact with Ready/unchanged: %+v", info)
 					}
 				}
 				if name == "suspended" || name == "refresh suspended" {
 					info, _ := s.GetStatus(rs.Named())
 					_, retained := s.GetEmission(rs.Named())
-					if !store.IsSuspended(info) || s.GetArtifact(rs.Named()) != nil || !slices.EqualFunc(retained.Manifests, before.Manifests, func(a, b map[string]any) bool { return cmp.Equal(a, b) }) || outputArrivals.Load() != 0 {
+					if info.Outcome() != store.OutcomeSuspended || s.GetArtifact(rs.Named()) != nil || !slices.EqualFunc(retained.Manifests, before.Manifests, func(a, b map[string]any) bool { return cmp.Equal(a, b) }) || outputArrivals.Load() != 0 {
 						t.Fatalf("suspension replayed or pruned output: status=%+v arrivals=%d", info, outputArrivals.Load())
 					}
 				}
@@ -210,7 +215,7 @@ data: {key: initial}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
 	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-	s.UpdateStatus(rs.Named(), store.StatusPending, "queued")
+	s.UpdateStatus(rs.Named(), store.StatusPending, "", "queued")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unsub := s.AddListener(store.EventStatusUpdated, func(nid manifest.NamedResource, _ any) {
@@ -368,7 +373,7 @@ data: {value: rendered}
 			}})
 			s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true})
 			s.SetArtifact(l.Named(), &store.SourceArtifact{Key: "static-l"})
-			s.UpdateStatus(l.Named(), store.StatusReady, "")
+			s.UpdateStatus(l.Named(), store.StatusReady, "", "")
 			if s.GetObject(l.Named()) != l || s.GetArtifact(l.Named()) == nil {
 				t.Fatal("fixture L is not live with an artifact")
 			}
@@ -550,7 +555,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, slices.Collect(s.Productions(repo, nil)))
 					o.ksc.Emit(p, &next)
 					next.Finish()
-					s.UpdateStatus(p, store.StatusReady, "")
+					s.UpdateStatus(p, store.StatusReady, "", "")
 					close(published)
 					return schedule.OutcomeTerminal, nil, false
 				})

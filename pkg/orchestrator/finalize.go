@@ -87,7 +87,7 @@ func (o *Orchestrator) finalize() error {
 				if !o.filter.ShouldReconcile(reader) {
 					continue
 				}
-				if info, _ := o.store.GetStatus(reader); info.Status != store.StatusFailed && !store.IsSuspended(info) {
+				if info, _ := o.store.GetStatus(reader); info.Status != store.StatusFailed && info.Outcome() != store.OutcomeSuspended {
 					o.store.UpdateFailure(reader, o.index.Errors[file])
 				}
 			}
@@ -105,7 +105,7 @@ func (o *Orchestrator) finalize() error {
 	}
 	o.orphans = o.detectOrphans(failed, prefixes)
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
-		o.store.UpdateStatus(id, store.StatusReady, "orphaned (not referenced by any parent kustomization.yaml)")
+		o.store.UpdateStatus(id, store.StatusReady, "", "orphaned (not referenced by any parent kustomization.yaml)")
 		slog.Warn("resource orphaned", "id", id.String(),
 			"file", o.fileOf(id),
 			"reason", o.orphans[id])
@@ -210,14 +210,13 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 	}
 }
 
-// FailuresError aggregates per-resource reconcile failures into one error. Its
-// identity (recovered with errors.As) — not its message text — is how the CLI
-// tells the resource-failure aggregate apart from incidental run errors (a
-// panic, a cancellation) when it re-scopes failures to a namespace filter and
-// re-renders them.
+// FailuresError aggregates per-resource reconcile failure messages.
 type FailuresError struct{ Message string }
 
 func (e *FailuresError) Error() string { return e.Message }
+
+// Unwrap returns the shared domain identity for resource failures.
+func (*FailuresError) Unwrap() error { return manifest.ErrFlux }
 
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))

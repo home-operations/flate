@@ -27,7 +27,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			if mode != "vanished" {
 				st.AddObject(obj)
 			}
-			st.UpdateStatus(id, store.StatusFailed, "original failure")
+			st.UpdateStatus(id, store.StatusFailed, "", "original failure")
 			if mode != "prior primary failure" {
 				st.UpdateFailure(id, &manifest.DependencyFailedError{Failed: []manifest.NamedResource{old}})
 			}
@@ -49,7 +49,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				case "primary error":
 					return errors.New("render failed")
 				case "primary status":
-					st.UpdateStatus(id, store.StatusFailed, "render failed")
+					st.UpdateStatus(id, store.StatusFailed, "", "render failed")
 				case "blocked":
 					return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
 				case "new dependency failure":

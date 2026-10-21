@@ -121,7 +121,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				source := &manifest.GitRepository{Name: "unavailable", Namespace: "flux-system"}
 				o.Store().AddObject(source)
 				o.Store().SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: headRoot})
-				o.Store().UpdateStatus(source.Named(), store.StatusReady, "fixture unavailable payload")
+				o.Store().UpdateStatus(source.Named(), store.StatusReady, "", "fixture unavailable payload")
 				result, err := o.Render(t.Context())
 				if err == nil || result == nil || result.Failed[changed].Status != store.StatusFailed {
 					t.Fatalf("selected producer must fail after discovery: result=%+v err=%v", result, err)

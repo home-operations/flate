@@ -3,7 +3,6 @@ package testrunner
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -55,33 +54,18 @@ func Run(result *orchestrator.Result) output.TestReport {
 }
 
 func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
-	switch {
-	case info.Status == store.StatusFailed:
-		if info.IsDependencyFailure() {
-			return output.Case{ID: id, Outcome: output.OutcomeBlocked, Reason: info.Message}
-		}
-		// Strip the `flux error: input error:` sentinel chain so the
-		// `flate test` table shows the actual cause rather than two
-		// layers of bureaucracy. Same treatment the orchestrator gives
-		// its aggregated error.
+	switch info.Outcome() {
+	case store.OutcomeBlocked:
+		return output.Case{ID: id, Outcome: output.OutcomeBlocked, Reason: info.Message}
+	case store.OutcomeFailed:
 		return output.Case{ID: id, Outcome: output.OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.Message)}
-	case store.IsUnchanged(info):
-		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: store.MsgUnchanged}
-	case store.IsSuspended(info):
-		// spec.suspend was honored. A user-suspended KS / HR isn't
-		// rendered, so reporting PASSED would be misleading — the
-		// resource is intentionally inert, not "tests passed."
-		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: store.MsgSuspended}
-	case store.IsSkipped(info):
-		// Strip the `skipped: ` convention prefix from the stored
-		// message — the column already prints SKIPPED, so leading the
-		// reason with "skipped:" again is duplicate labeling. Inner
-		// propagated "skipped:" prefixes (a consumer wrapping its
-		// source's skip message) survive verbatim — they're load-
-		// bearing for the user (KS → which OCIRepo? why?).
-		return output.Case{ID: id, Outcome: output.OutcomeSkipped,
-			Reason: strings.TrimSpace(strings.TrimPrefix(info.Message, store.SkippedPrefix))}
-	case info.Status == store.StatusReady:
+	case store.OutcomeUnchanged:
+		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: "unchanged"}
+	case store.OutcomeSuspended:
+		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: "suspended"}
+	case store.OutcomeSkipped:
+		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: info.Message}
+	case store.OutcomePassed:
 		return output.Case{ID: id, Outcome: output.OutcomePassed}
 	default:
 		return output.Case{ID: id, Outcome: output.OutcomeFailed,

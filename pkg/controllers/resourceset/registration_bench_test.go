@@ -154,7 +154,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						}
 						publishResourceSetDocuments(b, c, sets[i].Named(), artifacts[i].Manifests)
 						s.SetArtifact(sets[i].Named(), artifacts[i])
-						s.UpdateStatus(sets[i].Named(), store.StatusReady, "")
+						s.UpdateStatus(sets[i].Named(), store.StatusReady, "", "")
 					}
 					for range 32 {
 						for _, i := range commitOrder {

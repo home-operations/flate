@@ -3,6 +3,7 @@ package base_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -107,29 +108,88 @@ func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 	if _, ok := s.GetStatus(id); ok {
 		t.Error("missing object should not get a status entry")
 	}
+	s.UpdateStatus(id, store.StatusPending, store.ReasonRefetching, "re-fetching")
+	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
+		func(context.Context, *manifest.HelmRelease) error { t.Error("missing object reconciled"); return nil })
+	got, _ := s.GetStatus(id)
+	if got.Outcome() != store.OutcomeSkipped || got.Message != "object not in store at reconcile time" {
+		t.Fatalf("missing-object status = %+v", got)
+	}
 }
 
-// Informative Ready messages MUST survive a no-op reconcile.
 func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 	t.Parallel()
-	for _, message := range []string{store.MsgUnchanged, store.MsgSuspended, store.SkippedPrefix + " missing secret"} {
-		t.Run(message, func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reason  store.StatusReason
+		message string
+	}{
+		{name: "skipped", reason: store.ReasonSkipped, message: "missing secret"},
+		{name: "empty skip", reason: store.ReasonSkipped},
+		{name: "empty unchanged", reason: store.ReasonUnchanged},
+		{name: "empty suspended", reason: store.ReasonSuspended},
+		{name: "informative ready", message: "skipped: a literal explanation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
 			id := hr.Named()
-			s.UpdateStatus(id, store.StatusReady, message)
-
+			s.UpdateStatus(id, store.StatusReady, tc.reason, tc.message)
+			before, _ := s.GetStatus(id)
 			base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-				func(_ context.Context, _ *manifest.HelmRelease) error { return nil },
-			)
+				func(context.Context, *manifest.HelmRelease) error { return nil })
 			got, _ := s.GetStatus(id)
-			if got.Status != store.StatusReady {
-				t.Errorf("status = %v, want Ready", got.Status)
+			if got != before {
+				t.Fatalf("Ready snapshot changed: %+v, want %+v", got, before)
 			}
-			if got.Message != message {
-				t.Errorf("informative Ready message %q was clobbered: now %q", message, got.Message)
+		})
+	}
+	for _, tc := range []struct {
+		name          string
+		reason        store.StatusReason
+		message, want string
+	}{
+		{name: "nested skip", reason: store.ReasonSkipped, message: "skipped: missing auth", want: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth"},
+		{name: "boundary whitespace", reason: store.ReasonSkipped, message: "  missing auth \n", want: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth"},
+		{name: "empty explanation", reason: store.ReasonSkipped, want: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:"},
+		{name: "misleading message", message: "skipped: missing auth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+			s.AddObject(hr)
+			c := base.New(s, nil, "helmrelease")
+			src := &manifest.OCIRepository{Name: "source", Namespace: "ns"}
+			s.AddObject(src)
+			s.UpdateStatus(src.Named(), store.StatusReady, tc.reason, tc.message)
+			base.RunWithStatusOutcome(t.Context(), c, hr.Named(),
+				func(context.Context, *manifest.HelmRelease) error { return c.SourceSkipped(src.Named(), "source") })
+			got, _ := s.GetStatus(hr.Named())
+			want := store.OutcomePassed
+			if tc.reason == store.ReasonSkipped {
+				want = store.OutcomeSkipped
+			}
+			if got.Outcome() != want || got.Message != tc.want {
+				t.Fatalf("propagated status = %+v, want %s/%q", got, want, tc.want)
+			}
+		})
+	}
+	for _, message := range []string{" \t missing auth \n", " skipped: missing auth "} {
+		t.Run(fmt.Sprintf("direct/%q", message), func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			hr := &manifest.HelmRelease{Name: "app"}
+			s.AddObject(hr)
+			base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "test"), hr.Named(),
+				func(context.Context, *manifest.HelmRelease) error {
+					return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, message)
+				})
+			got, _ := s.GetStatus(hr.Named())
+			if got.Outcome() != store.OutcomeSkipped || got.Message != strings.TrimSpace(message) {
+				t.Fatalf("direct skip = %+v", got)
 			}
 		})
 	}
@@ -144,7 +204,7 @@ func TestRunWithStatusOutcome_PreservesExternalFailure(t *testing.T) {
 
 	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
 		func(_ context.Context, _ *manifest.HelmRelease) error {
-			s.UpdateStatus(id, store.StatusFailed, "dependency cycle detected")
+			s.UpdateStatus(id, store.StatusFailed, "", "dependency cycle detected")
 			return nil
 		},
 	)
@@ -308,7 +368,7 @@ func TestDispatchNode(t *testing.T) {
 	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns", Suspend: true}
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
-	if info, _ := s.GetStatus(susHR.Named()); info.Message != "suspended" {
+	if info, _ := s.GetStatus(susHR.Named()); info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 		t.Errorf("suspended HR status = %+v; want Ready/suspended via preGate", info)
 	}
 
@@ -339,22 +399,23 @@ func TestDispatchNode(t *testing.T) {
 		filtered  bool
 		preflight bool
 		message   string
+		outcome   store.Outcome
 		run       bool
 	}{
-		{"filtered", &manifest.HelmRelease{Name: "active"}, true, false, store.MsgUnchanged, false},
-		{"suspended before filter", &manifest.HelmRelease{Name: "suspended", Suspend: true}, true, false, store.MsgSuspended, false},
-		{"suspended before preflight", &manifest.HelmRelease{Name: "suspended", Suspend: true}, false, true, store.MsgSuspended, false},
-		{"suspended chart before filter", chart, true, false, store.MsgSuspended, false},
-		{"suspended chart before preflight", chart, false, true, store.MsgSuspended, false},
-		{"active chart", &manifest.HelmChartSource{Name: "active-chart"}, false, false, "", true},
-		{"suspended repository before filter", &manifest.HelmRepository{Name: "repo", Suspend: true}, true, false, store.MsgSuspended, false},
-		{"suspended repository before preflight", &manifest.HelmRepository{Name: "repo", Suspend: true}, false, true, store.MsgSuspended, false},
-		{"active repository", &manifest.HelmRepository{Name: "repo"}, false, false, "", true},
-		{"data", &manifest.ConfigMap{Name: "data"}, false, false, "", true},
-		{"secret", &manifest.Secret{Name: "secret"}, false, false, "", true},
-		{"raw object", &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "raw", Spec: map[string]any{"suspend": true}}, false, false, "", true},
-		{"input provider", &manifest.ResourceSetInputProvider{Name: "provider"}, false, false, "", true},
-		{"external artifact", &manifest.ExternalArtifact{Name: "source"}, false, false, "", true},
+		{"filtered", &manifest.HelmRelease{Name: "active"}, true, false, "unchanged", store.OutcomeUnchanged, false},
+		{"suspended before filter", &manifest.HelmRelease{Name: "suspended", Suspend: true}, true, false, "suspended", store.OutcomeSuspended, false},
+		{"suspended before preflight", &manifest.HelmRelease{Name: "suspended", Suspend: true}, false, true, "suspended", store.OutcomeSuspended, false},
+		{"suspended chart before filter", chart, true, false, "suspended", store.OutcomeSuspended, false},
+		{"suspended chart before preflight", chart, false, true, "suspended", store.OutcomeSuspended, false},
+		{"active chart", &manifest.HelmChartSource{Name: "active-chart"}, false, false, "", store.OutcomePassed, true},
+		{"suspended repository before filter", &manifest.HelmRepository{Name: "repo", Suspend: true}, true, false, "suspended", store.OutcomeSuspended, false},
+		{"suspended repository before preflight", &manifest.HelmRepository{Name: "repo", Suspend: true}, false, true, "suspended", store.OutcomeSuspended, false},
+		{"active repository", &manifest.HelmRepository{Name: "repo"}, false, false, "", store.OutcomePassed, true},
+		{"data", &manifest.ConfigMap{Name: "data"}, false, false, "", store.OutcomePassed, true},
+		{"secret", &manifest.Secret{Name: "secret"}, false, false, "", store.OutcomePassed, true},
+		{"raw object", &manifest.RawObject{APIVersion: "example.test/v1", Kind: "Widget", Name: "raw", Spec: map[string]any{"suspend": true}}, false, false, "", store.OutcomePassed, true},
+		{"input provider", &manifest.ResourceSetInputProvider{Name: "provider"}, false, false, "", store.OutcomePassed, true},
+		{"external artifact", &manifest.ExternalArtifact{Name: "source"}, false, false, "", store.OutcomePassed, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -377,7 +438,7 @@ func TestDispatchNode(t *testing.T) {
 				return nil
 			})
 			info, _ := st.GetStatus(id)
-			if ran != tc.run || info.Status != store.StatusReady || info.Message != tc.message {
+			if ran != tc.run || info.Outcome() != tc.outcome || info.Message != tc.message {
 				t.Fatalf("ran=%t status=%+v, want ran=%t Ready/%s", ran, info, tc.run, tc.message)
 			}
 		})

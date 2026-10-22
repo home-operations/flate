@@ -1,7 +1,6 @@
 package change
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -156,6 +155,10 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	return out, nil
 }
 
+type inputReader func([]byte) (int, error)
+
+func (r inputReader) Read(p []byte) (int, error) { return r(p) }
+
 func (s *Set) collectInputs(ctx context.Context, input fs.FS, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -170,30 +173,39 @@ func (s *Set) collectInputs(ctx context.Context, input fs.FS, name string) error
 		return fmt.Errorf("%w: open input %s: %w", manifest.ErrInput, name, err)
 	}
 	defer func() { _ = f.Close() }()
-	buf := hashBuffers.Get().(*hashBuffer)
-	defer hashBuffers.Put(buf)
-	var data bytes.Buffer
-	for {
+	var terminal, readErr error
+	reader := inputReader(func(p []byte) (int, error) {
 		if err := ctx.Err(); err != nil {
-			return err
+			terminal = err
+			return 0, err
 		}
-		n, err := f.Read(buf.bytes[:])
+		n, err := f.Read(p)
+		terminal = err
+		if err != nil && err != io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
+			readErr = err
+		}
 		if err := ctx.Err(); err != nil {
-			return err
+			terminal = err
+			return 0, err
 		}
-		_, _ = data.Write(buf.bytes[:n])
-		if err == io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("%w: read input %s: %w", manifest.ErrInput, name, err)
-		}
+		return n, err
+	})
+	docs, decodeErr := manifest.DecodeDocs(reader)
+	if decodeErr != nil && terminal == nil {
+		// A parser error must not hide later file errors or cancellation.
+		_, _ = io.Copy(io.Discard, reader)
 	}
-	if err := ctx.Err(); err != nil {
+	err = ctx.Err()
+	if err == nil && readErr != nil {
+		err = fmt.Errorf("%w: read input %s: %w", manifest.ErrInput, name, readErr)
+	}
+	if err != nil {
+		for _, doc := range docs {
+			manifest.ReleaseDoc(doc)
+		}
 		return err
 	}
-	docs, err := manifest.DecodeDocs(bytes.NewReader(data.Bytes()))
-	if err != nil {
+	if decodeErr != nil {
 		return nil
 	}
 	for _, doc := range docs {

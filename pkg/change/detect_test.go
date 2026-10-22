@@ -526,6 +526,8 @@ type evidenceFailureFS struct {
 	fs.FS
 	operation string
 	cause     error
+	read      func([]byte) (int, error)
+	opened    atomic.Int32
 	closed    atomic.Int32
 }
 
@@ -537,6 +539,7 @@ func (f *evidenceFailureFS) Open(name string) (fs.File, error) {
 	if err != nil || name != "input.yaml" {
 		return file, err
 	}
+	f.opened.Add(1)
 	return &evidenceFailureFile{File: file, input: f}, nil
 }
 
@@ -545,8 +548,14 @@ type evidenceFailureFile struct {
 	input *evidenceFailureFS
 }
 
-func (f *evidenceFailureFile) Read([]byte) (int, error) { return 0, f.input.cause }
-func (f *evidenceFailureFile) Close() error             { f.input.closed.Add(1); return f.File.Close() }
+func (f *evidenceFailureFile) Read(p []byte) (int, error) {
+	if f.input.read != nil {
+		return f.input.read(p)
+	}
+	return 0, f.input.cause
+}
+
+func (f *evidenceFailureFile) Close() error { f.input.closed.Add(1); return f.File.Close() }
 
 func TestDetect_OneSidedInputCancellation(t *testing.T) {
 	t.Parallel()
@@ -571,4 +580,180 @@ func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), true)
 	assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}(nil))
+}
+
+func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
+	var set Set
+	err := set.collectInputs(ctx, input, "input.yaml")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error=%v", err)
+	}
+	assert.Equal(t, input.opened.Load(), int32(0))
+}
+
+type inputCheckContext func() context.Context
+
+func (c inputCheckContext) Deadline() (time.Time, bool) { return c().Deadline() }
+func (c inputCheckContext) Done() <-chan struct{}       { return c().Done() }
+func (c inputCheckContext) Err() error                  { return c().Err() }
+func (c inputCheckContext) Value(key any) any           { return c().Value(key) }
+
+func TestCollectInputs_CancelAfterOpen(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reads := 0
+	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
+	input.read = func([]byte) (int, error) {
+		reads++
+		return 0, io.EOF
+	}
+	checked := inputCheckContext(func() context.Context {
+		if input.opened.Load() != 0 {
+			cancel()
+		}
+		return ctx
+	})
+	var set Set
+	err := set.collectInputs(checked, input, "input.yaml")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error=%v", err)
+	}
+	assert.Equal(t, reads, 0)
+	assert.Equal(t, input.opened.Load(), int32(1))
+	assert.Equal(t, input.closed.Load(), int32(1))
+	assert.Equal(t, len(set.inputs), 0)
+}
+
+func TestCollectInputs_ReadResults(t *testing.T) {
+	t.Parallel()
+	body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: apps}\n"
+	cause := errors.New("input read failed")
+	wrappedEOF := fmt.Errorf("unexpected EOF: %w", io.EOF)
+	for _, tc := range []struct {
+		name    string
+		readErr error
+		cancel  bool
+		wantErr error
+		reads   int
+	}{
+		{name: "bytes then EOF", reads: 2},
+		{name: "bytes with EOF", readErr: io.EOF, reads: 1},
+		{name: "bytes with error", readErr: cause, wantErr: cause, reads: 1},
+		{name: "wrapped EOF", readErr: wrappedEOF, wantErr: wrappedEOF, reads: 1},
+		{name: "cancel with bytes", cancel: true, wantErr: context.Canceled, reads: 1},
+		{name: "cancel with EOF", readErr: io.EOF, cancel: true, wantErr: context.Canceled, reads: 1},
+		{name: "cancel with error", readErr: cause, cancel: true, wantErr: context.Canceled, reads: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			cancellationChecks := 0
+			checked := inputCheckContext(func() context.Context {
+				if ctx.Err() != nil {
+					cancellationChecks++
+				}
+				return ctx
+			})
+			reads := 0
+			input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
+			input.read = func(p []byte) (int, error) {
+				reads++
+				if reads > 1 {
+					return 0, io.EOF
+				}
+				if tc.cancel {
+					cancel()
+				}
+				return copy(p, body), tc.readErr
+			}
+			var set Set
+			err := set.collectInputs(checked, input, "input.yaml")
+			if tc.wantErr == nil {
+				assert.NoError(t, err)
+				assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {}})
+			} else {
+				if !errors.Is(err, tc.wantErr) || len(set.inputs) != 0 {
+					t.Fatalf("collected inputs=%v error=%v", set.inputs, err)
+				}
+				if !tc.cancel && (!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")) {
+					t.Fatalf("read failure classification=%v", err)
+				}
+			}
+			assert.Equal(t, reads, tc.reads)
+			assert.Equal(t, input.closed.Load(), int32(1))
+			if tc.cancel {
+				// Final cancellation resolution must not mask a missing read-boundary check.
+				assert.Equal(t, cancellationChecks, 2)
+			}
+		})
+	}
+}
+
+func TestCollectInputs_ParseFailureDrain(t *testing.T) {
+	t.Parallel()
+	const malformed = "\x00invalid\n"
+	cause := errors.New("later read failed")
+	probeReads := 0
+	probe := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
+	probe.read = func(p []byte) (int, error) {
+		probeReads++
+		if probeReads == 1 {
+			return copy(p, malformed), nil
+		}
+		return 0, cause
+	}
+	f, err := probe.Open("input.yaml")
+	assert.NoError(t, err)
+	_, err = manifest.DecodeDocs(f)
+	assert.NoError(t, f.Close())
+	if err == nil || probeReads != 1 {
+		t.Fatalf("malformed fixture must stop before the later read: reads=%d error=%v", probeReads, err)
+	}
+	t.Logf("pinned decoder rejects malformed prefix after %d read; later read remains pending", probeReads)
+	for _, tc := range []struct {
+		name    string
+		readErr error
+		cancel  bool
+		wantErr error
+	}{
+		{name: "malformed ending at EOF", readErr: io.EOF},
+		{name: "later read error", readErr: cause, wantErr: cause},
+		{name: "later cancellation", cancel: true, wantErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reads := 0
+			input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
+			input.read = func(p []byte) (int, error) {
+				reads++
+				if reads == 1 {
+					return copy(p, malformed), nil
+				}
+				if tc.cancel {
+					cancel()
+				}
+				return copy(p, "later content"), tc.readErr
+			}
+			var set Set
+			err := set.collectInputs(ctx, input, "input.yaml")
+			if tc.wantErr == nil {
+				assert.NoError(t, err)
+			} else if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("drained error=%v, want %v", err, tc.wantErr)
+			} else if !tc.cancel && (!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")) {
+				t.Fatalf("drained failure classification=%v", err)
+			}
+			assert.Equal(t, len(set.inputs), 0)
+			assert.Equal(t, reads, 2)
+			assert.Equal(t, input.closed.Load(), int32(1))
+		})
+	}
 }

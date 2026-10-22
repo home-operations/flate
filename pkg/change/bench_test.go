@@ -2,7 +2,9 @@ package change
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -128,5 +130,22 @@ func BenchmarkDetect(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkCollectInputs_LargeFile(b *testing.B) {
+	root := b.TempDir()
+	testutil.WriteFile(b, root, "input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: large, namespace: apps}\ndata:\n  value: "+strings.Repeat("x", 256*1024)+"\n")
+	input := os.DirFS(root)
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "large"}
+	b.ReportAllocs()
+	for b.Loop() {
+		var set Set
+		if err := set.collectInputs(b.Context(), input, "input.yaml"); err != nil {
+			b.Fatal(err)
+		}
+		if _, ok := set.inputs[id]; !ok || len(set.inputs) != 1 {
+			b.Fatalf("collected inputs=%v", set.inputs)
+		}
 	}
 }

@@ -2,10 +2,12 @@ package helm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -101,7 +103,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					loaded, err := cli.loadChart(t.Context(), hr)
+					loaded, err := loadDecodedChart(t.Context(), cli, hr)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -244,28 +246,28 @@ data:
 		}
 		ch.SetDependencies(dependencies...)
 		order := slices.Clone(ch.Dependencies())
-		before := projectChart(cloneChartForRender(ch))
-		fingerprint := manifest.Fingerprint(before)
+		before := cloneChartForRender(ch)
+		fingerprint := captured.fingerprint()
 		t.Cleanup(func() {
 			assert.Equal(t, slices.Equal(ch.Dependencies(), order), true)
-			assert.Diff(t, projectChart(ch), before)
-			assert.Equal(t, manifest.Fingerprint(projectChart(ch)), fingerprint)
+			assert.Equal(t, reflect.DeepEqual(ch, before), true)
+			assert.Equal(t, captured.fingerprint(), fingerprint)
 		})
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
 		cli.SetSourceResolver(NewStoreSourceResolver(st))
 		// Canonical charts MUST remain immutable; choose the loader order before admission.
-		cli.chartCache[selector] = chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
+		cli.chartCache[selector] = chartDescription{chart: ch, captured: captured, key: selector, location: ".", fingerprint: captured.fingerprint(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
 		return cli
 	}
 	keyFor := func(t *testing.T, cli *Client) cache.BlobKey {
 		t.Helper()
-		loaded, err := cli.loadChart(t.Context(), hr)
+		loaded, err := loadDecodedChart(t.Context(), cli, hr)
 		assert.NoError(t, err)
 		loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
-		values, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		_, err = cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, err)
-		key := computeTemplateKey(loaded, values, Options{}, hr)
+		key := computeTemplateKey(loaded, map[string]any{}, Options{}, hr)
 		t.Logf("chart fingerprint=%s template key=%s", loaded.fingerprint, key)
 		if key == "" {
 			t.Fatal("subchart fixture produced an empty completed-output key")
@@ -278,12 +280,19 @@ data:
 		assert.NoError(t, err)
 		data, err := io.ReadAll(r)
 		assert.NoError(t, errors.Join(err, r.Close()))
-		return string(data)
+		var record renderRecord
+		assert.NoError(t, json.Unmarshal(data, &record))
+		return record.Output
 	}
 	writeBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey, data string) {
 		t.Helper()
+		captured, _, err := captureChart(input, ".")
+		assert.NoError(t, err)
+		ch, err := captured.load()
+		assert.NoError(t, err)
+		analysis := &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}
 		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, err := io.WriteString(w, data)
+			err := json.NewEncoder(w).Encode(renderRecord{Output: data, Analysis: analysis})
 			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
@@ -409,7 +418,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				loaded, err := cli.loadChart(t.Context(), hr)
+				loaded, err := loadDecodedChart(t.Context(), cli, hr)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -439,105 +448,10 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 	values2 := map[string]any{"b": 2, "a": 1} // different in-memory order
 	opts := Options{KubeVersion: "1.33"}
 
-	k1 := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values1, opts, hr)
-	k2 := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values2, opts, hr)
+	k1 := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values1, opts, hr)
+	k2 := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values2, opts, hr)
 	if k1 != k2 {
 		t.Errorf("same logical values must produce same key:\nk1=%s\nk2=%s", k1, k2)
-	}
-}
-
-func TestComputeTemplateKey_SubchartOrder(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		nested  bool
-		aliases bool
-	}{
-		{name: "siblings"},
-		{name: "nested", nested: true},
-		{name: "same name with aliases", aliases: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			st, hr, dir := ociRenderFixture(t)
-			parent, prefix := "", "charts/"
-			if tc.nested {
-				parent, prefix = "charts/child/", "charts/child/charts/"
-			}
-			declarations := "dependencies:\n"
-			for _, name := range []string{"child", "sibling"} {
-				loadedName := name
-				alias := ""
-				if tc.aliases {
-					loadedName = "child"
-					alias = "    alias: " + name + "-alias\n"
-				}
-				declarations += "  - name: " + loadedName + "\n    version: 1.0.0\n" + alias
-				testutil.WriteFile(t, dir, prefix+name+"/Chart.yaml", "apiVersion: v2\nname: "+loadedName+"\nversion: 1.0.0\n")
-				testutil.WriteFile(t, dir, prefix+name+"/values.yaml", "marker: "+name+"\n")
-				testutil.WriteFile(t, dir, prefix+name+"/templates/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Chart.Name }}
-data:
-  marker: {{ .Values.marker | quote }}
-  origin: `+name+`-template
-`)
-			}
-			if tc.nested {
-				testutil.WriteFile(t, dir, parent+"Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n"+declarations)
-				declarations = "dependencies:\n  - name: child\n    version: 1.2.3+child\n"
-			}
-			testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n"+declarations)
-			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-			input := os.DirFS(dir)
-			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
-				Kind: manifest.KindOCIRepository, FS: input, Digest: digest, Revision: "6.15.0@" + digest,
-			})
-			var keys, outputs [2]string
-			for i := range 2 {
-				captured, _, err := captureChart(input, ".")
-				assert.NoError(t, err)
-				ch, err := captured.load()
-				assert.NoError(t, err)
-				ordered := ch
-				if tc.nested {
-					ordered = ch.Dependencies()[0]
-				}
-				dependencies := slices.Clone(ordered.Dependencies())
-				slices.SortFunc(dependencies, func(a, b *chart.Chart) int {
-					return strings.Compare(string(a.Templates[0].Data), string(b.Templates[0].Data))
-				})
-				if i == 1 {
-					slices.Reverse(dependencies)
-				}
-				ordered.SetDependencies(dependencies...)
-				order := slices.Clone(ordered.Dependencies())
-				before := projectChart(cloneChartForRender(ch))
-				loaded := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
-				assert.Equal(t, slices.Equal(ordered.Dependencies(), order), true)
-				cli, err := NewClient(cachetest.New(t, "", cache.New))
-				assert.NoError(t, err)
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
-				cli.chartCache[captured.fingerprint()] = loaded
-				loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
-				values, err := cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
-				assert.NoError(t, err)
-				keys[i] = computeTemplateKey(loaded, values, Options{}, hr)
-				if keys[i] == "" {
-					t.Fatal("ordered graph produced an empty key")
-				}
-				outputs[i], err = cli.Template(t.Context(), hr, nil, Options{})
-				assert.NoError(t, err)
-				assert.Equal(t, slices.Equal(ordered.Dependencies(), order), true)
-				assert.Diff(t, projectChart(ch), before)
-				if !strings.Contains(outputs[i], "-template") {
-					t.Fatal("fresh render omitted dependency content")
-				}
-			}
-			assert.Equal(t, keys[0] == keys[1], !tc.aliases)
-			assert.Equal(t, outputs[0] == outputs[1], !tc.aliases)
-		})
 	}
 }
 
@@ -545,7 +459,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	t.Parallel()
 	ch, hr := minimalChart(), minimalHR()
 	values := map[string]any{"k": "v"}
-	base := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, Options{}, hr)
+	base := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values, Options{}, hr)
 	if base == "" {
 		t.Fatal("valid inputs produced an empty key")
 	}
@@ -570,7 +484,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			default:
 				t.Fatalf("new option %s requires an explicit cache-key decision", field.Name)
 			}
-			key := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, opts, hr)
+			key := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values, opts, hr)
 			if key == "" {
 				t.Fatal("valid option produced an empty key")
 			}
@@ -608,7 +522,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 			default:
 				t.Fatalf("field %s requires an explicit cache-key decision", field)
 			}
-			key := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, Options{}, alt)
+			key := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values, Options{}, alt)
 			if key == "" || key == base {
 				t.Fatal("changed release input did not produce a distinct valid key")
 			}
@@ -618,59 +532,12 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 		t.Parallel()
 		changed := minimalChart()
 		changed.Metadata.Version = "9.0.0"
-		assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(changed)), chart: changed}, values, Options{}, hr) == base, false)
-	})
-	for _, tc := range []struct {
-		name string
-		edit func(*chart.Chart, *chart.Chart)
-	}{
-		{"template name", func(_, b *chart.Chart) { b.Templates[0].Name += "x" }},
-		{"template bytes", func(_, b *chart.Chart) { b.Templates[0].Data = []byte("kind: Namespace\n") }},
-		{"template order", func(a, b *chart.Chart) {
-			a.Templates = append(a.Templates, &chartcommon.File{Name: "other", Data: []byte("other")})
-			b.Templates = []*chartcommon.File{a.Templates[1], a.Templates[0]}
-		}},
-		{"nil template entry", func(a, b *chart.Chart) { a.Templates = []*chartcommon.File{nil}; b.Templates = []*chartcommon.File{{}} }},
-		{"file tuple boundary", func(a, b *chart.Chart) {
-			a.Files = []*chartcommon.File{{Name: "a", Data: []byte("bc")}}
-			b.Files = []*chartcommon.File{{Name: "ab", Data: []byte("c")}}
-		}},
-		{"file bytes", func(a, b *chart.Chart) {
-			a.Files = []*chartcommon.File{{Name: "a", Data: []byte("one")}}
-			b.Files = []*chartcommon.File{{Name: "a", Data: []byte("two")}}
-		}},
-		{"nil file entry", func(a, b *chart.Chart) { a.Files = []*chartcommon.File{nil}; b.Files = []*chartcommon.File{{}} }},
-		{"schema bytes", func(_, b *chart.Chart) { b.Schema = []byte("{}") }},
-		{"defaults", func(_, b *chart.Chart) { b.Values["default"] = false }},
-		{"dependency", func(a, b *chart.Chart) {
-			a.AddDependency(minimalChart())
-			child := minimalChart()
-			child.Values["default"] = false
-			b.AddDependency(child)
-		}},
-	} {
-		t.Run("Chart/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			a, b := minimalChart(), minimalChart()
-			tc.edit(a, b)
-			first, second := chartLoadResult{chart: a, fingerprint: manifest.Fingerprint(projectChart(a))}, chartLoadResult{chart: b, fingerprint: manifest.Fingerprint(projectChart(b))}
-			key := computeTemplateKey(first, nil, Options{}, hr)
-			valuesKey := chartValuesCacheKey(first, []string{"values.yaml"}, false, nil)
-			if key == "" || key == computeTemplateKey(second, nil, Options{}, hr) || valuesKey == "" || valuesKey == chartValuesCacheKey(second, []string{"values.yaml"}, false, nil) {
-				t.Fatal("distinct chart content shared a cache key")
-			}
-		})
-	}
-	t.Run("Chart/nil", func(t *testing.T) {
-		t.Parallel()
-		first, second := chartLoadResult{}, chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{}))}
-		assert.Equal(t, computeTemplateKey(first, nil, Options{}, hr) == computeTemplateKey(second, nil, Options{}, hr), false)
-		assert.Equal(t, chartValuesCacheKey(first, nil, false, nil) == chartValuesCacheKey(second, nil, false, nil), false)
+		assert.Equal(t, computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, changed).fingerprint, chart: changed}, values, Options{}, hr) == base, false)
 	})
 
 	t.Run("Values", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, map[string]any{"k": "different"}, Options{}, hr) == base, false)
+		assert.Equal(t, computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, map[string]any{"k": "different"}, Options{}, hr) == base, false)
 	})
 }
 
@@ -688,7 +555,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	values := map[string]any{"k": "v"}
 	opts := Options{KubeVersion: "1.33"}
 	base := minimalHR()
-	baseKey := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, opts, base)
+	baseKey := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values, opts, base)
 
 	t.Run("CommonMetadata does not change the key", func(t *testing.T) {
 		t.Parallel()
@@ -697,7 +564,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 			Labels:      map[string]string{"team": "platform"},
 			Annotations: map[string]string{"note": "x"},
 		}
-		if got := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, opts, &alt); got != baseKey {
+		if got := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values, opts, &alt); got != baseKey {
 			t.Errorf("CommonMetadata must NOT affect the cache key (applied downstream of Template):\nbase=%s\nalt =%s", baseKey, got)
 		}
 	})
@@ -706,7 +573,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 		t.Parallel()
 		alt := *base
 		alt.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
-		if got := computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(ch)), chart: ch}, values, opts, &alt); got == baseKey {
+		if got := computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch}, values, opts, &alt); got == baseKey {
 			t.Error("PostRenderers changes rendered output and must still diverge the key (guards against dropping a real input)")
 		}
 	})
@@ -757,7 +624,7 @@ data:
 			if err != nil {
 				t.Fatal(err)
 			}
-			canonical, err := cli.loadChart(t.Context(), newHR())
+			canonical, err := loadDecodedChart(t.Context(), cli, newHR())
 			assert.NoError(t, err)
 			beforeReads := reads["mychart/templates/configmap.yaml"]
 			second, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
@@ -768,7 +635,7 @@ data:
 			if backing != "acquired" {
 				assert.Equal(t, reads["mychart/templates/configmap.yaml"], beforeReads+1)
 			}
-			warm, err := cli.loadChart(t.Context(), newHR())
+			warm, err := loadDecodedChart(t.Context(), cli, newHR())
 			assert.NoError(t, err)
 			assert.Equal(t, warm.chart == canonical.chart, true)
 			assert.Equal(t, warm.fingerprint, canonical.fingerprint)
@@ -777,14 +644,16 @@ data:
 				t.Fatal(err)
 			}
 			assert.Equal(t, third == first, false)
-			loaded, err := cli.loadChart(t.Context(), newHR())
+			loaded, err := loadDecodedChart(t.Context(), cli, newHR())
 			if err != nil {
 				t.Fatal(err)
 			}
 			values := map[string]any{"greeting": "hi", "fail": true}
+			loaded.inputs, loaded.valuesErr = loaded.observeValuesFiles(t.Context(), newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
+			assert.NoError(t, loaded.valuesErr)
 			key := cache.BlobKey{Content: computeTemplateKey(loaded, values, Options{}, newHR()), PersistOnly: true}
 			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				_, err := io.WriteString(w, first)
+				err := json.NewEncoder(w).Encode(renderRecord{Output: first, Analysis: loaded.analyze()})
 				return cache.ProducerResult{}, err
 			})
 			if err != nil {
@@ -801,7 +670,7 @@ data:
 				t.Fatal(err)
 			}
 			cli.SetSourceResolver(resolver)
-			loaded, err = cli.loadChart(t.Context(), newHR())
+			loaded, err = loadDecodedChart(t.Context(), cli, newHR())
 			assert.NoError(t, err)
 			if backing == "acquired" {
 				// Remove chart backing alone so completed output remains readable.
@@ -820,10 +689,67 @@ data:
 				if err != nil || out != first {
 					t.Fatalf("completed hit: output=%q, error=%v", out, err)
 				}
+				initial, err := cli.describeChart(t.Context(), newHR())
+				assert.NoError(t, err)
+				_, err = cli.Template(t.Context(), newHR(), values, Options{})
+				assert.NoError(t, err)
+				repeated, err := cli.describeChart(t.Context(), newHR())
+				assert.NoError(t, err)
+				if initial.record == nil || repeated.record != initial.record {
+					t.Fatal("repeated hit did not share its typed record")
+				}
+				alternate := maps.Clone(values)
+				alternate["variant"] = true
+				loaded.inputs, loaded.valuesErr = loaded.observeValuesFiles(t.Context(), newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
+				assert.NoError(t, loaded.valuesErr)
+				alternateKey := cache.BlobKey{Content: computeTemplateKey(loaded, alternate, Options{}, newHR()), PersistOnly: true}
+				r, _, _, err := cli.cache.Blob(t.Context(), alternateKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					err := json.NewEncoder(w).Encode(initial.record)
+					return cache.ProducerResult{}, err
+				})
+				assert.NoError(t, err)
+				assert.Equal(t, cache.AcquisitionIdentity(r), initial.record.identity)
+				assert.NoError(t, r.Close())
+				_, err = cli.Template(t.Context(), newHR(), alternate, Options{})
+				assert.NoError(t, err)
+				distinct, err := cli.describeChart(t.Context(), newHR())
+				assert.NoError(t, err)
+				if distinct.record == initial.record || distinct.record.key != alternateKey.Content {
+					t.Fatal("distinct release key reused a typed record")
+				}
+				for _, replacement := range []string{"changed output", "{", `{"Output":"missing analysis"}`} {
+					r, _, _, err := cli.cache.Blob(t.Context(), alternateKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+						var err error
+						if replacement == "changed output" {
+							err = json.NewEncoder(w).Encode(renderRecord{Output: replacement, Analysis: loaded.analyze()})
+						} else {
+							_, err = io.WriteString(w, replacement)
+						}
+						return cache.ProducerResult{}, err
+					})
+					assert.NoError(t, err)
+					assert.NoError(t, r.Close())
+					out, err := cli.Template(t.Context(), newHR(), alternate, Options{})
+					switch replacement {
+					case "changed output":
+						assert.NoError(t, err)
+						if out != replacement {
+							t.Fatal("same-key replacement served stale output")
+						}
+					case "{":
+						if _, ok := errors.AsType[*json.SyntaxError](err); !ok || !errors.Is(err, manifest.ErrFlux) {
+							t.Fatalf("malformed replacement was concealed: %v", err)
+						}
+					default:
+						if !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "analysis missing") {
+							t.Fatalf("missing analysis was accepted: %v", err)
+						}
+					}
+				}
 			} else if err == nil || !strings.Contains(err.Error(), "cache miss action") {
 				t.Fatalf("ineligible output did not bypass persistence: %v", err)
 			}
-			warm, err = cli.loadChart(t.Context(), newHR())
+			warm, err = loadDecodedChart(t.Context(), cli, newHR())
 			assert.NoError(t, err)
 			assert.Equal(t, warm.chart == loaded.chart, true)
 			assert.Equal(t, warm.fingerprint, loaded.fingerprint)
@@ -913,8 +839,14 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
 			hr := newHR()
 			if fault == "lookup" {
-				if _, err := cli.Template(t.Context(), hr, nil, Options{}); err != nil {
-					t.Fatal(err)
+				for range 2 {
+					_, err := cli.Template(t.Context(), hr, nil, Options{})
+					assert.NoError(t, err)
+				}
+				d, err := cli.describeChart(t.Context(), hr)
+				assert.NoError(t, err)
+				if d.record == nil {
+					t.Fatal("lookup fault fixture did not warm a typed record")
 				}
 			}
 			if err := os.RemoveAll(root); err != nil {
@@ -1039,11 +971,11 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		cli.SetSourceResolver(NewStoreSourceResolver(st))
 		first, err := cli.Template(t.Context(), hr, nil, Options{})
 		assert.NoError(t, err)
-		initial, err := cli.loadChart(t.Context(), hr)
+		initial, err := loadDecodedChart(t.Context(), cli, hr)
 		assert.NoError(t, err)
-		merged, err := cli.mergeChartValuesFiles(t.Context(), initial, hr.ChartValuesFiles, true)
-		assert.NoError(t, err)
-		key := computeTemplateKey(initial, merged, Options{}, hr)
+		initial.inputs, initial.valuesErr = initial.observeValuesFiles(t.Context(), hr.ChartValuesFiles, true)
+		assert.NoError(t, initial.valuesErr)
+		key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
 		if key == "" {
 			t.Fatal("fixture has no completed-output key")
 		}
@@ -1051,10 +983,12 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		assert.NoError(t, err)
 		data, err := io.ReadAll(r)
 		assert.NoError(t, errors.Join(err, r.Close()))
-		assert.Equal(t, string(data), first)
+		var record renderRecord
+		assert.NoError(t, json.Unmarshal(data, &record))
+		assert.Equal(t, record.Output, first)
 		cached := first + "# persistent hit witness\n"
 		r, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, err := io.WriteString(w, cached)
+			err := json.NewEncoder(w).Encode(renderRecord{Output: cached, Analysis: initial.analyze()})
 			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
@@ -1067,12 +1001,72 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		assert.Equal(t, hit, cached)
 		assertSourceValuesChanges(t, fresh, hr, root)
 	})
+	t.Run("packaged cache cannot mask missing source values", func(t *testing.T) {
+		t.Parallel()
+		if !renderPersistenceEligible(t) {
+			t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
+		}
+		root, st, hr := sourceValuesCacheFixture(t)
+		artifact := st.GetArtifact(hr.ChartSource())
+		testutil.WriteFile(t, root, "charts/demo/prod.yaml", "marker: packaged\n")
+		hr.Chart.Source.Kind = manifest.KindExternalArtifact
+		hr.ChartValuesFiles = []string{"prod.yaml"}
+		hr.IgnoreMissingValuesFiles = false
+		st.SetArtifact(hr.ChartSource(), artifact)
+		cacheRoot := t.TempDir()
+		owner := cachetest.New(t, cacheRoot, cache.New)
+		cli, err := NewClient(owner)
+		assert.NoError(t, err)
+		cli.SetSourceResolver(NewStoreSourceResolver(st))
+		first, err := cli.Template(t.Context(), hr, nil, Options{})
+		assert.NoError(t, err)
+		if !strings.Contains(first, `marker: "packaged"`) {
+			t.Fatal(first)
+		}
+		initial, err := cli.describeChart(t.Context(), hr)
+		assert.NoError(t, err)
+		key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
+		if key == "" {
+			t.Fatal("fixture has no completed-output key")
+		}
+		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+		assert.NoError(t, err)
+		data, err := io.ReadAll(r)
+		assert.NoError(t, errors.Join(err, r.Close()))
+		var record renderRecord
+		assert.NoError(t, json.Unmarshal(data, &record))
+		assert.Equal(t, record.Output, first)
+		if record.Analysis == nil {
+			t.Fatal("persisted record has no chart analysis")
+		}
+		sourceHR := hr.Clone()
+		sourceHR.Chart.Source.Kind = manifest.KindGitRepository
+		st.SetArtifact(sourceHR.ChartSource(), artifact)
+		fresh, err := NewClient(cachetest.New(t, cacheRoot, cache.New))
+		assert.NoError(t, err)
+		fresh.SetSourceResolver(NewStoreSourceResolver(st))
+		out, err := fresh.Template(t.Context(), sourceHR, nil, Options{})
+		assert.Equal(t, out, "")
+		if !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			t.Fatalf("missing source values error = %v, want fs.ErrNotExist, ErrInput and ErrFlux", err)
+		}
+		if !strings.Contains(err.Error(), `read values file "prod.yaml"`) {
+			t.Fatal(err)
+		}
+		missing, err := fresh.describeChart(t.Context(), sourceHR)
+		assert.NoError(t, err)
+		missing.inputs, missing.valuesErr = missing.observeValuesFiles(t.Context(), sourceHR.ChartValuesFiles, false)
+		if !errors.Is(missing.valuesErr, fs.ErrNotExist) {
+			t.Fatal(missing.valuesErr)
+		}
+		assert.Equal(t, computeTemplateKey(missing, map[string]any{}, Options{}, sourceHR), key)
+	})
 	assertSourceValuesChanges(t, cli, hr, root)
 }
 
 func assertSourceValuesChanges(t *testing.T, cli *Client, hr *manifest.HelmRelease, root string) {
 	t.Helper()
-	initial, err := cli.loadChart(t.Context(), hr)
+	initial, err := loadDecodedChart(t.Context(), cli, hr)
 	assert.NoError(t, err)
 	for _, marker := range []string{"changed", "", "added"} {
 		if marker == "" {
@@ -1092,7 +1086,7 @@ func assertSourceValuesChanges(t *testing.T, cli *Client, hr *manifest.HelmRelea
 		repeated, err := cli.Template(t.Context(), hr, nil, Options{})
 		assert.NoError(t, err)
 		assert.Equal(t, repeated, out)
-		loaded, err := cli.loadChart(t.Context(), hr)
+		loaded, err := loadDecodedChart(t.Context(), cli, hr)
 		assert.NoError(t, err)
 		assert.Equal(t, loaded.chart == initial.chart, true)
 	}

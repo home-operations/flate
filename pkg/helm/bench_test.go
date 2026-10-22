@@ -225,14 +225,14 @@ func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	ctx := context.Background()
-	if _, err := cli.loadChart(ctx, hr); err != nil {
+	if _, err := loadDecodedChart(ctx, cli, hr); err != nil {
 		b.Fatalf("warm loadChart: %v", err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := cli.loadChart(ctx, hr); err != nil {
+		if _, err := loadDecodedChart(ctx, cli, hr); err != nil {
 			b.Fatalf("loadChart: %v", err)
 		}
 	}
@@ -264,7 +264,7 @@ func BenchmarkMergeChartValuesFiles(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := cli.mergeChartValuesFiles(b.Context(), chartLoadResult{chart: ch}, names, false); err != nil {
+		if _, err := cli.mergeChartValuesFiles(b.Context(), chartDescription{chart: ch}, names, false); err != nil {
 			b.Fatalf("mergeChartValuesFiles: %v", err)
 		}
 	}

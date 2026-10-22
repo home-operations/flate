@@ -294,7 +294,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 			{Name: "values-prod.yaml", Data: []byte("replicaCount: 3\nimage:\n  tag: v1\n")},
 		},
 	}
-	loaded := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
+	loaded := chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint}
 	names := []string{"values.yaml", "values-prod.yaml"}
 
 	first, err := cli.mergeChartValuesFiles(t.Context(), loaded, names, false)
@@ -354,11 +354,11 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		},
 	}
 
-	a, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: chA, fingerprint: manifest.Fingerprint(projectChart(chA))}, []string{"prod.yaml"}, false)
+	a, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: chA, fingerprint: chartFixtureDescription(t, chA).fingerprint}, []string{"prod.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartA: %v", err)
 	}
-	b, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: chB, fingerprint: manifest.Fingerprint(projectChart(chB))}, []string{"prod.yaml"}, false)
+	b, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: chB, fingerprint: chartFixtureDescription(t, chB).fingerprint}, []string{"prod.yaml"}, false)
 	if err != nil {
 		t.Fatalf("chartB: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 					{Name: "prod.yaml", Data: []byte("k: " + name + "\n")},
 				},
 			}
-			loaded := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
+			loaded := chartDescription{chart: ch, fingerprint: ""}
 			assert.Equal(t, chartValuesCacheKey(loaded, []string{"prod.yaml"}, false, nil), "")
 			values, err := cli.mergeChartValuesFiles(t.Context(), loaded, []string{"prod.yaml"}, false)
 			if err != nil {
@@ -404,7 +404,7 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 		{Name: "first.yaml", Data: []byte("marker: first\n")},
 		{Name: "second.yaml", Data: []byte("marker: second\n")},
 	}}
-	loaded := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch))}
+	loaded := chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint}
 	for _, tc := range []struct {
 		name   string
 		files  []string
@@ -437,8 +437,8 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 
 func TestChartValuesCacheKey_DistinctInputs(t *testing.T) {
 	t.Parallel()
-	loaded := chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{Values: map[string]any{"k": "f"}}))}
-	changed := chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(&chart.Chart{Values: map[string]any{"k": "g"}}))}
+	loaded := chartDescription{fingerprint: manifest.Fingerprint([]byte("k: f"))}
+	changed := chartDescription{fingerprint: manifest.Fingerprint([]byte("k: g"))}
 	source := loaded
 	source.valuesFS = fstest.MapFS{}
 	source.valuesPin = "pin"
@@ -518,7 +518,7 @@ func TestOCIChartContent_DistinctInputs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ch := minimalChart()
-			first := chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch)), oci: &initial}
+			first := chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint, oci: &initial}
 			second := first
 			second.oci = &tc.next
 			assert.Equal(t, computeTemplateKey(first, nil, Options{}, minimalHR()) != computeTemplateKey(second, nil, Options{}, minimalHR()), true)

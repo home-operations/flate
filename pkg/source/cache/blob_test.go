@@ -74,6 +74,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Diff(t, data, payload)
 		assert.Equal(t, restoredID, id)
+		assert.Equal(t, AcquisitionIdentity(r), digest.FromBytes(payload).String())
 		assert.Equal(t, AcquisitionIdentity(FileFS("payload", r)), manifest.Fingerprint([2]string{digest.FromBytes(payload).String(), "payload"}))
 		assert.NoError(t, r.Close())
 		checkUnused()
@@ -510,6 +511,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					t.Fatal(err)
 				}
 				view := FileFS("chart.tgz", r)
+				readerPin := AcquisitionIdentity(r)
+				assert.Equal(t, readerPin, digest.FromString(payload).String())
+				assert.Equal(t, AcquisitionIdentity(struct{ io.ReadCloser }{r}), "")
 				pin := AcquisitionIdentity(view)
 				assert.Equal(t, pin, identities[payload])
 				if pin == "" || pin == AcquisitionIdentity(FileFS("other.tgz", r)) || AcquisitionIdentity(struct{ fs.FS }{view}) != "" {
@@ -524,6 +528,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				if err := r.Close(); err != nil {
 					t.Fatal(err)
 				}
+				assert.Equal(t, AcquisitionIdentity(r), "")
 				if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, nil); !errors.Is(err, errdef.ErrNotFound) || r != nil {
 					t.Fatalf("stale lookup: reader=%v, error=%v", r, err)
 				}
@@ -546,6 +551,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					t.Fatal(err)
 				}
 				restored := FileFS("chart.tgz", first)
+				assert.Equal(t, AcquisitionIdentity(first), readerPin)
 				if AcquisitionIdentity(restored) != pin {
 					t.Fatal("blob restoration changed identity")
 				}

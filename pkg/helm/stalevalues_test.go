@@ -11,6 +11,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
@@ -127,7 +128,13 @@ func TestUnreferencedValuePaths(t *testing.T) {
 			if al == nil {
 				al = allow()
 			}
-			got := unreferencedValuePaths(tc.src, tc.values, al)
+			ch := &chart.Chart{}
+			if tc.src != "" {
+				ch.Templates = []*chartcommon.File{{Data: []byte(tc.src)}}
+			}
+			analysis := (chartDescription{chart: ch}).analyze()
+			analysis.Allowed = al
+			got := analysis.unreferencedValuePaths(tc.values)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("unreferencedValuePaths = %v, want %v", got, tc.want)
 			}
@@ -151,7 +158,7 @@ func TestOpaqueValuesAccess(t *testing.T) {
 		"{{ .Values.a }}{{ .Values.b }}": false,
 	}
 	for src, want := range cases {
-		if got := opaqueValuesAccess(src); got != want {
+		if got := opaqueValuesAccess([]byte(src)); got != want {
 			t.Errorf("opaqueValuesAccess(%q) = %v, want %v", src, got, want)
 		}
 	}

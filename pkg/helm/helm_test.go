@@ -88,7 +88,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	hr.ChartValuesFiles = []string{"mychart/values.yaml", "mychart/first.yaml", "mychart/second.yaml"}
 	snapshot := manifest.DeepCopyMap(vals)
 	hrBefore := hr.Clone()
-	canonical, err := cli.loadChart(t.Context(), hr)
+	canonical, err := loadDecodedChart(t.Context(), cli, hr)
 	assert.NoError(t, err)
 	chartSnapshot := manifest.DeepCopyMap(canonical.chart.Values)
 	start := make(chan struct{})
@@ -485,7 +485,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			"first.yaml":  "a: first-only\nb: from-first\n",
 			"second.yaml": "b: from-second\nc: second-only\n",
 		})
-		got, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"first.yaml", "second.yaml"}, false)
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"first.yaml", "second.yaml"}, false)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -497,7 +497,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("MissingFileIgnored", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"a.yaml", "missing.yaml"}, true)
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"a.yaml", "missing.yaml"}, true)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}
@@ -509,7 +509,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		_, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"missing.yaml"}, false)
+		_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"missing.yaml"}, false)
 		if err == nil {
 			t.Fatal("expected error for missing file when ignoreMissing=false")
 		}
@@ -521,7 +521,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("InvalidYAMLErrors", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
-		_, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, []string{"bad.yaml"}, false)
+		_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"bad.yaml"}, false)
 		if err == nil {
 			t.Fatal("expected error for invalid YAML")
 		}
@@ -533,7 +533,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: c}, nil, false)
+		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, nil, false)
 		if err != nil {
 			t.Fatalf("merge: %v", err)
 		}

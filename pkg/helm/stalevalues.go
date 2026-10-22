@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"strings"
@@ -42,27 +43,35 @@ func (c *Client) StaleValuePaths(ctx context.Context, hr *manifest.HelmRelease, 
 	if len(values) == 0 {
 		return nil
 	}
-	loaded, err := c.loadChart(ctx, hr)
-	if err != nil || loaded.chart == nil {
+	loaded, err := c.describeChart(ctx, hr)
+	if err == nil && loaded.analysis == nil {
+		err = c.decodeChart(ctx, &loaded)
+	}
+	if err != nil {
 		return nil
 	}
-	return unreferencedValuePaths(chartTemplateText(loaded.chart), values, knownTopLevelKeys(loaded.chart))
+	return loaded.analyze().unreferencedValuePaths(values)
 }
 
-// unreferencedValuePaths returns the sorted top-level value keys absent from the
-// template source, skipping the always-used allowlist. It is pure and fail-open:
-// empty source or any opaque whole-.Values access yields nil (never a misleading
-// warning).
-func unreferencedValuePaths(src string, values map[string]any, allow map[string]struct{}) []string {
-	if src == "" || opaqueValuesAccess(src) {
+func requiresChartLoader(ch *chart.Chart) bool {
+	for _, file := range ch.Raw {
+		if file != nil && (file.Name == "requirements.yaml" || file.Name == "requirements.lock") {
+			return true
+		}
+	}
+	return slices.ContainsFunc(ch.Dependencies(), requiresChartLoader)
+}
+
+func (a *chartAnalysis) unreferencedValuePaths(values map[string]any) []string {
+	if a.Templates == "" {
 		return nil
 	}
 	var out []string
 	for k := range values {
-		if _, ok := allow[k]; ok {
+		if _, ok := a.Allowed[k]; ok {
 			continue
 		}
-		if !valuesKeyReferenced(src, k) {
+		if !valuesKeyReferenced(a.Templates, k) {
 			out = append(out, k)
 		}
 	}
@@ -124,28 +133,33 @@ func anyDependencyTags(ch *chart.Chart) bool {
 	return slices.ContainsFunc(ch.Dependencies(), anyDependencyTags)
 }
 
-// chartTemplateText concatenates every template (including _helpers.tpl and
-// NOTES.txt) of ch and its subcharts. Subchart templates are included because a
-// parent that passes context to a common/library chart has its values consumed
-// there — so a `.Values.<key>` reference anywhere in the tree counts.
+// Opaque .Values access suppresses every warning, so its source MUST not be retained.
 func chartTemplateText(ch *chart.Chart) string {
 	var b strings.Builder
-	var add func(*chart.Chart)
-	add = func(c *chart.Chart) {
+	var add func(*chart.Chart) bool
+	add = func(c *chart.Chart) bool {
 		if c == nil {
-			return
+			return true
 		}
 		for _, f := range c.Templates {
 			if f != nil {
+				if opaqueValuesAccess(f.Data) {
+					return false
+				}
 				b.Write(f.Data)
 				b.WriteByte('\n')
 			}
 		}
 		for _, sub := range c.Dependencies() {
-			add(sub)
+			if !add(sub) {
+				return false
+			}
 		}
+		return true
 	}
-	add(ch)
+	if !add(ch) {
+		return ""
+	}
 	return b.String()
 }
 
@@ -159,9 +173,9 @@ func chartTemplateText(ch *chart.Chart) string {
 // The test is structural: every `.Values` token whose next non-space byte is
 // neither `.` (a field selector, .Values.foo) nor `"` (a literal index,
 // `.Values "foo"` / `index .Values "foo"`) accesses the map as a whole.
-func opaqueValuesAccess(src string) bool {
+func opaqueValuesAccess(src []byte) bool {
 	for i := 0; ; {
-		j := strings.Index(src[i:], valuesToken)
+		j := bytes.Index(src[i:], []byte(valuesToken))
 		if j < 0 {
 			return false
 		}

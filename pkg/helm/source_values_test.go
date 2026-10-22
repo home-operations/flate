@@ -247,7 +247,7 @@ func TestTemplate_ValuesFilesFailures(t *testing.T) {
 					cli, err := NewClient(owner)
 					assert.NoError(t, err)
 					ch := minimalChart()
-					_, err = cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: ch, fingerprint: manifest.Fingerprint(projectChart(ch)), valuesFS: tc.input}, []string{tc.path}, ignore)
+					_, err = cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint, valuesFS: tc.input}, []string{tc.path}, ignore)
 					if err == nil || !errors.Is(err, tc.want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.path)) {
 						t.Fatalf("values error = %v; want %v and filename %q", err, tc.want, tc.path)
 					}

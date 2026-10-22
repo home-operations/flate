@@ -3,6 +3,7 @@ package helm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/action"
@@ -36,32 +38,77 @@ var envSettings = sync.OnceValue(cli.New)
 // Completed output is persisted through the borrowed cache owner. A hit skips
 // chart cloning and Helm action construction; the key includes all render inputs.
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
-	loaded, err := c.loadChart(ctx, hr)
+	loaded, err := c.describeChart(ctx, hr)
+	if err != nil {
+		return "", err
+	}
+	if hr.UsesDirectOCIRepository() {
+		loaded.oci = &ociChartContent{Digest: loaded.artifact.Digest, Revision: loaded.artifact.Revision, DisableTracking: opts.DisableChartDigestTracking}
+	}
+	caps, capabilityErr := opts.capabilities()
+	loaded.inputs, loaded.valuesErr = loaded.observeValuesFiles(ctx, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+	if hrValues == nil {
+		hrValues = map[string]any{}
+	}
+	key := computeTemplateKey(loaded, hrValues, opts, hr)
+	blobKey := cache.BlobKey{Content: key, PersistOnly: true}
+	var cacheErr error
+	if key != "" && loaded.valuesErr == nil {
+		reader, _, _, lookupErr := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, nil)
+		if lookupErr == nil {
+			identity := cache.AcquisitionIdentity(reader)
+			record := loaded.record
+			loadRecord := record == nil || record.key != key || record.identity != identity
+			var data []byte
+			var readErr error
+			if loadRecord {
+				data, readErr = io.ReadAll(reader)
+			}
+			if err := errors.Join(readErr, reader.Close()); err != nil {
+				cacheErr = fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+			} else {
+				if loadRecord {
+					record = &renderRecord{key: key, identity: identity}
+					if err := json.Unmarshal(data, record); err != nil {
+						cacheErr = fmt.Errorf("%w: decode helm render cache: %w", manifest.ErrFlux, err)
+					} else if record.Analysis == nil {
+						cacheErr = fmt.Errorf("%w: helm render cache analysis missing", manifest.ErrFlux)
+					}
+				}
+				if cacheErr == nil {
+					if record.Analysis.RequiresLoader {
+						err = c.decodeChart(ctx, &loaded)
+						if err != nil {
+							return "", err
+						}
+					}
+					if loadRecord {
+						c.rememberDescription(loaded, record)
+					}
+					return record.Output, nil
+				}
+			}
+		} else if !errors.Is(lookupErr, errdef.ErrNotFound) {
+			cacheErr = fmt.Errorf("lookup helm render cache: %w", lookupErr)
+		}
+	}
+	err = c.decodeChart(ctx, &loaded)
 	if err != nil {
 		return "", err
 	}
 	var trackedVersion string
 	if hr.UsesDirectOCIRepository() {
-		art := &loaded.artifact
-		version, err := ociChartVersion(loaded.chart.Metadata.Version, art.Revision)
+		version, err := ociChartVersion(loaded.chart.Metadata.Version, loaded.artifact.Revision)
 		if err != nil {
 			return "", fmt.Errorf("track oci chart version: %w", err)
 		}
 		if !opts.DisableChartDigestTracking {
 			trackedVersion = version
 		}
-		loaded.oci = &ociChartContent{Digest: art.Digest, Revision: art.Revision, DisableTracking: opts.DisableChartDigestTracking}
 	}
-	caps, err := opts.capabilities()
-	if err != nil {
-		return "", err
+	if capabilityErr != nil {
+		return "", capabilityErr
 	}
-
-	if hrValues == nil {
-		hrValues = map[string]any{}
-	}
-
-	// HR values must override the chart's named valuesFiles, matching helm-controller.
 	finalValues := hrValues
 	if len(hr.ChartValuesFiles) > 0 {
 		base, err := c.mergeChartValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
@@ -70,26 +117,13 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 		finalValues = values.DeepMergeInto(base, hrValues)
 	}
-
-	key := computeTemplateKey(loaded, finalValues, opts, hr)
-	blobKey := cache.BlobKey{Content: key, PersistOnly: true}
-	if key != "" {
-		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, nil)
-		if err == nil {
-			data, readErr := io.ReadAll(reader)
-			if err := errors.Join(readErr, reader.Close()); err != nil {
-				return "", fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
-			}
-			return string(data), nil
-		}
-		if !errors.Is(err, errdef.ErrNotFound) {
-			return "", fmt.Errorf("lookup helm render cache: %w", err)
-		}
+	if cacheErr != nil {
+		return "", cacheErr
 	}
 
-	loaded.chart = cloneChartForRender(loaded.chart)
+	ch := cloneChartForRender(loaded.chart)
 	if trackedVersion != "" {
-		loaded.chart.Metadata.Version = trackedVersion
+		ch.Metadata.Version = trackedVersion
 	}
 
 	cfg := new(action.Configuration)
@@ -106,7 +140,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
 	inst.SkipSchemaValidation = schemaValidationSkipped(opts, hr, hrValues)
 
-	rel, err := inst.RunWithContext(ctx, loaded.chart, finalValues)
+	rel, err := inst.RunWithContext(ctx, ch, finalValues)
 	if err != nil {
 		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
 	}
@@ -117,16 +151,18 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 	// Disabled dependencies must be pruned before validating their CRDs.
 	if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
-		if err := validateCRDs(loaded.chart); err != nil {
+		if err := validateCRDs(ch); err != nil {
 			return "", err
 		}
 	}
 
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
-	if key != "" {
+	if key != "" && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
+		canonical, analysis := loaded.chart, loaded.analysis
 		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, err := io.WriteString(w, out)
+			description := chartDescription{chart: canonical, analysis: analysis}
+			err := json.NewEncoder(w).Encode(renderRecord{Output: out, Analysis: description.analyze()})
 			return cache.ProducerResult{}, err
 		})
 		if err != nil {
@@ -137,6 +173,20 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 	}
 	return out, nil
+}
+
+func validChartTemplates(ch *chart.Chart) bool {
+	for _, file := range ch.Templates {
+		if file != nil && !utf8.Valid(file.Data) {
+			return false
+		}
+	}
+	for _, sub := range ch.Dependencies() {
+		if !validChartTemplates(sub) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateCRDs(ch *chart.Chart) error {
@@ -254,7 +304,7 @@ type chartValuesFile struct {
 	Missing  bool
 }
 
-func (l chartLoadResult) readValuesFile(ctx context.Context, name string) (chartValuesFile, error) {
+func (l chartDescription) readValuesFile(ctx context.Context, name string) (chartValuesFile, error) {
 	clean := path.Clean(name)
 	if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
 		return chartValuesFile{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, fs.ErrInvalid)
@@ -298,23 +348,38 @@ func (l chartLoadResult) readValuesFile(ctx context.Context, name string) (chart
 	return chartValuesFile{Data: data}, nil
 }
 
-func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartLoadResult, names []string, ignoreMissing bool) (map[string]any, error) {
-	read := func(name string) (chartValuesFile, error) {
-		file, err := loaded.readValuesFile(ctx, name)
-		if file.Missing && ignoreMissing {
-			err = nil
-		}
-		return file, err
+func (l chartDescription) observeValuesFiles(ctx context.Context, names []string, ignoreMissing bool) ([]chartValuesFile, error) {
+	if l.valuesFS == nil {
+		return nil, nil
 	}
-	var inputs []chartValuesFile
-	if loaded.valuesFS != nil && loaded.valuesPin == "" {
-		inputs = make([]chartValuesFile, len(names))
-		for i, name := range names {
+	inputs := make([]chartValuesFile, len(names))
+	observed := make(map[string]chartValuesFile, len(names))
+	for i, name := range names {
+		clean := path.Clean(name)
+		file, ok := observed[clean]
+		if !ok {
 			var err error
-			inputs[i], err = read(name)
-			if err != nil {
+			file, err = l.readValuesFile(ctx, name)
+			if err != nil && (!ignoreMissing || !file.Missing) {
 				return nil, err
 			}
+			observed[clean] = file
+		}
+		inputs[i] = file
+	}
+	return inputs, nil
+}
+
+func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartDescription, names []string, ignoreMissing bool) (map[string]any, error) {
+	if loaded.valuesErr != nil {
+		return nil, loaded.valuesErr
+	}
+	inputs := loaded.inputs
+	if inputs == nil {
+		var err error
+		inputs, err = loaded.observeValuesFiles(ctx, names, ignoreMissing)
+		if err != nil {
+			return nil, err
 		}
 	}
 	key := chartValuesCacheKey(loaded, names, ignoreMissing, inputs)
@@ -333,7 +398,10 @@ func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartLoadResu
 			file = inputs[i]
 		} else {
 			var err error
-			file, err = read(name)
+			file, err = loaded.readValuesFile(ctx, name)
+			if file.Missing && ignoreMissing {
+				err = nil
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -362,7 +430,7 @@ func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartLoadResu
 	return manifest.DeepCopyMap(merged), nil
 }
 
-func chartValuesCacheKey(loaded chartLoadResult, names []string, ignoreMissing bool, inputs []chartValuesFile) string {
+func chartValuesCacheKey(loaded chartDescription, names []string, ignoreMissing bool, inputs []chartValuesFile) string {
 	if loaded.fingerprint == "" {
 		return ""
 	}

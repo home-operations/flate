@@ -1,8 +1,12 @@
 package helm
 
 import (
+	"context"
 	"errors"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 	"os"
+	"path/filepath"
+	"sigs.k8s.io/yaml"
 	"sync"
 	"testing"
 
@@ -33,7 +37,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				t.Fatal(err)
 			}
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			_, err = cli.loadChart(t.Context(), hr)
+			_, err = loadDecodedChart(t.Context(), cli, hr)
 			_, typed := errors.AsType[chart.ValidationError](err)
 			if !typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("validation chain = %v", err)
@@ -59,7 +63,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	var previous string
 	for i, dir := range []string{first, second} {
 		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
-		loaded, err := cli.loadChart(t.Context(), hr)
+		loaded, err := loadDecodedChart(t.Context(), cli, hr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,17 +98,17 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			cli.SetSourceResolver(NewStoreSourceResolver(st))
 			withoutFiles := hr.Clone()
 			withoutFiles.ChartValuesFiles = nil
-			loaded, err := cli.loadChart(t.Context(), withoutFiles)
+			loaded, err := loadDecodedChart(t.Context(), cli, withoutFiles)
 			if err != nil {
 				t.Fatal(err)
 			}
 			assert.Equal(t, loaded.fingerprint == "", false)
-			var results [2]chartLoadResult
+			var results [2]chartDescription
 			var failures [2]error
 			var wg sync.WaitGroup
 			for i := range results {
 				wg.Go(func() {
-					results[i], failures[i] = cli.loadChart(t.Context(), hr)
+					results[i], failures[i] = loadDecodedChart(t.Context(), cli, hr)
 				})
 			}
 			wg.Wait()
@@ -122,4 +126,28 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			assert.Equal(t, merged["marker"], any("original"))
 		})
 	}
+}
+
+func loadDecodedChart(ctx context.Context, c *Client, hr *manifest.HelmRelease) (chartDescription, error) {
+	d, err := c.describeChart(ctx, hr)
+	if err != nil {
+		return chartDescription{}, err
+	}
+	if err := c.decodeChart(ctx, &d); err != nil {
+		return chartDescription{}, err
+	}
+	return d, nil
+}
+
+func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
+	t.Helper()
+	root := t.TempDir()
+	assert.NoError(t, chartutil.SaveDir(ch, root))
+	data, err := yaml.Marshal(ch.Values)
+	assert.NoError(t, err)
+	testutil.WriteFile(t, root, filepath.Join(ch.Name(), "values.yaml"), string(data))
+	captured, _, err := captureChart(os.DirFS(root), ch.Name())
+	assert.NoError(t, err)
+	fingerprint := captured.fingerprint()
+	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
 }

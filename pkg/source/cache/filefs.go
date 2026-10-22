@@ -68,9 +68,11 @@ type blobFile struct {
 func (f *blobFile) Stat() (fs.FileInfo, error) { return f.FileInfo, nil }
 
 // AcquisitionIdentity reports the held generation and shaping of cache-owned readers.
-// Anonymous filesystems and wrappers have no acquisition authority.
-func AcquisitionIdentity(input fs.FS) string {
+// Anonymous inputs and wrappers have no acquisition authority.
+func AcquisitionIdentity(input any) string {
 	switch input := input.(type) {
+	case *blobHandle:
+		return input.input.identity
 	case *tarFS:
 		return input.identity
 	case fileFS:

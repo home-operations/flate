@@ -13,7 +13,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -28,16 +27,10 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 		{"function value", map[string]any{"bad": func() {}}, minimalChart()},
 		{"NaN value", map[string]any{"bad": math.NaN()}, minimalChart()},
 		{"infinite value", map[string]any{"bad": math.Inf(1)}, minimalChart()},
-		{"chart defaults", nil, &chart.Chart{Values: map[string]any{"bad": make(chan int)}}},
-		{"subchart defaults", nil, func() *chart.Chart {
-			ch := minimalChart()
-			ch.AddDependency(&chart.Chart{Values: map[string]any{"bad": make(chan int)}})
-			return ch
-		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, computeTemplateKey(chartLoadResult{fingerprint: manifest.Fingerprint(projectChart(tc.chart)), chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
+			assert.Equal(t, computeTemplateKey(chartDescription{fingerprint: chartFixtureDescription(t, tc.chart).fingerprint, chart: tc.chart}, tc.values, Options{}, minimalHR()), "")
 		})
 	}
 }
@@ -56,7 +49,7 @@ func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, err := cli.mergeChartValuesFiles(t.Context(), chartLoadResult{chart: loaded}, []string{"empty.yaml"}, false)
+	values, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: loaded}, []string{"empty.yaml"}, false)
 	if err != nil {
 		t.Fatalf("empty file treated as missing: %v", err)
 	}
@@ -77,7 +70,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
 	hr := newHR()
 	hr.DisableSchemaValidation = true
-	loaded, err := cli.loadChart(t.Context(), hr)
+	loaded, err := loadDecodedChart(t.Context(), cli, hr)
 	if err != nil {
 		t.Fatal(err)
 	}

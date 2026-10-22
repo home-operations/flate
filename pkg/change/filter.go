@@ -412,7 +412,10 @@ func (f *Filter) resolve() {
 				src.Namespace = ""
 				_, oneSided = f.changes.inputs[src]
 			}
-			if (!ok || !f.changes.Contains(sr.File)) && !oneSided {
+			changed := f.changes.Contains(sr.File) || slices.ContainsFunc(sr.Productions, func(p manifest.Production) bool {
+				return p.Declaration != (manifest.NamedResource{}) && f.changes.Contains(p.File)
+			})
+			if (!ok || !changed) && !oneSided {
 				continue
 			}
 			enqueuePrimary(consumer)

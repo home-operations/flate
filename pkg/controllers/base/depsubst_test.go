@@ -80,7 +80,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 					t.Errorf("first child arrival dependency=%q, want %q", got, tt.want)
 				}
 			}, false)
-			c.Emit(parent.Named(), next)
+			c.Emit(parent.Named(), next, nil)
 			assert.Equal(t, arrivals, 1)
 			got, ok := st.Get[*manifest.Kustomization](child.Named())
 			if !ok || got.DependsOn[0].Name != tt.want || got.DependsOn[0].Namespace != "${NS}" || got.DependsOn[0].ReadyExpr != "true" {
@@ -92,7 +92,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if next.Children[1].Obj != child || next.Children[2].Obj != sibling || sibling.DependsOn[0].Name != "${PREFIX:-dev-}config" {
 				t.Fatal("caller emission/children mutated")
 			}
-			_, accepted := st.GetEmission(parent.Named())
+			_, _, accepted := st.GetEmission(parent.Named())
 			if diff := cmp.Diff(docs, accepted.Manifests); diff != "" {
 				t.Fatalf("authoritative documents changed (-want +got):\n%s", diff)
 			}
@@ -144,7 +144,7 @@ func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 			<-start
 			controllers[i].Emit(parents[i].Named(), &store.Emission{
 				Children: []store.Child{{Obj: children[i], Doc: docs[i]}}, Complete: true,
-			})
+			}, nil)
 		}()
 	}
 	ready.Wait()

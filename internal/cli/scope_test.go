@@ -563,7 +563,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		len(selection[0].Unrelated) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id) != nil {
 		t.Fatalf("projection did not follow current canonical refs: %+v", selection[0])
 	}
-	_, accepted := o.Store().GetEmission(id)
+	_, _, accepted := o.Store().GetEmission(id)
 	defer accepted.Finish()
 	assert.Equal(t, len(accepted.Manifests), 0)
 }

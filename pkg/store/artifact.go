@@ -108,16 +108,15 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 		sh.mu.RUnlock()
 		return nil
 	}
+	var view capture
+	sh.captureLocked(id, sh.cells[id], &view)
 	artifact := sh.artifacts[id].value
-	e, emitted := artifact.(*Emission)
-	var input Child
-	if emitted && e.input != nil {
-		var view capture
-		sh.captureLocked(id, sh.cells[id], &view)
-		input = view.child
+	if view.payload != nil {
+		artifact = view.payload
 	}
+	e, emitted := artifact.(*Emission)
 	sh.mu.RUnlock()
-	if emitted && !emissionCurrent(e, input) {
+	if emitted && !emissionCurrent(e, view) {
 		return nil
 	}
 	return artifact
@@ -149,7 +148,11 @@ func sameArtifact(prev, next Artifact) bool {
 	return reflect.DeepEqual(ac, bc)
 }
 
-func emissionCurrent(e *Emission, input Child) bool {
+func emissionCurrent(e *Emission, view capture) bool {
+	input := view.child
+	if !reconcileDocumentEqual(e.input, e.inputDoc, input.Doc) || e.inputHead.binding != view.source {
+		return false
+	}
 	if e.input == nil || e.input == input.Obj {
 		return true
 	}
@@ -167,6 +170,13 @@ func emissionCurrent(e *Emission, input Child) bool {
 		e.validated.Store(validated)
 	}
 	return true
+}
+
+func payloadEqual(a, b *SourceArtifact) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a == b || sameArtifact(a, b)
 }
 
 func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {

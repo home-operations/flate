@@ -1,21 +1,26 @@
 package store
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"io"
+	"io/fs"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/task"
 )
 
@@ -29,7 +34,7 @@ func emissionChild(name, value string) Child {
 }
 func accept(t *testing.T, s *Store, owner manifest.NamedResource, next *Emission) {
 	t.Helper()
-	s.RecordEmitted(owner, next)
+	s.RecordEmitted(owner, next, nil)
 }
 func ownerID(name string) manifest.NamedResource {
 	return testutil.KustomizationID("apps", name)
@@ -40,7 +45,7 @@ func checkEffectiveObject(t *testing.T, s *Store, id manifest.NamedResource, wan
 	assert.Equal(t, s.GetObject(id), want.Obj)
 	obj, _ := s.Snapshot(id, false)
 	assert.Equal(t, obj, want.Obj)
-	obj, attempt := s.GetEmission(id)
+	obj, _, attempt := s.GetEmission(id)
 	defer attempt.Finish()
 	assert.Equal(t, obj, want.Obj)
 	if s.EmissionOwner(id) != (manifest.NamedResource{}) {
@@ -101,7 +106,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 		t.Fatalf("independent supports: %v", got)
 	}
 	bad := emissionChild("a", "unequal")
-	s.RecordEmitted(q, &Emission{Children: []Child{b, bad}, Complete: true})
+	s.RecordEmitted(q, &Emission{Children: []Child{b, bad}, Complete: true}, nil)
 	if s.GetObject(b.Obj.Named()) != b.Obj || s.GetObject(bad.Obj.Named()) != bad.Obj {
 		t.Fatal("unequal contribution lost accepted content")
 	}
@@ -115,7 +120,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 	}
 	accept(t, s, p, &Emission{Children: []Child{a}, Manifests: []map[string]any{a.Doc}, Complete: true})
 	s.UpdateFailure(p, fmt.Errorf("%w: failed successor", manifest.ErrInput))
-	_, attempt := s.GetEmission(p)
+	_, _, attempt := s.GetEmission(p)
 	if len(attempt.Manifests) != 1 || attempt.Complete {
 		t.Fatalf("failure lost accepted output: %+v", attempt)
 	}
@@ -126,10 +131,10 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 		t.Fatal("partial update lost predecessor")
 	}
 	attempt.Finish()
-	_, progress := s.GetEmission(p)
+	_, _, progress := s.GetEmission(p)
 	progress.Children = nil
 	accept(t, s, p, &progress)
-	_, retained := s.GetEmission(p)
+	_, _, retained := s.GetEmission(p)
 	if len(retained.Manifests) != 2 {
 		t.Fatalf("inherited partial documents duplicated: %d", len(retained.Manifests))
 	}
@@ -152,15 +157,15 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 
 			s := New()
 			s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
-			_, initial := s.GetEmission(p)
+			_, _, initial := s.GetEmission(p)
 			initial.Children, initial.Manifests = []Child{a}, []map[string]any{a.Doc}
 			initial.Unreadable, initial.Fingerprint = []manifest.NamedResource{a.Obj.Named()}, "same"
 			initial.Complete = tc.name != "complete"
-			s.RecordEmitted(p, &initial)
+			s.RecordEmitted(p, &initial, nil)
 			predecessor := s.GetArtifact(p).(*Emission)
-			_, attempt := s.GetEmission(p)
+			_, _, attempt := s.GetEmission(p)
 			defer attempt.Finish()
-			attempt.Complete, attempt.Fingerprint = initial.Complete, initial.Fingerprint
+			attempt.Complete, attempt.Fingerprint = initial.Complete, "same"
 			tc.edit(&attempt)
 			checkPredecessor := func() {
 				t.Helper()
@@ -175,7 +180,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 					events++
 				}
 			}, false)()
-			s.RecordEmitted(p, &attempt)
+			s.RecordEmitted(p, &attempt, nil)
 			accepted := s.GetArtifact(p).(*Emission)
 			if events != 1 || accepted == predecessor || accepted.Fingerprint != "same" {
 				t.Fatal("equal fingerprint discarded changed emission")
@@ -187,10 +192,11 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 				t.Fatal("changed emission lost captured children or documents")
 			}
 			checkPredecessor()
-			_, replay := s.GetEmission(p)
+			_, _, replay := s.GetEmission(p)
 			defer replay.Finish()
 			replay.binding = accepted.binding
-			s.RecordEmitted(p, &replay)
+			replay.Complete = accepted.Complete
+			s.RecordEmitted(p, &replay, nil)
 			if events != 1 || s.GetArtifact(p) != accepted {
 				t.Fatal("equal replay republished accepted output")
 			}
@@ -218,7 +224,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 			var wg sync.WaitGroup
 			for i := range workers {
 				wg.Go(func() {
-					_, next := s.GetEmission(p)
+					_, _, next := s.GetEmission(p)
 					defer next.Finish()
 					c := emissionChild(fmt.Sprint(i), "value")
 					next.Children, next.Manifests = []Child{c}, []map[string]any{c.Doc}
@@ -232,7 +238,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 			}
 			close(start)
 			wg.Wait()
-			_, attempt := s.GetEmission(p)
+			_, _, attempt := s.GetEmission(p)
 			sh := s.shardFor(p)
 			sh.mu.RLock()
 			accepted := sh.slots[p].current.Load()
@@ -287,7 +293,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 					if obj := s.GetObject(id); obj == nil || obj.Named() != id {
 						t.Error("concurrent object lost identity")
 					}
-					obj, next := s.GetEmission(id)
+					obj, _, next := s.GetEmission(id)
 					next.Finish()
 					if obj == nil || obj.Named() != id || s.EmissionOwner(id) != q {
 						t.Error("concurrent rich read lost representative")
@@ -346,9 +352,9 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 					producer := &manifest.Kustomization{Name: "stable", Namespace: "apps"}
 					s.AddObject(producer)
 					child := emissionChild("stable", "value")
-					_, initial := s.GetEmission(producer.Named())
+					_, _, initial := s.GetEmission(producer.Named())
 					initial.Children, initial.Manifests, initial.Complete = []Child{child}, []map[string]any{child.Doc}, true
-					s.RecordEmitted(producer.Named(), &initial)
+					s.RecordEmitted(producer.Named(), &initial, nil)
 					involved := []*shard{s.shardFor(producer.Named()), s.shardFor(child.Obj.Named())}
 					for _, target := range manifest.ProducerTargets(child.Obj) {
 						involved = append(involved, s.shardFor(target.NamedResource))
@@ -367,7 +373,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 					var replay sync.WaitGroup
 					for i := range workers {
 						replay.Go(func() {
-							_, next := s.GetEmission(producer.Named())
+							_, _, next := s.GetEmission(producer.Named())
 							defer next.Finish()
 							next.Complete = true
 							if labels {
@@ -377,7 +383,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 							}
 							ready <- struct{}{}
 							<-start
-							s.RecordEmitted(producer.Named(), &next)
+							s.RecordEmitted(producer.Named(), &next, nil)
 						})
 					}
 					for range workers {
@@ -422,6 +428,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					cycle := Child{Obj: &manifest.Kustomization{Name: l.Name, Namespace: l.Namespace}}
 					data := emissionChild("shared", "value")
 					late := emissionChild("late", "value")
+					payload := &SourceArtifact{Key: "late-generated", Digest: "late-digest", FS: fstest.MapFS{"file": {Data: []byte("late bytes")}}}
 					accept(t, s, p, &Emission{Children: []Child{child}, Complete: true})
 					accept(t, s, k, &Emission{Children: []Child{cycle, data}, Manifests: []map[string]any{data.Doc}, Complete: true})
 					accept(t, s, l, &Emission{Children: []Child{child}, Complete: true})
@@ -443,13 +450,13 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					var wg sync.WaitGroup
 					wg.Go(func() {
 						<-start
-						_, attempt := s.GetEmission(k)
+						_, _, attempt := s.GetEmission(k)
 						attempt.Children = []Child{cycle, data, late}
 						attempt.Manifests = []map[string]any{data.Doc, late.Doc}
 						attempt.Complete = true
 						close(captured)
 						<-lateRelease
-						accept(t, s, k, &attempt)
+						s.RecordEmitted(k, &attempt, map[manifest.NamedResource]*SourceArtifact{late.Obj.Named(): payload, data.Obj.Named(): payload})
 						attempt.Finish()
 						close(lateDone)
 					})
@@ -489,6 +496,9 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						checkEffectiveObject(t, s, data.Obj.Named(), independent)
 						assert.Equal(t, s.EmissionOwner(data.Obj.Named()), q)
 					}
+					if shared && s.GetArtifact(data.Obj.Named()) == payload {
+						t.Fatal("hidden producer supplied bytes to the independently visible declaration")
+					}
 					for _, id := range hidden {
 						s.UpdateFailure(id, fmt.Errorf("%w: hidden successor", manifest.ErrInput))
 						s.SetArtifact(id, &SourceArtifact{Key: "late"})
@@ -509,7 +519,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
 							t.Fatal("hidden snapshot leaked")
 						}
-						if obj, attempt := s.GetEmission(id); obj != nil {
+						if obj, _, attempt := s.GetEmission(id); obj != nil {
 							attempt.Finish()
 							t.Fatal("hidden attempt leaked")
 						}
@@ -535,19 +545,25 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 							}
 						}, true)()
 					}
+					if len(s.Warnings()) != 0 {
+						t.Fatal("hidden payload contributed a conflict warning")
+					}
 					s.AddObject(&manifest.Kustomization{Name: k.Name, Namespace: k.Namespace})
 					if s.GetObject(k) == nil || s.GetObject(l) == nil || s.GetObject(late.Obj.Named()) == nil {
 						t.Fatal("external anchor did not restore supported descendants")
+					}
+					if s.GetArtifact(late.Obj.Named()) != payload {
+						t.Fatal("reanchoring lost privately completed generated payload")
 					}
 					for _, id := range hidden {
 						obj := s.GetObject(id)
 						if snapshot, _ := s.Snapshot(id, false); snapshot != obj {
 							t.Error("reanchored snapshot differs from effective object")
 						}
-						rich, attempt := s.GetEmission(id)
+						rich, _, attempt := s.GetEmission(id)
 						assert.Equal(t, rich, obj)
 						attempt.Finish()
-						if s.GetArtifact(id) != nil {
+						if artifact := s.GetArtifact(id); artifact != nil && ((id != late.Obj.Named() && id != data.Obj.Named()) || artifact != payload) {
 							t.Error("reanchoring restored retained artifact")
 						}
 						if _, ok := s.GetStatus(id); ok {
@@ -608,15 +624,15 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 		owner manifest.NamedResource
 		child Child
 	}{{p, a}, {q, b}} {
-		_, inventory := s.GetEmission(contribution.owner)
-		if diff := cmp.Diff(inventory.Children, []Child{contribution.child}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+		_, _, inventory := s.GetEmission(contribution.owner)
+		if diff := cmp.Diff(inventory.Children, []Child{contribution.child}, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 			t.Fatalf("emission children changed (-want +got): %s", diff)
 		}
 		inventory.Finish()
 	}
 	changed := childWithLabels("q")
 	changed.Doc["metadata"].(map[string]any)["labels"].(map[string]any)["semantic"] = "different"
-	s.RecordEmitted(q, &Emission{Children: []Child{changed}, Complete: true})
+	s.RecordEmitted(q, &Emission{Children: []Child{changed}, Complete: true}, nil)
 	if warnings := s.Warnings(); len(warnings) != 1 || warnings[0].Category != manifest.WarnConflictingProducers {
 		t.Fatalf("semantic metadata conflict warning: %+v", warnings)
 	}
@@ -629,7 +645,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	if got := s.Productions(fresh.Obj.Named(), nil); len(got) != 1 || got[0].Source != second.source {
 		t.Fatal("partial update lost new source context")
 	}
-	_, attempt := s.GetEmission(p)
+	_, _, attempt := s.GetEmission(p)
 	attempt.Unreadable = []manifest.NamedResource{fresh.Obj.Named()}
 	var notifications int
 	unsub := s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
@@ -639,7 +655,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	}, false)
 	accept(t, s, p, &attempt)
 	unsub()
-	_, accepted := s.GetEmission(p)
+	_, _, accepted := s.GetEmission(p)
 	if notifications != 1 || !slices.Equal(accepted.Unreadable, attempt.Unreadable) {
 		t.Fatal("context-only refresh was discarded")
 	}
@@ -652,13 +668,13 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 			}
 			a, b := childWithLabels("p"), childWithLabels("q")
-			s.RecordEmitted(p, &Emission{Children: []Child{a}, Complete: true})
+			s.RecordEmitted(p, &Emission{Children: []Child{a}, Complete: true}, nil)
 			id := a.Obj.Named()
-			_, attempt := s.GetEmission(id)
+			_, _, attempt := s.GetEmission(id)
 			attempt.Complete = true
-			s.RecordEmitted(id, &attempt)
+			s.RecordEmitted(id, &attempt, nil)
 			accepted := s.GetArtifact(id).(*Emission)
-			s.RecordEmitted(q, &Emission{Children: []Child{b}, Complete: true})
+			s.RecordEmitted(q, &Emission{Children: []Child{b}, Complete: true}, nil)
 			checkReplay := func(want bool) {
 				t.Helper()
 				seen := false
@@ -700,7 +716,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			s.RecordEmitted(q, &Emission{Children: []Child{{Obj: unequal, Doc: doc}}, Complete: true})
+			s.RecordEmitted(q, &Emission{Children: []Child{{Obj: unequal, Doc: doc}}, Complete: true}, nil)
 			if s.GetArtifact(id) != nil {
 				t.Fatal("unequal representative reused a validated artifact")
 			}
@@ -710,12 +726,12 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 			}
 			replacement := *accepted
 			replacement.input, replacement.inputDoc = unequal, doc
-			s.RecordEmitted(id, &replacement)
+			s.RecordEmitted(id, &replacement, nil)
 			current := s.GetArtifact(id).(*Emission)
 			if current == accepted || current.validated == nil || current.validated == accepted.validated || current.validated.Load() != nil {
 				t.Fatal("new emission retained its predecessor's memo")
 			}
-			s.RecordEmitted(q, &Emission{Children: []Child{b}, Complete: true})
+			s.RecordEmitted(q, &Emission{Children: []Child{b}, Complete: true}, nil)
 			if s.GetArtifact(id) != nil {
 				t.Fatal("old memo authorized the replacement emission")
 			}
@@ -772,7 +788,7 @@ func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 			}})
 			publish := func(owner Child, children ...Child) {
 				t.Helper()
-				obj, attempt := s.GetEmission(owner.Obj.Named())
+				obj, _, attempt := s.GetEmission(owner.Obj.Named())
 				defer attempt.Finish()
 				if obj == nil {
 					t.Fatalf("%v unavailable before publication", owner.Obj.Named())
@@ -781,7 +797,7 @@ func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 				for _, child := range children {
 					attempt.Manifests = append(attempt.Manifests, child.Doc)
 				}
-				s.RecordEmitted(owner.Obj.Named(), &attempt)
+				s.RecordEmitted(owner.Obj.Named(), &attempt, nil)
 			}
 			check := func(stage string, child Child, want bool) {
 				t.Helper()
@@ -868,7 +884,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				}
 			}
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{seed.Obj.Named(): {Productions: productions}}})
-			_, attempt := s.GetEmission(p)
+			_, _, attempt := s.GetEmission(p)
 			actual := emissionChild("seed", "changed")
 			if support == "bootstrap-orphan-equal" {
 				actual = emissionChild("seed", "old")
@@ -883,7 +899,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 					events = append(events, obj)
 				}
 			}, false)
-			s.RecordEmitted(p, &attempt)
+			s.RecordEmitted(p, &attempt, nil)
 			unsub()
 			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
 			checkEffectiveObject(t, s, seed.Obj.Named(), actual)
@@ -891,7 +907,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				if s.GetObject(seed.Obj.Named()) != actual.Obj {
 					t.Fatal("accepted output did not replace independent static content")
 				}
-				_, empty := s.GetEmission(p)
+				_, _, empty := s.GetEmission(p)
 				empty.Children, empty.Manifests = nil, nil
 				empty.Complete = true
 				accept(t, s, p, &empty)
@@ -911,7 +927,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 					t.Fatalf("retired bootstrap support: %v", got)
 				}
 			}
-			_, empty := s.GetEmission(p)
+			_, _, empty := s.GetEmission(p)
 			empty.Children = nil
 			empty.Manifests = nil
 			empty.Complete = true
@@ -934,8 +950,8 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 		s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 		child := emissionChild("anchored", "value")
 		id := child.Obj.Named()
-		s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
-		s.RecordEmitted(p, &Emission{Complete: true})
+		s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
+		s.RecordEmitted(p, &Emission{Complete: true}, nil)
 		s.lockAll()
 		defer s.unlockAll()
 		sh := s.shardFor(id)
@@ -964,14 +980,14 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 			seed, child := emissionChild("seed", "static"), emissionChild("seed", "emitted")
 			s.AddObject(seed.Obj)
-			s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
+			s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
 			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
 			if mode == "rooted_representative" {
 				s.AddObject(child.Obj)
 				q := ownerID("q")
 				s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
 				other := emissionChild("seed", "other")
-				s.RecordEmitted(q, &Emission{Children: []Child{other}, Complete: true})
+				s.RecordEmitted(q, &Emission{Children: []Child{other}, Complete: true}, nil)
 				assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), manifest.NamedResource{})
 				warnings := s.Warnings()
 				if len(warnings) != 1 {
@@ -982,7 +998,20 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				assert.Equal(t, warnings[0].Count, 1)
 				assert.Equal(t, warnings[0].Message, "conflicting producers; using static object")
 				assert.Diff(t, warnings[0].Detail, []string{p.String(), q.String()})
+				if s.GetObject(seed.Obj.Named()) != seed.Obj {
+					t.Fatal("rooted read lost static authority")
+				}
 				checkEffectiveObject(t, s, seed.Obj.Named(), seed)
+				replacement := emissionChild("seed", "replacement")
+				s.AddObject(replacement.Obj, replacement.Doc)
+				checkEffectiveObject(t, s, seed.Obj.Named(), replacement)
+				_, document, replaced := s.GetEmission(seed.Obj.Named())
+				assert.Diff(t, document, replacement.Doc)
+				replaced.Finish()
+				if !s.DeleteObject(seed.Obj.Named()) {
+					t.Fatal("static authority was not deleted")
+				}
+				checkEffectiveObject(t, s, seed.Obj.Named(), other)
 				return
 			}
 			if !s.DeleteObject(seed.Obj.Named()) || s.GetObject(seed.Obj.Named()) != child.Obj {
@@ -1003,9 +1032,9 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 		s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			seed.Obj.Named(): {Productions: []manifest.Production{{Owner: p, Source: manifest.BootstrapSourceID}}},
 		}})
-		_, attempt := s.GetEmission(p)
+		_, _, attempt := s.GetEmission(p)
 		attempt.Complete = true
-		s.RecordEmitted(p, &attempt)
+		s.RecordEmitted(p, &attempt, nil)
 		attempt.Finish()
 		if s.GetObject(seed.Obj.Named()) != nil {
 			t.Fatal("empty membership exposed hidden static prediction")
@@ -1020,12 +1049,12 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 		seed := emissionChild("seed", "same")
 		s.AddObject(seed.Obj)
 		next := &Emission{Children: []Child{seed}, Manifests: []map[string]any{seed.Doc}, Complete: true}
-		s.RecordEmitted(p, next)
+		s.RecordEmitted(p, next, nil)
 		s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			seed.Obj.Named(): {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
 		}})
-		s.RecordEmitted(p, next)
-		s.RecordEmitted(p, &Emission{Complete: true})
+		s.RecordEmitted(p, next, nil)
+		s.RecordEmitted(p, &Emission{Complete: true}, nil)
 		if s.GetObject(seed.Obj.Named()) != nil {
 			t.Fatal("equal replay failed to retire the bootstrap seed")
 		}
@@ -1058,7 +1087,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				if present {
 					next.Children = []Child{child}
 				}
-				s.RecordEmitted(owner, next)
+				s.RecordEmitted(owner, next, nil)
 			}
 			check := func(want bool) {
 				t.Helper()
@@ -1074,10 +1103,10 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			}
 			publish(p, true)
 			if mode == "other-source-current" {
-				_, attempt := s.GetEmission(k)
+				_, _, attempt := s.GetEmission(k)
 				attempt.binding.source.Name = "other-source"
 				attempt.Complete = true
-				s.RecordEmitted(k, &attempt)
+				s.RecordEmitted(k, &attempt, nil)
 				attempt.Finish()
 			}
 			check(true)
@@ -1155,11 +1184,11 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 			}
 			conflict := replacement.Clone()
 			conflict.Path = "conflicting"
-			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: conflict}}, Complete: true})
+			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: conflict}}, Complete: true}, nil)
 			if s.GetObject(k) != replacement {
 				t.Fatal("direct input lost its independent authority")
 			}
-			s.RecordEmitted(p, &Emission{Complete: true})
+			s.RecordEmitted(p, &Emission{Complete: true}, nil)
 
 			q := ownerID("q")
 			s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
@@ -1184,7 +1213,7 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 			s.AddObject(seed)
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{k: {Productions: []manifest.Production{{Owner: p}}}}})
 			contribution := seed.Clone()
-			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true})
+			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true}, nil)
 			if state == "hidden" {
 				child := emissionChild("grandchild", "retained")
 				accept(t, s, k, &Emission{Children: []Child{child}, Complete: true})
@@ -1197,7 +1226,7 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 			if state == "hidden" {
 				assert.Equal(t, s.GetObject(emissionChild("grandchild", "retained").Obj.Named()) != nil, true)
 			}
-			s.RecordEmitted(p, &Emission{Complete: true})
+			s.RecordEmitted(p, &Emission{Complete: true}, nil)
 			if s.GetObject(k) != seed {
 				t.Fatal("equal direct write did not retain independent static authority")
 			}
@@ -1207,7 +1236,7 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 					events++
 				}
 			}, false)()
-			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true})
+			s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true}, nil)
 			s.AddObject(seed)
 			if s.GetObject(k) != seed || events != 0 {
 				t.Fatal("equal static write changed the rooted representative")
@@ -1319,8 +1348,8 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 			bare: {Productions: []manifest.Production{{Owner: q, Source: manifest.BootstrapSourceID, Path: "input.yaml"}}},
 		}}
 		s.SetDiscoveryIndex(index)
-		s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
-		s.RecordEmitted(p, &Emission{Complete: true})
+		s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
+		s.RecordEmitted(p, &Emission{Complete: true}, nil)
 		sh := s.shardFor(target)
 		sh.mu.RLock()
 		hidden, members := sh.cells[target].hidden, len(sh.members[target])
@@ -1444,9 +1473,9 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{bare: {Productions: proofs}}})
 			want := []manifest.Production{proofs[1]}
 			if shadowed {
-				_, next := s.GetEmission(p)
+				_, _, next := s.GetEmission(p)
 				next.Complete = true
-				s.RecordEmitted(p, &next)
+				s.RecordEmitted(p, &next, nil)
 				next.Finish()
 				want = nil
 			}
@@ -1495,7 +1524,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
 			t.Fatal("absent producer leaked snapshot")
 		}
-		if obj, attempt := s.GetEmission(id); obj != nil || len(attempt.Children) != 0 || len(attempt.Manifests) != 0 {
+		if obj, _, attempt := s.GetEmission(id); obj != nil || len(attempt.Children) != 0 || len(attempt.Manifests) != 0 {
 			t.Fatal("absent producer leaked accepted output")
 		}
 	}
@@ -1617,7 +1646,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: target.Namespace,
 				Spec: map[string]any{"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "VALUE"}}},
 			}
-			_, next := s.GetEmission(owner)
+			_, _, next := s.GetEmission(owner)
 			defer next.Finish()
 			next.Children, next.Complete = []Child{{Obj: external}}, true
 			start := make(chan struct{})
@@ -1628,7 +1657,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 			})
 			wg.Go(func() {
 				<-start
-				s.RecordEmitted(owner, &next)
+				s.RecordEmitted(owner, &next, nil)
 			})
 			close(start)
 			wg.Wait()
@@ -1697,7 +1726,7 @@ func TestStore_RenderedParentAllocations(t *testing.T) {
 			id := child.Obj.Named()
 			switch name {
 			case "thin":
-				s.RecordEmitted(owner, &Emission{Children: []Child{child}, Complete: true})
+				s.RecordEmitted(owner, &Emission{Children: []Child{child}, Complete: true}, nil)
 			case "frozen", "bridge":
 				key := id
 				proof := manifest.Production{Owner: owner}
@@ -1771,7 +1800,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 		}
 		owned := child
 		owned.Productions = []manifest.Production{proof}
-		s.RecordEmitted(p, &Emission{Children: []Child{owned}})
+		s.RecordEmitted(p, &Emission{Children: []Child{owned}}, nil)
 		borrowed := s.Productions(child.Obj.Named(), nil)
 		if len(borrowed) != 1 || &borrowed[0] != &backing[0] {
 			t.Fatal("duplicate accepted evidence copied frozen backing")
@@ -1802,7 +1831,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 		s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			child.Obj.Named(): {Productions: []manifest.Production{{Owner: p, Source: manifest.BootstrapSourceID}}},
 		}})
-		s.RecordEmitted(p, &Emission{Children: []Child{child}})
+		s.RecordEmitted(p, &Emission{Children: []Child{child}}, nil)
 		s.AddObject(child.Obj)
 		if s.GetObject(child.Obj.Named()) != child.Obj || s.GetObject(p) != nil {
 			t.Fatal("fixture needs an independently rooted child and hidden owner")
@@ -1830,7 +1859,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 				child.Obj.Named(): {Productions: proofs},
 			}})
 			s.AddObject(child.Obj)
-			_, attempt := s.GetEmission(owners[filtered])
+			_, _, attempt := s.GetEmission(owners[filtered])
 			attempt.Complete = true
 			accept(t, s, owners[filtered], &attempt)
 			attempt.Finish()
@@ -1848,7 +1877,7 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			}
 			want := slices.Delete(slices.Clone(original), filtered, filtered+1)
 			for _, id := range owners {
-				_, attempt := s.GetEmission(id)
+				_, _, attempt := s.GetEmission(id)
 				attempt.Complete = true
 				accept(t, s, id, &attempt)
 				attempt.Finish()
@@ -2044,8 +2073,8 @@ func TestRecordEmitted_SharedChildArrival(t *testing.T) {
 				wg.Go(func() {
 					<-start
 					synthetic := *child
-					s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: &synthetic}}})
-					s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: &synthetic}, emissionChild(owner.Name, "complete")}, Complete: true})
+					s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: &synthetic}}}, nil)
+					s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: &synthetic}, emissionChild(owner.Name, "complete")}, Complete: true}, nil)
 				})
 			}
 			close(start)
@@ -2088,7 +2117,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 			l.Obj.Named(): {Productions: []manifest.Production{{Owner: k, Source: manifest.BootstrapSourceID, Authored: l.Obj.Named(), Path: "l.yaml", File: "l.yaml"}}},
 		}})
-		s.RecordEmitted(p, &Emission{Children: []Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true})
+		s.RecordEmitted(p, &Emission{Children: []Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true}, nil)
 		if s.GetObject(k) == nil || !slices.ContainsFunc(s.ListObjects("", ""), func(obj manifest.BaseManifest) bool { return obj.Named() == l.Obj.Named() }) {
 			t.Fatal("fixture K/L not initially visible")
 		}
@@ -2133,7 +2162,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		t.Parallel()
 
 		s, p, k, l := fixture(t, "k", "l", false)
-		s.RecordEmitted(p, &Emission{Complete: true})
+		s.RecordEmitted(p, &Emission{Complete: true}, nil)
 		checkHidden(t, s, k)
 		checkHidden(t, s, l.Obj.Named())
 		for _, batch := range []bool{false, true} {
@@ -2141,7 +2170,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 				t.Parallel()
 
 				s, p, k, l := fixture(t, "k", "l", false)
-				s.RecordEmitted(p, &Emission{Complete: true})
+				s.RecordEmitted(p, &Emission{Complete: true}, nil)
 				checkHidden(t, s, k)
 				checkHidden(t, s, l.Obj.Named())
 				s.SetArtifact(l.Obj.Named(), &SourceArtifact{Key: "private"})
@@ -2188,19 +2217,19 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 				captured, observing, withdrawn := make(chan struct{}), make(chan struct{}), make(chan struct{})
 				late := emissionChild("late", "private")
 				tasks.Go(t.Context(), "late-publication", func(context.Context) {
-					_, attempt := s.GetEmission(k)
+					_, _, attempt := s.GetEmission(k)
 					defer attempt.Finish()
 					attempt.Children, attempt.Complete = []Child{late}, true
 					close(captured)
 					tasks.YieldSlot(func() { <-withdrawn })
 					checkHidden(t, s, l.Obj.Named())
-					s.RecordEmitted(k, &attempt)
+					s.RecordEmitted(k, &attempt, nil)
 					s.SetArtifact(l.Obj.Named(), &SourceArtifact{Key: "late-private"})
 					s.UpdateStatus(l.Obj.Named(), StatusReady, "", "")
 				})
 				tasks.Go(t.Context(), "withdrawal", func(context.Context) {
 					tasks.YieldSlot(func() { <-captured; <-observing })
-					s.RecordEmitted(p, &Emission{Complete: true})
+					s.RecordEmitted(p, &Emission{Complete: true}, nil)
 					close(withdrawn)
 				})
 				tasks.Go(t.Context(), "observer", func(context.Context) {
@@ -2270,11 +2299,11 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: doc}, {Obj: foreign, Doc: foreignDoc}}, Manifests: []map[string]any{foreignDoc, doc}, Complete: true})
+	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: doc}, {Obj: foreign, Doc: foreignDoc}}, Manifests: []map[string]any{foreignDoc, doc}, Complete: true}, nil)
 	if arrivals != 0 {
 		t.Fatalf("equal seed acquired document with %d arrivals", arrivals)
 	}
-	_, accepted := s.GetEmission(p)
+	_, _, accepted := s.GetEmission(p)
 	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], foreignDoc) || !specValueEqual(accepted.Manifests[1], doc) {
 		t.Fatal("suppressed arrival lost authoritative document")
 	}
@@ -2283,16 +2312,29 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 	}
 	next := manifest.DeepCopyMap(doc)
 	next["apiVersion"] = manifest.SourceDomain + "/v1beta2"
-	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: next}, emissionChild("other", "value")}, Manifests: []map[string]any{next}})
+	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: next}, emissionChild("other", "value")}, Manifests: []map[string]any{next}}, nil)
 	if arrivals != 1 {
 		t.Fatalf("changed authoritative document arrivals = %d, want 1", arrivals)
 	}
-	_, accepted = s.GetEmission(p)
+	_, _, accepted = s.GetEmission(p)
 	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], next) || !specValueEqual(accepted.Manifests[1], foreignDoc) {
 		t.Fatalf("partial version update lost cross-group documents: %v", accepted.Manifests)
 	}
 	if got := s.Productions(foreign.Named(), nil); len(got) != 1 || got[0].Owner != p {
 		t.Fatalf("cross-group support = %v", got)
+	}
+
+	next = manifest.DeepCopyMap(next)
+	next["metadata"].(map[string]any)["annotations"] = map[string]any{"semantic": "changed"}
+	next["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": p.Name}
+	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: obj, Doc: next}}, Complete: true}, nil)
+	if arrivals != 1 {
+		t.Fatalf("unchanged source document metadata caused %d arrivals, want 1", arrivals)
+	}
+	_, retained, attempt := s.GetEmission(obj.Named())
+	defer attempt.Finish()
+	if !specValueEqual(retained, next) {
+		t.Fatal("suppressed arrival lost updated document metadata")
 	}
 
 }
@@ -2311,6 +2353,66 @@ func (b *admissionBarrier) Named() manifest.NamedResource {
 		<-b.release
 	}
 	return b.ConfigMap.Named()
+}
+
+func TestRecordEmitted_ReadsInvalidatedBeforeCommit(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"stable", "replacement"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := ownerID("owner")
+			s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+			input := emissionChild("input", "old")
+			s.AddObject(input.Obj)
+			child := &manifest.ConfigMap{Name: "output", Namespace: "apps"}
+			s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: child}}, Fingerprint: "accepted", Complete: true}, nil)
+			previous := s.GetArtifact(owner)
+			var reads ReadSet
+			reads.Init(s, owner, nil)
+			defer reads.Retire()
+			reads.GetObject(input.Obj.Named())
+			name := child.Name
+			if mode == "replacement" {
+				name = "replacement"
+			}
+			release := make(chan struct{})
+			barrier := &admissionBarrier{
+				ConfigMap: &manifest.ConfigMap{Name: name, Namespace: "apps"},
+				prepared:  make(chan struct{}),
+				release:   release,
+			}
+			next := &Emission{Children: []Child{{Obj: barrier}}, Fingerprint: "stale", Complete: true}
+			reads.Bind(next)
+			resume := sync.OnceFunc(func() { close(release) })
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				s.RecordEmitted(owner, next, nil)
+			}()
+			t.Cleanup(func() { resume(); <-done })
+			select {
+			case <-barrier.prepared:
+			case <-done:
+				t.Fatal("publication did not reach the admission barrier")
+			}
+			if !reads.Valid() {
+				t.Fatal("reads invalid before concurrent input replacement")
+			}
+			s.AddObject(emissionChild("input", "new").Obj)
+			if reads.Valid() {
+				t.Fatal("input replacement did not invalidate the pending publication")
+			}
+			resume()
+			<-done
+			if s.GetArtifact(owner) != previous || s.GetObject(child.Named()) != child {
+				t.Fatal("stale proposal replaced authoritative output")
+			}
+			if mode == "replacement" && s.GetObject(barrier.ConfigMap.Named()) != nil {
+				t.Fatal("stale proposal installed a replacement child")
+			}
+		})
+	}
 }
 
 func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
@@ -2360,11 +2462,11 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 			if mode == "other-pin" {
 				proposal.binding.key = "other-pin"
 			}
-			s.RecordEmitted(owner.Named(), proposal)
+			s.RecordEmitted(owner.Named(), proposal, nil)
 			want := mode == "proposal" || mode == "frozen"
 			check := func(want bool) {
 				t.Helper()
-				_, current := s.GetEmission(owner.Named())
+				_, _, current := s.GetEmission(owner.Named())
 				defer current.Finish()
 				var predicted bool
 				for _, a := range s.GetArtifact(owner.Named()).(*Emission).entries {
@@ -2382,30 +2484,30 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 				}
 			}
 			check(want)
-			_, next := s.GetEmission(owner.Named())
+			_, _, next := s.GetEmission(owner.Named())
 			next.Children = []Child{g}
 			next.Complete = true
 			next.binding = proposal.binding
-			s.RecordEmitted(owner.Named(), &next)
+			s.RecordEmitted(owner.Named(), &next, nil)
 			check(want)
 			next.Finish()
 			if mode == "frozen" {
-				_, replacement := s.GetEmission(owner.Named())
+				_, _, replacement := s.GetEmission(owner.Named())
 				replacement.Children, replacement.Complete, replacement.binding = []Child{g, consumer("app-web")}, true, proposal.binding
-				s.RecordEmitted(owner.Named(), &replacement)
+				s.RecordEmitted(owner.Named(), &replacement, nil)
 				check(false)
 				replacement.Finish()
 				for range 2 {
-					_, withoutConsumer := s.GetEmission(owner.Named())
+					_, _, withoutConsumer := s.GetEmission(owner.Named())
 					withoutConsumer.Children, withoutConsumer.Complete, withoutConsumer.binding = []Child{g}, true, proposal.binding
-					s.RecordEmitted(owner.Named(), &withoutConsumer)
+					s.RecordEmitted(owner.Named(), &withoutConsumer, nil)
 					check(false)
 					withoutConsumer.Finish()
 				}
 			}
-			_, next = s.GetEmission(owner.Named())
+			_, _, next = s.GetEmission(owner.Named())
 			next.Children, next.Complete, next.binding = []Child{generator("different-{app}")}, true, proposal.binding
-			s.RecordEmitted(owner.Named(), &next)
+			s.RecordEmitted(owner.Named(), &next, nil)
 			check(false)
 			next.Finish()
 		})
@@ -2417,26 +2519,26 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 		s.AddObject(owner)
 		g := generator("app-{app}")
-		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true})
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true}, nil)
 		replacement := target
 		replacement.Name = "app-web"
-		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(replacement.Name)}, Complete: true})
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(replacement.Name)}, Complete: true}, nil)
 		if len(s.Productions(replacement, nil)) != 1 {
 			t.Fatal("reference replacement lost new prediction")
 		}
 		if len(s.Productions(target, nil)) != 0 {
 			t.Fatal("reference replacement retained old prediction")
 		}
-		_, current := s.GetEmission(owner.Named())
+		_, _, current := s.GetEmission(owner.Named())
 		if current.Children[0].Obj != g.Obj {
 			t.Fatal("unchanged declaration replaced")
 		}
 		current.Finish()
-		s.RecordEmitted(owner.Named(), &Emission{})
+		s.RecordEmitted(owner.Named(), &Emission{}, nil)
 		if len(s.Productions(replacement, nil)) != 1 {
 			t.Fatal("incomplete empty withdrew prediction")
 		}
-		s.RecordEmitted(owner.Named(), &Emission{Complete: true})
+		s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
 		if len(s.Productions(replacement, nil)) != 0 {
 			t.Fatal("successful empty retained prediction")
 		}
@@ -2449,8 +2551,8 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		s.AddObject(owner)
 		g, retained := generator("app-{app}"), consumer(target.Name)
 		retained.Obj = &manifest.Kustomization{Name: "retained", Namespace: "apps", SourceRef: retained.Obj.(*manifest.Kustomization).SourceRef}
-		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name), retained}, Complete: true})
-		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer("app-web")}, Complete: true})
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name), retained}, Complete: true}, nil)
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer("app-web")}, Complete: true}, nil)
 		if len(s.Productions(target, nil)) != 1 {
 			t.Fatal("retained consumer lost its declaration's prediction")
 		}
@@ -2463,7 +2565,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		s.AddObject(owner)
 		g := generator("app-{app}")
 		binding := sourceBinding{source: manifest.BootstrapSourceID, key: "pin", root: "/view"}
-		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true, binding: binding})
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true, binding: binding}, nil)
 		release := make(chan struct{})
 		barrier := &admissionBarrier{
 			ConfigMap: &manifest.ConfigMap{Name: "barrier", Namespace: "apps"},
@@ -2478,7 +2580,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 			writers.Wait()
 		})
 		writers.Go(func() {
-			s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, {Obj: barrier}, {Obj: &manifest.ConfigMap{Name: "inert", Namespace: "apps"}}}, Complete: true, binding: binding})
+			s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, {Obj: barrier}, {Obj: &manifest.ConfigMap{Name: "inert", Namespace: "apps"}}}, Complete: true, binding: binding}, nil)
 		})
 		<-barrier.prepared
 		replacement := target
@@ -2486,7 +2588,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		published := make(chan struct{})
 		writers.Go(func() {
 			defer close(published)
-			s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(replacement.Name)}, Complete: true, binding: binding})
+			s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(replacement.Name)}, Complete: true, binding: binding}, nil)
 		})
 		<-published
 		check := func() {
@@ -2530,7 +2632,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		for _, name := range []string{"app-api", "app-web"} {
 			wg.Go(func() {
 				<-start
-				s.RecordEmitted(owner.Named(), &Emission{Children: []Child{generator("app-{app}"), consumer(name)}, Complete: true})
+				s.RecordEmitted(owner.Named(), &Emission{Children: []Child{generator("app-{app}"), consumer(name)}, Complete: true}, nil)
 			})
 		}
 		close(start)
@@ -2558,9 +2660,9 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 	generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"}}
 	next := &Emission{Children: []Child{{Obj: generator}, {Obj: consumer}}, Complete: true}
-	s.RecordEmitted(owner.Named(), next)
+	s.RecordEmitted(owner.Named(), next, nil)
 	accepted := s.GetArtifact(owner.Named())
-	if got := testing.AllocsPerRun(10, func() { s.RecordEmitted(owner.Named(), next) }); got != 0 {
+	if got := testing.AllocsPerRun(10, func() { s.RecordEmitted(owner.Named(), next, nil) }); got != 0 {
 		t.Fatalf("identical dynamic emission allocated %v times, want zero", got)
 	}
 	if s.GetArtifact(owner.Named()) != accepted {
@@ -2581,12 +2683,12 @@ func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	s.AddObject(owner)
 	first, last := emissionChild("first", "a"), emissionChild("last", "b")
-	_, complete := s.GetEmission(owner.Named())
+	_, _, complete := s.GetEmission(owner.Named())
 	complete.Children = []Child{first, last}
 	complete.Manifests = []map[string]any{first.Doc, last.Doc}
 	complete.Fingerprint = manifest.Fingerprint(complete.Manifests)
 	complete.Complete = true
-	s.RecordEmitted(owner.Named(), &complete)
+	s.RecordEmitted(owner.Named(), &complete, nil)
 	complete.Finish()
 	var observer, writer ReadSet
 	observer.Init(s, ownerID("observer"), nil)
@@ -2599,9 +2701,9 @@ func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
 	defer stopObjects()
 	stopArtifacts := s.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { artifacts++ }, false)
 	defer stopArtifacts()
-	_, partial := writer.GetEmission(owner.Named())
+	_, _, partial := writer.GetEmission(owner.Named())
 	partial.Children = partial.Children[len(partial.Children)-1:]
-	s.RecordEmitted(owner.Named(), &partial)
+	s.RecordEmitted(owner.Named(), &partial, nil)
 	partial.Finish()
 	after := s.GetArtifact(owner.Named()).(*Emission)
 	if !observer.Valid() || objects != 0 || artifacts != 0 {
@@ -2610,68 +2712,76 @@ func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
 	if !after.Complete || after.Fingerprint != before.Fingerprint {
 		t.Fatal("equal partial subset lost completed render identity")
 	}
-	assert.Diff(t, after.Children, before.Children)
+	if !slices.EqualFunc(after.Children, before.Children, childEqual) {
+		t.Fatal("equal partial subset changed its children")
+	}
 	assert.Diff(t, after.Manifests, before.Manifests)
 }
 
 func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"partial", "rebound", "rejected"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			s := New()
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-			s.AddObject(owner)
-			var first, second ReadSet
-			first.Init(s, owner.Named(), nil)
-			second.Init(s, owner.Named(), nil)
-			defer first.Retire()
-			defer second.Retire()
-			_, output := first.GetEmission(owner.Named())
-			child := emissionChild("output", "old")
-			output.Children, output.Manifests = []Child{child}, []map[string]any{child.Doc}
-			output.Fingerprint = manifest.Fingerprint(output.Manifests)
-			output.Complete = true
-			first.Bind(&output)
-			s.RecordEmitted(owner.Named(), &output)
-			output.Finish()
-			_, next := second.GetEmission(owner.Named())
-			defer next.Finish()
-			next.Complete = mode != "partial"
-			if mode == "rejected" {
-				child = emissionChild("output", "new")
-				next.Children, next.Manifests = []Child{child}, []map[string]any{child.Doc}
-				next.Fingerprint = manifest.Fingerprint(next.Manifests)
-				sh := s.shardFor(owner.Named())
-				sh.mu.Lock()
-				sh.slots[owner.Named()].generation = ^uint64(0)
-				sh.mu.Unlock()
-			}
-			second.Bind(&next)
-			if mode == "rejected" {
-				func() {
-					defer func() {
-						if message, ok := recover().(string); !ok || message != "store: authority generation exhausted" {
-							t.Error("expected exhausted publication rejection")
-						}
-					}()
-					s.RecordEmitted(owner.Named(), &next)
-				}()
-			} else {
-				s.RecordEmitted(owner.Named(), &next)
-			}
-			current := s.GetArtifact(owner.Named()).(*Emission)
-			if mode == "rebound" {
-				if !first.retired.Load() || current.OutputReads != &second {
-					t.Fatal("accepted rebound retained the predecessor borrower")
+	for _, payload := range []bool{false, true} {
+		for _, mode := range []string{"partial", "rebound", "rejected"} {
+			t.Run(fmt.Sprintf("payload=%t/%s", payload, mode), func(t *testing.T) {
+				t.Parallel()
+				s := New()
+				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+				s.AddObject(owner)
+				var first, second ReadSet
+				first.Init(s, owner.Named(), nil)
+				second.Init(s, owner.Named(), nil)
+				defer first.Retire()
+				defer second.Retire()
+				_, _, output := first.GetEmission(owner.Named())
+				child := emissionChild("output", "old")
+				output.Children, output.Manifests = []Child{child}, []map[string]any{child.Doc}
+				output.Fingerprint = manifest.Fingerprint(output.Manifests)
+				output.Complete = true
+				first.Bind(&output)
+				var payloads map[manifest.NamedResource]*SourceArtifact
+				if payload {
+					payloads = map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "content"}}
 				}
-			} else if first.retired.Load() || current.OutputReads != &first {
-				t.Fatal("publication retired an output borrower it did not replace")
-			}
-			if !current.OutputReads.Valid() {
-				t.Fatal("current output lost valid provenance")
-			}
-		})
+				s.RecordEmitted(owner.Named(), &output, payloads)
+				output.Finish()
+				_, _, next := second.GetEmission(owner.Named())
+				defer next.Finish()
+				next.Complete = mode != "partial"
+				if mode == "rejected" {
+					child = emissionChild("output", "new")
+					next.Children, next.Manifests = []Child{child}, []map[string]any{child.Doc}
+					next.Fingerprint = manifest.Fingerprint(next.Manifests)
+					sh := s.shardFor(owner.Named())
+					sh.mu.Lock()
+					sh.slots[owner.Named()].generation = ^uint64(0)
+					sh.mu.Unlock()
+				}
+				second.Bind(&next)
+				if mode == "rejected" {
+					func() {
+						defer func() {
+							if message, ok := recover().(string); !ok || message != "store: authority generation exhausted" {
+								t.Error("expected exhausted publication rejection")
+							}
+						}()
+						s.RecordEmitted(owner.Named(), &next, nil)
+					}()
+				} else {
+					s.RecordEmitted(owner.Named(), &next, nil)
+				}
+				current := s.GetArtifact(owner.Named()).(*Emission)
+				if mode == "rebound" {
+					if !first.retired.Load() || current.OutputReads != &second {
+						t.Fatal("accepted rebound retained the predecessor borrower")
+					}
+				} else if first.retired.Load() || current.OutputReads != &first {
+					t.Fatal("publication retired an output borrower it did not replace")
+				}
+				if !current.OutputReads.Valid() {
+					t.Fatal("current output lost valid provenance")
+				}
+			})
+		}
 	}
 }
 
@@ -2689,7 +2799,7 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			s.AddObject(parent)
 			s.UpdateStatus(parent.Named(), StatusReady, "", "")
 			publish := func(children ...Child) {
-				s.RecordEmitted(parent.Named(), &Emission{Children: children, Complete: true})
+				s.RecordEmitted(parent.Named(), &Emission{Children: children, Complete: true}, nil)
 			}
 			publish(Child{Obj: declaration})
 			var first, second ReadSet
@@ -2701,12 +2811,12 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			if scenario == "source_hidden" {
 				s.SetArtifact(declaration.Named(), &SourceArtifact{Reads: &first, Key: "content"})
 			} else {
-				_, output := first.GetEmission(declaration.Named())
+				_, _, output := first.GetEmission(declaration.Named())
 				child := emissionChild("output", "old")
 				output.Children, output.Manifests = []Child{child}, []map[string]any{child.Doc}
 				output.Complete = true
 				first.Bind(&output)
-				s.RecordEmitted(declaration.Named(), &output)
+				s.RecordEmitted(declaration.Named(), &output, nil)
 				output.Finish()
 			}
 			first.Accept()
@@ -2759,6 +2869,484 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			sh.mu.RUnlock()
 			if retained != &first {
 				t.Fatal("closing discarded borrowed output provenance")
+			}
+		})
+	}
+}
+
+func TestRecordEmitted_PayloadPrecedence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                string
+		reverse, persistent bool
+	}{
+		{name: "memory/a-first"},
+		{name: "memory/z-first", reverse: true},
+		{name: "persistent/a-first", persistent: true},
+		{name: "persistent/z-first", persistent: true, reverse: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			a, z, zz := ownerID("a"), ownerID("z"), ownerID("zz")
+			for _, id := range []manifest.NamedResource{a, z, zz} {
+				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+			}
+			firstChild, lastChild, declaration := emissionChild("generated", "a"), emissionChild("generated", "z"), emissionChild("generated", "zz")
+			target := declaration.Obj.Named()
+			root := ""
+			if tc.persistent {
+				root = t.TempDir()
+			}
+			cache, err := sourcecache.New(t.Context(), root)
+			assert.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, cache.Close()) })
+			acquire := func(value string) *SourceArtifact {
+				t.Helper()
+				input, descriptor, key, err := cache.Acquire(t.Context(), sourcecache.ArchiveKey{Content: value, Policy: "fixed"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, target sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					writer := tar.NewWriter(target)
+					if err := writer.AddFS(fstest.MapFS{"file": {Data: []byte(value)}}); err != nil {
+						return sourcecache.ProducerResult{}, err
+					}
+					return sourcecache.ProducerResult{}, writer.Close()
+				})
+				assert.NoError(t, err)
+				return &SourceArtifact{Kind: target.Kind, URL: "https://" + value + ".test", LocalPath: "/" + value, LocalRoot: "/root-" + value, Key: key, Digest: descriptor.Annotations["flate.tree-digest"], Revision: "revision-" + value, Metadata: map[string]string{"origin": value}, FS: input}
+			}
+			first, last := acquire("a"), acquire("z")
+			first.Size, last.Size, last.InputAlias = 1, 2, true
+			peer := New()
+			peer.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
+			peer.RecordEmitted(a, &Emission{Children: []Child{firstChild}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: first})
+			owners, payloads := []manifest.NamedResource{a, z}, []*SourceArtifact{first, last}
+			children := []Child{firstChild, lastChild}
+			if tc.reverse {
+				slices.Reverse(owners)
+				slices.Reverse(payloads)
+				slices.Reverse(children)
+			}
+			start, done := make(chan struct{}), make(chan struct{})
+			tasks := task.NewBounded(2)
+			for i := range owners {
+				tasks.Go(t.Context(), owners[i].Name, func(context.Context) {
+					if i == 1 {
+						tasks.YieldSlot(func() { <-start })
+					}
+					s.RecordEmitted(owners[i], &Emission{Children: []Child{children[i]}, Manifests: []map[string]any{children[i].Doc}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: payloads[i]})
+					if i == 0 {
+						close(start)
+						tasks.YieldSlot(func() { <-done })
+					} else {
+						close(done)
+					}
+				})
+			}
+			tasks.BlockTillDone()
+			if tasks.Failures() != 0 {
+				t.Fatal("publication panicked")
+			}
+			s.RecordEmitted(zz, &Emission{Children: []Child{declaration}, Manifests: []map[string]any{declaration.Doc}, Complete: true}, nil)
+			assert.Diff(t, s.Warnings(), []manifest.Warning{{Resource: target, Category: manifest.WarnConflictingProducers, Count: 1, Message: "conflicting producers; using " + zz.String(), Detail: []string{a.String(), z.String(), zz.String()}}})
+			seen := 0
+			unsubscribe := s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, value any) {
+				if id == target {
+					seen++
+					if value != last {
+						t.Error("replay selected a different payload")
+					}
+				}
+			}, true)
+			unsubscribe()
+			if seen != 1 {
+				t.Fatalf("generated payload replay count = %d", seen)
+			}
+			if s.EmissionOwner(target) != zz || s.GetArtifact(target) != last {
+				t.Fatal("declaration winner suppressed greatest byte contributor")
+			}
+			checkDeclaration := func() {
+				t.Helper()
+				obj, doc, attempt := s.GetEmission(target)
+				defer attempt.Finish()
+				assert.Equal(t, obj, declaration.Obj)
+				assert.Diff(t, doc, declaration.Doc)
+				assert.Equal(t, s.EmissionOwner(target), zz)
+			}
+			checkDeclaration()
+			if data, err := fs.ReadFile(first.FS, "file"); err != nil || string(data) != "a" {
+				t.Fatalf("losing payload = %q, %v", data, err)
+			}
+			opened, err := last.FS.Open("file")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = opened.Close() }()
+			s.RecordEmitted(z, &Emission{Complete: true}, nil)
+			if s.GetArtifact(target) != first {
+				t.Fatal("withdrawal did not select the whole surviving descriptor")
+			}
+			checkDeclaration()
+			if data, err := fs.ReadFile(s.GetArtifact(target).(*SourceArtifact).FS, "file"); err != nil || string(data) != "a" {
+				t.Fatalf("surviving payload = %q, %v", data, err)
+			}
+			s.RecordEmitted(a, &Emission{Complete: true}, nil)
+			if s.GetObject(target) == nil || s.GetArtifact(target) != nil {
+				t.Fatal("declaration-only survivor retained byte authority")
+			}
+			checkDeclaration()
+			if data, err := io.ReadAll(opened); err != nil || string(data) != "z" {
+				t.Fatalf("already-open withdrawn backing = %q, %v", data, err)
+			}
+			if peer.GetArtifact(target) != first {
+				t.Fatal("withdrawal discarded another store's shared cache backing")
+			}
+			peer.RecordEmitted(a, &Emission{Complete: true}, nil)
+			for _, payload := range []*SourceArtifact{first, last} {
+				if data, err := fs.ReadFile(payload.FS, "file"); err != nil || string(data) != payload.Metadata["origin"] {
+					t.Fatalf("unowned cache backing = %q, %v", data, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRecordEmitted_PayloadProvenance(t *testing.T) {
+	t.Parallel()
+	s := New()
+	p := ownerID("producer")
+	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+	child := emissionChild("target", "same")
+	target := child.Obj.Named()
+	payload := &SourceArtifact{Kind: target.Kind, Key: "key", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}}
+	_, _, attempt := s.GetEmission(p)
+	defer attempt.Finish()
+	attempt.Children = []Child{child}
+	attempt.Fingerprint = "same"
+	s.RecordEmitted(p, &attempt, map[manifest.NamedResource]*SourceArtifact{target: payload})
+	if attempt.Fingerprint != "" || s.GetArtifact(p).(*Emission).Fingerprint != "" {
+		t.Fatal("partial payload publication retained successful fingerprint eligibility")
+	}
+	attempt.Children, attempt.Complete = []Child{child}, true
+	attempt.Fingerprint = "same"
+	s.RecordEmitted(p, &attempt, nil)
+	if s.GetArtifact(target) != payload {
+		t.Fatal("same-attempt nil finalization removed payload")
+	}
+	_, _, replay := s.GetEmission(p)
+	defer replay.Finish()
+	replay.Complete = true
+	s.RecordEmitted(p, &replay, nil)
+	if s.GetArtifact(target) != payload {
+		t.Fatal("borrowed replay removed payload")
+	}
+	s.RecordEmitted(p, &Emission{Children: []Child{child}, Manifests: replay.Manifests, Fingerprint: replay.Fingerprint, Complete: true}, nil)
+	if s.GetArtifact(target) != nil {
+		t.Fatal("fresh declaration-only replacement retained bytes")
+	}
+	s.RecordEmitted(p, &Emission{Children: []Child{child}, Fingerprint: "same", Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: payload})
+	other := emissionChild("other", "new")
+	_, _, replacement := s.GetEmission(p)
+	defer replacement.Finish()
+	replacement.Children, replacement.Complete = []Child{child, other}, true
+	s.RecordEmitted(p, &replacement, map[manifest.NamedResource]*SourceArtifact{other.Obj.Named(): payload})
+	if s.GetArtifact(target) != nil || s.GetArtifact(other.Obj.Named()) != payload {
+		t.Fatal("new attempt borrowed an earlier payload for its fresh declaration-only child")
+	}
+}
+
+func TestRecordEmitted_PayloadUpdate(t *testing.T) {
+	t.Parallel()
+	s := New()
+	owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	s.AddObject(owner)
+	child := emissionChild("generated", "same")
+	target := child.Obj.Named()
+	first := &SourceArtifact{Key: "first", Digest: "first", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
+	second := &SourceArtifact{Key: "second", Digest: "second", FS: fstest.MapFS{"file": {Data: []byte("second")}}}
+	_, _, initial := s.GetEmission(owner.Named())
+	initial.Children, initial.Manifests, initial.Fingerprint, initial.Complete = []Child{child}, []map[string]any{child.Doc}, "same", true
+	s.RecordEmitted(owner.Named(), &initial, map[manifest.NamedResource]*SourceArtifact{target: first})
+	var updates []*SourceArtifact
+	defer s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, value any) {
+		if id == target {
+			updates = append(updates, value.(*SourceArtifact))
+		}
+	}, false)()
+	_, _, next := s.GetEmission(owner.Named())
+	defer next.Finish()
+	next.Complete = true
+	s.RecordEmitted(owner.Named(), &next, map[manifest.NamedResource]*SourceArtifact{target: second})
+	if !slices.Equal(updates, []*SourceArtifact{second}) {
+		t.Fatal("payload-only replacement did not notify the whole descriptor exactly once")
+	}
+	obj, doc, input := s.GetEmission(target)
+	defer input.Finish()
+	assert.Equal(t, obj, child.Obj)
+	assert.Diff(t, doc, child.Doc)
+	assert.Equal(t, s.GetArtifact(target), Artifact(second))
+	equal := *second
+	equal.FS = fstest.MapFS{"file": {Data: []byte("second")}}
+	s.RecordEmitted(owner.Named(), &next, map[manifest.NamedResource]*SourceArtifact{target: &equal})
+	if !slices.Equal(updates, []*SourceArtifact{second}) {
+		t.Fatal("semantically equal payload with distinct backing notified readers")
+	}
+	s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
+	if s.GetArtifact(target) != nil || !slices.Equal(updates, []*SourceArtifact{second, nil}) {
+		t.Fatal("last payload withdrawal did not remove authority and notify readers")
+	}
+}
+
+func TestRecordEmitted_PayloadWarnings(t *testing.T) {
+	t.Parallel()
+	for _, equal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("equal=%t", equal), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			a, z, zz := ownerID("a"), ownerID("z"), ownerID("zz")
+			for _, id := range []manifest.NamedResource{a, z, zz} {
+				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+			}
+			child := emissionChild("generated", "same")
+			target := child.Obj.Named()
+			s.RecordEmitted(zz, &Emission{Children: []Child{child}, Complete: true}, nil)
+			first := &SourceArtifact{Key: "a", Digest: "a", Revision: "a", Metadata: map[string]string{"origin": "a"}, FS: fstest.MapFS{"file": {Data: []byte("a")}}}
+			last := &SourceArtifact{Key: "a", Digest: "a", Revision: "a", Metadata: map[string]string{"origin": "a"}, FS: fstest.MapFS{"file": {Data: []byte("a")}}}
+			if !equal {
+				last.Key, last.Digest, last.Revision = "z", "z", "z"
+				last.Metadata, last.FS = map[string]string{"origin": "z"}, fstest.MapFS{"file": {Data: []byte("z")}}
+			}
+			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: first})
+			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: last})
+			var want []manifest.Warning
+			if !equal {
+				want = []manifest.Warning{{Resource: target, Category: manifest.WarnConflictingProducers, Count: 1, Message: "conflicting producers; using " + zz.String(), Detail: []string{a.String(), z.String(), zz.String()}}}
+			}
+			assert.Diff(t, s.Warnings(), want)
+			assert.Equal(t, s.EmissionOwner(target), zz)
+			assert.Equal(t, s.GetArtifact(target), Artifact(last))
+		})
+	}
+}
+
+func TestGetEmission_CompleteFingerprint(t *testing.T) {
+	t.Parallel()
+	for _, complete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("complete=%t", complete), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			s.AddObject(owner)
+			_, _, next := s.GetEmission(owner.Named())
+			next.Complete, next.Fingerprint = true, "same"
+			s.RecordEmitted(owner.Named(), &next, nil)
+			sh := s.shardFor(owner.Named())
+			sh.mu.Lock()
+			accepted := *sh.slots[owner.Named()].current.Load()
+			accepted.Complete = complete
+			sh.slots[owner.Named()].current.Store(&accepted)
+			sh.mu.Unlock()
+			_, _, attempt := s.GetEmission(owner.Named())
+			defer attempt.Finish()
+			want := ""
+			if complete {
+				want = "same"
+			}
+			output, replayable := attempt.Replay("same")
+			assert.Equal(t, replayable, complete)
+			assert.Equal(t, output.Fingerprint, want)
+			assert.Equal(t, attempt.Complete, false)
+		})
+	}
+}
+
+func TestGetEmission_AuthoritativeDocument(t *testing.T) {
+	t.Parallel()
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprint(batch), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			raw := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"value": "first"}}
+			doc := map[string]any{"metadata": map[string]any{"uid": "authored"}, "spec": raw.Spec}
+			added := 0
+			defer s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+				if id == raw.Named() {
+					added++
+				}
+			}, false)()
+			s.AddObject(raw, doc)
+			if added != 1 {
+				t.Fatalf("initial admission events = %d, want 1", added)
+			}
+			if batch {
+				s.AddObjects([]manifest.BaseManifest{raw.Clone()})
+			} else {
+				s.AddObject(raw.Clone())
+			}
+			if added != 1 {
+				t.Fatalf("equal object-only admission events = %d, want 1", added)
+			}
+			_, retained, attempt := s.GetEmission(raw.Named())
+			attempt.Finish()
+			if !specValueEqual(retained, doc) {
+				t.Fatal("equal object-only admission discarded document")
+			}
+			changed := raw.Clone()
+			changed.Spec["value"] = "second"
+			if batch {
+				s.AddObjects([]manifest.BaseManifest{changed})
+			} else {
+				s.AddObject(changed)
+			}
+			if added != 2 {
+				t.Fatalf("changed object-only admission events = %d, want 2", added)
+			}
+			_, retained, attempt = s.GetEmission(raw.Named())
+			attempt.Finish()
+			if retained != nil {
+				t.Fatal("changed object-only admission retained stale authority")
+			}
+			replacement := map[string]any{"metadata": map[string]any{"uid": "replacement"}}
+			var captured ReadSet
+			captured.Init(s, ownerID("document-reader"), nil)
+			captured.GetObject(raw.Named())
+			s.AddObject(changed, replacement)
+			if captured.Valid() {
+				t.Fatal("meaningful document-only replacement kept the captured generator valid")
+			}
+			captured.Retire()
+			if added != 3 {
+				t.Fatalf("replacement document admission events = %d, want 3", added)
+			}
+			_, retained, attempt = s.GetEmission(raw.Named())
+			attempt.Finish()
+			if !specValueEqual(retained, replacement) {
+				t.Fatal("explicit document did not replace equal object's authority")
+			}
+			s.AddObject(changed, replacement)
+			if added != 3 {
+				t.Fatalf("equal document admission events = %d, want 3", added)
+			}
+			_, _, completed := s.GetEmission(raw.Named())
+			defer completed.Finish()
+			completed.Complete = true
+			s.RecordEmitted(raw.Named(), &completed, nil)
+			if s.GetArtifact(raw.Named()) == nil {
+				t.Fatal("completed document input is unavailable")
+			}
+			s.AddObject(changed, doc)
+			if s.GetArtifact(raw.Named()) != nil {
+				t.Fatal("changed document retained completed work for the same object pointer")
+			}
+		})
+	}
+}
+
+func TestGetEmission_SelectedBinding(t *testing.T) {
+	t.Parallel()
+	s := New()
+	parent := ownerID("parent")
+	s.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
+	obj := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+	child := Child{Obj: obj, Doc: map[string]any{"apiVersion": obj.APIVersion, "kind": obj.Kind}}
+	first := sourceBinding{source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "first"}, key: "first"}
+	second := sourceBinding{source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "second"}, key: "second"}
+	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: first}, nil)
+	_, _, attempt := s.GetEmission(obj.Named())
+	defer attempt.Finish()
+	attempt.Fingerprint, attempt.Complete = "success", true
+	s.RecordEmitted(obj.Named(), &attempt, nil)
+	accepted := s.GetArtifact(obj.Named())
+	if accepted == nil {
+		t.Fatal("fresh inventory unavailable")
+	}
+	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: first, Fingerprint: "changed"}, nil)
+	_, doc, equivalent := s.GetEmission(obj.Named())
+	defer equivalent.Finish()
+	if equivalent.inputHead.binding != first || !specValueEqual(doc, child.Doc) || func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() || s.GetArtifact(obj.Named()) != accepted {
+		t.Fatal("equivalent declaration storage invalidated accepted work")
+	}
+	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: second}, nil)
+	_, doc, rebound := s.GetEmission(obj.Named())
+	defer rebound.Finish()
+	if rebound.inputHead.binding != second || !specValueEqual(doc, child.Doc) || rebound.Fingerprint != "" || s.GetArtifact(obj.Named()) != nil {
+		t.Fatal("selected document and binding did not invalidate old replay together")
+	}
+}
+
+func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"complete", "close"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			s.AddObject(owner)
+			var output, first, second, third ReadSet
+			output.Init(s, owner.Named(), nil)
+			defer output.Retire()
+			initial := &Emission{Complete: true}
+			output.Bind(initial)
+			s.RecordEmitted(owner.Named(), initial, nil)
+			first.Init(s, owner.Named(), nil)
+			second.Init(s, owner.Named(), nil)
+			third.Init(s, owner.Named(), nil)
+			defer first.Retire()
+			defer second.Retire()
+			defer third.Close()
+			var registrations []*registrationHead
+			publish := func(reads *ReadSet, name string) {
+				t.Helper()
+				input := emissionChild("input-"+name, name)
+				s.AddObject(input.Obj)
+				reads.GetObject(input.Obj.Named())
+				registrations = append(registrations, reads.input(input.Obj.Named()).cells[objectFacet-1].head)
+				_, _, next := reads.GetEmission(owner.Named())
+				defer next.Finish()
+				child := emissionChild(name, name)
+				next.Children, next.Manifests = []Child{child}, []map[string]any{child.Doc}
+				reads.Bind(&next)
+				s.RecordEmitted(owner.Named(), &next, map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: name}})
+			}
+			publish(&first, "a")
+			publish(&second, "b")
+			publish(&third, "c")
+			accepted := s.GetArtifact(owner.Named()).(*Emission)
+			if len(accepted.Children) != 3 || !accepted.Retains(&first) || !accepted.Retains(&second) || !accepted.Retains(&third) {
+				t.Fatal("partial publication lost a borrowed payload owner")
+			}
+			if first.retired.Load() || second.retired.Load() {
+				t.Fatal("partial publication retired a descriptor still borrowed by the inventory")
+			}
+			for _, head := range registrations {
+				if head.first.Load() == nil {
+					t.Fatal("partial publication released a borrowed payload owner's registration")
+				}
+			}
+			if mode == "close" {
+				third.Close()
+				for _, reads := range []*ReadSet{&output, &first, &second, &third} {
+					if !reads.retired.Load() {
+						t.Fatal("closing retained a payload owner's registrations")
+					}
+				}
+				assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
+				for _, head := range registrations {
+					if head.first.Load() != nil {
+						t.Fatal("sweep retained a closed payload owner's registration")
+					}
+				}
+				return
+			}
+			last := emissionChild("c", "c")
+			_, _, next := third.GetEmission(owner.Named())
+			defer next.Finish()
+			next.Children, next.Manifests, next.Complete = []Child{last}, []map[string]any{last.Doc}, true
+			third.Bind(&next)
+			s.RecordEmitted(owner.Named(), &next, nil)
+			if !first.retired.Load() || !second.retired.Load() || third.retired.Load() {
+				t.Fatal("completion did not release exactly the superseded payload owners")
+			}
+			if s.GetArtifact(last.Obj.Named()) == nil {
+				t.Fatal("completion removed the current execution's accepted descriptor")
 			}
 		})
 	}

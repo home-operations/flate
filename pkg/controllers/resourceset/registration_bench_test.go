@@ -12,6 +12,7 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -179,10 +180,10 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							b.Fatal(errs[i])
 						}
 						id := sets[i].Named()
-						_, next := s.GetEmission(id)
+						_, _, next := s.GetEmission(id)
 						next.Children, next.Manifests = base.ParseChildren(id, artifacts[i].Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
-						c.Emit(id, &next)
+						c.Emit(id, &next, nil)
 						expected[i].fingerprint, expected[i].manifests = next.Fingerprint, next.Manifests
 						next.Finish()
 						s.UpdateStatus(sets[i].Named(), store.StatusReady, "", "")
@@ -290,12 +291,12 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, inventory := replay.run.Reads.GetEmission(rs.Named())
+	_, _, inventory := replay.run.Reads.GetEmission(rs.Named())
 	inventory.Children, inventory.Manifests = base.ParseChildren(rs.Named(), initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
 	inventory.Complete = true
-	replay.run.Emit(rs.Named(), &inventory)
+	replay.run.Emit(rs.Named(), &inventory, nil)
 	inventory.Finish()
-	if accepted := s.GetArtifact(rs.Named()).(*store.Emission); accepted.Fingerprint != initial.Fingerprint || !cmp.Equal(accepted.Manifests, initial.Manifests) || !cmp.Equal(accepted.Children, initial.Children) {
+	if accepted := s.GetArtifact(rs.Named()).(*store.Emission); accepted.Fingerprint != initial.Fingerprint || !cmp.Equal(accepted.Manifests, initial.Manifests) || !cmp.Equal(accepted.Children, initial.Children, cmpopts.IgnoreUnexported(store.Child{})) {
 		t.Error("same-inventory publication lost its rendered identity or bytes")
 	}
 	var objectEvents, statusEvents atomic.Int64

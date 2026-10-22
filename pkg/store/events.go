@@ -101,7 +101,7 @@ func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscrib
 type idPayload struct {
 	id      manifest.NamedResource
 	payload any
-	input   Child
+	input   capture
 }
 
 // snapshotForReplay captures the existing-state replay for event.
@@ -125,11 +125,24 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 			return record.statusInfo()
 		})
 	case EventArtifactUpdated:
-		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]artifactRecord {
-			return sh.artifacts
-		}, func(_ *shard, _ manifest.NamedResource, record artifactRecord) (any, bool) {
-			return record.value, record.value != nil
-		})
+		var out []idPayload
+		for _, sh := range s.shards {
+			for id := range sh.cells {
+				var view capture
+				sh.captureLocked(id, sh.cells[id], &view)
+				if sh.cells[id].hidden {
+					continue
+				}
+				artifact := sh.artifacts[id].value
+				if view.payload != nil {
+					artifact = view.payload
+				}
+				if artifact != nil {
+					out = append(out, idPayload{id: id, payload: artifact, input: view})
+				}
+			}
+		}
+		return out
 	}
 	return nil
 }
@@ -156,11 +169,11 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 			if !ok {
 				continue
 			}
-			var input Child
+			var input capture
 			if _, ok := payload.(*Emission); ok {
 				var view capture
 				sh.captureLocked(id, sh.cells[id], &view)
-				input = view.child
+				input = view
 			}
 
 			out = append(out, idPayload{id: id, payload: payload, input: input})

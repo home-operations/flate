@@ -126,6 +126,11 @@ func TestAcquire_EmptyEntryHeadersCountAgainstCap(t *testing.T) {
 			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(overCapTar.Bytes(), ocispec.Descriptor{})); err == nil {
 				t.Fatal("empty entry headers bypassed extract cap")
 			}
+			key.Policy = "extract"
+			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(overCapTar.Bytes(), ocispec.Descriptor{})); err != nil {
+				t.Fatalf("extract charged header bytes: %v", err)
+			}
+			key.Policy = ""
 			var payloadTar bytes.Buffer
 			testutil.WriteTar(t, &payloadTar, map[string]string{"a": "", "b": ""}, 0o644)
 			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(payloadTar.Bytes(), ocispec.Descriptor{})); err != nil {

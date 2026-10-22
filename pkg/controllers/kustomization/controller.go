@@ -177,7 +177,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 		return err
 	}
 
-	_, attempt := c.run.Reads.GetEmission(id)
+	_, _, attempt := c.run.Reads.GetEmission(id)
 	defer attempt.Finish()
 	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering")
 	if err := c.run.PreflightError(id); err != nil {
@@ -218,7 +218,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace})
 	attempt.Fingerprint, attempt.Complete = fp, true
-	c.run.Emit(id, &attempt)
+	c.run.Emit(id, &attempt, nil)
 	return nil
 }
 

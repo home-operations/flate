@@ -27,7 +27,7 @@ func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]mani
 			return obj
 		}
 		r, _ := l.Index.Lookup(id)
-		obj := l.indexedObject(id, r)
+		obj := l.indexedObject(id, r).Obj
 		objects[id] = obj
 		return obj
 	}

@@ -107,7 +107,7 @@ type DependencyRef struct {
 type Reference struct {
 	DependencyRef
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
-	// certSecretRef, proxySecretRef or inputsFrom.
+	// certSecretRef, proxySecretRef, inputsFrom, artifact or materializer.
 	Use string
 	// Position indexes the authored field; credentials use secret=0, cert=1, proxy=2.
 	Position int
@@ -143,6 +143,10 @@ func References(obj BaseManifest) iter.Seq[Reference] {
 		case *HelmRepository:
 			obj.references(yield)
 		case *Bucket:
+			obj.references(yield)
+		case *ExternalArtifact:
+			obj.references(yield)
+		case *RawObject:
 			obj.references(yield)
 		}
 	}
@@ -195,6 +199,9 @@ func (r *RawObject) Named() NamedResource {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (r *RawObject) Suspended() bool { return false }
+
+// ReconcileDocument reports whether reconciliation consumes the authoritative document.
+func (r *RawObject) ReconcileDocument() bool { return r.isArtifactGenerator() }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (r *RawObject) WithNamespace(namespace string) BaseManifest {

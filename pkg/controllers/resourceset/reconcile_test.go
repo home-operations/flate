@@ -95,7 +95,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					if hit || err != nil {
 						return hit, err
 					}
-					_, attempt = st.GetEmission(id)
+					_, _, attempt = st.GetEmission(id)
 					attempt.Fingerprint = fp
 					close(started)
 					tasks.YieldSlot(func() { <-resume })
@@ -111,7 +111,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				}
 				attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{})
 				attempt.Complete = true
-				c.Emit(id, &attempt)
+				c.Emit(id, &attempt, nil)
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 {
@@ -166,13 +166,13 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				for _, p := range providers {
 					children = append(children, store.Child{Obj: p})
 				}
-				st.RecordEmitted(owner.Named(), &store.Emission{Children: children, Complete: true})
+				st.RecordEmitted(owner.Named(), &store.Emission{Children: children, Complete: true}, nil)
 			}
 			check := func(count int, status store.Status) *store.Emission {
 				t.Helper()
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}}}
 				filter := change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, st)
-				_, before := st.GetEmission(rs.Named())
+				_, _, before := st.GetEmission(rs.Named())
 				for _, child := range before.Children {
 					if !filter.ShouldReconcile(child.Obj.Named()) {
 						t.Fatal("accepted child missing before replay")
@@ -187,7 +187,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				if info.Status != status {
 					t.Fatalf("status=%+v, want %s", info, status)
 				}
-				_, current := st.GetEmission(rs.Named())
+				_, _, current := st.GetEmission(rs.Named())
 				defer current.Finish()
 				if len(current.Manifests) != count || len(current.Children) != count {
 					t.Fatalf("inventory=%+v, want %d documents and children", current, count)

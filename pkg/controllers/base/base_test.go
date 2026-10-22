@@ -53,11 +53,11 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
 		execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
-			_, next := execution.Reads.GetEmission(parent.Named())
+			_, _, next := execution.Reads.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}
 			next.Complete = true
-			execution.Emit(parent.Named(), &next)
+			execution.Emit(parent.Named(), &next, nil)
 			return nil
 		})
 		return execution
@@ -106,11 +106,11 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 					if source {
 						st.SetArtifact(id, &store.SourceArtifact{Reads: &execution.Reads, Key: "content", LocalPath: "source"})
 					} else {
-						_, next := execution.Reads.GetEmission(id)
+						_, _, next := execution.Reads.GetEmission(id)
 						defer next.Finish()
 						next.Children = []store.Child{{Obj: child}}
 						next.Complete = true
-						execution.Emit(id, &next)
+						execution.Emit(id, &next, nil)
 					}
 					return nil
 				})
@@ -752,5 +752,52 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 				t.Fatalf("status update replaced retained outcome: %v", execution.Outcome())
 			}
 		})
+	}
+}
+
+func TestFingerprintDedup_CompleteOnly(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{"current", "predecessor"} {
+		for _, complete := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/complete=%t", path, complete), func(t *testing.T) {
+				t.Parallel()
+				s := store.New()
+				c := base.New(s, nil, "test")
+				parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+				child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
+				s.AddObject(parent)
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
+				filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+				c.Configure(base.Options{Filter: filter, Index: index})
+				fingerprint := manifest.Fingerprint("same")
+				_, _, next := s.GetEmission(parent.Named())
+				defer next.Finish()
+				next.Children, next.Fingerprint, next.Complete = []store.Child{{Obj: child}}, fingerprint, complete
+				if path == "current" {
+					s.SetArtifact(parent.Named(), &next)
+				} else {
+					s.RecordEmitted(parent.Named(), &next, nil)
+					if !complete && s.GetArtifact(parent.Named()).(*store.Emission).Fingerprint != "" {
+						t.Fatal("incomplete successor retained a successful fingerprint")
+					}
+					changed := parent.Clone()
+					changed.Labels = map[string]string{"changed": "yes"}
+					s.AddObject(changed)
+					if s.GetArtifact(parent.Named()) != nil {
+						t.Fatal("fixture did not invalidate the current emission")
+					}
+				}
+				if filter.ShouldReconcile(child.Named()) {
+					t.Fatal("fixture child already selected before replay")
+				}
+				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "same")
+				if fp != fingerprint || handled != complete || err != nil {
+					t.Fatalf("replay key=%q handled=%t err=%v, want %q,%t,nil", fp, handled, err, fingerprint, complete)
+				}
+				if filter.ShouldReconcile(child.Named()) != complete {
+					t.Fatal("complete replay did not extend changed-only selection through Emit")
+				}
+			})
+		}
 	}
 }

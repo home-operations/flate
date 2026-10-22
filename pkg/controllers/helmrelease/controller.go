@@ -191,7 +191,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			return handled, err
 		}
 		attempt.Finish()
-		_, attempt = c.run.Reads.GetEmission(id)
+		_, _, attempt = c.run.Reads.GetEmission(id)
 		c.Store.UpdateStatus(id, store.StatusPending, "", "rendering chart")
 		if err := c.run.PreflightError(id); err != nil {
 			handled = true
@@ -262,7 +262,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: hr.ReleaseNamespace()})
 	attempt.Children = append(attempt.Children, synthetic...)
 	attempt.Fingerprint, attempt.Complete = fp, true
-	c.run.Emit(id, &attempt)
+	c.run.Emit(id, &attempt, nil)
 	return nil
 }
 
@@ -389,9 +389,9 @@ func (c *execution) materializeHelmChartSource(id manifest.NamedResource, hr *ma
 	}
 	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
 	// The incomplete generic publication makes C available before H waits for acquisition.
-	_, attempt := c.run.Reads.GetEmission(id)
+	_, _, attempt := c.run.Reads.GetEmission(id)
 	attempt.Children = []store.Child{{Obj: syn}}
-	c.run.Emit(id, &attempt)
+	c.run.Emit(id, &attempt, nil)
 	attempt.Finish()
 	hr.Chart.Source = syn.Named()
 	return hr, true

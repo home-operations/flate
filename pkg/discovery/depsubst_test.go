@@ -53,20 +53,24 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 	testutil.WriteFile(t, root, "app/supplier.yaml", testutil.KustomizationYAML("supplier", "apps", "  postBuild: {substitute: {PREFIX: prod-}}\n"))
 	testutil.WriteFile(t, root, "other/active.yaml", testutil.KustomizationYAML("active", "apps", "  path: ./other\n  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n"))
 	st := store.New()
-	activeObject, _, _, err := manifest.ParseDoc(map[string]any{
+	activeObject, activeDoc, _, err := manifest.ParseDoc(map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
-		"metadata": map[string]any{"name": "active", "namespace": "apps"},
+		"metadata": map[string]any{"name": "active", "namespace": "apps", "uid": "admitted"},
 		"spec":     map[string]any{"path": "./other", "dependsOn": []any{map[string]any{"name": "${PREFIX:-dev-}config"}}},
 	}, manifest.ParseDocOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.AddObject(activeObject)
+	st.AddObject(activeObject, activeDoc)
 	st.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
 	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "app"), RepoRoot: root, Store: st})
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, doc, emission := st.GetEmission(activeObject.Named())
+	emission.Finish()
+	assert.Equal(t, doc["metadata"].(map[string]any)["uid"], any("admitted"))
+
 	if result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "prod-config" {
 		t.Fatal("dependency substitutions were not resolved")
 	}

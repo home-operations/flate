@@ -177,6 +177,11 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 			r.invalid.Store(true)
 		}
 	}
+	if view.payloadOwner != nil {
+		r.sample(view.payloadOwner, view.payloadRecord)
+		r.activateProducers()
+		input.view.payloadRecord = nil
+	}
 	if view.owner != nil {
 		r.sample(view.owner, view.record)
 		r.activateProducers()
@@ -244,7 +249,7 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource) Artifact {
 	if input.derived&4 != 0 {
 		return input.artifact
 	}
-	obj := r.GetObject(id)
+	r.GetObject(id)
 	sh := r.store.shardFor(id)
 	sh.mu.RLock()
 	record := sh.artifacts[id]
@@ -254,7 +259,10 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource) Artifact {
 	sh.mu.RUnlock()
 	input.derived |= 4
 	r.observe(input, artifactFacet, record.generation)
-	if e, ok := input.artifact.(*Emission); ok && !emissionCurrent(e, Child{Obj: obj, Doc: input.view.child.Doc}) {
+	if input.view.payload != nil {
+		input.artifact = input.view.payload
+	}
+	if e, ok := input.artifact.(*Emission); ok && !emissionCurrent(e, input.view) {
 		input.artifact = nil
 	}
 	return input.artifact
@@ -292,6 +300,17 @@ func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.Named
 	var pending []manifest.NamedResource
 	for _, production := range r.productions(r.input(id), nil) {
 		owner := production.Owner
+		if declaration := production.Declaration; declaration != (manifest.NamedResource{}) && manifest.KindOf(r.GetObject(declaration)).Runnable {
+			owner = declaration
+			sh := r.store.shardFor(owner)
+			sh.mu.RLock()
+			slot := sh.slots[owner]
+			if slot != nil {
+				r.sample(slot, slot.current.Load())
+			}
+			sh.mu.RUnlock()
+			r.activateProducers()
+		}
 		if owner != (manifest.NamedResource{}) && owner != id && !r.input(owner).settled && !slices.Contains(pending, owner) {
 			pending = append(pending, owner)
 		}
@@ -328,7 +347,7 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 }
 
 // GetEmission binds candidate output to this execution's captured declaration and source.
-func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, Emission) {
+func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
 	return r.store.getEmission(r, id)
 }
 
@@ -478,13 +497,13 @@ func (s *Store) SetPreflight(id manifest.NamedResource, message string) {
 }
 
 // Admit binds raw-file admission to the captured source that supplied its bytes.
-func (r *ReadSet) Admit(obj manifest.BaseManifest, source, owner manifest.NamedResource) {
+func (r *ReadSet) Admit(obj manifest.BaseManifest, source, owner manifest.NamedResource, docs ...map[string]any) {
 	r.GetArtifact(source)
 	var support *Input
 	if owner != (manifest.NamedResource{}) && owner != obj.Named() {
 		support = r.input(owner)
 	}
-	r.store.addObject(obj, r.input(source), support)
+	r.store.addObject(obj, r.input(source), support, docs...)
 }
 
 // Promotions captures source-family evidence before conditional raw-file admission.
@@ -553,6 +572,10 @@ func (r *ReadSet) Close() {
 	switch output := artifact.(type) {
 	case *Emission:
 		reads = output.OutputReads
+		output.payloadReads.Retire()
+		for borrowed := range output.borrowed {
+			borrowed.Retire()
+		}
 	case *SourceArtifact:
 		reads = output.Reads
 	}

@@ -578,14 +578,14 @@ func TestRS_EmissionGrouping(t *testing.T) {
 				slices.Reverse(ids)
 			}
 			for _, id := range ids {
-				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
+				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 			}
 			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: docs})
 			second := manifest.DeepCopyMap(doc)
 			second["metadata"].(map[string]any)["name"] = "second"
 			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
 				entries, authoritative := base.ParseChildren(b.Named(), ordered, manifest.ParseDocOptions{})
-				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true})
+				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true}, nil)
 				if got := outputByParent(o.collectManifests())[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
 					t.Fatalf("authoritative document order lost: %v", got)
 				}
@@ -595,9 +595,9 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			changed, changedDocs := base.ParseChildren(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
 			for _, id := range ids {
 				if id == a.Named() {
-					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
+					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 				} else {
-					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: changedDocs, Complete: true})
+					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: changedDocs, Complete: true}, nil)
 				}
 			}
 			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: changedDocs})
@@ -1909,8 +1909,8 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				if id == ownerA {
 					assert.Equal(t, mixedChildren, 2)
 				}
-				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true})
-				_, admitted := s.GetEmission(id)
+				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true}, nil)
+				_, _, admitted := s.GetEmission(id)
 				admitted.Finish()
 				mixedChildren = 0
 				for _, child := range admitted.Children {

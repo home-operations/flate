@@ -28,9 +28,9 @@ func loadForTest(ctx context.Context, t *testing.T, l *Loader, dir string) (int,
 func candidateForTest(t *testing.T, l *Loader, id manifest.NamedResource) manifest.BaseManifest {
 	t.Helper()
 	r, _ := l.Index.Lookup(id)
-	obj := l.candidates[id]
+	obj := l.candidates[id].Obj
 	if obj == nil {
-		obj = l.authoredObject(r.Path, r.Authored)
+		obj = l.authoredObject(r.Path, r.Authored).Obj
 		if obj != nil && obj.Named().Namespace != id.Namespace {
 			obj = obj.WithNamespace(id.Namespace)
 		}

@@ -11,9 +11,9 @@ func publishDocuments(c *base.Controller, id manifest.NamedResource, docs []map[
 		c.Store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	}
 	children, retained := base.ParseChildren(id, docs, opts)
-	_, next := c.Store.GetEmission(id)
+	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = children, retained, true
-	c.Emit(id, &next)
+	c.Emit(id, &next, nil)
 	return children, retained
 }

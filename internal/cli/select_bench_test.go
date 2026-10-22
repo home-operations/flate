@@ -41,15 +41,15 @@ func completedScopeFixture(tb testing.TB, count int, failures, cycle bool) orche
 	res := &orchestrator.Result{Manifests: make([]manifest.DocumentBatch, 0, count), Blocked: make(map[manifest.NamedResource][]manifest.NamedResource)}
 	for i, id := range ids {
 		if i%64 != 0 {
-			_, next := o.Store().GetEmission(ids[i-1])
+			_, _, next := o.Store().GetEmission(ids[i-1])
 			next.Children, next.Complete = []store.Child{{Obj: o.Store().GetObject(id)}}, true
-			o.Store().RecordEmitted(ids[i-1], &next)
+			o.Store().RecordEmitted(ids[i-1], &next, nil)
 			next.Finish()
 		}
 		if cycle && (i%64 == 63 || i == len(ids)-1) {
-			_, next := o.Store().GetEmission(id)
+			_, _, next := o.Store().GetEmission(id)
 			next.Children, next.Complete = []store.Child{{Obj: o.Store().GetObject(ids[i-i%64])}}, true
-			o.Store().RecordEmitted(id, &next)
+			o.Store().RecordEmitted(id, &next, nil)
 			// A closed ownership cycle needs independent file-indexed support.
 			o.Store().AddObject(next.Children[0].Obj)
 			next.Finish()

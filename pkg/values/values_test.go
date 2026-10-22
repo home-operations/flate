@@ -1014,7 +1014,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{first.Named(): {Productions: []manifest.Production{{Owner: owner, Path: "settings.yaml", Authored: first.Named()}}}}})
 	s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
-	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: first}}, Complete: true})
+	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: first}}, Complete: true}, nil)
 	var reads store.ReadSet
 	reader := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}
 	reads.Init(s, reader, nil)
@@ -1026,7 +1026,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	}
 	next := *first
 	next.Data = map[string]any{"VALUE": "next"}
-	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true})
+	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true}, nil)
 	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 1 || counted.productions != 1 {
 		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
 	}
@@ -1077,10 +1077,10 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: id.Namespace,
 		Spec: map[string]any{"target": map[string]any{"name": id.Name}, "data": []any{map[string]any{"secretKey": "VALUE"}}},
 	}
-	_, next := st.GetEmission(owner)
+	_, _, next := st.GetEmission(owner)
 	defer next.Finish()
 	next.Children, next.Complete = []store.Child{{Obj: external}}, true
-	st.RecordEmitted(owner, &next)
+	st.RecordEmitted(owner, &next, nil)
 	if previous.Valid() {
 		t.Fatal("replacement retained captured file authority")
 	}

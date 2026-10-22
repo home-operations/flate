@@ -18,22 +18,24 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func builtObjectsForTest(t *testing.T, data string) []manifest.BaseManifest {
+func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	t.Helper()
 	docs, err := manifest.DecodeDocs(strings.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	objects := make([]manifest.BaseManifest, 0, len(docs))
+	objects := make([]store.Child, 0, len(docs))
 	for _, doc := range docs {
-		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
+		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if obj != nil {
-			objects = append(objects, obj)
+			objects = append(objects, store.Child{Obj: obj, Doc: authoritative})
 		}
-		manifest.ReleaseDoc(doc)
+		if obj == nil {
+			manifest.ReleaseDoc(doc)
+		}
 	}
 	return objects
 }
@@ -53,7 +55,7 @@ configMapGenerator: [{name: generated, files: [value.txt]}]
 `,
 		"entry/bundle.yaml": `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
-metadata: {name: podinfo}
+metadata: {name: podinfo, uid: built-release}
 spec:
   interval: 1h
   chart: {spec: {chart: podinfo, version: 1.0.0, sourceRef: {kind: HelmRepository, name: charts}}}
@@ -145,7 +147,7 @@ spec:
 		t.Fatal("independently loaded evidence under the entry prefix was removed")
 	}
 	admit := func(obj manifest.BaseManifest) bool { return l.AdmitsRoot(obj.Named(), "") }
-	if !Promote(t.Context(), st, docs[0].Named(), PromoteOptions{Documents: docs, Admit: admit}) {
+	if !Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}) {
 		t.Fatal("built promotion failed")
 	}
 	selected.Namespace, selected.Name = "apps", "selected-dev"
@@ -194,7 +196,8 @@ spec:
 		t.Fatalf("remount and finalization changed replacement errors: %v", l.Index.Errors)
 	}
 	var generated manifest.NamedResource
-	for _, obj := range docs {
+	for _, child := range docs {
+		obj := child.Obj
 		id := obj.Named()
 		record, exists := l.Index.Lookup(id)
 		if !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) || record.File != "entry/kustomization.yaml" {
@@ -228,10 +231,15 @@ spec:
 	hrID := testutil.HelmReleaseID("apps", "podinfo-dev")
 	hr := st.GetObject(hrID).(*manifest.HelmRelease)
 	assert.Equal(t, hr.Chart.Version, "2.0.0")
+	_, document, emission := st.GetEmission(hrID)
+	emission.Finish()
+	assert.Equal(t, document["metadata"].(map[string]any)["uid"], any("built-release"))
+	spec := document["spec"].(map[string]any)
+	assert.Equal(t, spec["chart"].(map[string]any)["spec"].(map[string]any)["version"], any("2.0.0"))
 	record, _ := l.Index.Lookup(hrID)
 	assert.Diff(t, record.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
 	sources := slices.Collect(l.Sources())
-	if !slices.ContainsFunc(sources, func(obj manifest.BaseManifest) bool { return obj.Named().Name == "source-dev" }) {
+	if !slices.ContainsFunc(sources, func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil }) {
 		t.Fatal("built source is unavailable to discovery")
 	}
 }
@@ -250,7 +258,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	if _, err := l.Load(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	docs := []manifest.BaseManifest{&manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}}
+	docs := []store.Child{{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}}}
 	l.RegisterBuilt(root, docs)
 	l.Admit(root)
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
@@ -259,7 +267,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	if _, exists := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "remote"}); exists {
 		t.Fatal("raw remote generator declaration was indexed")
 	}
-	assert.Diff(t, l.Index.Readers["kustomization.yaml"], []manifest.NamedResource{docs[0].Named()})
+	assert.Diff(t, l.Index.Readers["kustomization.yaml"], []manifest.NamedResource{docs[0].Obj.Named()})
 }
 
 func TestRegisterBuilt_DeletedInvalidResource(t *testing.T) {
@@ -309,7 +317,7 @@ spec:
 		t.Fatal(err)
 	}
 	docs := builtObjectsForTest(t, string(data))
-	if len(docs) != 1 || docs[0].Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}) {
+	if len(docs) != 1 || docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}) {
 		t.Fatalf("deletion patch did not leave only the retained ConfigMap: %v", docs)
 	}
 	l.RegisterBuilt(root, docs)
@@ -317,7 +325,7 @@ spec:
 		t.Fatalf("deleted resource raw error survived successful built registration: %v", err)
 	}
 	admit := func(obj manifest.BaseManifest) bool { return l.AdmitsRoot(obj.Named(), "") }
-	if !Promote(t.Context(), st, docs[0].Named(), PromoteOptions{Documents: docs, Admit: admit}) {
+	if !Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}) {
 		t.Fatal("retained built promotion failed")
 	}
 	l.Admit(root)

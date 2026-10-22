@@ -416,7 +416,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			if wantWarnings == 1 {
 				assert.Equal(t, s.Warnings()[0].Count, 1)
 			}
-			_, accepted := s.GetEmission(rs.Named())
+			_, _, accepted := s.GetEmission(rs.Named())
 			raw := accepted.Manifests
 			wantNames := []string{"old"}
 			if strings.HasPrefix(state, "filter") || state == "failed gate" {

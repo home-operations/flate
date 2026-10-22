@@ -22,7 +22,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [source.yaml, child.yaml]\n")
-	testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: 'https://example.test/cluster'}\n")
+	testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps, uid: source-evidence}\nspec: {url: 'https://example.test/cluster'}\n")
 	testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
 	st := store.New()
 	l := loader.New(st)
@@ -40,6 +40,8 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 		t.Fatalf("initial evidence resolution = %d, %v", count, err)
 	}
 	before := st.GetArtifact(id).(*store.SourceArtifact)
+	child, childDoc, emission := st.GetEmission(testutil.KustomizationID("apps", "child"))
+	emission.Finish()
 	if !st.DeleteObject(id) {
 		t.Fatal("source was not admitted before removal")
 	}
@@ -57,6 +59,16 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(id) != after {
 		t.Fatalf("unchanged evidence resolution = %d, %v", count, err)
 	}
+	st.AddObject(child, childDoc)
+	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 0 || st.GetArtifact(id) != after {
+		t.Fatalf("source republication changed resolved evidence: %d, %v", count, err)
+	}
+	_, doc, attempt := st.GetEmission(id)
+	attempt.Finish()
+	if doc == nil || doc["metadata"].(map[string]any)["uid"] != "source-evidence" {
+		t.Fatalf("republished source lost its document: %v", doc)
+	}
+
 }
 
 func TestResolveEntrySources_Identity(t *testing.T) {

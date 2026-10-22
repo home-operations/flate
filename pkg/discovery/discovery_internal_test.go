@@ -196,7 +196,7 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./scope/app"}
 			if ownership == "reachable" {
 				input["scope/app/kustomization.yaml"].Data = []byte("resources: [owner.yaml, child.yaml, source.yaml, cm.yaml]\nnameSuffix: -dev\n")
-				input["scope/app/owner.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML(owner.Name, owner.Namespace, "  path: ./scope/app\n"))}
+				input["scope/app/owner.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system, uid: selected-owner, annotations: {fixture: retained}}\nspec: {path: ./scope/app, interval: 1m}\n")}
 			} else if ownership != "unowned" {
 				if ownership == "foreign" || ownership == "pinned" || ownership == "alias" {
 					src := &manifest.GitRepository{Name: ownership, Namespace: owner.Namespace, URL: "https://fixture.invalid/" + ownership}
@@ -226,6 +226,13 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 				t.Fatal("entry invented a Flux owner")
 			}
 			admitted := owner.Named()
+			if ownership == "reachable" {
+				_, doc, emission := st.GetEmission(admitted)
+				emission.Finish()
+				if doc == nil || doc["metadata"].(map[string]any)["uid"] != "selected-owner" || doc["metadata"].(map[string]any)["annotations"].(map[string]any)["fixture"] != "retained" {
+					t.Fatalf("selected owner lost authoritative metadata: %v", doc)
+				}
+			}
 			if bare {
 				admitted = testutil.KustomizationID("apps", "child-dev")
 				child, ok := st.GetObject(admitted).(*manifest.Kustomization)

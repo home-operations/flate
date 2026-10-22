@@ -83,7 +83,7 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 		if hit || err != nil {
 			return hit, err
 		}
-		_, bound := c.run.Reads.GetEmission(id)
+		_, _, bound := c.run.Reads.GetEmission(id)
 		attempt = &bound
 		attempt.Fingerprint = fp
 		return false, nil
@@ -105,7 +105,7 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 		}
 	}
 	attempt.Complete = true
-	c.run.Emit(id, attempt)
+	c.run.Emit(id, attempt, nil)
 	return nil
 }
 

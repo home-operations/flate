@@ -96,11 +96,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	d.loader.Admit(repoRoot)
-	kustomizations := d.loader.Kustomizations()
+	var kustomizations []*manifest.Kustomization
+	for _, child := range d.loader.Kustomizations() {
+		kustomizations = append(kustomizations, child.Obj.(*manifest.Kustomization))
+	}
 	substitutions := values.NewDependencySubstitutions(kustomizations)
 	for _, ks := range kustomizations {
 		if resolved := manifest.MapDependsOn(ks, substitutions.Resolve, substitutions.Resolve); resolved != ks && cfg.Store.GetObject(ks.Named()) != nil {
-			cfg.Store.AddObject(resolved)
+			_, doc, emission := cfg.Store.GetEmission(ks.Named())
+			emission.Finish()
+			cfg.Store.AddObject(resolved, doc)
 		}
 	}
 	var standaloneSecrets []manifest.NamedResource
@@ -116,13 +121,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(ctx, standaloneSecrets)
-	documents := d.documents[:0]
-	for i, obj := range d.built {
+	var documents []map[string]any
+	for _, child := range d.built {
+		obj := child.Obj
 		current := cfg.Store.GetObject(obj.Named())
 		if current == nil {
 			continue
 		}
-		doc := d.documents[i]
+		doc := child.Doc
 		if secret, ok := current.(*manifest.Secret); ok && current != obj {
 			doc = maps.Clone(doc)
 			snapshot := secret.Snapshot()
@@ -148,7 +154,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 type discoverer struct {
 	documents       []map[string]any
-	built           []manifest.BaseManifest
+	built           []store.Child
 	cfg             Config
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]entryResolution
@@ -200,7 +206,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
 		kustomizations := d.loader.Kustomizations()
-		for _, ks := range kustomizations {
+		for _, child := range kustomizations {
+			ks := child.Obj.(*manifest.Kustomization)
 			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
 			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
 			if _, seen := ksExpanded[key]; seen {
@@ -260,7 +267,8 @@ func (d *discoverer) admitEntry(ctx context.Context, repoRoot string) error {
 	if _, err := d.resolveEntrySources(ctx, true); err != nil {
 		return err
 	}
-	for _, ks := range d.loader.Kustomizations() {
+	for _, child := range d.loader.Kustomizations() {
+		ks := child.Obj.(*manifest.Kustomization)
 		if ks.IsFragment() {
 			continue
 		}
@@ -271,7 +279,7 @@ func (d *discoverer) admitEntry(ctx context.Context, repoRoot string) error {
 			root = art.LocalRoot
 		}
 		if !external && safepath.Contains(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)), d.cfg.Path) {
-			d.cfg.Store.AddObject(ks)
+			d.cfg.Store.AddObject(ks, child.Doc)
 			_, err := d.resolveEntrySources(ctx, true)
 			return err
 		}
@@ -290,10 +298,11 @@ func (d *discoverer) admitEntry(ctx context.Context, repoRoot string) error {
 		if err != nil {
 			return fmt.Errorf("discovery entry document: %w", err)
 		}
-		if obj != nil {
-			d.built = append(d.built, obj)
-			d.documents = append(d.documents, authoritative)
+		if obj == nil {
+			manifest.ReleaseDoc(doc)
+			continue
 		}
+		d.built = append(d.built, store.Child{Obj: obj, Doc: authoritative})
 	}
 	d.loader.RegisterBuilt(d.cfg.Path, d.built)
 	d.promoteOrphans(ctx, nil)
@@ -307,7 +316,8 @@ func (d *discoverer) admitEntry(ctx context.Context, repoRoot string) error {
 func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedSources := make(map[manifest.NamedResource]struct{})
 	pinnedKS := make(map[manifest.NamedResource]struct{})
-	for _, ks := range d.loader.Kustomizations() {
+	for _, child := range d.loader.Kustomizations() {
+		ks := child.Obj.(*manifest.Kustomization)
 		ref := ks.SourceID()
 		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}

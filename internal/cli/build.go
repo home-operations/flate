@@ -24,7 +24,7 @@ func newBuildCmd() *cobra.Command {
 		Use:   "build",
 		Short: "Render Flux objects to YAML (defaults to all)",
 		Args:  cobra.NoArgs,
-	}, renderKinds...)
+	}, runnableKinds...)
 	cmd.AddCommand(
 		buildCmd(&cobra.Command{
 			Use:     "ks [name]",
@@ -40,9 +40,9 @@ func newBuildCmd() *cobra.Command {
 		}, manifest.KindHelmRelease),
 		buildCmd(&cobra.Command{
 			Use:   "all",
-			Short: "Render all Kustomization and HelmRelease objects",
+			Short: "Render all Flux producer output",
 			Args:  cobra.NoArgs,
-		}, renderKinds...),
+		}, runnableKinds...),
 	)
 	return cmd
 }

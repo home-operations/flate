@@ -16,7 +16,7 @@ type PromoteOptions struct {
 	Record      manifest.Production
 	Reads       *store.ReadSet
 	WipeSecrets bool                             // SOPS ciphertext is replaced with offline placeholders.
-	Documents   []manifest.BaseManifest          // Parsed, sanitized documents replace raw file acquisition.
+	Documents   []store.Child                    // Parsed, sanitized documents replace raw file acquisition.
 	Admit       func(manifest.BaseManifest) bool // Admission applies to the requested object and every sibling.
 }
 
@@ -57,7 +57,8 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 	if authored == (manifest.NamedResource{}) {
 		authored = id
 	}
-	for _, obj := range objs {
+	for _, child := range objs {
+		obj := child.Obj
 		if opts.Documents == nil && obj.Named() == authored {
 			if authored.Namespace != id.Namespace {
 				obj = obj.WithNamespace(id.Namespace)
@@ -72,9 +73,9 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 			return false
 		}
 		if opts.Reads != nil {
-			opts.Reads.Admit(obj, source, record.Owner)
+			opts.Reads.Admit(obj, source, record.Owner, child.Doc)
 		} else {
-			st.AddObject(obj)
+			st.AddObject(obj, child.Doc)
 		}
 	}
 	obj := st.GetObject(id)
@@ -83,7 +84,7 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 
 // RegisterBuilt replaces selected bootstrap resource evidence with authoritative built documents.
 // The root MUST be loaded and docs MUST be sanitized immutable build output.
-func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
+func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.SourceRoot, l.documents.mountedRoot(root), root)
 	rel, _ := filepath.Rel(sourceRoot, root)
@@ -108,7 +109,7 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.indexedObject(id, record)) {
+		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.indexedObject(id, record).Obj) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)
@@ -120,9 +121,10 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 	l.documents.cache[root] = cached
 	_, builder := l.documents.read(root)
 	if l.candidates == nil {
-		l.candidates = map[manifest.NamedResource]manifest.BaseManifest{}
+		l.candidates = map[manifest.NamedResource]store.Child{}
 	}
-	for _, obj := range docs {
+	for _, child := range docs {
+		obj := child.Obj
 		id := obj.Named()
 		record := manifest.DiscoveryRecord{File: l.fileCoordinate(builder)}
 		for ref := range manifest.References(obj) {
@@ -131,7 +133,7 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 			}
 		}
 		l.Index.Records[id] = record
-		l.candidates[id] = obj
+		l.candidates[id] = child
 	}
 	l.scopes.complete = false
 }

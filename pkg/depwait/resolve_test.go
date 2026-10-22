@@ -54,7 +54,7 @@ func TestResolve_SelectedData(t *testing.T) {
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{data.Named(): {Productions: productions}}})
 			if tc.accepted {
 				st.AddObject(&manifest.Kustomization{Name: supplier.Name, Namespace: supplier.Namespace})
-				st.RecordEmitted(supplier, &store.Emission{Children: []store.Child{{Obj: data}}, Complete: true})
+				st.RecordEmitted(supplier, &store.Emission{Children: []store.Child{{Obj: data}}, Complete: true}, nil)
 				status := store.StatusFailed
 				if tc.pending {
 					status = store.StatusPending
@@ -149,7 +149,7 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	result := w.Available(t.Context(), DataDependency{NamedResource: id, Input: input, Optional: true}, manifest.DrainNone)
 	assert.Equal(t, result.Kind, schedule.Blocked)
 	assert.Equal(t, input.Data, manifest.Data(nil))
-	st.RecordEmitted(supplier, &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true})
+	st.RecordEmitted(supplier, &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true}, nil)
 	before.Retire()
 	var after store.ReadSet
 	after.Init(st, parent, nil)

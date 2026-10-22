@@ -213,14 +213,14 @@ data: {key: fixed}
 				}
 				if name == "filter skip" {
 					info, ok := s.GetStatus(rs.Named())
-					_, retained := s.GetEmission(rs.Named())
+					_, _, retained := s.GetEmission(rs.Named())
 					if !ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || len(retained.Children) != 0 || len(retained.Manifests) != 0 {
 						t.Fatalf("filter retained invalid output: %+v", info)
 					}
 				}
 				if name == "suspended" || name == "refresh suspended" {
 					info, _ := s.GetStatus(rs.Named())
-					_, retained := s.GetEmission(rs.Named())
+					_, _, retained := s.GetEmission(rs.Named())
 					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: rs.Namespace, Name: "output"}
 					if info.Outcome() != store.OutcomeSuspended || len(retained.Manifests) != 0 || len(retained.Children) != 0 || s.GetObject(output) != nil || outputArrivals.Load() != 0 || outputWithdrawals.Load() != 1 {
 						t.Fatalf("suspension retained or replayed stale output: status=%+v arrivals=%d withdrawals=%d", info, outputArrivals.Load(), outputWithdrawals.Load())
@@ -323,8 +323,8 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					p, k, consumer := testutil.KustomizationID("flux-system", "publisher"), testutil.KustomizationID("flux-system", "child"), testutil.KustomizationID("flux-system", "consumer")
 					s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 					child := &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}
-					s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
-					_, late := s.GetEmission(k)
+					s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
+					_, _, late := s.GetEmission(k)
 					doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "late", "namespace": "apps"}, "data": map[string]any{"value": "private"}}
 					late.Children, late.Manifests = base.ParseChildren(k, []map[string]any{doc}, manifest.ParseDocOptions{})
 					late.Complete = true
@@ -332,7 +332,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					consumerStarted, woken := make(chan struct{}), make(chan struct{})
 					var calls atomic.Int64
 					publishLate := func() {
-						s.RecordEmitted(k, &late)
+						s.RecordEmitted(k, &late, nil)
 					}
 					s.AddObject(&manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace})
 					releasePublication := sync.OnceFunc(func() { close(publishRelease) })
@@ -359,7 +359,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 						if lateFirst {
 							publishLate()
 						}
-						s.RecordEmitted(p, &store.Emission{Complete: true})
+						s.RecordEmitted(p, &store.Emission{Complete: true}, nil)
 						if !lateFirst {
 							publishLate()
 						}
@@ -427,7 +427,7 @@ data: {value: rendered}
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				l.Named(): {Productions: []manifest.Production{{Owner: k, Source: manifest.BootstrapSourceID}}},
 			}})
-			s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true})
+			s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true}, nil)
 			s.SetArtifact(l.Named(), &store.SourceArtifact{Key: "static-l"})
 			s.UpdateStatus(l.Named(), store.StatusReady, "", "")
 			if s.GetObject(l.Named()) != l || s.GetArtifact(l.Named()) == nil {
@@ -453,7 +453,7 @@ data: {value: rendered}
 			t.Cleanup(unsub)
 			withdrawn := make(chan struct{})
 			tasks.Go(t.Context(), "withdrawal", func(context.Context) {
-				s.RecordEmitted(p, &store.Emission{Complete: true})
+				s.RecordEmitted(p, &store.Emission{Complete: true}, nil)
 				close(withdrawn)
 			})
 			tasks.Go(t.Context(), "dispatch-withdrawn", func(ctx context.Context) {
@@ -558,11 +558,11 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					if scenario == "effective_input_change" {
 						nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
 					}
-					_, next := s.GetEmission(p)
+					_, _, next := s.GetEmission(p)
 					next.Children, next.Manifests = base.ParseChildren(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
 					next.Complete = true
 					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, s.Productions(repo, nil))
-					o.ksc.Emit(p, &next)
+					o.ksc.Emit(p, &next, nil)
 					next.Finish()
 					s.UpdateStatus(p, store.StatusReady, "", "")
 					close(published)
@@ -592,9 +592,9 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						}
 					})
 					if scenario == "withdrawal_reanchor" {
-						_, empty := s.GetEmission(p)
+						_, _, empty := s.GetEmission(p)
 						empty.Complete = true
-						o.ksc.Emit(p, &empty)
+						o.ksc.Emit(p, &empty, nil)
 						if s.GetObject(repo) != nil {
 							t.Error("withdrawal retained repository")
 						}
@@ -649,7 +649,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					if info, ok := s.GetStatus(id); !ok || info.Status != store.StatusReady || info.Message != "" {
 						t.Errorf("consumer %s: %+v", id, info)
 					}
-					_, output := s.GetEmission(id)
+					_, _, output := s.GetEmission(id)
 					if len(output.Manifests) != 1 {
 						t.Errorf("consumer %s emitted %d documents", id, len(output.Manifests))
 					}
@@ -712,7 +712,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 			}
 			settled.Store(true)
 			obj := &manifest.ConfigMap{Name: "hello", Namespace: "flux-system", Data: map[string]any{"value": "pinned"}}
-			run.Emit(id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}, Complete: true})
+			run.Emit(id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}, Complete: true}, nil)
 			return nil
 		})
 		return schedule.Result{Assessment: run}

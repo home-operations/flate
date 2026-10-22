@@ -60,7 +60,7 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 			t.Fatalf("parent=%v/%t content owner=%v, want %v/true and %v", parent, ok, o.store.EmissionOwner(id), a, z)
 		}
 		assert.Diff(t, o.store.Productions(id, nil), []manifest.Production{{Owner: a}, {Owner: z}})
-		o.store.RecordEmitted(a, &store.Emission{Complete: true})
+		o.store.RecordEmitted(a, &store.Emission{Complete: true}, nil)
 		parent, ok = o.parentOf(id)
 		if !ok || parent != z {
 			t.Fatalf("withdrawn parent=%v/%t, want %v/true", parent, ok, z)

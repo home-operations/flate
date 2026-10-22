@@ -134,9 +134,11 @@ type archiveProducer struct {
 }
 
 func (p archiveProducer) identity() string {
-	key := p.key
-	key.Required = nil
-	return manifest.Fingerprint(acquisitionContent{Archive: key})
+	return manifest.Fingerprint(acquisitionContent{Archive: struct {
+		Content        any
+		Ignore, Policy string
+		Version        int
+	}{p.key.Content, p.key.Ignore, p.key.Policy, 1}})
 }
 
 func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
@@ -172,7 +174,9 @@ func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload)
 	})
 	g.Go(func() error {
 		_, err := readArchive(pr, p.key, index)
-		if err == nil {
+		if err == nil && p.key.Policy == "extract" {
+			_, err = io.Copy(io.Discard, pr)
+		} else if err == nil {
 			if n, copyErr := io.CopyN(io.Discard, pr, maxTrailingBytes+1); n > maxTrailingBytes {
 				err = fmt.Errorf("archive has more than %d bytes after its end marker", maxTrailingBytes)
 			} else if !errors.Is(copyErr, io.EOF) {

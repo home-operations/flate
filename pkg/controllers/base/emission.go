@@ -30,7 +30,7 @@ func ParseChildren(parent manifest.NamedResource, docs []map[string]any, opts ma
 }
 
 // Emit extends changed-only selection before the single coherent publication.
-func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission) {
+func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
 	original := next
 	for i, child := range next.Children {
 		if child.Obj == nil || child.Obj.Named() == id {
@@ -47,5 +47,10 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission) {
 		}
 		c.KeepEmitted(id, obj, next.Reads)
 	}
-	c.Store.RecordEmitted(id, next)
+	c.Store.RecordEmitted(id, next, payloads)
+	if next != original {
+		children := original.Children
+		*original = *next
+		original.Children = children
+	}
 }

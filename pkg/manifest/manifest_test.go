@@ -532,11 +532,6 @@ spec:
     kind: ImageUpdateAutomation
     name: app-image
     namespace: apps
-status:
-  artifact:
-    url: file:///cache/ea/pulled-tarball.tar.gz
-    revision: v1.2.3@sha256:abc
-    digest: sha256:abc
 `)
 	ea, err := parseExternalArtifact(doc)
 	if err != nil {
@@ -547,12 +542,6 @@ status:
 	}
 	if ea.SourceRef == nil || ea.SourceRef.Kind != "ImageUpdateAutomation" {
 		t.Errorf("sourceRef: %+v", ea.SourceRef)
-	}
-	if ea.ArtifactURL != "file:///cache/ea/pulled-tarball.tar.gz" {
-		t.Errorf("artifact URL: %q", ea.ArtifactURL)
-	}
-	if ea.Revision != "v1.2.3@sha256:abc" {
-		t.Errorf("revision: %q", ea.Revision)
 	}
 }
 

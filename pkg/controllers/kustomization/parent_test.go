@@ -51,7 +51,7 @@ func TestCollectDeps_AppendsStructuralParent(t *testing.T) {
 				st.SetDiscoveryIndex(index)
 				other := &manifest.Kustomization{Name: "other", Namespace: child.Namespace}
 				st.AddObject(other)
-				st.RecordEmitted(other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
+				st.RecordEmitted(other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
 				want = other.Named()
 			}
 			c := New(st, nil, nil, false)
@@ -209,7 +209,7 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	s.AddObject(producer)
 	declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": "credentials", "template": map[string]any{"data": map[string]any{"X": "remote"}}}}}
-	c.Emit(producer.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true})
+	c.Emit(producer.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true}, nil)
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}}}}
 	execution := c.newExecution(consumer.Named())
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: "credentials"}
@@ -295,7 +295,7 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 				DependsOn: []kustomizev1.DependencyReference{{Name: owner.Name, ReadyExpr: expr}},
 			}
 			s.AddObject(owner)
-			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
+			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
 			s.UpdateStatus(owner.Named(), store.StatusReady, "", "")
 			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode})
 			output, _ := s.GetArtifact(child.Named()).(*store.Emission)

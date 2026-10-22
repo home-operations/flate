@@ -131,7 +131,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if !slices.Contains(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), child) {
 						t.Fatal("suspension lost the child's file read tracking")
 					}
-					_, inventory := o.store.GetEmission(child)
+					_, _, inventory := o.store.GetEmission(child)
 					if retained {
 						if len(artifact.Manifests) != 1 || o.store.GetArtifact(child) != nil || o.store.GetObject(retainedID) == nil || len(inventory.Children) != 1 {
 							t.Fatal("suspension pruned retained artifact or emission")

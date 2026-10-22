@@ -147,9 +147,9 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 					return err
 				}
 				renders.Add(1)
-				_, output := e.Reads.GetEmission(id)
+				_, _, output := e.Reads.GetEmission(id)
 				output.Fingerprint, output.Complete = fp, true
-				e.Emit(id, &output)
+				e.Emit(id, &output, nil)
 				output.Finish()
 				return nil
 			})
@@ -270,6 +270,9 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 				var active, total atomic.Int64
 				counts := map[schedule.NodeID]*atomic.Int64{x.Named(): {}, y.Named(): {}}
 				s, st := registeredScheduler(t, []manifest.BaseManifest{x, y}, func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					active.Add(1)
 					defer active.Add(-1)
 					run, count := counts[id].Add(1), total.Add(1)
@@ -286,12 +289,12 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 						held <- struct{}{}
 						<-ctx.Done()
 					}
-					_, next := e.Reads.GetEmission(id)
+					_, _, next := e.Reads.GetEmission(id)
 					defer next.Finish()
 					child := &manifest.ConfigMap{Name: id.Name, Namespace: "ns", Data: map[string]any{"value": run}}
 					next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
 					next.Manifests, next.Complete = []map[string]any{child.Snapshot()}, true
-					e.Emit(id, &next)
+					e.Emit(id, &next, nil)
 					if blocked {
 						return e.Require(ctx, []manifest.DependencyRef{{NamedResource: other}}, level)
 					}
@@ -300,7 +303,7 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 				c := base.New(st, nil)
 				for _, obj := range []*manifest.Kustomization{x, y} {
 					child := &manifest.ConfigMap{Name: obj.Name, Namespace: "ns", Data: map[string]any{"value": int64(0)}}
-					c.Emit(obj.Named(), &store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true})
+					c.Emit(obj.Named(), &store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true}, nil)
 				}
 				done := make(chan error, 1)
 				go func() { done <- s.Run(ctx) }()
@@ -406,11 +409,11 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 				close(entered)
 				<-release
 			}
-			_, next := e.Reads.GetEmission(id)
+			_, _, next := e.Reads.GetEmission(id)
 			defer next.Finish()
 			child := &manifest.ConfigMap{Name: "rendered", Namespace: "ns", Data: map[string]any{"value": "identical"}}
 			next.Children, next.Manifests, next.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, []map[string]any{child.Snapshot()}, true
-			e.Emit(id, &next)
+			e.Emit(id, &next, nil)
 			return nil
 		})
 		st = current
@@ -456,14 +459,14 @@ func TestScheduler_RegisteredLateDeclaration(t *testing.T) {
 					{"apiVersion": "example.test/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "late", "namespace": "ns"}},
 					{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "late", "namespace": "ns"}, "spec": map[string]any{"path": "./late"}},
 				}
-				_, next := e.Reads.GetEmission(id)
+				_, _, next := e.Reads.GetEmission(id)
 				defer next.Finish()
 				late := &manifest.Kustomization{Name: "late", Namespace: "ns"}
 				late.Path = "./late"
 				foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Namespace: "ns", Name: "late"}
 				next.Children = []store.Child{{Obj: foreign, Doc: docs[0]}, {Obj: late, Doc: docs[1]}}
 				next.Manifests, next.Complete = docs, true
-				e.Emit(id, &next)
+				e.Emit(id, &next, nil)
 				e.Tasks.YieldSlot(func() { <-ready })
 				close(published)
 				return nil
@@ -539,12 +542,12 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 			captured, ok := e.Reads.Get[*manifest.ConfigMap](input.Named())
 			assert.Equal(t, ok, true)
 			e.Reads.RequireData(input.Named())
-			_, next := e.Reads.GetEmission(id)
+			_, _, next := e.Reads.GetEmission(id)
 			defer next.Finish()
 			child := &manifest.ConfigMap{Name: "output", Namespace: "ns", Data: map[string]any{"value": captured.Data["value"]}}
 			next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
 			next.Manifests, next.Complete = []map[string]any{child.Snapshot()}, true
-			return e.Emit(id, &next)
+			return e.Emit(id, &next, nil)
 		}}
 		s := schedule.New(tasks, d)
 		defer st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, true)()

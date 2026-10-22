@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestParseFile_ResultOwnership(t *testing.T) {
@@ -82,10 +83,11 @@ metadata: {namespace: apps}
 			if tc.invalid {
 				want = want[:1]
 			}
-			assertNames := func(objects []manifest.BaseManifest, names []string) {
+			assertNames := func(objects []store.Child, names []string) {
 				t.Helper()
 				got := make([]string, 0, len(objects))
-				for _, obj := range objects {
+				for _, child := range objects {
+					obj := child.Obj
 					if obj == nil {
 						t.Fatal("nil object in parse result")
 					}
@@ -121,20 +123,27 @@ metadata: {namespace: apps}
 			}
 			assert.NoError(t, err)
 			slices.Reverse(first)
-			first[0] = nil
+			first[0] = store.Child{}
 			second, err := r.parseFile(path, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assertNames(second, want)
 			slices.Reverse(second)
-			second[0] = nil
+			second[0] = store.Child{}
 			third, err := r.parseFile(path, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assertNames(third, want)
 			if tc.cached {
 				cached := r.cache[path]
 				assertNames(cached.objects, []string{"first", "producer", "last"})
-				if _, ok := cached.objects[1].(*manifest.RawObject); !ok {
+				if _, ok := cached.objects[1].Obj.(*manifest.RawObject); !ok {
 					t.Errorf("cached producer = %T, want raw object", cached.objects[1])
+				}
+				if cached.objects[0].Doc == nil || cached.objects[1].Doc != nil || cached.objects[2].Doc == nil {
+					t.Fatal("only tracked objects should retain authoritative documents")
+				}
+				targets := manifest.ProducerTargets(cached.objects[1].Obj)
+				if len(targets) != 1 || targets[0].Name != "generated" {
+					t.Fatalf("released raw document corrupted producer spec: %v", targets)
 				}
 				assert.Equal(t, cached.body, header.body)
 				assert.Equal(t, cached.file, header.file)

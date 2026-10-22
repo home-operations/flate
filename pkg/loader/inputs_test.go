@@ -326,7 +326,7 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 				assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
 			}
 			terminal := testutil.KustomizationID("authored", "terminal")
-			if _, ok := l.Index.Lookup(terminal); ok || l.candidates[terminal] != nil || len(l.documents.cache[filepath.Join(root, tc.terminal)].objects) != 0 {
+			if _, ok := l.Index.Lookup(terminal); ok || l.candidates[terminal].Obj != nil || len(l.documents.cache[filepath.Join(root, tc.terminal)].objects) != 0 {
 				t.Fatal("terminal-only patch retained raw admission evidence")
 			}
 		})
@@ -629,7 +629,7 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	}
 	l.Admit(root)
 	id := testutil.KustomizationID("authored", "dual")
-	if _, ok := l.Index.Lookup(id); !ok || l.candidates[id] == nil || st.GetObject(id) == nil || len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
+	if _, ok := l.Index.Lookup(id); !ok || l.candidates[id].Obj == nil || st.GetObject(id) == nil || len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
 		t.Fatal("terminal role suppressed a separately declared resource")
 	}
 }

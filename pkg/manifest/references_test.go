@@ -107,6 +107,20 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		{Kind: KindGitRepository, Name: "source"},
 		{APIVersion: "foreign.example/v1", Kind: KindResourceSetInputProvider, Name: "inputs"},
 	}
+	g := &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Namespace: "authored", Spec: map[string]any{"sources": []any{
+		map[string]any{"alias": "first", "kind": KindOCIRepository, "name": "remote", "namespace": "other"},
+		map[string]any{"alias": "second", "kind": KindGitRepository, "name": "local"},
+		map[string]any{"alias": "third", "kind": KindBucket, "name": "bucket"},
+		map[string]any{"alias": "fourth", "kind": KindExternalArtifact, "name": "generated"},
+	}}}
+	e, _, _, err := ParseDoc(map[string]any{
+		"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": KindExternalArtifact,
+		"metadata": map[string]any{"name": "generated", "namespace": "authored"},
+		"spec": map[string]any{"sourceRef": map[string]any{
+			"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "name": "generator",
+		}},
+	}, ParseDocOptions{})
+	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name, namespace string
 		obj             BaseManifest
@@ -125,6 +139,15 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "effective", Name: "chart", Use: "chart", Content: true},
 			{Group: HelmReleaseDomain, Kind: KindHelmRelease, Namespace: "effective", Name: "parent", Use: "dependsOn"},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
+		}},
+		{"artifactgenerator", "effective", g, []Reference{
+			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other", Name: "remote", Use: "artifact", Content: true},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "local", Use: "artifact", Position: 1, Content: true},
+			{Group: SourceDomain, Kind: KindBucket, Namespace: "effective", Name: "bucket", Use: "artifact", Position: 2, Content: true},
+			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "effective", Name: "generated", Use: "artifact", Position: 3, Content: true},
+		}},
+		{"externalartifact", "effective", e, []Reference{
+			{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "effective", Name: "generator", Use: "materializer"},
 		}},
 		{"resourceset", "apps", r, []Reference{
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: new("true")},
@@ -160,6 +183,10 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 				spec = obj.HelmReleaseSpec
 			case *ResourceSet:
 				spec = obj.ResourceSetSpec
+			case *RawObject:
+				spec = obj.Spec
+			case *ExternalArtifact:
+				spec = obj.ExternalArtifactSpec
 			}
 			body, err := json.Marshal(spec)
 			assert.NoError(t, err)
@@ -178,6 +205,10 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 				assert.Diff(t, parsed.HelmReleaseSpec, spec)
 			case *ResourceSet:
 				assert.Diff(t, parsed.ResourceSetSpec, spec)
+			case *RawObject:
+				assert.Diff(t, parsed.Spec, spec)
+			case *ExternalArtifact:
+				assert.Diff(t, parsed.ExternalArtifactSpec, spec)
 			}
 			assert.Equal(t, changed, true)
 			assert.Diff(t, doc, before)
@@ -390,7 +421,8 @@ func TestReferences_NoAllocations(t *testing.T) {
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
 	KindOf(&RawObject{APIVersion: "v1", Kind: KindConfigMap}).Namespaced()
-	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "source"}}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
+	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "source"}}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}, &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"sources": []any{map[string]any{"kind": KindGitRepository, "name": "input"}}}}} {
+
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf(obj) }), float64(0))
 			count := 0
@@ -500,7 +532,7 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 
 func assertReferenceEdges(t *testing.T, got, want []Reference) {
 	t.Helper()
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "UnknownArtifactRoot", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering")); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "ArtifactOnly", "UnknownArtifactRoot", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering")); diff != "" {
 		t.Fatalf("reference edges (-want +got):\n%s", diff)
 	}
 }

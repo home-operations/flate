@@ -122,7 +122,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 		return err
 	}
 
-	_, attempt := c.run.Reads.GetEmission(id)
+	_, _, attempt := c.run.Reads.GetEmission(id)
 	defer attempt.Finish()
 	docs, err := kustomize.Render(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
@@ -156,7 +156,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 
 	attempt.Children, attempt.Manifests = c.ParseChildren(ks, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Fingerprint, attempt.Complete = fp, true
-	return c.run.Emit(id, &attempt)
+	return c.run.Emit(id, &attempt, nil)
 }
 
 // resolveSource retains source-controller ignore shaping for working-tree aliases.

@@ -11,10 +11,10 @@ import (
 func publishDocuments(c *base.Controller, id manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions) ([]store.Child, []map[string]any) {
 	prior, hadStatus := c.Store.GetStatus(id)
 	children, retained := parseChildrenForTest(id, docs, opts)
-	_, next := c.Store.GetEmission(id)
+	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = children, retained, true
-	c.Emit(id, &next)
+	c.Emit(id, &next, nil)
 	if hadStatus && prior.Status == store.StatusPending {
 		c.Store.UpdateStatus(id, prior)
 	}
@@ -38,5 +38,5 @@ func publishFixture(tb testing.TB, s *store.Store, id manifest.NamedResource, ch
 		}
 		next.Children = append(next.Children, store.Child{Obj: obj})
 	}
-	s.RecordEmitted(id, next)
+	s.RecordEmitted(id, next, nil)
 }

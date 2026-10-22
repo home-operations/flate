@@ -16,12 +16,14 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 	t.Parallel()
 	const root = "/virtual/orphan-evidence"
 	input := fstest.MapFS{
-		"a.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x, namespace: default}\ndata: {VALUE: X}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: A}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: default}\ndata: {VALUE: S}\n")},
-		"z.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: Z}\n")},
+		"a.yaml":         {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x, namespace: default}\ndata: {VALUE: X}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: A}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: default}\ndata: {VALUE: S}\n")},
+		"z.yaml":         {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: default}\ndata: {VALUE: Z}\n")},
+		"generator.yaml": {Data: []byte("apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: default, uid: authored, annotations: {source.extensions.fluxcd.io/reconcile: disabled}}\nspec: {sources: [{alias: repo, kind: GitRepository, name: input}]}\n")},
 	}
 	x := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "x"}
 	shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "shared"}
 	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "sibling"}
+	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "default", Name: "generator"}
 	for _, tc := range []struct {
 		name  string
 		order []manifest.NamedResource
@@ -42,6 +44,7 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				}
 				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: root + "/" + file, File: file}
 			}
+			l.Index.Records[generator] = manifest.DiscoveryRecord{Authored: generator, Path: root + "/generator.yaml", File: "generator.yaml"}
 			d := &discoverer{cfg: Config{Store: st}, loader: l}
 			if tc.order == nil {
 				d.promoteOrphans(t.Context(), nil)
@@ -53,6 +56,12 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 						t.Fatalf("promotion failed for %s", id)
 					}
 				}
+				d.promoteOrphans(t.Context(), nil)
+			}
+			obj, doc, attempt := st.GetEmission(generator)
+			attempt.Finish()
+			if obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored" || doc["metadata"].(map[string]any)["annotations"].(map[string]any)["source.extensions.fluxcd.io/reconcile"] != "disabled" {
+				t.Fatalf("orphan generator lost authored document: %#v", doc)
 			}
 			for _, want := range []struct {
 				id    manifest.NamedResource
@@ -82,13 +91,19 @@ spec:
     spec:
       chart: charts/demo
       sourceRef: {kind: GitRepository, name: source, namespace: apps}
+---
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: generator, namespace: apps, uid: authored}
+spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 `)
 	st := store.New()
 	admitDiscoveryForTest(st, dir)
 	l := loader.New(st)
 	self := testutil.KustomizationID("apps", "self")
 	child := testutil.HelmReleaseID("apps", "child")
-	for _, id := range []manifest.NamedResource{self, child} {
+	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+	for _, id := range []manifest.NamedResource{self, child, generator} {
 		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "apps/bundle.yaml"), File: "apps/bundle.yaml"}
 		if id == self {
 			record.Authored.Namespace = "authored"
@@ -105,6 +120,9 @@ spec:
 	}
 	if st.GetObject(child) != nil {
 		t.Error("orphan promotion must not admit a parent-owned sibling")
+	}
+	if st.GetObject(generator) != nil {
+		t.Error("orphan promotion admitted a parent-owned generator")
 	}
 }
 
@@ -186,7 +204,9 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				obj := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"HOST": value}}
 				saved = append(saved, obj)
 				if scenario != "unknown-file" {
-					st.AddObject(obj)
+					doc := obj.Snapshot()
+					doc["metadata"].(map[string]any)["uid"] = "saved-secret"
+					st.AddObject(obj, doc)
 				}
 			}
 			testutil.WriteFile(t, dir, "bundle.yaml", body)
@@ -239,6 +259,16 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 					}
 				} else if got != saved[i] {
 					t.Errorf("%s must preserve exact immutable object", id)
+				}
+				_, doc, emission := st.GetEmission(id)
+				emission.Finish()
+				if doc == nil {
+					t.Fatal("promoted or restored secret lost its authoritative document")
+				}
+				if scenario == "failed" || scenario == "preexisting" || scenario == "graph-owned" {
+					if doc["metadata"].(map[string]any)["uid"] != "saved-secret" {
+						t.Fatalf("saved secret metadata lost: %v", doc)
+					}
 				}
 				wantSaved := "..PLACEHOLDER_HOST.."
 				if scenario == "preexisting" {

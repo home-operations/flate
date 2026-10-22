@@ -90,10 +90,10 @@ func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child"}}}
 	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	next := &store.Emission{Children: children, Manifests: retained, Complete: true}
-	c.Emit(parent.Named(), next)
+	c.Emit(parent.Named(), next, nil)
 	arrivals := 0
 	s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
-	c.Emit(parent.Named(), next)
+	c.Emit(parent.Named(), next, nil)
 	if arrivals != 0 {
 		t.Fatalf("equal accepted replay fired %d arrivals", arrivals)
 	}

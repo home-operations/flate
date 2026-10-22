@@ -96,11 +96,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	kustomizations := d.loader.Kustomizations()
+	var kustomizations []*manifest.Kustomization
+	for _, child := range d.loader.Kustomizations() {
+		kustomizations = append(kustomizations, child.Obj.(*manifest.Kustomization))
+	}
 	substitutions := values.NewDependencySubstitutions(kustomizations)
 	for _, ks := range kustomizations {
 		if resolved := manifest.MapDependsOn(ks, substitutions.Resolve, substitutions.Resolve); resolved != ks && cfg.Store.GetObject(ks.Named()) != nil {
-			cfg.Store.AddObject(resolved)
+			_, doc, emission := cfg.Store.GetEmission(ks.Named())
+			emission.Finish()
+			cfg.Store.AddObject(resolved, doc)
 		}
 	}
 	var standaloneSecrets []manifest.NamedResource
@@ -124,7 +129,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		if !ok || record.Builder != d.documentFiles[i] || current == nil {
 			continue
 		}
-		if secret, ok := current.(*manifest.Secret); ok && !slices.Contains(l.BuiltDocuments(id), current) {
+		if secret, ok := current.(*manifest.Secret); ok && !slices.ContainsFunc(l.BuiltDocuments(id), func(child store.Child) bool { return child.Obj == current }) {
 			doc = maps.Clone(doc)
 			snapshot := secret.Snapshot()
 			for _, key := range []string{"data", "stringData", "type"} {
@@ -200,7 +205,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
 		kustomizations := d.loader.Kustomizations()
-		for _, ks := range kustomizations {
+		for _, child := range kustomizations {
+			ks := child.Obj.(*manifest.Kustomization)
 			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
 			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
 			if _, seen := ksExpanded[key]; seen {
@@ -268,28 +274,29 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 	if err != nil {
 		return fmt.Errorf("discovery package %q build: %w", root, err)
 	}
-	built := []manifest.BaseManifest{}
-	var documents []map[string]any
+	built := []store.Child{}
 	for _, doc := range manifest.FlattenLists(docs) {
 		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
 		if err != nil {
 			return fmt.Errorf("discovery package %q document: %w", root, err)
 		}
-		if obj != nil {
-			built = append(built, obj)
-			documents = append(documents, authoritative)
+		if obj == nil {
+			manifest.ReleaseDoc(doc)
+			continue
 		}
+		built = append(built, store.Child{Obj: obj, Doc: authoritative})
 	}
 	packageRoot := filepath.Join(repoRoot, filepath.FromSlash(root))
 	selected := packageRoot == d.cfg.Path
 	d.loader.RegisterBuilt(packageRoot, built)
-	for i, obj := range built {
+	for _, child := range built {
+		obj := child.Obj
 		if !selected && manifest.KindOf(obj).DiscoverySeed() {
 			continue
 		}
 		record, _ := d.loader.Index.Lookup(obj.Named())
 		d.documentFiles = append(d.documentFiles, record.Builder)
-		d.documents = append(d.documents, documents[i])
+		d.documents = append(d.documents, child.Doc)
 	}
 	return nil
 }
@@ -301,7 +308,8 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedSources := make(map[manifest.NamedResource]struct{})
 	pinnedKS := make(map[manifest.NamedResource]struct{})
-	for _, ks := range d.loader.Kustomizations() {
+	for _, child := range d.loader.Kustomizations() {
+		ks := child.Obj.(*manifest.Kustomization)
 		ref := ks.SourceID()
 		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}

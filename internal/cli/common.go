@@ -362,14 +362,17 @@ const (
 	presentDiff
 )
 
-var renderKinds = func() []string {
-	var kinds []string
+var renderKinds, runnableKinds = func() ([]string, []string) {
+	var render, runnable []string
 	for info := range manifest.Kinds() {
 		if info.Render {
-			kinds = append(kinds, info.Kind)
+			render = append(render, info.Kind)
+		}
+		if info.Runnable {
+			runnable = append(runnable, info.Kind)
 		}
 	}
-	return kinds
+	return render, runnable
 }()
 
 type selectedRequest struct {

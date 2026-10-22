@@ -24,6 +24,32 @@ func cmID(ns string) manifest.NamedResource {
 	return manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: "cluster-settings"}
 }
 
+func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
+	s := store.New()
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	builder := selfProduceBuilder{idx: index, store: s, emittedFiles: map[string][]manifest.NamedResource{}}
+	obj := &manifest.Kustomization{Name: "child", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "input"}}
+	children := []store.Child{{Obj: obj}}
+	var visits []graphVisit
+	for _, name := range []string{"a", "z"} {
+		owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
+		s.AddObject(owner)
+		visit := graphVisit{owner: owner.Named(), namespace: "apps", file: "child.yaml", coordinate: "child.yaml"}
+		visits = append(visits, visit)
+		builder.recordProduced(visit, children, nil)
+	}
+	if got := testing.AllocsPerRun(100, func() {
+		for _, visit := range visits {
+			builder.recordProduced(visit, children, nil)
+		}
+	}); got != 0 {
+		t.Fatalf("repeated production capture allocated %v times, want zero", got)
+	}
+	id := manifest.Resolve(obj.Named(), "apps", "")
+	assert.Diff(t, index.Records[id].Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}})
+	assert.Equal(t, len(index.Records[id].Productions), 2)
+}
+
 func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -212,6 +238,27 @@ func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 			b.recordProducer(producerDeclaration{obj: ks}, nil)
 		}); got != 0 {
 			t.Fatalf("nonproducer preparation allocations=%v, want 0", got)
+		}
+	})
+	t.Run("unused_references", func(t *testing.T) {
+		id := ks.Named()
+		record := manifest.DiscoveryRecord{Path: filepath.Join(dir, "ks.yaml"), File: "ks.yaml"}
+		index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: record}}
+		l := &Loader{Store: s, Index: index, scopes: &scopeConstruction{}}
+		ctx := t.Context()
+		measure := func() float64 {
+			t.Helper()
+			return testing.AllocsPerRun(10, func() {
+				if err := l.buildProductions(ctx, dir, nil); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+		withoutReferences := measure()
+		record.Refs = []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "unused"}}
+		index.Records[id] = record
+		if got := measure(); got != withoutReferences {
+			t.Fatalf("nonproducer reference allocations = %v, want %v", got, withoutReferences)
 		}
 	})
 }
@@ -513,9 +560,10 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 				l.mountSources()
 				objects, err := l.documents.parseFile(path, manifest.ParseDocOptions{})
 				assert.NoError(t, err)
-				for _, obj := range objects {
+				for _, child := range objects {
+					obj := child.Obj
 					if _, ok := obj.(*manifest.Kustomization); ok && st.GetObject(obj.Named()) == nil {
-						st.AddObject(obj)
+						st.AddObject(obj, child.Doc)
 					}
 				}
 				if !tc.graphAdded {
@@ -1049,12 +1097,13 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, resources, scan string
-		component             bool
+		component, alias      bool
 	}{
-		{"generator_first", "generator.yaml, consumer.yaml", ".", false},
-		{"consumer_first", "consumer.yaml, generator.yaml", ".", false},
-		{"component_full", "consumer.yaml", ".", true},
-		{"component_changed_only", "consumer.yaml", "apps", true},
+		{"generator_first", "generator.yaml, consumer.yaml", ".", false, false},
+		{"consumer_first", "consumer.yaml, generator.yaml", ".", false, false},
+		{"component_full", "consumer.yaml", ".", true, false},
+		{"component_changed_only", "consumer.yaml", "apps", true, false},
+		{"component_input_alias", "consumer.yaml", "apps", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1065,11 +1114,21 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 				generatorFile = "shared/generator.yaml"
 				testutil.WriteFile(t, root, "shared/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [generator.yaml]\n")
 			}
-			testutil.WriteFile(t, root, generatorFile, "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: authored}\nspec:\n  pathPattern: '@repo/apps/{app}'\n  artifacts: [{name: 'app-{app}'}]\n")
+			testutil.WriteFile(t, root, generatorFile, "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: authored, uid: authored}\nspec:\n  sources: [{alias: foreign, kind: OCIRepository, name: foreign, namespace: external}, {alias: repo, kind: GitRepository, name: input}, {alias: bucket, kind: Bucket, name: bucket, namespace: storage}]\n  pathPattern: '@repo/apps/{app}'\n  artifacts: [{name: 'app-{app}'}]\n")
 			testutil.WriteFile(t, root, "apps/consumer.yaml", testutil.KustomizationYAML("consumer", "authored", "  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-api}\n"))
 			s := store.New()
+			source := manifest.BootstrapSourceID
+			if tc.alias {
+				repository := &manifest.GitRepository{Name: "alias", Namespace: "flux-system"}
+				source = repository.Named()
+				s.AddObject(repository)
+				s.SetArtifact(source, &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(t.TempDir(), "alias"), InputAlias: true, FS: os.DirFS(root)})
+			}
 			for _, ns := range []string{"apps", "staging"} {
 				owner := &manifest.Kustomization{Name: ns, Namespace: "flux-system", Path: "./apps", TargetNamespace: ns}
+				if tc.alias {
+					owner.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace}
+				}
 				if tc.component {
 					owner.Components = []string{"../shared"}
 				}
@@ -1085,6 +1144,25 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 				t.Fatal(err)
 			}
 			idx := l.Index
+			for _, ns := range []string{"apps", "staging"} {
+				generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: ns, Name: "generator"}
+				record, ok := idx.Lookup(generator)
+				if !ok || record.File != generatorFile {
+					t.Fatalf("generator coordinates before filtering = %+v", record)
+				}
+				assert.Diff(t, record.Refs, []manifest.NamedResource{
+					{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "external", Name: "foreign"},
+					{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: ns, Name: "input"},
+					{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "storage", Name: "bucket"},
+				})
+				target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: ns, Name: "app-api"}
+				r, ok := idx.Lookup(target)
+				if !ok || r.Path != "" || s.GetObject(target) != nil || s.GetArtifact(target) != nil {
+					t.Fatalf("prediction supplied content: %+v", r)
+				}
+				want := manifest.Production{Owner: testutil.KustomizationID("flux-system", ns), Declaration: generator, Authored: manifest.NamedResource{Group: generator.Group, Kind: generator.Kind, Namespace: "authored", Name: generator.Name}, Source: source, File: generatorFile}
+				assert.Diff(t, r.Productions, []manifest.Production{want})
+			}
 			filter := change.NewFilter(change.NewSet([]string{generatorFile}), idx, s)
 			assert.Diff(t, idx.Readers[generatorFile], []manifest.NamedResource{testutil.KustomizationID("flux-system", "apps"), testutil.KustomizationID("flux-system", "staging")})
 			for _, ns := range []string{"apps", "staging"} {
@@ -1095,17 +1173,11 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 				generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: ns, Name: "generator"}
 				obj := s.GetObject(generator)
 				assert.Equal(t, obj != nil, !tc.component)
-				if obj != nil && (!manifest.KindOf(obj).Discovery || manifest.KindOf(obj).Runnable) {
+				if obj != nil && (!manifest.KindOf(obj).Discovery || !manifest.KindOf(obj).Runnable) {
 					t.Fatalf("generator admission = %v", obj)
 				}
-				for _, name := range []string{"app-api"} {
-					target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: ns, Name: name}
-					r, ok := idx.Lookup(target)
-					if !ok || r.Path != "" || s.GetObject(target) != nil || s.GetArtifact(target) != nil {
-						t.Fatalf("prediction supplied content: %+v", r)
-					}
-					want := manifest.Production{Owner: testutil.KustomizationID("flux-system", ns), Declaration: generator, Authored: manifest.NamedResource{Group: generator.Group, Kind: generator.Kind, Namespace: "authored", Name: generator.Name}, Source: manifest.BootstrapSourceID, File: generatorFile}
-					assert.Diff(t, r.Productions, []manifest.Production{want})
+				if !filter.ShouldReconcile(testutil.KustomizationID(ns, "consumer")) {
+					t.Fatal("changed generator declaration did not select its source consumer")
 				}
 				if r, ok := idx.Lookup(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: ns, Name: "generator"}); ok && len(r.Productions) != 0 {
 					t.Fatal("generator name became an output")
@@ -1125,7 +1197,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 	for _, name := range []string{"first", "second"} {
 		view := filepath.Join(root, "views", name)
 		testutil.WriteFile(t, view, "apps/kustomization.yaml", "namespace: apps\nresources: [generator.yaml, consumer.yaml]\n")
-		testutil.WriteFile(t, view, "apps/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator}\nspec:\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: 'app-{app}'}, {name: common}]\n")
+		testutil.WriteFile(t, view, "apps/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, uid: authored}\nspec:\n  sources: [{alias: foreign, kind: OCIRepository, name: foreign, namespace: external}, {alias: repo, kind: GitRepository, name: input}, {alias: bucket, kind: Bucket, name: bucket, namespace: storage}]\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: 'app-{app}'}, {name: common}]\n")
 		testutil.WriteFile(t, view, "apps/consumer.yaml", testutil.KustomizationYAML("consumer", "", "  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-"+name+"}\n"))
 		source := &manifest.GitRepository{Name: name, Namespace: "flux-system"}
 		s.AddObject(source)
@@ -1134,6 +1206,38 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 		if _, err := l.Load(t.Context(), view); err != nil {
 			t.Fatal(err)
 		}
+		authored := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Name: "generator"}
+		record, ok := l.Index.Lookup(authored)
+		if !ok {
+			t.Fatal("authored generator missing before index finalization")
+		}
+		assert.Diff(t, record.Refs, []manifest.NamedResource{
+			{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "external", Name: "foreign"},
+			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "input"},
+			{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "storage", Name: "bucket"},
+		})
+	}
+	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
+		l.scopes.ready[l.sourceState(ks.SourceID())] = struct{}{}
+	}
+	l.Admit(root)
+	projected := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+	record, ok := l.Index.Lookup(projected)
+	if !ok {
+		t.Fatal("projected generator missing before index finalization")
+	}
+	assert.Diff(t, record.Refs, []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "external", Name: "foreign"},
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"},
+		{Group: manifest.SourceDomain, Kind: manifest.KindBucket, Namespace: "storage", Name: "bucket"},
+	})
+	obj, doc, attempt := s.GetEmission(projected)
+	attempt.Finish()
+	if obj == nil || doc == nil || doc["metadata"].(map[string]any)["uid"] != "authored" {
+		t.Fatalf("projected authoritative document = %#v", doc)
+	}
+	if _, authoredNamespace := doc["metadata"].(map[string]any)["namespace"]; authoredNamespace {
+		t.Fatal("projection changed authored document namespace")
 	}
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
@@ -1163,11 +1267,59 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 	assert.Diff(t, files, []string{"views/first/apps/generator.yaml", "views/second/apps/generator.yaml"})
 }
 
+func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps, uid: authored}\nspec:\n  sources: [{alias: foreign, kind: OCIRepository, name: foreign, namespace: external}, {alias: repo, kind: GitRepository, name: input}]\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: 'app-{app}'}]\n")
+	testutil.WriteFile(t, root, "entry/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-api}\n"))
+	testutil.WriteFile(t, root, "entry/other.yaml", testutil.KustomizationYAML("other", "other", "  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-other}\n"))
+	testutil.WriteFile(t, root, "entry/foreign-owner.yaml", testutil.KustomizationYAML("foreign-owner", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: foreign}\n"))
+	view := filepath.Join(root, "views", "foreign")
+	testutil.WriteFile(t, view, "apps/kustomization.yaml", "resources: [consumer.yaml]\n")
+	testutil.WriteFile(t, view, "apps/consumer.yaml", testutil.KustomizationYAML("foreign", "apps", "  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-foreign}\n"))
+	s := store.New()
+	admitForTest(s, root)
+	source := &manifest.GitRepository{Name: "foreign", Namespace: "flux-system"}
+	s.AddObject(source)
+	s.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: view, Key: "foreign-pin", FS: os.DirFS(view)})
+	l := loaderFixture(s, nil)
+	l.SourceRoot = root
+	for _, scan := range []string{filepath.Join(root, "entry"), view} {
+		if _, err := l.Load(t.Context(), scan); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+	output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
+	record, _ := l.Index.Lookup(generator)
+	assert.Diff(t, record.Refs, []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "external", Name: "foreign"},
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"},
+	})
+	assert.Diff(t, s.Productions(output, l.Index), []manifest.Production{{Owner: generator, Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: "entry/generator.yaml"}})
+	for _, unrelated := range []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "other", Name: "app-other"},
+		{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-foreign"},
+	} {
+		if slices.ContainsFunc(s.Productions(unrelated, l.Index), func(p manifest.Production) bool { return p.Declaration == generator }) {
+			t.Fatalf("static declaration escaped its namespace or source view: %s", unrelated)
+		}
+	}
+	filter := change.NewFilter(change.NewSet([]string{"entry/consumer.yaml"}), l.Index, s)
+	assert.Equal(t, filter.ShouldReconcile(generator), true)
+	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
+	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("other", "other")), false)
+	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "foreign")), false)
+}
+
 func BenchmarkSelfProduceBuilder_ArtifactJoin(b *testing.B) {
 	obj := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}
-	consumers := make([]manifest.BaseManifest, 100)
+	consumers := make([]store.Child, 100)
 	for i := range consumers {
-		consumers[i] = &manifest.Kustomization{Namespace: "apps", Name: fmt.Sprintf("consumer-%d", i), SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: fmt.Sprintf("app-%d", i)}}
+		consumers[i].Obj = &manifest.Kustomization{Namespace: "apps", Name: fmt.Sprintf("consumer-%d", i), SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: fmt.Sprintf("app-%d", i)}}
 	}
 	declaration := producerDeclaration{obj: obj, authored: obj.Named(), visit: graphVisit{source: manifest.BootstrapSourceID, coordinate: "generator.yaml"}}
 	reader := documentReader{cache: map[string]document{"consumers.yaml": {objects: consumers}}}
@@ -1184,12 +1336,14 @@ func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, template string
-		split          bool
-		want           bool
+		split, deleted bool
+		ignored, want  bool
 	}{
-		{"before", "old-{app}", false, false},
-		{"after", "app-{app}", false, true},
-		{"disjoint_coverage", "app-{app}", true, false},
+		{name: "before", template: "old-{app}"},
+		{name: "after", template: "app-{app}", want: true},
+		{name: "disjoint_coverage", template: "app-{app}", split: true},
+		{name: "deleted_declaration", template: "app-{app}", deleted: true},
+		{name: "explicit_ignored_declaration", template: "app-{app}", ignored: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1200,7 +1354,12 @@ func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {
 				consumerDir, resources = "consumer", "generator.yaml"
 			}
 			testutil.WriteFile(t, root, "producer/kustomization.yaml", "namespace: apps\nresources: ["+resources+"]\n")
-			testutil.WriteFile(t, root, "producer/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator}\nspec:\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: '"+tc.template+"'}]\n")
+			if !tc.deleted {
+				testutil.WriteFile(t, root, "producer/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator}\nspec:\n  sources: [{alias: repo, kind: GitRepository, name: input}]\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: '"+tc.template+"'}]\n")
+			}
+			if tc.ignored {
+				testutil.WriteFile(t, root, "producer/.krmignore", "generator.yaml\n")
+			}
 			if tc.split {
 				testutil.WriteFile(t, root, "consumer/kustomization.yaml", "namespace: apps\nresources: [consumer.yaml]\n")
 			}
@@ -1231,29 +1390,77 @@ func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {
 
 func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "kustomization.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: document, namespace: apps}\nspec:\n  sourceRef: {kind: ExternalArtifact, name: app-document}\nresources: [generator.yaml, consumer.yaml]\n")
-	testutil.WriteFile(t, root, "generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps}\nspec:\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: 'app-{app}'}]\n")
-	testutil.WriteFile(t, root, "consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  sourceRef: {kind: ExternalArtifact, name: app-api}\n"))
-	reader := readerForTest(root)
-	b := selfProduceBuilder{idx: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, store: store.New(), reader: reader, emittedFiles: map[string][]manifest.NamedResource{}}
-	w := graphWalker{documents: reader, visited: map[graphContext]struct{}{}}
-	var scope []graphVisit
-	var declarations []producerDeclaration
-	if !w.walk(graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
-		scope = append(scope, v)
-		if v.document == nil && v.readable {
-			declarations = b.recordProduced(v, nil, declarations)
-		}
-		return true
-	}) {
-		t.Fatal("walk stopped before completing")
-	}
-	b.joinProductions(declarations, scope)
-	for name, want := range map[string]int{"app-api": 1, "app-document": 0} {
-		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: name}
-		record, _ := b.idx.Lookup(id)
-		assert.Equal(t, len(record.Productions), want)
+	for _, mode := range []string{"explicit", "deferred", "unadmitted", "projected", "self_owner"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			generatorNS, artifactName, namespace := "apps", "app-{app}", ""
+			if mode == "projected" {
+				generatorNS, namespace = "", "namespace: apps\n"
+			}
+			if mode == "self_owner" {
+				generatorNS, artifactName = "authored", "app-api"
+			}
+			testutil.WriteFile(t, root, "kustomization.yaml", namespace+"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: document, namespace: apps}\nspec:\n  sourceRef: {kind: ExternalArtifact, name: app-document}\nresources: [generator.yaml, consumer.yaml, hidden.yaml]\n")
+			testutil.WriteFile(t, root, "generator.yaml", fmt.Sprintf("apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: %q}\nspec:\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: %q}]\n", generatorNS, artifactName))
+			testutil.WriteFile(t, root, "consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  sourceRef: {kind: ExternalArtifact, name: app-api}\n"))
+			testutil.WriteFile(t, root, "hidden.yaml", testutil.KustomizationYAML("hidden", "apps", "  sourceRef: {kind: ExternalArtifact, name: app-hidden}\n"))
+			reader := readerForTest(root)
+			st := store.New()
+			if mode != "explicit" {
+				for _, name := range []string{"generator", "consumer"} {
+					if mode == "unadmitted" && name == "generator" {
+						continue
+					}
+					children, err := reader.parseFile(filepath.Join(root, name+".yaml"), manifest.ParseDocOptions{})
+					assert.NoError(t, err)
+					obj := children[0].Obj
+					if mode == "projected" || mode == "self_owner" {
+						obj = obj.WithNamespace("apps")
+					}
+					st.AddObject(obj, children[0].Doc)
+				}
+			}
+			b := selfProduceBuilder{idx: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, store: st, reader: reader, emittedFiles: map[string][]manifest.NamedResource{}}
+			generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+			authored := generator
+			authored.Namespace = generatorNS
+			if mode == "projected" || mode == "self_owner" {
+				b.idx.Records[generator] = manifest.DiscoveryRecord{Authored: authored, Path: filepath.Join(root, "generator.yaml"), File: "generator.yaml"}
+			}
+			w := graphWalker{documents: reader, visited: map[graphContext]struct{}{}}
+			var scope []graphVisit
+			var declarations []producerDeclaration
+			if !w.walk(graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
+				v.deferMaterialization = mode != "explicit"
+				if mode == "self_owner" {
+					v.owner = generator
+				}
+				scope = append(scope, v)
+				if v.document == nil && v.readable {
+					declarations = b.recordProduced(v, nil, declarations)
+				}
+				return true
+			}) {
+				t.Fatal("walk stopped before completing")
+			}
+			b.joinProductions(declarations, scope)
+			want := map[string]int{"app-api": 1, "app-document": 0, "app-hidden": 0}
+			if mode == "explicit" {
+				want["app-hidden"] = 1
+			}
+			if mode == "unadmitted" {
+				want["app-api"] = 0
+			}
+			for name, count := range want {
+				id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: name}
+				record, _ := b.idx.Lookup(id)
+				assert.Equal(t, len(record.Productions), count)
+				if count != 0 {
+					assert.Diff(t, record.Productions, []manifest.Production{{Owner: generator, Declaration: generator, Authored: authored, Source: manifest.BootstrapSourceID, File: "generator.yaml"}})
+				}
+			}
+		})
 	}
 }
 

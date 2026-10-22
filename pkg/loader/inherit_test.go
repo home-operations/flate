@@ -42,12 +42,17 @@ func TestAdmit_UnchangedInputs(t *testing.T) {
 	l.Admit(root)
 	before := l.Kustomizations()
 	assert.Equal(t, len(before), 4)
+	for _, child := range before {
+		if child.Doc == nil || child.Doc["spec"].(map[string]any)["path"] != "./app" {
+			t.Fatalf("admitted peer lost its document: %v", child.Doc)
+		}
+	}
 	allocs := testing.AllocsPerRun(10, func() { l.Admit(root) })
 	t.Logf("unchanged admission: %.0f allocations", allocs)
 	if allocs > 3 {
 		t.Fatalf("unchanged admission repeated scope work: %.0f allocations", allocs)
 	}
-	if !slices.Equal(l.Kustomizations(), before) {
+	if !slices.EqualFunc(l.Kustomizations(), before, func(a, b store.Child) bool { return a.Obj == b.Obj }) {
 		t.Fatal("unchanged admission replaced peer identities")
 	}
 	assert.Equal(t, len(l.Index.Claims), 1)
@@ -281,7 +286,11 @@ spec:
 						break
 					}
 				}
-				original, _ = l.authoredObject(r.Path, r.Authored).(*manifest.Kustomization)
+				authored := l.authoredObject(r.Path, r.Authored)
+				if authored.Doc == nil || manifest.DocIdentity(authored.Doc) != r.Authored {
+					t.Fatalf("projection lost authored document: %v", authored.Doc)
+				}
+				original, _ = authored.Obj.(*manifest.Kustomization)
 				if original == nil {
 					t.Fatal("authored Kustomization missing")
 				}
@@ -293,7 +302,7 @@ spec:
 				if diff := cmp.Diff(original, snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 					t.Fatalf("authored object mutated (-want +got): %s", diff)
 				}
-				if diff := cmp.Diff(l.authoredObject(raw.Path, raw.Authored), snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+				if diff := cmp.Diff(l.authoredObject(raw.Path, raw.Authored).Obj, snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 					t.Fatalf("authored object mutated (-want +got): %s", diff)
 				}
 				assert.Diff(t, l.recordNamespaces(raw, "myns"), tc.wantKS)
@@ -515,7 +524,7 @@ func TestAdmit_SourceKinds(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "source"}
-			original := l.authoredObject(filepath.Join(root, "source.yaml"), raw)
+			original := l.authoredObject(filepath.Join(root, "source.yaml"), raw).Obj
 			if original == nil {
 				t.Fatal("source not loaded")
 			}
@@ -693,6 +702,11 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	sibling := testutil.KustomizationID("apps", "sibling")
 	if l.Store.GetObject(sibling) == nil {
 		t.Fatal("bootstrap sibling not initially admitted")
+	}
+	_, doc, emission := l.Store.GetEmission(sibling)
+	emission.Finish()
+	if doc == nil || doc["spec"].(map[string]any)["path"] != "./leaf" {
+		t.Fatalf("bootstrap sibling lost authoritative document: %v", doc)
 	}
 	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
 	l.Admit(root)

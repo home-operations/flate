@@ -109,34 +109,53 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			}
 		}
 	}
-	evidence := map[manifest.NamedResource]manifest.BaseManifest{}
+	evidence := map[manifest.NamedResource]store.Child{}
 	if d.loader != nil {
-		for obj := range d.loader.Sources() {
-			evidence[obj.Named()] = obj
+		for child := range d.loader.Sources() {
+			evidence[child.Obj.Named()] = child
 		}
-		for _, ks := range d.loader.Kustomizations() {
+		for _, child := range d.loader.Kustomizations() {
+			ks := child.Obj.(*manifest.Kustomization)
 			ref := ks.SourceID()
-			if allowMissing || evidence[ref] != nil || d.cfg.Store.GetObject(ref) != nil {
+			if allowMissing || evidence[ref].Obj != nil || d.cfg.Store.GetObject(ref) != nil {
 				groups[ref] = append(groups[ref], ks)
 			}
 		}
-	} else if allowMissing {
-		for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
-			groups[ks.SourceID()] = append(groups[ks.SourceID()], ks)
+	}
+	if allowMissing {
+		for kind := range manifest.Kinds() {
+			if !kind.Runnable {
+				continue
+			}
+			for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
+				for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+					if ref.Group != manifest.SourceDomain || ref.Use != "source" && ref.Use != "artifact" {
+						continue
+					}
+					if ks, ok := obj.(*manifest.Kustomization); ok {
+						if !slices.Contains(groups[ref.NamedResource], ks) {
+							groups[ref.NamedResource] = append(groups[ref.NamedResource], ks)
+						}
+					} else if _, seen := groups[ref.NamedResource]; !seen {
+						groups[ref.NamedResource] = nil
+					}
+				}
+			}
 		}
 	}
+
 	candidates := map[manifest.NamedResource]entryResolution{}
 	var pinned []*manifest.GitRepository
 	for _, id := range slices.SortedFunc(maps.Keys(groups), manifest.NamedResource.Compare) {
 		obj := d.cfg.Store.GetObject(id)
 		if obj == nil {
-			obj = evidence[id]
+			obj = evidence[id].Obj
 			if obj != nil && slices.ContainsFunc(groups[id], func(ks *manifest.Kustomization) bool {
 				return d.cfg.Store.GetObject(ks.Named()) != nil
 			}) {
 				previous, resolved := d.resolvedSources[id]
 				artifact, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
-				d.cfg.Store.AddObject(obj)
+				d.cfg.Store.AddObject(obj, evidence[id].Doc)
 				if resolved && previous.object == obj && artifact != nil {
 					d.publishEntrySource(previous, artifact)
 				}

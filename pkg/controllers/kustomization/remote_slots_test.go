@@ -63,7 +63,7 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 	for _, id := range ids {
 		status, _ := s.GetStatus(id)
 		assert.Equal(t, status.Status, store.StatusReady)
-		_, artifact := s.GetEmission(id)
+		_, _, artifact := s.GetEmission(id)
 		if len(artifact.Manifests) != 1 {
 			t.Fatalf("missing rendered artifact for %s", id)
 		}

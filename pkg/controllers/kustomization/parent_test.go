@@ -76,7 +76,7 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 				DependsOn: []kustomizev1.DependencyReference{{Name: owner.Name, ReadyExpr: expr}},
 			}
 			s.AddObject(owner)
-			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
+			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
 			s.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode})
 			output, _ := s.GetArtifact(child.Named()).(*store.Emission)

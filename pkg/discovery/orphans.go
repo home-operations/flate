@@ -8,17 +8,20 @@ import (
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []manifest.NamedResource) {
 	index := d.loader.Index
 	// All admitted stand-ins MUST be removed before promotion so real sibling Secrets take precedence.
 	slices.SortFunc(standaloneSecrets, manifest.NamedResource.Compare)
-	var saved []*manifest.Secret
+	var saved []store.Child
 	for _, id := range standaloneSecrets {
 		record, _ := index.Lookup(id)
 		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.loader.AdmitsRoot(id, record.Path) {
-			saved = append(saved, obj)
+			_, doc, emission := d.cfg.Store.GetEmission(id)
+			emission.Finish()
+			saved = append(saved, store.Child{Obj: obj, Doc: doc})
 			d.cfg.Store.DeleteObject(id)
 		}
 	}
@@ -38,9 +41,10 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}
-	for _, obj := range saved {
+	for _, child := range saved {
+		obj := child.Obj
 		if d.cfg.Store.GetObject(obj.Named()) == nil {
-			d.cfg.Store.AddObject(obj)
+			d.cfg.Store.AddObject(obj, child.Doc)
 		}
 	}
 }

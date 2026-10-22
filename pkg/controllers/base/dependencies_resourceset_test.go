@@ -92,7 +92,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 					c.Store.RecordEmitted(owner.Named(), &store.Emission{Children: []store.Child{{Obj: rs, Productions: []manifest.Production{
 						{Owner: rs.Named(), File: "self.yaml"},
 						{Path: "file.yaml"},
-					}}}, Complete: true})
+					}}}, Complete: true}, nil)
 				}
 
 			}

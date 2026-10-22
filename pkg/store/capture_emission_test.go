@@ -5,7 +5,7 @@ import (
 )
 
 func captureEmission(st *Store, id manifest.NamedResource, output *Emission) *Emission {
-	_, next := st.GetEmission(id)
+	_, _, next := st.GetEmission(id)
 	next.Finish()
 	next.Children, next.Manifests = output.Children, output.Manifests
 	next.Fingerprint, next.Unreadable = output.Fingerprint, output.Unreadable

@@ -54,7 +54,7 @@ type Loader struct {
 	scopes     *scopeConstruction
 	entry      entryKind
 	entryPath  string
-	candidates map[manifest.NamedResource]manifest.BaseManifest
+	candidates map[manifest.NamedResource]store.Child
 	admitted   map[manifest.NamedResource]manifest.BaseManifest
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
@@ -91,14 +91,14 @@ func New(s *store.Store) *Loader {
 }
 
 // Sources yields immutable source-artifact evidence in unspecified order.
-func (l *Loader) Sources() iter.Seq[manifest.BaseManifest] {
-	return func(yield func(manifest.BaseManifest) bool) {
+func (l *Loader) Sources() iter.Seq[store.Child] {
+	return func(yield func(store.Child) bool) {
 		for id, r := range l.Index.Files() {
 			if !id.KindInfo().SourceArtifact {
 				continue
 			}
 			obj := l.indexedObject(id, r)
-			if obj != nil && !yield(obj) {
+			if obj.Obj != nil && !yield(obj) {
 				return
 			}
 		}
@@ -112,9 +112,9 @@ func (l *Loader) AdmitsRoot(id manifest.NamedResource, file string) bool {
 		return false
 	}
 	if r.Path == "" {
-		return r.Authored == (manifest.NamedResource{}) && l.candidates[id] != nil
+		return r.Authored == (manifest.NamedResource{}) && l.candidates[id].Obj != nil
 	}
-	if l.entry != entryKustomize && id.KindInfo().Discovery && l.candidates[id] != nil && l.documents.cache[file].loaded && !l.documents.cache[file].bootstrap {
+	if l.entry != entryKustomize && id.KindInfo().Discovery && l.candidates[id].Obj != nil && l.documents.cache[file].loaded && !l.documents.cache[file].bootstrap {
 		return true
 	}
 	return l.rootAdmission(file, r.File, id.KindInfo().Structural).admits(l, id, r)
@@ -180,30 +180,36 @@ func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manif
 }
 
 // Kustomizations returns admitted and reachable source-qualified owner evidence.
-func (l *Loader) Kustomizations() []*manifest.Kustomization {
-	out := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+func (l *Loader) Kustomizations() []store.Child {
+	objects := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	out := make([]store.Child, 0, len(objects))
+	for _, obj := range objects {
+		_, doc, emission := l.Store.GetEmission(obj.Named())
+		emission.Finish()
+		out = append(out, store.Child{Obj: obj, Doc: doc})
+	}
 	for id, r := range l.Index.Files() {
 		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization || l.Store.GetObject(id) != nil {
 			continue
 		}
-		obj := l.indexedObject(id, r)
-		if ks, ok := obj.(*manifest.Kustomization); ok {
-			out = append(out, ks)
+		child := l.indexedObject(id, r)
+		if _, ok := child.Obj.(*manifest.Kustomization); ok {
+			out = append(out, child)
 		}
 	}
-	slices.SortFunc(out, func(a, b *manifest.Kustomization) int { return a.Named().Compare(b.Named()) })
+	slices.SortFunc(out, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
 	return out
 }
 
-func (l *Loader) indexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) manifest.BaseManifest {
-	if obj := l.candidates[id]; obj != nil {
-		return obj
+func (l *Loader) indexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) store.Child {
+	if child := l.candidates[id]; child.Obj != nil {
+		return child
 	}
-	obj := l.authoredObject(r.Path, r.Authored)
-	if obj != nil && obj.Named().Namespace != id.Namespace {
-		obj = obj.WithNamespace(id.Namespace)
+	child := l.authoredObject(r.Path, r.Authored)
+	if child.Obj != nil && child.Obj.Named().Namespace != id.Namespace {
+		child.Obj = child.Obj.WithNamespace(id.Namespace)
 	}
-	return obj
+	return child
 }
 
 // Load records Flux objects under root by walking the kustomize
@@ -483,7 +489,8 @@ func (w *walker) scanBootstrapFluxKS(dir, kpath string) int {
 			})
 			continue
 		}
-		for _, obj := range objs {
+		for _, child := range objs {
+			obj := child.Obj
 			ks, ok := obj.(*manifest.Kustomization)
 			if !ok {
 				continue
@@ -640,12 +647,13 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	reader := l.documents
 	reader.regular = true
-	objs := []manifest.BaseManifest{}
-	collect := func(obj manifest.BaseManifest) {
+	objs := []store.Child{}
+	collect := func(child store.Child) {
+		obj := child.Obj
 		if raw, ok := obj.(*manifest.RawObject); ok && !manifest.KindOf(raw).Tracked && len(manifest.ProducerTargets(raw)) == 0 {
 			return
 		}
-		objs = append(objs, obj)
+		objs = append(objs, child)
 	}
 	var err error
 	if cached := l.documents.cache[path].objects; cached != nil {
@@ -669,7 +677,8 @@ func (l *Loader) loadFile(path string) (int, error) {
 		return 0, nil
 	}
 	count := 0
-	for _, obj := range objs {
+	for _, child := range objs {
+		obj := child.Obj
 		info := manifest.KindOf(obj)
 		if !info.Tracked {
 			l.recordObject(obj, path)
@@ -701,7 +710,8 @@ func (l *Loader) recordDataFile(absPath string) error {
 	if err != nil {
 		return err
 	}
-	for _, obj := range objs {
+	for _, child := range objs {
+		obj := child.Obj
 		id := obj.Named()
 		if !manifest.KindOf(obj).Data {
 			// Non-data kinds (most commonly templated Flux CRs in a
@@ -720,30 +730,34 @@ func (l *Loader) recordDataFile(absPath string) error {
 // recordObject retains raw locations and authored source references for deferred admission.
 func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	id := obj.Named()
-	if l.candidates[id] != nil {
+	if l.candidates[id].Obj != nil {
 		if record, exists := l.Index.Lookup(id); exists && record.Path == "" {
 			return
 		}
 	}
 	delete(l.candidates, id)
 	r := manifest.DiscoveryRecord{Authored: id, Path: absPath, File: l.fileCoordinate(absPath)}
+	r.Refs = discoveryReferences(obj)
+	l.Index.Records[id] = r
+}
+
+func discoveryReferences(obj manifest.BaseManifest) []manifest.NamedResource {
 	var buf [16]manifest.NamedResource
 	refs := buf[:0]
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if !discoveryReference(ref) {
-			continue
+		if discoveryReference(ref) {
+			refs = append(refs, ref.NamedResource)
 		}
-		refs = append(refs, ref.NamedResource)
 	}
-	if len(refs) > 0 {
-		r.Refs = slices.Clone(refs)
+	if len(refs) != 0 {
+		return slices.Clone(refs)
 	}
-	l.Index.Records[id] = r
+	return nil
 }
 
 func discoveryReference(ref manifest.Reference) bool {
 	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Content && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
-		(ref.Use == "source" || ref.Use == "chart") && ref.Kind != "" && ref.Name != ""
+		(ref.Use == "source" || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" && ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {

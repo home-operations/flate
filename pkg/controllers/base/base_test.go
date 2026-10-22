@@ -57,11 +57,11 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
 		execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
-			_, next := execution.Reads.GetEmission(parent.Named())
+			_, _, next := execution.Reads.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}
 			next.Complete = true
-			execution.Emit(parent.Named(), &next)
+			execution.Emit(parent.Named(), &next, nil)
 			return nil
 		})
 		return execution
@@ -110,11 +110,11 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 					if source {
 						st.SetArtifact(id, &store.SourceArtifact{Reads: &execution.Reads, Key: "content", LocalPath: "source"})
 					} else {
-						_, next := execution.Reads.GetEmission(id)
+						_, _, next := execution.Reads.GetEmission(id)
 						defer next.Finish()
 						next.Children = []store.Child{{Obj: child}}
 						next.Complete = true
-						execution.Emit(id, &next)
+						execution.Emit(id, &next, nil)
 					}
 					return nil
 				})
@@ -467,10 +467,10 @@ func TestExecution_Dispatch(t *testing.T) {
 						t.Fatal("resumed with a different captured declaration")
 					}
 					calls.Add(1)
-					_, output := s.run.Reads.GetEmission(got.Named())
+					_, _, output := s.run.Reads.GetEmission(got.Named())
 					defer output.Finish()
 					output.Complete = true
-					s.run.Emit(got.Named(), &output)
+					s.run.Emit(got.Named(), &output, nil)
 					if s.failure {
 						return fmt.Errorf("%w: synthetic failure", manifest.ErrInput)
 					}
@@ -732,11 +732,11 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			c := base.New(st, nil)
 			input := &manifest.Kustomization{Name: "input", Namespace: "apps", Path: "A"}
 			st.AddObject(input)
-			_, prior := st.GetEmission(input.Named())
+			_, _, prior := st.GetEmission(input.Named())
 			defer prior.Finish()
 			prior.Fingerprint, prior.Complete = manifest.Fingerprint("A"), true
 			prior.Manifests = []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "A"}}}
-			st.RecordEmitted(input.Named(), &prior)
+			st.RecordEmitted(input.Named(), &prior, nil)
 			run := controllertest.NewExecution(c, input.Named())
 			run.Reads.GetDeclaration(input.Named())
 			replacement := input.Clone()
@@ -801,10 +801,10 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	st.AddObjects([]manifest.BaseManifest{parent, input})
 	publish := func(obj *manifest.HelmRelease) {
 		t.Helper()
-		_, next := st.GetEmission(parent.Named())
+		_, _, next := st.GetEmission(parent.Named())
 		defer next.Finish()
 		next.Children, next.Complete = []store.Child{{Obj: obj}}, true
-		st.RecordEmitted(parent.Named(), &next)
+		st.RecordEmitted(parent.Named(), &next, nil)
 	}
 	publish(input)
 	entered, replaced := make(chan struct{}), make(chan struct{})
@@ -848,4 +848,51 @@ func (c blockedFingerprintContent) MarshalJSON() ([]byte, error) {
 	close(c.entered)
 	c.tasks.YieldSlot(func() { <-c.replaced })
 	return []byte(`"A"`), nil
+}
+
+func TestFingerprintDedup_CompleteOnly(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{"current", "predecessor"} {
+		for _, complete := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/complete=%t", path, complete), func(t *testing.T) {
+				t.Parallel()
+				s := store.New()
+				c := base.New(s, nil)
+				parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+				child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
+				s.AddObject(parent)
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
+				filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+				c.Configure(base.Options{Filter: filter, Index: index})
+				fingerprint := manifest.Fingerprint("same")
+				_, _, next := s.GetEmission(parent.Named())
+				defer next.Finish()
+				next.Children, next.Fingerprint, next.Complete = []store.Child{{Obj: child}}, fingerprint, complete
+				if path == "current" {
+					s.SetArtifact(parent.Named(), &next)
+				} else {
+					s.RecordEmitted(parent.Named(), &next, nil)
+					if !complete && s.GetArtifact(parent.Named()).(*store.Emission).Fingerprint != "" {
+						t.Fatal("incomplete successor retained a successful fingerprint")
+					}
+					changed := parent.Clone()
+					changed.Labels = map[string]string{"changed": "yes"}
+					s.AddObject(changed)
+					if s.GetArtifact(parent.Named()) != nil {
+						t.Fatal("fixture did not invalidate the current emission")
+					}
+				}
+				if filter.ShouldReconcile(child.Named()) {
+					t.Fatal("fixture child already selected before replay")
+				}
+				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "same")
+				if fp != fingerprint || handled != complete || err != nil {
+					t.Fatalf("replay key=%q handled=%t err=%v, want %q,%t,nil", fp, handled, err, fingerprint, complete)
+				}
+				if filter.ShouldReconcile(child.Named()) != complete {
+					t.Fatal("complete replay did not extend changed-only selection through Emit")
+				}
+			})
+		}
+	}
 }

@@ -158,10 +158,10 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	}
 	accepted := *raw
 	accepted.URL = "https://accepted.example"
-	_, next := st.GetEmission(parent.Named())
+	_, _, next := st.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Children = []store.Child{{Obj: &accepted}}
-	st.RecordEmitted(parent.Named(), &next)
+	st.RecordEmitted(parent.Named(), &next, nil)
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "other children pending"})
 	if resolver.HelmRepository(raw.Namespace, raw.Name) != &accepted {
 		t.Fatal("shared resolver lost effective accepted source")

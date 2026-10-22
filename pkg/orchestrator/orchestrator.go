@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
@@ -170,6 +171,7 @@ type Orchestrator struct {
 	ksc    *kustomization.Controller
 	hrc    *helmrelease.Controller
 	rsc    *resourcesetctrl.Controller
+	agc    *artifactgenerator.Controller
 	filter *change.Filter
 	cache  *sourcecache.Cache
 	inputs source.HTTPInputs
@@ -342,6 +344,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
 	o.hrc = helmrelease.New(base.New(st, ts), client, cfg.HelmOptions, cfg.WipeSecrets)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
+	o.agc = artifactgenerator.New(st, ts, owner)
 	o.depGraph = newDependencyGraph()
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)

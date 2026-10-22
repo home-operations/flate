@@ -62,7 +62,7 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 		})
 	}
 	cached := l.documents.cache[filepath.Join(dir, manifest.KindGitRepository+".yaml")].objects
-	assert.Equal(t, slices.ContainsFunc(cached, func(obj manifest.BaseManifest) bool { return obj.Named().Kind == manifest.KindGitRepository }), true)
+	assert.Equal(t, slices.ContainsFunc(cached, func(child store.Child) bool { return child.Obj.Named().Kind == manifest.KindGitRepository }), true)
 }
 
 // TestDiscovery_PromoteMaterializesFromIndex covers the

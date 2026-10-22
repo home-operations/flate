@@ -23,6 +23,11 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
 	for {
+		if dep.ArtifactOnly {
+			if art, ok := w.Store.GetArtifact(id).(*store.SourceArtifact); ok && art.FS != nil {
+				return Classification{Kind: schedule.Terminal}
+			}
+		}
 		obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
 		present := obj != nil || info.Status != ""
 		if !w.Materializer && present && !info.Statusful {
@@ -95,12 +100,15 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 	if info, ok := w.Store.GetStatus(id); ok && info.Outcome() == store.OutcomeSkipped {
 		return Classification{Err: fmt.Errorf("%w: %s %s skipped: %s", manifest.ErrSourceSkipped, label, id, info.String())}
 	}
-	if descriptor, ok := w.Store.GetObject(id).(existenceOnly); ok && descriptor.ExistenceOnly() {
+	if descriptor, ok := w.Store.GetObject(id).(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
 	}
 	art, _ := w.Store.GetArtifact(id).(*store.SourceArtifact)
 	if art != nil && art.FS != nil {
 		return Classification{Kind: schedule.Terminal}
+	}
+	if dep.ArtifactOnly {
+		return Classification{Err: fmt.Errorf("%w: source %s has no readable content", manifest.ErrInput, id)}
 	}
 	if level >= manifest.DrainCascade {
 		message := fmt.Sprintf("%s %s artifact content unavailable", label, id)

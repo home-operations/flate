@@ -96,8 +96,12 @@ func (s *Store) Warnings() []manifest.Warning {
 		}
 		sh.mu.RUnlock()
 		for id, contributions := range byID {
+			payload := contributions[0].child.payload
 			if len(contributions) < 2 || !slices.ContainsFunc(contributions[1:], func(c contribution) bool {
-				return !semanticEqual(contributions[0].child, c.child)
+				if payload == nil {
+					payload = c.child.payload
+				}
+				return !semanticEqual(contributions[0].child, c.child) || payload != nil && c.child.payload != nil && !payloadEqual(payload, c.child.payload)
 			}) {
 				continue
 			}

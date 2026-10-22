@@ -130,7 +130,7 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 				if attempts.Load() != 0 || requests.Load() != 0 {
 					t.Error("covered raw source attempted acquisition")
 				}
-				s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: effective}}, Complete: false}))
+				s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: effective}}, Complete: false}), nil)
 				return schedule.Result{}
 			}
 			out := d.Dispatch(ctx, id, level)
@@ -245,7 +245,7 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 								if info.Reason != store.ReasonUnchanged || len(s.FailedResources()) != 0 {
 									t.Errorf("excluded source created work/failure: %+v", info)
 								}
-								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}))
+								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
 								o.tasks.YieldSlot(func() {
 									select {
 									case <-extendPermit:
@@ -254,7 +254,7 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 								})
 								o.ksc.KeepEmitted(id, &accepted, nil)
 							} else {
-								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}))
+								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
 							}
 							close(published)
 							return schedule.Result{}

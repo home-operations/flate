@@ -242,7 +242,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 						t.Fatal("typed synthetic child unavailable while H is incomplete")
 					}
 					for _, hr := range consumers {
-						_, partial := st.GetEmission(hr.Named())
+						_, _, partial := st.GetEmission(hr.Named())
 						if len(partial.Children) != 1 || partial.Children[0].Doc != nil || len(partial.Manifests) != 0 {
 							t.Fatalf("synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v", hr.Named(), partial.Children, partial.Manifests)
 						}
@@ -301,7 +301,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 						} else {
 							st.UpdateFailure(hr.Named(), fmt.Errorf("%w: H failed after partial work", manifest.ErrInput))
 						}
-						_, retained := st.GetEmission(hr.Named())
+						_, _, retained := st.GetEmission(hr.Named())
 						found := false
 						for _, child := range retained.Children {
 							if child.Obj.Named() == source {
@@ -878,7 +878,7 @@ func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T)
 				if parent == unreadable {
 					unavailable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}, {Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}
 				}
-				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: unavailable})
+				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: unavailable}, nil)
 			}
 			if got := c.newExecution(hr.Named()).parentReadsUnreadableSecret(hr.Named()); got == tc.supplied {
 				t.Fatalf("unreadable parent secret = %t, supplied = %t", got, tc.supplied)

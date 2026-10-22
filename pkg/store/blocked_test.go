@@ -189,6 +189,11 @@ func TestUpdateFailure_StatusEvents(t *testing.T) {
 	}
 	write(b, a)
 	write(a, b)
+	initial, _ := st.GetStatus(id)
+	st.UpdateFailure(id, &manifest.DependencyFailedError{Parent: id, Failed: []manifest.NamedResource{a, b}, Reasons: map[manifest.NamedResource]string{a: "nested propagation"}})
+	if current, _ := st.GetStatus(id); current != initial {
+		t.Fatal("unchanged blockers replaced the first diagnostic")
+	}
 	if len(events) != 1 {
 		t.Fatalf("identical condition/provenance dispatched %d events", len(events))
 	}

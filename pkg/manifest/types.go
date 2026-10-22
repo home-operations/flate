@@ -116,6 +116,8 @@ type DependencyRef struct {
 	ReadyExpr *string
 	// Artifact requires acquired filesystem content after readiness.
 	Artifact bool
+	// ArtifactOnly accepts readable content before readiness and rejects ready sources without it.
+	ArtifactOnly bool
 	// UnknownArtifactRoot preserves the unresolved source-root diagnostic at drain.
 	UnknownArtifactRoot bool
 	// ChartSource retains chart-source context on acquisition failures and skips.
@@ -150,7 +152,7 @@ const (
 type Reference struct {
 	DependencyRef
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
-	// certSecretRef, proxySecretRef or inputsFrom; empty selects an implicit gate only.
+	// certSecretRef, proxySecretRef, inputsFrom, artifact or materializer; empty selects an implicit gate only.
 	Use string
 	// Position indexes the authored field; credentials use secret=0, cert=1, proxy=2.
 	Position int
@@ -192,6 +194,10 @@ func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 		case *HelmRepository:
 			obj.references(yield)
 		case *Bucket:
+			obj.references(yield)
+		case *ExternalArtifact:
+			obj.references(yield)
+		case *RawObject:
 			obj.references(yield)
 		}
 	}
@@ -244,6 +250,9 @@ func (r *RawObject) Named() NamedResource {
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (r *RawObject) Suspended() bool { return false }
+
+// ReconcileDocument reports whether reconciliation consumes the authoritative document.
+func (r *RawObject) ReconcileDocument() bool { return r.isArtifactGenerator() }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (r *RawObject) WithNamespace(namespace string) BaseManifest {

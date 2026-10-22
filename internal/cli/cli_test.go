@@ -501,9 +501,9 @@ func TestRun_TestAll(t *testing.T) {
 	path := writeFixture(t)
 	testutil.WriteFile(t, path, "flux/hidden.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: ExternalArtifact\nmetadata: {name: hidden, namespace: flux-system}\nstatus: {artifact: {url: 'file://"+path+"'}}\n")
 	stdout, _, code := runCLI(t, "test", "all", "--path", path)
-	assert.Equal(t, code, 0)
+	assert.Equal(t, code, 1)
 	assert.Equal(t, strings.Contains(stdout, "✓") && strings.Contains(stdout, "passed"), true)
-	assert.Equal(t, strings.Contains(stdout, "failed") || strings.Contains(stdout, "hidden"), false)
+	assert.Equal(t, strings.Contains(stdout, "failed") && strings.Contains(stdout, "hidden"), true)
 }
 
 func TestRun_TestAll_RespectsNamespace(t *testing.T) {
@@ -702,7 +702,7 @@ func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 		maxArgs          int
 	}{
 		{path: "build", use: "build", short: "Render Flux objects to YAML (defaults to all)"},
-		{path: "build all", use: "all", short: "Render all Kustomization and HelmRelease objects"},
+		{path: "build all", use: "all", short: "Render all Flux producer output"},
 		{path: "build ks", use: "ks [name]", short: "Render Kustomizations", aliases: []string{"kustomization", "kustomizations"}, maxArgs: 1},
 		{path: "build hr", use: "hr [name]", short: "Render HelmReleases", aliases: []string{"helmrelease", "helmreleases"}, maxArgs: 1},
 		{path: "test", use: "test", short: "Report Kustomization + HelmRelease reconcile status (defaults to all)"},

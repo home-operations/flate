@@ -11,10 +11,10 @@ func publishDocuments(c *Controller, id manifest.NamedResource, docs []map[strin
 		c.Store.AddObject(&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace})
 	}
 	children, retained := parseChildrenForTest(id, docs, opts)
-	_, next := c.Store.GetEmission(id)
+	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = children, retained, true
-	c.Emit(id, &next)
+	c.Emit(id, &next, nil)
 	if hadStatus && prior.Status == store.StatusPending {
 		c.Store.UpdateStatus(id, prior)
 	}

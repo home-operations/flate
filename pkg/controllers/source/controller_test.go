@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -59,7 +60,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 	}})
 	st.AddObjects([]manifest.BaseManifest{parent, repo, secret})
-	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
 	var pending int
 	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); id == repo.Named() && ok && info.Status == store.StatusPending {
@@ -83,12 +84,12 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 			secret.StringData = map[string]any{"username": "second"}
 			st.AddObject(secret)
 		case "authority":
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
 		case "declaration":
 			next := *repo
 			repo = &next
 			repo.URL = "https://example.test/changed"
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
 		}
 		previous := accepted
 		c.Tasks.Go(t.Context(), phase.name, func(ctx context.Context) {
@@ -124,7 +125,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 			second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{first, second})
 			publish := func(value string) {
-				c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete})
+				c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete}, nil)
 			}
 			publish("first")
 			var accepted *base.Execution
@@ -136,7 +137,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 			if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != 1 {
 				t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
 			}
-			c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete})
+			c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
 			publish("changed")
 			if accepted.Valid() {
 				t.Fatal("producer publication did not invalidate the captured availability assessment")
@@ -184,7 +185,7 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 				if provisional.Outcome() != schedule.Blocked || f.calls != 0 {
 					t.Errorf("provisional unresolved=%t acquisitions=%d, want deferred with no acquisition", provisional.Outcome() == schedule.Blocked, f.calls)
 				}
-				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true})
+				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true}, nil)
 				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			})
 			c.Tasks.BlockTillDone()
@@ -231,7 +232,7 @@ func TestSource_DeclarationProgress(t *testing.T) {
 					if run.Reads.GetArtifact(repo.Named()) == nil {
 						t.Error("producer did not receive source content")
 					}
-					run.Emit(id, &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
+					run.Emit(id, &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
 					return nil
 				})
 				return run
@@ -778,5 +779,205 @@ func TestController_ExistenceOnly_NoTransientPendingOnReemit(t *testing.T) {
 	}
 	if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady {
 		t.Errorf("source not Ready after no-op re-run: %+v", info)
+	}
+}
+
+func TestController_ArtifactMaterializers(t *testing.T) {
+	t.Parallel()
+	for _, state := range []store.Status{store.StatusPending, store.StatusFailed, store.StatusReady} {
+		t.Run(string(state), func(t *testing.T) {
+			t.Parallel()
+			fetcher := &fakeFetcher{err: fmt.Errorf("%w: content unavailable", manifest.ErrInput)}
+			c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
+			generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+			st.AddObject(generator)
+			st.UpdateStatus(generator.Named(), store.StatusInfo{Status: state, Reason: "", Message: "materializer state"})
+			doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "ExternalArtifact", "metadata": map[string]any{"name": "generated", "namespace": "apps"}, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": generator.APIVersion, "kind": generator.Kind, "name": generator.Name}}}
+			obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.AddObject(obj, authoritative)
+			var blocked []manifest.NamedResource
+			var outcome schedule.Kind
+			c.Tasks.Go(t.Context(), "materializer", func(ctx context.Context) {
+				run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+				outcome, blocked = run.Outcome(), run.Blocked
+				if outcome == schedule.DependencyFailed {
+					status, _ := st.GetStatus(obj.Named())
+					blocked = status.BlockedBy()
+				}
+			})
+			c.Tasks.BlockTillDone()
+			switch state {
+			case store.StatusPending:
+				if outcome != schedule.Blocked || len(blocked) != 1 || blocked[0] != generator.Named() || fetcher.calls != 0 {
+					t.Fatalf("materializer wait = %v, calls=%d", blocked, fetcher.calls)
+				}
+			case store.StatusFailed:
+				status, _ := st.GetStatus(obj.Named())
+				if outcome != schedule.DependencyFailed || len(blocked) != 1 || blocked[0] != generator.Named() || status.Status != store.StatusFailed || fetcher.calls != 0 {
+					t.Fatalf("failed materializer result = %+v, %+v, %v, calls=%d", outcome, status, blocked, fetcher.calls)
+				}
+			default:
+				status, _ := st.GetStatus(obj.Named())
+				if len(blocked) != 0 || status.Status != store.StatusFailed {
+					t.Fatalf("contentless result = %+v, %v", status, blocked)
+				}
+			}
+			payload := &store.SourceArtifact{Kind: manifest.KindExternalArtifact, Key: "generated", FS: fstest.MapFS{"file": {Data: []byte("available")}}}
+			st.RecordEmitted(generator.Named(), &store.Emission{Children: []store.Child{{Obj: obj, Doc: authoritative}}}, map[manifest.NamedResource]*store.SourceArtifact{obj.Named(): payload})
+			before := fetcher.calls
+			st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
+			c.Tasks.Go(t.Context(), "accepted", func(ctx context.Context) {
+				run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+				blocked = run.Blocked
+			})
+			c.Tasks.BlockTillDone()
+			status, _ := st.GetStatus(obj.Named())
+			if len(blocked) != 0 || status.Status != store.StatusReady || fetcher.calls != before {
+				t.Fatalf("accepted bytes waited for %s producer: %+v, %v", state, status, blocked)
+			}
+		})
+	}
+}
+
+type materializerFetcher struct{ calls atomic.Int64 }
+
+func (f *materializerFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+	f.calls.Add(1)
+	return nil, fmt.Errorf("%w: content unavailable", manifest.ErrInput)
+}
+
+func TestController_ArtifactMaterializersProduction(t *testing.T) {
+	t.Parallel()
+	for _, declarationPresent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("declaration=%t", declarationPresent), func(t *testing.T) {
+			t.Parallel()
+			fetcher := &materializerFetcher{}
+			c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+			obj := &manifest.ExternalArtifact{Name: "generated", Namespace: "apps"}
+			st.AddObject(owner)
+			st.AddObject(obj)
+			materializer := owner.Named()
+			if declarationPresent {
+				st.AddObject(generator)
+				materializer = generator.Named()
+			}
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				obj.Named(): {Productions: []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}}},
+			}})
+			st.UpdateStatus(materializer, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "progressing"})
+			var blocked []manifest.NamedResource
+			c.Tasks.Go(t.Context(), "predicted", func(ctx context.Context) {
+				run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+				blocked = run.Blocked
+			})
+			c.Tasks.BlockTillDone()
+			if len(blocked) != 1 || blocked[0] != materializer || fetcher.calls.Load() != 0 {
+				t.Fatalf("progressing materializer = %v, want %s; fetches=%d", blocked, materializer, fetcher.calls.Load())
+			}
+		})
+	}
+}
+
+func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
+	t.Parallel()
+	fetcher := &materializerFetcher{}
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
+	generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+	st.AddObject(generator)
+	doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "generated", "namespace": "apps"}, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": generator.APIVersion, "kind": generator.Kind, "name": generator.Name}}}
+	obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.AddObject(obj, authoritative)
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		obj.Named(): {Productions: []manifest.Production{{Owner: generator.Named(), Declaration: generator.Named(), Source: manifest.BootstrapSourceID}}},
+	}})
+	if len(st.Productions(obj.Named(), nil)) != 1 {
+		t.Fatal("fixture has no bound output prediction")
+	}
+	_, _, empty := st.GetEmission(generator.Named())
+	defer empty.Finish()
+	empty.Complete = true
+	st.RecordEmitted(generator.Named(), &empty, nil)
+	st.UpdateStatus(generator.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "complete empty"})
+	if len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil || st.GetArtifact(obj.Named()) != nil {
+		t.Fatal("complete empty inventory retained predicted output authority")
+	}
+	st.AddObject(obj, authoritative)
+	if len(st.Productions(obj.Named(), nil)) != 0 {
+		t.Fatal("independent declaration revived a completed producer prediction")
+	}
+	var blocked []manifest.NamedResource
+	c.Tasks.Go(t.Context(), "complete-empty", func(ctx context.Context) {
+		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+		blocked = run.Blocked
+	})
+	c.Tasks.BlockTillDone()
+	status, _ := st.GetStatus(obj.Named())
+	if len(blocked) != 0 || status.Status != store.StatusFailed || status.IsDependencyFailure() || fetcher.calls.Load() != 1 || st.GetArtifact(obj.Named()) != nil {
+		t.Fatalf("complete empty source = %+v, blocked=%v, fetches=%d", status, blocked, fetcher.calls.Load())
+	}
+}
+
+type materializerDispatcher struct {
+	controller *Controller
+	drains     [3]atomic.Int64
+}
+
+func (d *materializerDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+	d.drains[level].Add(1)
+	return schedule.Result{Assessment: &materializerAssessment{Execution: d.controller.ReconcileNode(ctx, id, level), drains: &d.drains}}
+}
+func (d *materializerDispatcher) Sweep(_ context.Context, _ bool) []schedule.NodeID {
+	return slices.Collect(d.controller.Store.Sweep())
+}
+
+type materializerAssessment struct {
+	*base.Execution
+	drains *[3]atomic.Int64
+}
+
+func (a *materializerAssessment) Settle(ctx context.Context, level manifest.DrainLevel) {
+	a.drains[level].Add(1)
+	a.Execution.Settle(ctx, level)
+}
+
+func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
+	t.Parallel()
+	fetcher := &materializerFetcher{}
+	c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
+	ids := []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "a", Namespace: "apps"}, {Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: "b", Namespace: "apps"}}
+	for i, id := range ids {
+		doc := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": id.Kind, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": id.Kind, "name": ids[1-i].Name}}}
+		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.AddObject(obj, authoritative)
+	}
+	dispatcher := &materializerDispatcher{controller: c}
+	scheduler := schedule.New(c.Tasks, dispatcher)
+	defer st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) {
+		scheduler.OnPublication()
+	}, false)()
+	scheduler.Seed(ids)
+	if err := scheduler.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if dispatcher.drains[manifest.DrainForce].Load() == 0 || fetcher.calls.Load() != 0 || c.Tasks.Failures() != 0 {
+		t.Fatalf("cycle force passes=%d, fetches=%d, task failures=%d", dispatcher.drains[manifest.DrainForce].Load(), fetcher.calls.Load(), c.Tasks.Failures())
+	}
+	for i, id := range ids {
+		status, _ := st.GetStatus(id)
+		blocked := status.BlockedBy()
+		if status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 || blocked[0] != ids[1-i] || st.GetArtifact(id) != nil {
+			t.Fatalf("contentless cycle %s = %+v, blocked=%v", id, status, blocked)
+		}
 	}
 }

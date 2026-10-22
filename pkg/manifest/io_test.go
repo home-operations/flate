@@ -9,6 +9,20 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
+func TestReleaseDoc_WithoutAllocations(t *testing.T) {
+	docs, err := DecodeDocs(strings.NewReader(strings.Repeat("kind: ConfigMap\n---\n", 101)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := 0
+	if got := testing.AllocsPerRun(100, func() {
+		ReleaseDoc(docs[next])
+		next++
+	}); got != 0 {
+		t.Fatalf("document release allocated %v times, want zero", got)
+	}
+}
+
 func TestDecodeDocs_ScalarValues(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

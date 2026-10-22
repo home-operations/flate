@@ -87,7 +87,7 @@ func TestKindInfo_ArtifactGenerator(t *testing.T) {
 	if _, ok := obj.(*RawObject); !ok {
 		t.Fatalf("generator type = %T", obj)
 	}
-	want := KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Discovery: true}
+	want := KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Runnable: true, Status: true, Discovery: true}
 	assert.Equal(t, obj.Named().KindInfo(), want)
 	want.apiVersion = "source.extensions.fluxcd.io/v1beta1"
 	assert.Equal(t, KindOf(obj), want)
@@ -114,7 +114,7 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 			raw := &RawObject{Kind: tc.kind, APIVersion: tc.apiVersion, Name: "generator", Namespace: "apps", Spec: map[string]any{
 				"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}},
 			}}
-			want := KindInfo{Group: tc.group, Kind: tc.kind, Tracked: tc.tracked, Discovery: tc.tracked, apiVersion: tc.apiVersion}
+			want := KindInfo{Group: tc.group, Kind: tc.kind, Tracked: tc.tracked, Discovery: tc.tracked, Runnable: tc.tracked, Status: tc.tracked, apiVersion: tc.apiVersion}
 			assert.Equal(t, KindOf(raw), want)
 			assert.Equal(t, raw.Named().Group, tc.group)
 			assert.Equal(t, ProducerNeedsCandidates(raw), tc.tracked)

@@ -44,7 +44,12 @@ func (*HelmRepository) ReferenceCapacity() (int, int) { return 2, 0 }
 func (*HelmChartSource) ReferenceCapacity() (int, int) { return 1, 0 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*ExternalArtifact) ReferenceCapacity() (int, int) { return 0, 0 }
+func (e *ExternalArtifact) ReferenceCapacity() (int, int) {
+	if e.SourceRef != nil {
+		return 1, 0
+	}
+	return 0, 0
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (*ResourceSetInputProvider) ReferenceCapacity() (int, int) { return 0, 0 }
@@ -56,7 +61,13 @@ func (*ConfigMap) ReferenceCapacity() (int, int) { return 0, 0 }
 func (*Secret) ReferenceCapacity() (int, int) { return 0, 0 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*RawObject) ReferenceCapacity() (int, int) { return 0, 0 }
+func (r *RawObject) ReferenceCapacity() (int, int) {
+	if r.isArtifactGenerator() {
+		sources, _ := r.Spec["sources"].([]any)
+		return len(sources), 0
+	}
+	return 0, 0
+}
 
 func (h *HelmRelease) hasChartReferences() bool {
 	return h.ChartRef != nil || h.HelmReleaseSpec.Chart != nil || h.Chart.Source.Kind != ""

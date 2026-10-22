@@ -449,7 +449,7 @@ data: {greeting: hi}
 					original := hr.Clone()
 					st.AddObject(hr)
 					if site.parent {
-						c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true})
+						c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true}, nil)
 					}
 					st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 					var retained *store.Emission
@@ -518,7 +518,7 @@ data: {greeting: hi}
 						if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 							t.Errorf("status = %+v, want Ready/suspended", info)
 						}
-						_, inventory := st.GetEmission(id)
+						_, _, inventory := st.GetEmission(id)
 						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(inventory.Children) != 0 {
 							t.Errorf("suspended replacement rendered: artifact=%+v output=%v renders=%d", art, st.GetObject(output), renders.Load())
 						}
@@ -613,14 +613,14 @@ data:
 					docB := manifest.DeepCopyMap(docA)
 					docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
 					publish := func(doc map[string]any) {
-						_, next := st.GetEmission(parent.Named())
+						_, _, next := st.GetEmission(parent.Named())
 						defer next.Finish()
 						next.Children, next.Manifests = c.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 						next.Complete = true
 						if rescue {
 							next.Unreadable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: parent.Namespace, Name: "unreadable"}}
 						}
-						c.Emit(parent.Named(), &next)
+						c.Emit(parent.Named(), &next, nil)
 					}
 					publish(docA)
 					st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})

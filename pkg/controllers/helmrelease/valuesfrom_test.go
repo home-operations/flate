@@ -192,7 +192,7 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 			case "suspended":
 				accepted := input.Clone()
 				accepted.Suspend = true
-				st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}))
+				st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}), nil)
 			}
 			run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
 

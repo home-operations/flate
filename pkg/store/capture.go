@@ -60,10 +60,10 @@ type inputBlock struct {
 }
 
 type readinessGate struct {
-	expr                                       *string
-	artifact, unknownArtifactRoot, chartSource bool
-	materializer                               bool
-	next                                       *readinessGate
+	expr                                                     *string
+	artifact, artifactOnly, unknownArtifactRoot, chartSource bool
+	materializer                                             bool
+	next                                                     *readinessGate
 }
 
 // Gate retains a readiness expression and its dependency purpose.
@@ -196,7 +196,10 @@ func (r *ReadSet) observe(input *Input, kind facet, generation uint64) {
 	r.activate(input, kind, generation)
 }
 
-func (r *ReadSet) sample(slot *producerSlot, record *Emission) {
+func (r *ReadSet) sample(id manifest.NamedResource, slot *producerSlot, record *Emission) {
+	if id == r.id && slot.id == r.id {
+		return
+	}
 	input := r.input(slot.id)
 	if input.derived&8 != 0 {
 		if input.producer != record.publication() {
@@ -294,8 +297,13 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 			r.invalid.Store(true)
 		}
 	}
+	if view.payloadOwner != nil {
+		r.sample(id, view.payloadOwner, view.payloadRecord)
+		r.activateProducers()
+		input.view.payloadRecord = nil
+	}
 	if view.owner != nil {
-		r.sample(view.owner, view.record)
+		r.sample(id, view.owner, view.record)
 		r.activateProducers()
 		input.view.record = nil
 	}
@@ -369,7 +377,7 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource) Artifact {
 	if input.derived&4 != 0 {
 		return details.artifact
 	}
-	obj := r.GetObject(id)
+	r.GetObject(id)
 	sh := r.store.shardFor(id)
 	sh.mu.RLock()
 	record := sh.artifacts[id]
@@ -379,7 +387,10 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource) Artifact {
 	sh.mu.RUnlock()
 	input.derived |= 4
 	r.observe(input, artifactFacet, record.generation)
-	if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, Child{Obj: obj, Doc: input.view.child.Doc}) {
+	if input.view.payload != nil {
+		details.artifact = input.view.payload
+	}
+	if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, input.view) {
 		details.artifact = nil
 	}
 	return details.artifact
@@ -412,6 +423,23 @@ func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.Disc
 	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: r.Productions(id, index)}
 }
 
+// Materializer selects and captures the runnable declaration supplying a production.
+func (r *ReadSet) Materializer(id manifest.NamedResource, production manifest.Production) manifest.NamedResource {
+	owner := production.Owner
+	if declaration := production.Declaration; declaration != (manifest.NamedResource{}) && manifest.KindOf(r.GetObject(declaration)).Runnable {
+		owner = declaration
+		sh := r.store.shardFor(owner)
+		sh.mu.RLock()
+		slot := sh.slots[owner]
+		if slot != nil {
+			r.sample(id, slot, slot.current.Load())
+		}
+		sh.mu.RUnlock()
+		r.activateProducers()
+	}
+	return owner
+}
+
 // UnsettledProducers captures contributors needed to supply an unpublished declaration.
 // Availability MUST NOT become a content projection for artifact reuse.
 func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.NamedResource {
@@ -422,7 +450,7 @@ func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.Named
 	}
 	var pending []manifest.NamedResource
 	for _, production := range productions {
-		owner := production.Owner
+		owner := r.Materializer(id, production)
 		if owner != (manifest.NamedResource{}) && owner != id && !r.input(owner).settled && !slices.Contains(pending, owner) {
 			pending = append(pending, owner)
 		}
@@ -467,7 +495,7 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 }
 
 // GetEmission binds candidate output to this execution's captured declaration and source.
-func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, Emission) {
+func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
 	return r.store.getEmission(r, id)
 }
 
@@ -489,7 +517,7 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	input.required = true
 	if !input.gate {
 		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
-		input.Ref.Artifact, input.Ref.UnknownArtifactRoot, input.Ref.ChartSource = ref.Artifact, ref.UnknownArtifactRoot, ref.ChartSource
+		input.Ref.Artifact, input.Ref.ArtifactOnly, input.Ref.UnknownArtifactRoot, input.Ref.ChartSource = ref.Artifact, ref.ArtifactOnly, ref.UnknownArtifactRoot, ref.ChartSource
 		input.materializer = materializer
 		return
 	}
@@ -498,10 +526,10 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	}
 	for gate := &r.details(input).gates; ; gate = &(*gate).next {
 		if *gate == nil {
-			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource, materializer: materializer}
+			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, artifactOnly: ref.ArtifactOnly, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource, materializer: materializer}
 			return
 		}
-		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, UnknownArtifactRoot: (*gate).unknownArtifactRoot, ChartSource: (*gate).chartSource}, ref) && (*gate).materializer == materializer {
+		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, ArtifactOnly: (*gate).artifactOnly, UnknownArtifactRoot: (*gate).unknownArtifactRoot, ChartSource: (*gate).chartSource}, ref) && (*gate).materializer == materializer {
 			return
 		}
 	}
@@ -522,7 +550,7 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 				continue
 			}
 			for gate := details.gates; gate != nil; gate = gate.next {
-				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
+				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, ArtifactOnly: gate.artifactOnly, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
 					return
 				}
 			}
@@ -632,13 +660,13 @@ func (s *Store) SetPreflight(id manifest.NamedResource, message string) {
 }
 
 // Admit binds raw-file admission to the captured source that supplied its bytes.
-func (r *ReadSet) Admit(obj manifest.BaseManifest, source, owner manifest.NamedResource) {
+func (r *ReadSet) Admit(obj manifest.BaseManifest, source, owner manifest.NamedResource, docs ...map[string]any) {
 	r.GetArtifact(source)
 	var support *Input
 	if owner != (manifest.NamedResource{}) && owner != obj.Named() {
 		support = r.input(owner)
 	}
-	r.store.addObject(obj, r.input(source), support)
+	r.store.addObject(obj, r.input(source), support, docs...)
 }
 
 // Promotions captures source-family evidence before conditional raw-file admission.
@@ -652,7 +680,7 @@ func (r *ReadSet) Promotions(id manifest.NamedResource, index *manifest.Discover
 // Bind attaches consumed provenance and retains prospective children before publication.
 func (r *ReadSet) Bind(emission *Emission) {
 	if emission.Reads != r {
-		_, captured := r.GetEmission(r.id)
+		_, _, captured := r.GetEmission(r.id)
 		emission.input, emission.inputDoc, emission.inputHead = captured.input, captured.inputDoc, captured.inputHead
 		emission.binding, emission.coverage = captured.binding, captured.coverage
 		captured.Finish()
@@ -717,6 +745,10 @@ func (r *ReadSet) Close() {
 	switch output := artifact.(type) {
 	case *Emission:
 		reads = output.OutputReads
+		output.payloadReads.Retire()
+		for borrowed := range output.borrowed {
+			borrowed.Retire()
+		}
 	case *SourceArtifact:
 		reads = output.Reads
 	}

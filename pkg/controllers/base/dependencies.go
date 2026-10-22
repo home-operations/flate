@@ -22,14 +22,14 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](ctx context.Context,
 			return canonical, err
 		}
 	}
-	if stage != manifest.GateParents {
+	deps := e.dependencies(effective, stage)
+	if stage != manifest.GateParents && len(deps) != 0 {
 		message := "resolving dependencies"
 		if stage == manifest.GateArtifacts {
 			message = "resolving source artifact"
 		}
 		e.SetPendingUnlessReady(e.Reads.ID(), message)
 	}
-	deps := e.dependencies(effective, stage)
 	if err := e.Require(ctx, deps, level); err != nil {
 		return canonical, err
 	}

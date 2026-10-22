@@ -119,6 +119,7 @@ func (o *Orchestrator) configureControllers() {
 	}, o.cfg.SourceRetry)
 	o.hrc.Configure(common)
 	o.rsc.Configure(common)
+	o.agc.Configure(common)
 }
 
 // Render is the structured embed-friendly entry point: Bootstrap +
@@ -186,25 +187,32 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 // Accepted completed output MUST remain available after a failed successor.
 func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 	var objects []manifest.BaseManifest
-	for _, info := range reconcilableKinds {
-		objects = append(objects, o.store.ListObjects(info.Group, info.Kind)...)
+	for info := range manifest.Kinds() {
+		if info.Runnable {
+			objects = append(objects, o.store.ListObjects(info.Group, info.Kind)...)
+		}
 	}
-	objects = append(objects, o.store.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSet)...)
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	out := make([]manifest.DocumentBatch, 0, len(objects)+1)
 	positions := make(map[manifest.NamedResource]int, len(objects))
 	for _, obj := range objects {
 		id := obj.Named()
 		parent := id
-		_, parentAttributed := obj.(*manifest.ResourceSet)
+		parentAttributed := !manifest.KindOf(obj).Render
 		if parentAttributed {
 			var ok bool
 			parent, ok = o.parentOf(id)
-			if !ok || o.store.GetObject(parent) == nil {
+			if !ok {
+				if manifest.KindOf(obj).Parent {
+					continue
+				}
+				parent = id
+			}
+			if o.store.GetObject(parent) == nil {
 				continue
 			}
 		}
-		effective, attempt := o.store.GetEmission(id)
+		effective, _, attempt := o.store.GetEmission(id)
 		attempt.Finish()
 		if effective == nil {
 			continue

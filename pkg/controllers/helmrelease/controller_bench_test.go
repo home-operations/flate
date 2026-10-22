@@ -3,11 +3,8 @@ package helmrelease
 import (
 	"testing"
 
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -29,8 +26,8 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 			if tc.source != nil {
 				identity = struct{ Digest, Revision string }{tc.source.Digest, tc.source.Revision}
 			}
-			c := controllertest.NewExecution(base.New(store.New(), nil, "test"), hr.Named())
-			defer c.Close()
+			c := controllertest.NewExecution(base.New(store.New(), nil), hr.Named())
+
 			b.ReportAllocs()
 			for b.Loop() {
 				if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
@@ -48,8 +45,8 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	st := store.New()
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest})
 	resolver := helm.NewSources(st)
-	c := controllertest.NewExecution(base.New(st, nil, "test"), hr.Named())
-	defer c.Close()
+	c := controllertest.NewExecution(base.New(st, nil), hr.Named())
+
 	b.ReportAllocs()
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.ChartSource())
@@ -57,20 +54,6 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 		if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
-	}
-}
-
-func BenchmarkCollectHRDeps(b *testing.B) {
-	id := testutil.HelmReleaseID("apps", "target")
-	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
-	st := store.New()
-	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
-	c.Configure(ReconcileOptions{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)})
-	execution := c.newExecution(hr.Named())
-	defer execution.run.Close()
-	b.ReportAllocs()
-	for b.Loop() {
-		execution.collectDeps(hr)
 	}
 }
 
@@ -87,7 +70,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			st := store.New()
-			c := &Controller{Controller: base.New(st, nil, "helmrelease")}
+			c := &Controller{Controller: base.New(st, nil)}
 			parent := testutil.HelmReleaseID("apps", "parent")
 			docs := []map[string]any{tc.doc}
 			b.ReportAllocs()

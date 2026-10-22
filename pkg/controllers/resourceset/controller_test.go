@@ -36,7 +36,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
-		c.Close()
+
 		tasks.BlockTillDone()
 	})
 	return c, s
@@ -106,7 +106,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 
 	// RSIP arrives → re-dispatch renders the Widget from its inputs.
 	s.AddObject(staticRSIP("rsip", "flux-system", nil, map[string]string{"user": "alice"}))
-	s.UpdateStatus(want, store.StatusReady, "", "")
+	s.UpdateStatus(want, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
@@ -127,10 +127,10 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	c := New(s, tasks, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
-	defer c.Close()
+
 	rs := selectorFixture("acl", "blue")
 	s.AddObject(rs)
-	if len(c.newExecution(rs.Named()).collectDeps(rs)) != 0 {
+	if _, err := c.newExecution(rs.Named()).run.RequireRefresh(t.Context(), rs, manifest.GateInputs, manifest.DrainNone); err != nil {
 		t.Fatal("selector-only input must not require an ID gate")
 	}
 	provider := staticRSIP("rsip", "ns", map[string]string{"color": "blue"}, nil)
@@ -413,13 +413,13 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			var deliveries atomic.Int64
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-			t.Cleanup(c.Close)
+
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 			st.AddObject(parent)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			provider := staticRSIP("provider", "flux-system", nil, map[string]string{"user": "rs-refresh-output"})
 			st.AddObject(provider)
-			st.UpdateStatus(provider.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			doc := map[string]any{
 				"apiVersion": fluxopv1.GroupVersion.String(), "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "fleet", "namespace": "flux-system"},
@@ -437,7 +437,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			st.UpdateStatus(rs.Named(), store.StatusPending, "", "")
+			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			replacement := manifest.DeepCopyMap(doc)
 			replacement["spec"].(map[string]any)["resourcesTemplate"] = "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: << inputs.user >>}\n" + "---\n" + testutil.KustomizationYAML("rs-refresh-child", "", "  {path: ./child, sourceRef: {kind: GitRepository, name: flux-system}}\n")
 			if suspended {
@@ -447,7 +447,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			var fired, published atomic.Bool
 			unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 				info, ok := payload.(store.StatusInfo)
-				if id != rs.Named() || !ok || info.Message != "resolving inputs" {
+				if id != rs.Named() || !ok || info.Message != "resolving dependencies" {
 					return
 				}
 				observations.Add(1)
@@ -509,10 +509,6 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	rs := obj.(*manifest.ResourceSet)
 	s.AddObject(rs)
 	want := manifest.NamedResource{Kind: "Unsupported", Namespace: "apps", Name: provider.Name}
-	deps := c.newExecution(rs.Named()).collectDeps(rs)
-	if len(deps) != 1 || deps[0].NamedResource != want {
-		t.Fatalf("input dependencies = %+v, want edge to %s", deps, want)
-	}
 	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone).Blocked; len(blocked) != 1 || blocked[0] != want {
 		t.Fatalf("blocked = %v, want [%s]", blocked, want)
 	}
@@ -541,7 +537,7 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 				rs.ResourcesTemplate = "<< invalid template"
 			}
 			s.AddObjects([]manifest.BaseManifest{rs, provider})
-			s.UpdateStatus(provider.Named(), store.StatusReady, "", "")
+			s.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if hit {
 				_, _, err := resourceset.Render(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {
 					s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true})

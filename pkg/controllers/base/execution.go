@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -24,6 +25,7 @@ type Execution struct {
 	pending    error
 	resume     func(context.Context, manifest.DrainLevel) error
 	initial    store.StatusInfo
+	unresolved []manifest.NamedResource
 	recovering bool
 }
 
@@ -34,7 +36,7 @@ func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 		c.Store.SetIncluded(id, c.filter.ShouldReconcile(id))
 	}
 	if c.preflight != nil {
-		message, failed := c.PreflightFailure(id)
+		message, failed := c.preflight(id)
 		if !failed {
 			message = ""
 		}
@@ -77,7 +79,15 @@ func (e *Execution) Retire() {
 }
 
 // Emit publishes the candidate inventory with its consumed provenance.
-func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission) {
+func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission) error {
+	if err := e.checkpoint(); err != nil {
+		return err
+	}
+	e.publish(id, next)
+	return nil
+}
+
+func (e *Execution) publish(id manifest.NamedResource, next *store.Emission) {
 	e.Reads.Bind(next)
 	next.Unreadable = e.Unreadable
 	e.Controller.Emit(id, next)
@@ -95,8 +105,17 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 	w := depwait.Waiter{Store: &e.Reads, Parent: e.Reads.ID(), Existence: e.existence, AllowMissingCRDs: e.allowMissingCRDs}
 	var blocked []manifest.NamedResource
 	var failed *manifest.DependencyFailedError
+	var cause error
+	var causeID manifest.NamedResource
 	for dep := range e.Reads.Gates() {
-		switch cl := w.Classify(ctx, dep, level); cl.Kind {
+		cl := w.Classify(ctx, dep, level)
+		if cl.Err != nil {
+			if cause == nil || dep.Compare(causeID) < 0 {
+				cause, causeID = cl.Err, dep.NamedResource
+			}
+			continue
+		}
+		switch cl.Kind {
 		case schedule.DependencyFailed:
 			if failed == nil {
 				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Reasons: make(map[manifest.NamedResource]string)}
@@ -112,6 +131,9 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 	if len(blocked) > 0 {
 		slices.SortFunc(blocked, manifest.NamedResource.Compare)
 		return &depwait.ErrBlocked{Deps: slices.Compact(blocked)}
+	}
+	if cause != nil {
+		return cause
 	}
 	if failed != nil {
 		slices.SortFunc(failed.Failed, manifest.NamedResource.Compare)
@@ -152,6 +174,9 @@ func (e *Execution) finish(err error) {
 		e.Blocked = blocked.Deps
 		return
 	}
+	if errors.Is(err, errSuspended) {
+		return
+	}
 	if err != nil {
 		if _, failed := errors.AsType[*manifest.DependencyFailedError](err); failed {
 			e.kind = schedule.DependencyFailed
@@ -162,11 +187,11 @@ func (e *Execution) finish(err error) {
 		_, next := e.Reads.GetEmission(id)
 		if e.Store.HasInventory(id) {
 			next.Complete = !next.OutputReads.Valid()
-			e.Emit(id, &next)
+			e.publish(id, &next)
 		}
 		next.Finish()
 		if errors.Is(err, manifest.ErrSourceSkipped) {
-			e.Store.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, strings.TrimSpace(manifest.TrimSentinelPrefix(err.Error())))
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: strings.TrimSpace(manifest.TrimSentinelPrefix(err.Error()))})
 		} else {
 			e.Store.UpdateFailure(id, err)
 		}
@@ -175,7 +200,7 @@ func (e *Execution) finish(err error) {
 	if prior, ok := e.Store.GetStatus(id); ok && (prior.Status == store.StatusFailed && (!e.recovering || prior != e.initial) || prior.Status == store.StatusReady && (prior.Message != "" || prior.Outcome() != store.OutcomePassed)) {
 		return
 	}
-	e.Store.UpdateStatus(id, store.StatusReady, "", "")
+	e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 }
 
 // Dispatch runs a captured declaration through the common acceptance path.
@@ -184,15 +209,15 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			e.Reads.Retire()
-			e.log.Error("panic during reconcile", "id", id.String(), "panic", recovered)
-			e.Store.UpdateStatus(id, store.StatusFailed, "", fmt.Sprintf("panic: %v", recovered))
+			slog.Error("base: panic during reconcile", "id", id.String(), "panic", recovered)
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: fmt.Sprintf("panic: %v", recovered)})
 			panic(recovered)
 		}
 	}()
 	obj, ok := e.Reads.Get[T](id)
 	if !ok {
 		if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-			e.Store.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "object not in store at reconcile time")
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
 		}
 		return
 	}
@@ -202,7 +227,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		return
 	}
 	if !e.Reads.Admitted() {
-		e.Store.UpdateStatus(id, store.StatusReady, store.ReasonUnchanged, "unchanged")
+		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
 		e.withdrawInvalid()
 		e.Reads.Accept()
 		return
@@ -210,8 +235,8 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 	if !e.Reads.Valid() {
 		return
 	}
-	if message := e.Reads.Preflight(); message != "" {
-		e.finish(fmt.Errorf("%w: %s", manifest.ErrInput, message))
+	if err := e.checkpoint(); err != nil {
+		e.finish(err)
 		return
 	}
 	e.initial, _ = e.Store.GetStatus(id)
@@ -223,28 +248,19 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 	e.finish(err)
 }
 
-// KeepOrderingDep retains changed or unresolved authored prerequisites.
-func (e *Execution) KeepOrderingDep(id manifest.NamedResource) bool {
+func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
 	return !e.filterActive() || e.filter.ShouldReconcile(id) || (e.existence == nil || !e.existence.IsFileIndexed(id)) && e.Reads.GetObject(id) == nil
-}
-
-// SourceSkipped propagates a captured source's whole-source skip.
-func (e *Execution) SourceSkipped(id manifest.NamedResource, label string) error {
-	if info, ok := e.Reads.GetStatus(id); ok && info.Outcome() == store.OutcomeSkipped {
-		return fmt.Errorf("%w: %s %s skipped: %s", manifest.ErrSourceSkipped, label, id.String(), info.Message)
-	}
-	return nil
 }
 
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
 func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, error) {
 	if content == nil {
-		return "", false, nil
+		return "", false, e.admitRender()
 	}
 	fp := manifest.Fingerprint(content)
 	if fp == "" {
-		return "", false, nil
+		return "", false, e.admitRender()
 	}
 	current, _ := e.Store.GetArtifact(id).(*store.Emission)
 	output, matched := current.Replay(fp)
@@ -257,9 +273,9 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 		output, matched = attempt.Replay(fp)
 	}
 	if !matched {
-		return fp, false, nil
+		return fp, false, e.admitRender()
 	}
-	if err := e.PreflightError(id); err != nil {
+	if err := e.checkpoint(); err != nil {
 		return fp, true, err
 	}
 	e.Reused = true
@@ -284,8 +300,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	for _, child := range output.Children {
 		e.KeepEmitted(id, child.Obj, &e.Reads)
 	}
-	e.Emit(id, &attempt)
-	return fp, true, nil
+	return fp, true, e.Emit(id, &attempt)
 }
 
 // Outcome returns the retained readiness decision without reading the store.
@@ -301,18 +316,20 @@ func (e *Execution) withdrawInvalid() {
 	_, next := e.Reads.GetEmission(e.Reads.ID())
 	if e.Store.HasInventory(e.Reads.ID()) && !next.OutputReads.Valid() {
 		next.Complete = true
-		e.Emit(e.Reads.ID(), &next)
+		e.publish(e.Reads.ID(), &next)
 	}
 	next.Finish()
 }
 
-// PreflightError reports the execution's captured structural admission decision.
-func (e *Execution) PreflightError(_ manifest.NamedResource) error {
-	if !e.Reads.Valid() {
-		return errors.New("execution inputs changed")
+func (e *Execution) admitRender() error {
+	if err := e.checkpoint(); err != nil {
+		return err
 	}
-	if message := e.Reads.Preflight(); message != "" {
-		return errors.New(message)
+	id := e.Reads.ID()
+	if info, ok := e.Store.GetStatus(id); ok && info.Status == store.StatusPending {
+		e.Store.ReportProgress(id, "rendering")
+	} else {
+		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Message: "rendering"})
 	}
 	return nil
 }
@@ -387,6 +404,12 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 	if failed != nil {
 		failed.Failed = compactDataIDs(failed.Failed)
 		return failed
+	}
+	if gateErr != nil {
+		return gateErr
+	}
+	for _, ref := range e.unresolved {
+		e.Reads.AddWarning(e.Reads.ID(), manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values", ref.Name)})
 	}
 	return p.wait.Resume(ctx, level, compactDataIDs(omitted))
 }

@@ -28,15 +28,27 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			t.Parallel()
 
 			s := store.New()
-			c := New(s, nil, "test")
-			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			c := New(s, task.NewBounded(2))
+			c.Configure(Options{SkipKinds: []string{"ConfigMap"}})
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", TargetNamespace: "apps"}
 			s.AddObject(parent)
 			doc := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "credentials"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:encrypted]"}}
+			skipped := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "skipped", "namespace": "apps"}}
 			invalid := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "invalid"}, "spec": "invalid"}
-			children, docs := ParseChildren(parent.Named(), []map[string]any{doc, invalid}, manifest.ParseDocOptions{WipeSecrets: wipe, DefaultNamespace: "apps"})
-			if len(children) != 1 || len(docs) != 2 {
+			borrowed := []map[string]any{doc, skipped, invalid}
+			before := []map[string]any{manifest.DeepCopyMap(doc), manifest.DeepCopyMap(skipped), manifest.DeepCopyMap(invalid)}
+			children, docs := c.ParseChildren(parent, borrowed, manifest.ParseDocOptions{WipeSecrets: wipe})
+			if len(children) != 2 || len(docs) != 2 {
 				t.Fatalf("parse: children=%d docs=%d", len(children), len(docs))
 			}
+			want := "ENC[AES256_GCM,data:encrypted]"
+			if wipe {
+				want = manifest.ValuePlaceholder("X")
+			}
+			assert.Equal(t, docs[0]["stringData"].(map[string]any)["X"], any(want))
+			assert.Diff(t, docs[1], invalid)
+			assert.Diff(t, children[1].Doc, skipped)
+			assert.Diff(t, borrowed, before)
 			if fmt.Sprintf("%p", children[0].Doc) != fmt.Sprintf("%p", docs[0]) {
 				t.Fatal("child document does not share authoritative map")
 			}
@@ -45,7 +57,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			next.Children[0] = store.Child{}
 			next.Manifests[0] = nil
 			_, accepted := s.GetEmission(parent.Named())
-			if len(accepted.Children) != 1 || accepted.Children[0].Obj == nil || accepted.Manifests[0] == nil {
+			if len(accepted.Children) != 2 || accepted.Children[0].Obj == nil || accepted.Manifests[0] == nil {
 				t.Fatal("caller slice headers mutate accepted inventory")
 			}
 		})
@@ -56,7 +68,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
@@ -66,7 +78,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}, "data": map[string]any{"VALUE": "value"}},
 		{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child"}, "spec": map[string]any{"path": "./app"}},
 	}
-	children, retained := ParseChildren(parent.Named(), docs, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 	arrivals := 0
 	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if payload == nil {
@@ -103,11 +115,11 @@ func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "effective"}
 	s.AddObject(parent)
 	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "parent", "namespace": "apps"}, "spec": map[string]any{"path": "stale"}}}
-	children, retained := ParseChildren(parent.Named(), docs, manifest.ParseDocOptions{})
+	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	if len(children) != 0 {
 		t.Fatal("self copy admitted")
 	}
@@ -125,7 +137,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 			t.Parallel()
 
 			s := store.New()
-			c := New(s, nil, "test")
+			c := New(s, nil)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			s.AddObject(parent)
 			target := manifest.NamedResource{Kind: manifest.KindSecret, Name: "credentials", Namespace: "apps"}
@@ -140,7 +152,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 			}, false)
 			for _, key := range []string{"X", "Y"} {
 				doc := map[string]any{"apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret", "metadata": map[string]any{"name": "declaration", "namespace": "apps"}, "spec": map[string]any{"target": map[string]any{"name": target.Name, "template": map[string]any{"data": map[string]any{key: "remote"}}}}}
-				children, docs := ParseChildren(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: wipe})
+				children, docs := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: wipe})
 				c.Emit(parent.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
 				if s.GetObject(target) != nil {
 					t.Fatal("runtime placeholder has a store writer")
@@ -191,7 +203,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				t.Parallel()
 
 				s := store.New()
-				c := New(s, nil, "test")
+				c := New(s, nil)
 				root := &manifest.Kustomization{Name: "p", Namespace: "apps"}
 				supporter := &manifest.Kustomization{Name: "q", Namespace: "apps"}
 				s.AddObjects([]manifest.BaseManifest{root, supporter})
@@ -203,7 +215,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				doc := map[string]any{"apiVersion": apiVersion, "kind": tc.kind, "metadata": map[string]any{"name": "declaration", "namespace": "apps"}, "spec": spec}
 				publish := func(owner manifest.NamedResource, doc map[string]any) {
 					t.Helper()
-					children, docs := ParseChildren(owner, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: wipe})
+					children, docs := parseChildrenForTest(owner, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: wipe})
 					c.Emit(owner, &store.Emission{Children: children, Manifests: docs, Complete: true})
 				}
 				publish(root.Named(), doc)
@@ -296,7 +308,7 @@ func TestEmit_RuntimeProducerDataPrecedence(t *testing.T) {
 				t.Parallel()
 
 				s := store.New()
-				c := New(s, nil, "test")
+				c := New(s, nil)
 				root := &manifest.Kustomization{Name: "p", Namespace: "apps"}
 				materializer := &manifest.Kustomization{Name: "materializer", Namespace: "apps"}
 				s.AddObjects([]manifest.BaseManifest{root, materializer})
@@ -344,14 +356,14 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	childID := testutil.KustomizationID("apps", "child")
 	publish := func(label, path string) {
 		t.Helper()
 		doc := map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "child", "namespace": "apps", "labels": map[string]any{"kustomize.toolkit.fluxcd.io/name": label}}, "spec": map[string]any{"path": path}}
-		children, docs := ParseChildren(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+		children, docs := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 		_, next := s.GetEmission(parent.Named())
 		defer next.Finish()
 		next.Children, next.Manifests, next.Complete = children, docs, true
@@ -364,7 +376,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	s.RecordEmitted(childID, &next)
 	next.Finish()
 	before := s.GetArtifact(childID)
-	s.UpdateStatus(childID, store.StatusReady, "", "")
+	s.UpdateStatus(childID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	publish("second", "app")
 	var arrivals, statuses int
 	stopObjects := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
@@ -389,7 +401,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	obj := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
 	s.AddObject(obj)
 	first := newExecution(c, obj.Named())
@@ -423,14 +435,14 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	t.Parallel()
 
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	root := &manifest.Kustomization{Name: "root", Namespace: "apps"}
 	s.AddObject(root)
 	invalid := map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "invalid", "namespace": "apps"}, "spec": "invalid"}
 	secret := map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret, "metadata": map[string]any{"name": "secret", "namespace": "apps"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:encrypted]"}}
 	valid := manifest.DeepCopyMap(invalid)
 	valid["spec"] = map[string]any{"path": "original"}
-	children, docs := ParseChildren(root.Named(), []map[string]any{secret, valid, invalid}, manifest.ParseDocOptions{WipeSecrets: true})
+	children, docs := parseChildrenForTest(root.Named(), []map[string]any{secret, valid, invalid}, manifest.ParseDocOptions{WipeSecrets: true})
 	if len(children) != 2 || len(docs) != 3 {
 		t.Fatal("invalid predecessor fixture")
 	}
@@ -447,7 +459,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	}
 	inherited.Finish()
 	fresh := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "fresh", "namespace": "apps"}, "data": map[string]any{"value": "first"}}
-	incoming, incomingDocs := ParseChildren(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
+	incoming, incomingDocs := parseChildrenForTest(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
 	_, partial := s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, incomingDocs
 	c.Emit(root.Named(), &partial)
@@ -459,7 +471,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	}
 	fresh = manifest.DeepCopyMap(fresh)
 	fresh["data"].(map[string]any)["value"] = "second"
-	incoming, incomingDocs = ParseChildren(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
+	incoming, incomingDocs = parseChildrenForTest(root.Named(), []map[string]any{fresh}, manifest.ParseDocOptions{})
 	_, partial = s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, incomingDocs
 	c.Emit(root.Named(), &partial)
@@ -471,7 +483,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	}
 	valid = manifest.DeepCopyMap(valid)
 	valid["spec"].(map[string]any)["path"] = "updated"
-	incoming, incomingDocs = ParseChildren(root.Named(), []map[string]any{valid}, manifest.ParseDocOptions{})
+	incoming, incomingDocs = parseChildrenForTest(root.Named(), []map[string]any{valid}, manifest.ParseDocOptions{})
 	_, partial = s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, incomingDocs
 	c.Emit(root.Named(), &partial)
@@ -495,7 +507,7 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 			t.Run(kind.Kind+"/default="+fallback, func(t *testing.T) {
 				t.Parallel()
 				s := store.New()
-				c := New(s, nil, "test")
+				c := New(s, nil)
 				parent := manifest.NamedResource{Group: kind.Group, Kind: kind.Kind, Namespace: "parent", Name: "infra"}
 				docs := []map[string]any{
 					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository", "metadata": map[string]any{"name": "chart"}, "spec": map[string]any{"url": "oci://example.test/chart"}},
@@ -510,7 +522,7 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 				}
 				opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: fallback}
 				s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
-				children, retained := ParseChildren(parent, docs, opts)
+				children, retained := parseChildrenForTest(parent, docs, opts)
 				c.Emit(parent, &store.Emission{Children: children, Manifests: retained, Complete: true})
 				assert.Equal(t, len(children), len(docs))
 				for i, want := range []string{fallback, "release", fallback, "", fallback} {
@@ -526,7 +538,7 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 					}
 				}
 				assert.Diff(t, retained, before)
-				replayed, replay := ParseChildren(parent, retained, opts)
+				replayed, replay := parseChildrenForTest(parent, retained, opts)
 				c.Emit(parent, &store.Emission{Children: replayed, Manifests: replay, Complete: true})
 				for i := range children {
 					assert.Equal(t, replayed[i].Obj.Named(), children[i].Obj.Named())
@@ -540,7 +552,7 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	parent := testutil.KustomizationID("apps", "parent")
 	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings"}
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
@@ -551,11 +563,11 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
-		s.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonUnchanged, "unchanged")
+		s.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
 	}
 	foreignProducer := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Name: producer.Name, Namespace: producer.Namespace}
 	s.AddObject(foreignProducer)
-	s.UpdateStatus(foreignProducer.Named(), store.StatusReady, "", "foreign unchanged")
+	s.UpdateStatus(foreignProducer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "foreign unchanged"})
 	foreignSettings := settings
 	foreignSettings.Group = "example.test"
 	index := &manifest.DiscoveryIndex{
@@ -615,10 +627,10 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			c := New(s, nil, "test")
+			c := New(s, nil)
 			obj := obj.WithNamespace("apps")
 			s.AddObject(obj)
-			s.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonUnchanged, "unchanged")
+			s.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 			}
@@ -651,14 +663,14 @@ func newExecution(c *Controller, id manifest.NamedResource) *Execution {
 func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, nil, "test")
+	c := New(s, nil)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	first := newExecution(c, parent.Named())
 	defer first.Close()
 	_, initial := first.Reads.GetEmission(parent.Named())
 	doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "output", "namespace": "apps"}, "data": map[string]any{"value": "one"}}
-	initial.Children, initial.Manifests = ParseChildren(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+	initial.Children, initial.Manifests = parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 	initial.Fingerprint, initial.Complete = manifest.Fingerprint("rendered input"), true
 	first.Emit(parent.Named(), &initial)
 	initial.Finish()
@@ -668,7 +680,7 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	changed := manifest.DeepCopyMap(doc)
 	changed["data"].(map[string]any)["value"] = "two"
 	_, next := s.GetEmission(parent.Named())
-	next.Children, next.Manifests = ParseChildren(parent.Named(), []map[string]any{changed}, manifest.ParseDocOptions{})
+	next.Children, next.Manifests = parseChildrenForTest(parent.Named(), []map[string]any{changed}, manifest.ParseDocOptions{})
 	next.Complete = true
 	c.Emit(parent.Named(), &next)
 	next.Finish()
@@ -698,13 +710,13 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			declaration := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "old"}
 			st.AddObject(parent)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			publish := func(obj *manifest.Kustomization) {
 				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true})
 			}
 			publish(declaration)
 			tasks := task.NewBounded(2)
-			controller := New(st, tasks, "test")
+			controller := New(st, tasks)
 			borrowed := make(chan weak.Pointer[store.ReadSet], 1)
 			replaced := make(chan struct{})
 			var previous weak.Pointer[store.ReadSet]

@@ -25,7 +25,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -83,7 +82,7 @@ func TestDetectOrphans(t *testing.T) {
 	for _, ks := range []*manifest.Kustomization{parent, orphan, emittedChild, root} {
 		o.store.AddObject(ks)
 	}
-	o.store.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+	o.store.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	// Mark emittedChild as rendered by its parent — simulates the
 	// AddObject + RecordEmitted call cluster-apps's render would make.
 	publishFixture(t, o.store, parent.Named(), []manifest.NamedResource{emittedChild.Named()})
@@ -313,7 +312,7 @@ data: {k: v}
 // same file and pointing at the SAME spec.path. They are peers (neither
 // renders the other), so they must not be wired as each other's
 // structural parent — a mutual parent edge deadlocks the pair in
-// collectDeps and stalls their dependents. The context timeout bounds
+// the shared dependency gate and stalls their dependents. The context timeout bounds
 // the run if a mutual parent edge regresses.
 func TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout(t *testing.T) {
 	dir := t.TempDir()
@@ -550,8 +549,8 @@ func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 	if !ok || info.Status != store.StatusFailed {
 		t.Fatalf("cluster-apps status = (%+v, %v), want Failed (absent substituteFrom CM must fail loud)", info, ok)
 	}
-	if !strings.Contains(info.Message, "cluster-settings") {
-		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.Message)
+	if !strings.Contains(info.String(), "cluster-settings") {
+		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.String())
 	}
 }
 
@@ -572,7 +571,7 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a.Named(): {Parent: parent}, b.Named(): {Parent: parent}}}
 			o := &Orchestrator{store: s, index: index}
 			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": "equal"}}
-			children, docs := base.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
+			children, docs := parseChildrenForTest(parent, []map[string]any{doc}, manifest.ParseDocOptions{})
 			ids := []manifest.NamedResource{a.Named(), b.Named()}
 			if reverse {
 				slices.Reverse(ids)
@@ -584,7 +583,7 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			second := manifest.DeepCopyMap(doc)
 			second["metadata"].(map[string]any)["name"] = "second"
 			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
-				entries, authoritative := base.ParseChildren(b.Named(), ordered, manifest.ParseDocOptions{})
+				entries, authoritative := parseChildrenForTest(b.Named(), ordered, manifest.ParseDocOptions{})
 				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true})
 				if got := outputByParent(o.collectManifests())[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
 					t.Fatalf("authoritative document order lost: %v", got)
@@ -592,7 +591,7 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			}
 			unequal := manifest.DeepCopyMap(doc)
 			unequal["data"] = map[string]any{"value": "different"}
-			changed, changedDocs := base.ParseChildren(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
+			changed, changedDocs := parseChildrenForTest(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
 			for _, id := range ids {
 				if id == a.Named() {
 					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
@@ -677,7 +676,7 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 				t.Fatal("missing render result")
 			}
 			id := testutil.KustomizationID("flux-system", "apps")
-			if info, ok := res.Failed[id]; !ok || !strings.Contains(info.Message, tc.diagnostic) {
+			if info, ok := res.Failed[id]; !ok || !strings.Contains(info.String(), tc.diagnostic) {
 				t.Fatalf("Kustomization failure = %+v, present = %t", info, ok)
 			}
 		})
@@ -1892,7 +1891,7 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				if id == ownerA {
 					input = append([]map[string]any{docA, version, omitted, explicit, namespaceA, malformed}, incomplete...)
 				}
-				children, authoritative := base.ParseChildren(id, input, manifest.ParseDocOptions{})
+				children, authoritative := parseChildrenForTest(id, input, manifest.ParseDocOptions{})
 				assert.Diff(t, authoritative, input)
 				mixedChildren := 0
 				for i, child := range children {

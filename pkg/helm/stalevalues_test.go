@@ -293,8 +293,7 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 		"Chart.yaml":        {Data: []byte("apiVersion: v2\nname: chart\nversion: 1.0.0\n")},
 		"templates/cm.yaml": {Data: []byte("{{ .Values.first }}")},
 	}
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	st := store.New()
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo"}}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, Key: "misleading"})

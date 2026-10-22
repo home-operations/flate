@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"runtime"
 	"slices"
 	"strings"
@@ -282,7 +283,7 @@ func TestReadRegistration_ActivationUnderReadLock(t *testing.T) {
 					case "object", "bucket":
 						s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "new"})
 					case "condition":
-						s.UpdateStatus(id, StatusReady, "", "new")
+						s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "new"})
 					case "artifact":
 						s.SetArtifact(id, &SourceArtifact{Revision: "new"})
 					}
@@ -324,7 +325,7 @@ func TestReadRegistration_ActivationUnderReadLock(t *testing.T) {
 					case "object", "bucket":
 						s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "changed"})
 					case "condition":
-						s.UpdateStatus(id, StatusFailed, "", "changed")
+						s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "changed"})
 					case "artifact":
 						s.SetArtifact(id, &SourceArtifact{Revision: "changed"})
 					}
@@ -561,7 +562,7 @@ func TestReadRegistration_AbsenceExhaustionIsAtomic(t *testing.T) {
 				case "object":
 					s.AddObject(obj)
 				case "condition":
-					s.UpdateStatus(obj.Named(), StatusReady, "", "")
+					s.UpdateStatus(obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 				case "artifact":
 					s.SetArtifact(obj.Named(), &SourceArtifact{})
 				case "emission":
@@ -638,14 +639,14 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		id: {Productions: []manifest.Production{{Owner: owner, Source: source, Authored: id, File: "settings.yaml", Path: "/settings.yaml"}}},
 	}})
-	st.UpdateStatus(owner, StatusPending, "", "pending")
+	st.UpdateStatus(owner, StatusInfo{Status: StatusPending, Reason: "", Message: "pending"})
 	var reads ReadSet
 	reads.Init(st, ownerID("consumer"), nil)
 	for range reads.Promotions(id, nil) {
 	}
 	reads.GetStatus(owner)
 	reads.Admit(&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}}, source, owner)
-	st.UpdateStatus(owner, StatusFailed, "", "render failed")
+	st.UpdateStatus(owner, StatusInfo{Status: StatusFailed, Reason: "", Message: "render failed"})
 	if reads.Valid() || st.GetObject(id) == nil {
 		t.Fatal("readiness transition must invalidate its reader without withdrawing source bytes")
 	}
@@ -724,9 +725,9 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 			defer reads.Retire()
 			var want []manifest.DependencyRef
 			for _, expr := range expressions {
-				ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: expr}
+				ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new(expr)}
 				reads.Require(ref)
-				if !slices.Contains(want, ref) {
+				if !slices.ContainsFunc(want, func(prior manifest.DependencyRef) bool { return sameReadinessGate(prior, ref) }) {
 					want = append(want, ref)
 				}
 			}
@@ -749,6 +750,43 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 			assert.Equal(t, got, 2)
 		})
 	}
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("facts/reverse=%t", reverse), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			obj := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
+			s.AddObject(obj)
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			refs := []manifest.DependencyRef{
+				{NamedResource: obj.Named()},
+				{NamedResource: obj.Named(), ReadyExpr: new("true")},
+				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true},
+				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true},
+				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ChartSource: true},
+			}
+			if reverse {
+				slices.Reverse(refs)
+			}
+			for _, ref := range refs {
+				reads.Require(ref)
+			}
+			for _, ref := range refs {
+				if ref.ReadyExpr != nil {
+					ref.ReadyExpr = new(*ref.ReadyExpr)
+				}
+				reads.Require(ref)
+			}
+			assert.Diff(t, slices.Collect(reads.Gates()), refs)
+			assert.Diff(t, slices.Collect(reads.Required()), []manifest.NamedResource{obj.Named()})
+			assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(obj))
+			if reads.inputs != &reads.local || reads.inputs.next != nil {
+				t.Fatal("gate facts created more than one captured authority")
+			}
+		})
+	}
+
 }
 
 func TestRequire_ReleasesPredicates(t *testing.T) {
@@ -759,8 +797,8 @@ func TestRequire_ReleasesPredicates(t *testing.T) {
 	for _, retirement := range []bool{false, true} {
 		reads.Init(s, ownerID("reader"), inputs)
 		for _, id := range []manifest.NamedResource{ownerID("first"), ownerID("second")} {
-			reads.Require(manifest.DependencyRef{NamedResource: id, ReadyExpr: "true"})
-			reads.Require(manifest.DependencyRef{NamedResource: id, ReadyExpr: "false"})
+			reads.Require(manifest.DependencyRef{NamedResource: id, ReadyExpr: new("true")})
+			reads.Require(manifest.DependencyRef{NamedResource: id, ReadyExpr: new("false")})
 		}
 		if retirement {
 			reads.Retire()
@@ -776,4 +814,30 @@ func TestRequire_ReleasesPredicates(t *testing.T) {
 	if reads.local.gates != nil || inputs[0].gates != nil {
 		t.Fatal("reset retained overflow predicates")
 	}
+}
+
+func TestRequire_CapturedIdentityDuringAdmission(t *testing.T) {
+	t.Parallel()
+	s := New()
+	obj := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
+	var reads ReadSet
+	reads.Init(s, ownerID("reader"), nil)
+	defer reads.Retire()
+	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(nil))
+	ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true, ChartSource: true}
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Go(func() {
+		<-start
+		reads.Require(ref)
+	})
+	workers.Go(func() {
+		<-start
+		s.AddObject(obj)
+	})
+	close(start)
+	workers.Wait()
+	assert.Diff(t, slices.Collect(reads.Gates()), []manifest.DependencyRef{ref})
+	assert.Equal(t, s.GetObject(obj.Named()), manifest.BaseManifest(obj))
+	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(nil))
 }

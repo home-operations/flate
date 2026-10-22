@@ -123,7 +123,7 @@ metadata:
 			t.Errorf("%s spec.path = %q, want %q (${CLUSTER_ENV} should resolve to test)", name, ks.Path, want)
 		}
 		if info, failed := res.Failed[id]; failed {
-			t.Errorf("%s failed: %s", name, info.Message)
+			t.Errorf("%s failed: %s", name, info.String())
 		}
 	}
 }

@@ -342,7 +342,7 @@ func failureModel(result *selection.Selection) output.Model {
 	blocked := result.BlockedCount()
 	for root, victims := range result.Causes {
 		if info, isFailed := result.Failed[root]; isFailed {
-			primary = append(primary, output.Primary{ID: root, Msg: info.Message, Blocks: victims})
+			primary = append(primary, output.Primary{ID: root, Msg: info.String(), Blocks: victims})
 		} else {
 			missing = append(missing, output.Missing{ID: root, RequiredBy: victims})
 		}

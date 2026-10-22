@@ -53,7 +53,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 					var e *crdPromotion
 					switch state {
 					case "valid expression":
-						ref.ReadyExpr = "false"
+						ref.ReadyExpr = new("false")
 					case "explicit namespace":
 						ref.Namespace = "explicit"
 					case "object", "present invalid expression":
@@ -61,7 +61,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						want = schedule.Terminal
 						msg = ""
 						if state == "present invalid expression" {
-							ref.ReadyExpr = "dep.(("
+							ref.ReadyExpr = new("dep.((")
 						}
 					case "ready status", "pending status", "failed status":
 						status := store.StatusReady
@@ -71,7 +71,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						if state == "failed status" {
 							status = store.StatusFailed
 						}
-						s.UpdateStatus(ref.NamedResource, status, "", "state")
+						s.UpdateStatus(ref.NamedResource, store.StatusInfo{Status: status, Reason: "", Message: "state"})
 						want = schedule.Terminal
 						msg = ""
 					case "promoted", "promotion miss":
@@ -90,7 +90,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 							msg = "dependency not found"
 						}
 					case "invalid expression":
-						ref.ReadyExpr = "dep.(("
+						ref.ReadyExpr = new("dep.((")
 						want = schedule.DependencyFailed
 					}
 					w := &Waiter{Store: s, AllowMissingCRDs: enabled}

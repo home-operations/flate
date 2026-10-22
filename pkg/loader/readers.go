@@ -40,7 +40,7 @@ func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]mani
 		}
 		visited[id] = struct{}{}
 		obj := object(id)
-		for ref := range manifest.References(obj) {
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 			if ref.Use == "chart" {
 				collect(ref.NamedResource, consumer)
 				continue

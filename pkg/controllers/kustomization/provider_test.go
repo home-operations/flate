@@ -66,7 +66,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			st.AddObject(tc.late)
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.substitutionSources)
+			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.SubstituteFrom)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
 			if provider.Data(external.Named()) != external.(manifest.Data) || provider.Data(other.Named()) != other.(manifest.Data) || provider.Data(missing) != nil {
 				t.Fatal("provider lost exact frozen precedence or fallback")

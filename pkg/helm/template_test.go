@@ -3,6 +3,7 @@ package helm
 import (
 	"errors"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -51,10 +52,7 @@ data:
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/crds/widgets.yaml", crd)
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	wantAll, err := manifest.SplitDocs([]byte(crd + "---\n" + cm))
 	if err != nil {
@@ -111,7 +109,7 @@ data:
 			if tc.skip {
 				want = wantAll[1:]
 			}
-			assert.Diff(t, manifest.DropKinds(docs, opts.SkipResourceKinds()), want)
+			assert.Diff(t, slices.DeleteFunc(slices.Clone(docs), func(doc map[string]any) bool { return slices.Contains(opts.SkipResourceKinds(), manifest.DocKind(doc)) }), want)
 		})
 	}
 }
@@ -124,10 +122,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/crds/a-valid.yaml", cm)
 	testutil.WriteFile(t, dir, "mychart/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	want, err := manifest.SplitDocs([]byte(cm))
 	if err != nil {
@@ -180,10 +175,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", cm+"---\napiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	_, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
@@ -213,10 +205,7 @@ dependencies:
 	testutil.WriteFile(t, dir, "mychart/charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", "apiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	want, err := manifest.SplitDocs([]byte(cm))
 	if err != nil {
@@ -257,10 +246,7 @@ dependencies:
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	ch := &chart.Chart{
 		Metadata: &chart.Metadata{Name: "mychart", Version: "0.1.0"},
 		Values:   map[string]any{"image": map[string]any{"tag": "default", "repository": "canonical"}},
@@ -311,10 +297,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 // not alias even with identical valuesFiles.
 func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	chA := &chart.Chart{
 		Metadata: &chart.Metadata{Name: "a", Version: "1.0.0"},
 		Files: []*chartcommon.File{
@@ -343,10 +326,7 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 
 func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	for _, name := range []string{"A", "B"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -370,10 +350,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 
 func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	ch := &chart.Chart{Metadata: &chart.Metadata{Name: "fixture", Version: "1.0.0"}, Files: []*chartcommon.File{
 		{Name: "first.yaml", Data: []byte("marker: first\n")},
 		{Name: "second.yaml", Data: []byte("marker: second\n")},
@@ -512,10 +489,7 @@ metadata:
 data:
   version: {{ .Capabilities.KubeVersion.Version | quote }}
 `)
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	for _, tc := range []struct {
 		name, version, want string
@@ -563,10 +537,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-			if err != nil {
-				t.Fatal(err)
-			}
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 			hr := newHR()
 			hr.DisableSchemaValidation = tc.install
@@ -612,8 +583,7 @@ func TestTemplate_ShowOnlyFraming(t *testing.T) {
 	testutil.WriteFile(t, dir, "demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "demo/templates/a.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}")
 	testutil.WriteFile(t, dir, "demo/templates/b.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}")
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	const a = "---\n# Source: demo/templates/a.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}\n"
 	const b = "---\n# Source: demo/templates/b.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}\n"

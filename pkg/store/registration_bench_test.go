@@ -82,7 +82,7 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 					}
 					for range s.Sweep() {
 					}
-					s.UpdateStatus(consumer, StatusReady, "", "")
+					s.UpdateStatus(consumer, StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 					if mode == "absent" {
 						s.DeleteObject(ids[0])
 					}
@@ -111,7 +111,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 			for i := range consumers {
 				consumers[i] = testutil.KustomizationID("ns", fmt.Sprintf("consumer-%05d", i))
 				s.AddObject(&manifest.Kustomization{Name: consumers[i].Name, Namespace: consumers[i].Namespace})
-				s.UpdateStatus(consumers[i], StatusReady, "", "")
+				s.UpdateStatus(consumers[i], StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 			}
 			tasks := task.NewBounded(workers)
 			state := &struct {
@@ -128,7 +128,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 							state.sets[i].Init(s, consumers[i], nil)
 							state.inputs[i].Ref.NamedResource = ids[i]
 							state.sets[i].Capture(&state.inputs[i])
-							s.UpdateStatus(consumers[i], StatusReady, "", "")
+							s.UpdateStatus(consumers[i], StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 						}
 					})
 				}
@@ -145,8 +145,8 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 							if i == 0 {
 								start()
 							}
-							s.UpdateStatus(consumers[i], StatusPending, "", "completion")
-							s.UpdateStatus(consumers[i], StatusReady, "", "")
+							s.UpdateStatus(consumers[i], StatusInfo{Status: StatusPending, Reason: "", Message: "completion"})
+							s.UpdateStatus(consumers[i], StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 						}
 						tasks.YieldSlot(func() { <-written })
 					})
@@ -186,7 +186,7 @@ func registrationFixture(tb testing.TB, mode string) (*Store, []manifest.NamedRe
 	if mode == "produced" || mode == "repeated" {
 		producer := &manifest.ResourceSet{Name: "producer", Namespace: "ns"}
 		s.AddObject(producer)
-		s.UpdateStatus(producer.Named(), StatusReady, "", "")
+		s.UpdateStatus(producer.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 		recordForTest(tb, s, producer.Named(), ids)
 	}
 	if mode != "absent" {

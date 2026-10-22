@@ -15,7 +15,7 @@ import (
 func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
+	c := &Controller{Controller: base.New(s, task.NewBounded(0))}
 	idA := testutil.KustomizationID("ns", "a")
 	idB := testutil.KustomizationID("ns", "b")
 	parent := testutil.KustomizationID("ns", "parent")
@@ -57,7 +57,7 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := &Controller{Controller: base.New(s, task.NewBounded(0), "kustomization")}
+	c := &Controller{Controller: base.New(s, task.NewBounded(0))}
 	parent := testutil.KustomizationID("ns", "parent")
 
 	var leaked bool
@@ -88,7 +88,7 @@ func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child"}}}
-	children, retained := base.ParseChildren(parent.Named(), docs, manifest.ParseDocOptions{})
+	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	next := &store.Emission{Children: children, Manifests: retained, Complete: true}
 	c.Emit(parent.Named(), next)
 	arrivals := 0

@@ -2,9 +2,6 @@
 package base
 
 import (
-	"errors"
-	"log/slog"
-	"sync"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -20,52 +17,25 @@ import (
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
+	// SubstituteFrom is the immutable bootstrap-approved substitution snapshot.
+	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 
-	// log is name's logger, pre-bound at New with a controller=<name>
-	// attribute. Reconcile bodies and the shared base helpers log through it
-	// (via Logger()) so the controller identity is a structured field rather
-	// than a per-call message prefix. Bound once from slog.Default(), which the
-	// CLI installs in PersistentPreRunE before any controller is constructed.
-	log *slog.Logger
-
-	started atomic.Bool
-	filter  *change.Filter
-
-	// closed is set by Close so any later AddListener short-circuits
-	// rather than appending into a slice nobody will drain. The flag
-	// is checked once on the fast path (no lock) and re-checked under
-	// unsubMu before the append so a Close racing AddListener cannot
-	// snapshot c.unsub and miss a registration landing just after.
-	// Matches the started lifecycle-gate pattern above.
-	closed atomic.Bool
-
-	// unsubMu guards unsub so AddListener and Close can be called
-	// concurrently (e.g. shutdown racing a listener-triggered Submit).
-	// The slice is short-lived (registered via AddListener, drained at Close)
-	// and per-controller, so the lock has near-zero contention.
-	unsubMu sync.Mutex
-	unsub   []store.Unsubscribe
+	started   atomic.Bool
+	filter    *change.Filter
+	index     *manifest.DiscoveryIndex
+	skipKinds []string
 
 	dependencySubstitutions values.DependencySubstitutions
 	existence               depwait.ExistenceLookup
+	allowMissingSecrets     bool
 	allowMissingCRDs        bool
 	preflight               func(manifest.NamedResource) (string, bool)
 }
 
-// New constructs a controller with its stable identity for reconciliation logs.
-func New(s *store.Store, t *task.Service, name string) *Controller {
-	return &Controller{
-		Store: s,
-		Tasks: t,
-		log:   slog.Default().With(slog.String("controller", name)),
-	}
+// New constructs a controller with the shared store and task service.
+func New(s *store.Store, t *task.Service) *Controller {
+	return &Controller{Store: s, Tasks: t}
 }
-
-// Logger returns the controller's slog logger, pre-bound with a
-// controller=<name> attribute. Reconcile bodies (and the emit helper, via the
-// controller they receive) log through it so the controller identity is a
-// structured field rather than a per-call message prefix.
-func (c *Controller) Logger() *slog.Logger { return c.log }
 
 // requireNotStarted panics if the started gate is set, enforcing the
 // invariant that reconcile-shaping config is frozen once dispatch
@@ -83,6 +53,10 @@ func (c *Controller) requireNotStarted(method string) {
 // concrete controller embeds Options in its own option struct and forwards it
 // to Configure, then assigns its controller-specific fields.
 type Options struct {
+	// SkipKinds is the immutable visible-output exclusion list.
+	SkipKinds []string
+	// SubstituteFrom is the immutable bootstrap-approved substitution snapshot.
+	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 	// DependencySubstitutions is the frozen discovered lookup used before child publication.
 	DependencySubstitutions values.DependencySubstitutions
 	// Filter narrows reconciliation to changed resources in changed-only mode.
@@ -96,6 +70,8 @@ type Options struct {
 	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
 	// because the cluster installs them at runtime.
 	AllowMissingCRDs bool
+	// AllowMissingSecrets permits unresolved required Helm values at the fixpoint.
+	AllowMissingSecrets bool
 	// PreflightFailure reports dependency-graph errors discovered before
 	// reconcile; when set for an id the controller marks it Failed and renders
 	// nothing.
@@ -107,10 +83,14 @@ func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.dependencySubstitutions = opts.DependencySubstitutions
 	c.filter = opts.Filter
+	c.index = opts.Index
+	c.SubstituteFrom = opts.SubstituteFrom
+	c.skipKinds = opts.SkipKinds
 	c.existence = opts.Existence
 	c.preflight = opts.PreflightFailure
 	c.Store.SetDiscoveryIndex(opts.Index)
 	c.allowMissingCRDs = opts.AllowMissingCRDs
+	c.allowMissingSecrets = opts.AllowMissingSecrets
 }
 
 // KeepEmitted extends the change filter's keep set so render-emitted
@@ -135,27 +115,6 @@ func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.B
 	}
 }
 
-// PreflightFailure reports the pre-reconcile failure for id if the
-// orchestrator detected a dependency-graph error. Returns ("", false)
-// when no preflight check is configured or no failure was recorded.
-func (c *Controller) PreflightFailure(id manifest.NamedResource) (string, bool) {
-	if c.preflight == nil {
-		return "", false
-	}
-	return c.preflight(id)
-}
-
-// PreflightError returns an error wrapping the preflight failure
-// message for id, or nil when no failure is recorded. Used at each
-// yield point inside reconcile so a cycle detection or topology error
-// published mid-flight aborts the current pass without waiting.
-func (c *Controller) PreflightError(id manifest.NamedResource) error {
-	if msg, failed := c.PreflightFailure(id); failed {
-		return errors.New(msg)
-	}
-	return nil
-}
-
 // SetPendingUnlessReady initializes progress without changing an existing condition.
 func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string) {
 	if info, ok := c.Store.GetStatus(id); ok {
@@ -164,66 +123,18 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 		}
 		return
 	}
-	c.Store.UpdateStatus(id, store.StatusPending, "", msg)
+	c.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: msg})
 }
 
-// StartLifecycle flips the started gate, freezing reconcile-shaping
-// config. Call before dispatch or installing listeners via AddListener.
+// StartLifecycle freezes reconcile-shaping configuration before dispatch.
 func (c *Controller) StartLifecycle() {
 	c.started.Store(true)
-}
-
-// AddListener registers a store listener and records it so Close can
-// unsubscribe. snapshot=true matches every concrete controller's needs
-// (deliver the current store state on subscribe). Safe to call
-// concurrently with Close — once Close has flipped the closed gate,
-// any in-flight or later AddListener is refused and the registration
-// is rolled back so the underlying store does not retain a listener
-// the controller will never unsubscribe.
-func (c *Controller) AddListener(event store.EventKind, l store.Listener) {
-	// Fast path: avoid the store registration entirely when Close has
-	// already started. The post-lock re-check below catches the TOCTOU
-	// window where Close flips closed between this load and the lock.
-	if c.closed.Load() {
-		return
-	}
-	u := c.Store.AddListener(event, l, true)
-	c.unsubMu.Lock()
-	if c.closed.Load() {
-		// Close set the flag and drained c.unsub between our fast-path
-		// check and the lock — releasing the store registration here
-		// matches what Close would have done with our entry.
-		c.unsubMu.Unlock()
-		u()
-		return
-	}
-	c.unsub = append(c.unsub, u)
-	c.unsubMu.Unlock()
-}
-
-// Close removes every registered listener and refuses any later
-// AddListener so a late call from a shutdown-racing goroutine cannot
-// leak a registration past us. Idempotent: a second Close is a no-op
-// because the closed flag is set via Swap.
-func (c *Controller) Close() {
-	c.unsubMu.Lock()
-	if c.closed.Swap(true) {
-		// Another Close already drained and marked us closed.
-		c.unsubMu.Unlock()
-		return
-	}
-	unsubs := c.unsub
-	c.unsub = nil
-	c.unsubMu.Unlock()
-	for _, u := range unsubs {
-		u()
-	}
 }
 
 // preGate marks suspended objects Ready; refresh MUST never apply changed-only filtering.
 func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 	if obj.Suspended() {
-		c.Store.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
+		c.Store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
 		return true
 	}
 	return false

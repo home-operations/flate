@@ -46,7 +46,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 	}
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "platform-values"}
-	cache := NewCache() // shared across all HRs, as in production (one per helm.Client)
+	cache := &Cache{} // shared across all HRs, as in production (one per helm.Client)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -92,7 +92,7 @@ counts:
 	// content-keyed memo and skip yaml.Unmarshal — matches the production
 	// pattern where M HRs sharing a platform-wide values CM parse
 	// exactly once.
-	cache := NewCache()
+	cache := &Cache{}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -120,7 +120,7 @@ func BenchmarkExpandValueReferences_TargetPaths(b *testing.B) {
 			for i := range count {
 				refs = append(refs, manifest.ValuesReference{Kind: "ConfigMap", Name: inject.Name, ValuesKey: "value", TargetPath: fmt.Sprintf("app%d.image.tag", i)})
 			}
-			cache := NewCache()
+			cache := &Cache{}
 			b.ReportAllocs()
 			for b.Loop() {
 				hr := &manifest.HelmRelease{Name: "app", Namespace: "default", ValuesFrom: refs}
@@ -150,7 +150,7 @@ func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
 	cm := &manifest.ConfigMap{Name: "shared", Namespace: "default", Data: data}
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "shared", ValuesKey: "values.yaml"}
-	cache := NewCache()
+	cache := &Cache{}
 
 	b.ReportAllocs()
 	b.ResetTimer()

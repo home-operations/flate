@@ -556,7 +556,7 @@ func appendReferences(dst []manifest.NamedResource, obj manifest.BaseManifest, r
 	include := func(ref manifest.Reference) bool {
 		return (!reverse && ref.Content) || (ref.Use == "substituteFrom" && ref.Name != "")
 	}
-	refs := manifest.References(obj)
+	refs := manifest.References(obj, manifest.ReferenceRelations)
 	prefixLen := len(dst)
 	for ref := range refs {
 		if include(ref) {

@@ -214,7 +214,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "invalid.yaml") || strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
 			t.Fatalf("selected malformed reference lost its source: %v", err)
 		}
-		if info := res.Failed[testutil.KustomizationID("flux-system", "peer")]; !strings.Contains(info.Message, "missing.yaml") {
+		if info := res.Failed[testutil.KustomizationID("flux-system", "peer")]; !strings.Contains(info.String(), "missing.yaml") {
 			t.Fatalf("input error overwrote the reader's render failure: %+v", info)
 		}
 		runs := []Rendered{{Orchestrator: o, Result: res, Err: err}}
@@ -241,7 +241,7 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 	}
 	for _, side := range []Rendered{base, head} {
 		info := side.Result.Failed[testutil.KustomizationID("flux-system", "selected")]
-		if info.Status != store.StatusFailed || !strings.Contains(info.Message, "unknown: dependency not found") {
+		if info.Status != store.StatusFailed || !strings.Contains(info.String(), "unknown: dependency not found") {
 			t.Fatalf("missing target diagnosis lost: %+v", info)
 		}
 	}

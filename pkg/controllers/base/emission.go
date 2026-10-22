@@ -7,12 +7,37 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ParseChildren retains authoritative sanitized documents, including invalid typed output.
+type emissionProducer interface {
+	EmissionPolicy() manifest.EmissionPolicy
+}
+
+// ParseChildren selects output and retains authoritative sanitized child documents.
+// Producer namespace policy overrides opts.DefaultNamespace; raw parents use that default.
 // The returned objects and maps MUST remain immutable after publication.
-func ParseChildren(parent manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions) ([]store.Child, []map[string]any) {
+func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []map[string]any, opts manifest.ParseDocOptions) ([]store.Child, []map[string]any) {
+	var policy manifest.EmissionPolicy
+	if producer, ok := parent.(emissionProducer); ok {
+		policy = producer.EmissionPolicy()
+		if policy.InternalNamespace {
+			opts.DefaultNamespace = ""
+		} else {
+			opts.DefaultNamespace = policy.Namespace
+		}
+	}
 	children := make([]store.Child, 0, len(docs))
 	retained := false
+	var visible []map[string]any
 	for i, doc := range docs {
+		output, child := policy.SelectDocument(doc, c.skipKinds)
+		if !output {
+			if visible == nil {
+				visible = make([]map[string]any, i, len(docs))
+				copy(visible, docs[:i])
+			}
+		}
+		if !child {
+			continue
+		}
 		obj, authoritative, changed, err := manifest.ParseDoc(doc, opts)
 		if changed {
 			if !retained {
@@ -21,10 +46,22 @@ func ParseChildren(parent manifest.NamedResource, docs []map[string]any, opts ma
 			}
 			docs[i] = authoritative
 		}
-		if err != nil || obj == nil || obj.Named() == parent {
+		if visible != nil && output {
+			visible = append(visible, authoritative)
+		}
+		if err != nil || obj == nil {
+			continue
+		}
+		if policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
+			obj = obj.WithNamespace(policy.Namespace)
+		}
+		if obj.Named() == parent.Named() {
 			continue
 		}
 		children = append(children, store.Child{Obj: obj, Doc: authoritative})
+	}
+	if visible != nil {
+		docs = visible
 	}
 	return children, docs
 }
@@ -46,6 +83,14 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission) {
 			next.Children[i].Obj = obj
 		}
 		c.KeepEmitted(id, obj, next.Reads)
+	}
+	if next.Complete {
+		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {
+			message := store.ApplyingStatus(len(next.Manifests))
+			if info != message {
+				c.Store.UpdateStatus(id, message)
+			}
+		}
 	}
 	c.Store.RecordEmitted(id, next)
 }

@@ -23,10 +23,11 @@ const (
 
 // StatusInfo projects readiness, reason, message and failure provenance from a Ready condition.
 type StatusInfo struct {
-	Status  Status
-	Reason  StatusReason
-	Message string
-	failure *dependencyFailure
+	Status          Status
+	Reason          StatusReason
+	Message         string
+	failure         *dependencyFailure
+	applyingObjects int
 }
 
 // StatusReason identifies a Ready condition's machine-readable reason.
@@ -102,9 +103,10 @@ func (i StatusInfo) BlockedBy() []manifest.NamedResource {
 
 // Failure IDs are immutable so StatusInfo can retain them after the shard unlocks.
 type conditionRecord struct {
-	state      *conditionState
-	conditions []Condition
-	failure    *dependencyFailure
+	state           *conditionState
+	applyingObjects int
+	conditions      []Condition
+	failure         *dependencyFailure
 }
 
 type conditionState struct {
@@ -200,11 +202,11 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 		}
 		switch c.Status {
 		case metav1.ConditionTrue:
-			return StatusInfo{Status: StatusReady, Reason: StatusReason(c.Reason), Message: c.Message}, true
+			return StatusInfo{Status: StatusReady, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects}, true
 		case metav1.ConditionFalse:
-			return StatusInfo{Status: StatusFailed, Reason: StatusReason(c.Reason), Message: c.Message, failure: r.failure}, true
+			return StatusInfo{Status: StatusFailed, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects, failure: r.failure}, true
 		default:
-			return StatusInfo{Status: StatusPending, Reason: StatusReason(c.Reason), Message: c.Message}, true
+			return StatusInfo{Status: StatusPending, Reason: StatusReason(c.Reason), Message: c.Message, applyingObjects: r.applyingObjects}, true
 		}
 	}
 	return StatusInfo{}, false
@@ -213,8 +215,8 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 // UpdateStatus records a Ready-condition transition and dispatches a
 // StatusUpdated event when the StatusInfo rollup changes. Snapshot
 // exposes the full condition state. An empty reason derives the normal reason from status.
-func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, reason StatusReason, message string) {
-	s.SetCondition(id, readyCondition(status, reason, message))
+func (s *Store) UpdateStatus(id manifest.NamedResource, info StatusInfo) {
+	s.setCondition(id, readyCondition(info.Status, info.Reason, info.Message), info.applyingObjects, nil)
 }
 
 // ReportProgress dispatches transient phase text without changing Ready conditions.
@@ -228,7 +230,7 @@ func (s *Store) ReportProgress(id manifest.NamedResource, message string) {
 
 // UpdateFailure atomically records a terminal error and its immediate failed dependencies.
 func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
-	s.setCondition(id, readyCondition(StatusFailed, "", err.Error()), newDependencyFailure(err))
+	s.setCondition(id, readyCondition(StatusFailed, "", err.Error()), 0, newDependencyFailure(err))
 }
 
 // SetCondition upserts cond into the resource's condition list keyed
@@ -246,13 +248,13 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 // lands (e.g. tests). The FailedResources rollup filters phantoms
 // by intersecting against the object map at read time.
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
-	s.setCondition(id, cond, nil)
+	s.setCondition(id, cond, 0, nil)
 }
 
-func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure *dependencyFailure) {
+func (s *Store) setCondition(id manifest.NamedResource, cond Condition, applyingObjects int, failure *dependencyFailure) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
-	updated, changed := sh.setConditionLocked(id, cond, failure)
+	updated, changed := sh.setConditionLocked(id, cond, applyingObjects, failure)
 	if !changed {
 		sh.mu.Unlock()
 		return
@@ -274,22 +276,36 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 // record aliases the live condition slice. Failure IDs remain immutable.
 // Existing conditions with unchanged provenance MUST be overwritten in place
 // without reassigning the map entry, preserving the allocation-free hot path.
-func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, failure *dependencyFailure) (conditionRecord, bool) {
+func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, applyingObjects int, failure *dependencyFailure) (conditionRecord, bool) {
 	record := sh.conditions[id]
-	failureChanged := cond.Type == ConditionReady && !record.failure.same(failure)
+	ready := cond.Type == ConditionReady
+	objects := record.applyingObjects
+	objectsChanged := ready && objects != applyingObjects
+	if ready && applyingObjects != 0 {
+		cond.Message = ""
+	}
+	failureChanged := ready && !record.failure.same(failure)
 	for i := range record.conditions {
-		if record.conditions[i].Type != cond.Type {
+		previous := &record.conditions[i]
+		if previous.Type != cond.Type {
 			continue
 		}
-		changed := !conditionEqual(record.conditions[i], cond)
+		messageChanged := previous.Message != cond.Message
+		if ready {
+			messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
+		}
+		changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason || previous.ObservedGeneration != cond.ObservedGeneration
 		if changed || failureChanged {
 			record.advanceLocked(sh)
 		}
-		if changed {
-			record.conditions[i] = cond
+		if changed || objectsChanged {
+			*previous = cond
 		}
-		if failureChanged {
+		if failureChanged || objectsChanged {
 			record.failure = failure
+			if ready {
+				record.applyingObjects = applyingObjects
+			}
 			sh.conditions[id] = record
 		}
 		return record, changed || failureChanged
@@ -306,6 +322,9 @@ func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, f
 	record.advanceLocked(sh)
 	if failureChanged {
 		record.failure = failure
+	}
+	if ready {
+		record.applyingObjects = applyingObjects
 	}
 	record.conditions = append(record.conditions, cond)
 	sh.conditions[id] = record
@@ -370,4 +389,14 @@ func (s *Store) FailedResources() map[manifest.NamedResource]StatusInfo {
 		}
 	}
 	return out
+}
+
+func (r conditionRecord) project(conditions []Condition) {
+	if r.applyingObjects != 0 {
+		for i := range conditions {
+			if conditions[i].Type == ConditionReady {
+				conditions[i].Message = StatusInfo{applyingObjects: r.applyingObjects}.String()
+			}
+		}
+	}
 }

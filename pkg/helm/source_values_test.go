@@ -56,8 +56,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 				if kind == manifest.KindBucket {
 					input = acquireChartFS(t, owner, os.DirFS(root))
 				}
-				cli, err := NewClient(owner)
-				assert.NoError(t, err)
+				cli := NewClient(owner)
 				st := store.New()
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Kind: kind, Group: manifest.SourceDomain, Name: "repo", Namespace: "apps"}}, IgnoreMissingValuesFiles: ignore}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
@@ -142,8 +141,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 			}
 			st := store.New()
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, artifact), Revision: "1.0.0"})
-			cli, err := NewClient(owner)
-			assert.NoError(t, err)
+			cli := NewClient(owner)
 			cliSources := NewSources(st)
 			for _, tc := range []struct {
 				name  string
@@ -256,10 +254,9 @@ func TestTemplate_ValuesFilesFailures(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					t.Parallel()
-					cli, err := NewClient(owner)
-					assert.NoError(t, err)
+					cli := NewClient(owner)
 					ch := minimalChart()
-					_, err = cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint, valuesFS: tc.input}, []string{tc.path}, ignore)
+					_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint, valuesFS: tc.input}, []string{tc.path}, ignore)
 					if err == nil || !errors.Is(err, tc.want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.path)) {
 						t.Fatalf("values error = %v; want %v and filename %q", err, tc.want, tc.path)
 					}
@@ -283,8 +280,7 @@ func TestObserveValuesFiles_PinnedReuse(t *testing.T) {
 			testutil.WriteFile(t, root, "config/other.yaml", "marker: other\nnested:\n  value: shared\n")
 			owner := cachetest.New(t, "", cache.New)
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
-			cli, err := NewClient(owner)
-			assert.NoError(t, err)
+			cli := NewClient(owner)
 			cliSources := NewSources(st)
 			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
@@ -352,8 +348,7 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 	t.Parallel()
 	root, st, hr := sourceValuesCacheFixture(t)
 	owner := cachetest.New(t, "", cache.New)
-	cli, err := NewClient(owner)
-	assert.NoError(t, err)
+	cli := NewClient(owner)
 	cliSources := NewSources(st)
 	d, err := cli.describeChart(t.Context(), hr, cliSources)
 	assert.NoError(t, err)
@@ -399,8 +394,7 @@ func TestObserveValuesFiles_RetryFailures(t *testing.T) {
 			root, st, hr := sourceValuesCacheFixture(t)
 			owner := cachetest.New(t, "", cache.New)
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
-			cli, err := NewClient(owner)
-			assert.NoError(t, err)
+			cli := NewClient(owner)
 			cliSources := NewSources(st)
 			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
@@ -452,8 +446,7 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	root, st, hr := sourceValuesCacheFixture(t)
 	owner := cachetest.New(t, "", cache.New)
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
-	cli, err := NewClient(owner)
-	assert.NoError(t, err)
+	cli := NewClient(owner)
 	cliSources := NewSources(st)
 	d, err := cli.describeChart(t.Context(), hr, cliSources)
 	assert.NoError(t, err)
@@ -510,8 +503,7 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 	t.Parallel()
 	root, st, hr := sourceValuesCacheFixture(t)
-	cli, err := NewClient(cachetest.New(t, "", cache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
 	var previousPin, chartFingerprint string
 	for _, marker := range []string{"first", "changed", ""} {

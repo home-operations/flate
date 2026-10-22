@@ -33,7 +33,7 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 	if _, exists := res.Index.Lookup(consumer.Named()); !exists {
 		t.Fatal("resolved discovery index was not published")
 	}
-	for ref := range manifest.References(consumer) {
+	for ref := range manifest.References(consumer, manifest.ReferenceRelations) {
 		if ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil {
 			t.Fatalf("discovered dependency target missing: %s", ref.NamedResource)
 		}

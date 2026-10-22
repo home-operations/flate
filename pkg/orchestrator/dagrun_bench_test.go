@@ -18,7 +18,7 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 			c := resourceset.New(s, task.NewBounded(2), true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-			b.Cleanup(c.Close)
+
 			rs := &manifest.ResourceSet{Name: "bench", Namespace: "ns"}
 			s.AddObject(rs)
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}

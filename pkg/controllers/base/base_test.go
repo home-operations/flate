@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -27,7 +27,7 @@ func TestExecution_Success(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 		func(_ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			if obj.Name != "app" {
 				t.Errorf("re-read got %q, want app", obj.Name)
@@ -47,9 +47,9 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	c := base.New(s, nil, "test")
+	c := base.New(s, nil)
 	c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s), Index: index})
-	defer c.Close()
+
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
 		execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
@@ -86,8 +86,8 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			tasks := task.NewBounded(2)
-			c := base.New(st, tasks, "test")
-			defer c.Close()
+			c := base.New(st, tasks)
+
 			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 			if source {
 				obj = &manifest.GitRepository{Name: "producer", Namespace: "apps"}
@@ -163,7 +163,7 @@ func TestExecution_Failure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 		func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			return errors.New("render failed")
 		},
@@ -191,7 +191,7 @@ func TestExecution_Panic(t *testing.T) {
 	var rec any
 	func() {
 		defer func() { rec = recover() }()
-		controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+		controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 			func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				panic("kaboom")
 			},
@@ -214,7 +214,7 @@ func TestExecution_MissingObject(t *testing.T) {
 	s := store.New()
 	id := testutil.HelmReleaseID("ns", "ghost")
 	called := false
-	controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 		func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			called = true
 			return nil
@@ -226,8 +226,8 @@ func TestExecution_MissingObject(t *testing.T) {
 	if _, ok := s.GetStatus(id); ok {
 		t.Error("missing object should not get a status entry")
 	}
-	s.UpdateStatus(id, store.StatusPending, "", "re-fetching")
-	controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+	s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "re-fetching"})
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 		func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
 			t.Error("missing object reconciled")
 			return nil
@@ -257,9 +257,9 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
 			id := hr.Named()
-			s.UpdateStatus(id, store.StatusReady, tc.reason, tc.message)
+			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
 			before, _ := s.GetStatus(id)
-			controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+			controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 				func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil })
 			got, _ := s.GetStatus(id)
 			if got != before {
@@ -282,14 +282,15 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			s := store.New()
 			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
-			c := base.New(s, nil, "helmrelease")
+			c := base.New(s, nil)
 			src := &manifest.OCIRepository{Name: "source", Namespace: "ns"}
 			s.AddObject(src)
-			s.UpdateStatus(src.Named(), store.StatusReady, tc.reason, tc.message)
+			s.SetArtifact(src.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
+			s.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
 			execution := controllertest.NewExecution(c, hr.Named())
 			execution.Dispatch(t.Context(), manifest.DrainNone,
 				func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
-					return execution.SourceSkipped(src.Named(), "source")
+					return execution.Require(t.Context(), []manifest.DependencyRef{{NamedResource: src.Named(), Artifact: true}}, manifest.DrainNone)
 				})
 			got, _ := s.GetStatus(hr.Named())
 			want := store.OutcomePassed
@@ -307,7 +308,7 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			s := store.New()
 			hr := &manifest.HelmRelease{Name: "app"}
 			s.AddObject(hr)
-			controllertest.NewExecution(base.New(s, nil, "test"), hr.Named()).Dispatch(t.Context(), manifest.DrainNone,
+			controllertest.NewExecution(base.New(s, nil), hr.Named()).Dispatch(t.Context(), manifest.DrainNone,
 				func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
 					return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, message)
 				})
@@ -326,9 +327,9 @@ func TestExecution_PreservesExternalFailure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	controllertest.NewExecution(base.New(s, nil, "helmrelease"), id).Dispatch(t.Context(), manifest.DrainNone,
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
 		func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-			s.UpdateStatus(id, store.StatusFailed, "", "dependency cycle detected")
+			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "dependency cycle detected"})
 			return nil
 		},
 	)
@@ -341,141 +342,16 @@ func TestExecution_PreservesExternalFailure(t *testing.T) {
 	}
 }
 
-// TestController_CloseDrainsConcurrentAddListener exercises the
-// Close-vs-AddListener race. Many goroutines register listeners while
-// a single goroutine runs Close. The contract is that exactly ONE
-// Close call must leave no listener registered against the store —
-// either Close drained the listener directly OR the closed flag
-// caused AddListener to refuse / roll back. A listener that registers
-// AFTER Close's snapshot but BEFORE Close releases the unsubMu lock
-// must NOT leak.
-//
-// We verify by firing EventObjectAdded AFTER Close returns and
-// counting handler invocations; we deliberately do NOT call Close
-// twice (a second Close would mask the leak by draining the slice
-// that grew between the first Close's snapshot and its lock release).
-// Run under -race over many iterations to catch the snapshot-after-
-// append window that the closed flag closes.
-func TestController_CloseDrainsConcurrentAddListener(t *testing.T) {
-	t.Parallel()
-
-	const goroutines = 256
-
-	for iter := range 100 {
-		s := store.New()
-		c := base.New(s, nil, "test")
-
-		var fired atomic.Int64
-		var wg sync.WaitGroup
-		start := make(chan struct{})
-		closeDone := make(chan struct{})
-
-		for range goroutines {
-			wg.Go(func() {
-				<-start
-				c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
-					fired.Add(1)
-				})
-			})
-		}
-
-		// Release goroutines and run a single Close concurrently. Wait
-		// for both the Close and every AddListener to finish before
-		// firing the post-close event — that way the test asks "after
-		// the dust settles, has Close drained everything that managed
-		// to register?". A pre-fix run that snapshotted before an
-		// AddListener landed leaves that listener registered, and the
-		// post-close event will fire it.
-		close(start)
-		go func() {
-			c.Close()
-			close(closeDone)
-		}()
-		wg.Wait()
-		<-closeDone
-
-		// Snapshot-replay during AddListener may have fired the handler
-		// at registration time. Only NEW events after Close matter for
-		// the leak check.
-		fired.Store(0)
-
-		hr := &manifest.HelmRelease{Name: "post-close", Namespace: "ns"}
-		s.AddObject(hr)
-
-		if got := fired.Load(); got != 0 {
-			t.Fatalf("iter %d: %d listeners still active after Close — leak", iter, got)
-		}
-	}
-}
-
-// TestController_AddListenerAfterCloseIsNoOp pins the post-Close
-// refusal: a fresh AddListener once Close has returned must register
-// nothing in the underlying store.
-func TestController_AddListenerAfterCloseIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	s := store.New()
-	c := base.New(s, nil, "test")
-
-	c.Close()
-
-	var fired atomic.Int64
-	c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
-		fired.Add(1)
-	})
-
-	// Fire an event. The refused listener must not run.
-	hr := &manifest.HelmRelease{Name: "after-close", Namespace: "ns"}
-	s.AddObject(hr)
-
-	if got := fired.Load(); got != 0 {
-		t.Fatalf("AddListener after Close fired %d times; want 0 (registration must be refused)", got)
-	}
-}
-
-// TestController_DoubleCloseIsSafe pins the Swap-based double-Close
-// idempotency: a second Close must not re-iterate an already-drained
-// slice (which would call each unsub twice) and must not panic.
-func TestController_DoubleCloseIsSafe(t *testing.T) {
-	t.Parallel()
-
-	s := store.New()
-	c := base.New(s, nil, "test")
-
-	var fired atomic.Int64
-	c.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) {
-		fired.Add(1)
-	})
-
-	// First Close drains the registered listener.
-	c.Close()
-	// Second Close must be a no-op — Swap-on-closed returns true so
-	// the drain loop is skipped entirely. If the slice were re-iterated
-	// after c.unsub = nil, this would be a benign nil-range; the real
-	// regression we are guarding against is a future refactor that
-	// captures the slice outside the Swap branch and double-fires.
-	c.Close()
-
-	// Fire an event to confirm the listener was unsubscribed exactly
-	// once (the post-Close store has no listener and won't fire).
-	hr := &manifest.HelmRelease{Name: "double-close", Namespace: "ns"}
-	s.AddObject(hr)
-
-	if got := fired.Load(); got != 0 {
-		t.Fatalf("listener fired %d times after double Close; want 0", got)
-	}
-}
-
 func TestExecution_Dispatch(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	ts := task.NewBounded(0)
-	c := base.New(s, ts, "test")
+	c := base.New(s, ts)
 	c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
 		return "synthetic cycle", id.Name == "preflightfail"
 	}})
 	c.StartLifecycle()
-	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
+	t.Cleanup(func() { ts.BlockTillDone() })
 
 	var ran atomic.Int64
 	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error { ran.Add(1); return nil }
@@ -541,7 +417,7 @@ func TestExecution_Dispatch(t *testing.T) {
 			st := store.New()
 			st.AddObject(tc.obj)
 			id := tc.obj.Named()
-			c := base.New(st, nil, "test")
+			c := base.New(st, nil)
 			if tc.filtered {
 				c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
@@ -566,7 +442,7 @@ func TestExecution_Dispatch(t *testing.T) {
 
 func TestFingerprintDedup(t *testing.T) {
 	s := store.New()
-	c := base.New(s, nil, "test")
+	c := base.New(s, nil)
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
@@ -616,7 +492,7 @@ func TestFingerprintDedup(t *testing.T) {
 func TestFingerprintDedup_PreflightError(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := base.New(s, nil, "test")
+	c := base.New(s, nil)
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
@@ -639,7 +515,7 @@ func TestExecution_ExcludedOutputValidity(t *testing.T) {
 	prior.GetObject(obj.Named())
 	st.SetArtifact(obj.Named(), &store.SourceArtifact{Reads: &prior})
 	st.SetIncluded(obj.Named(), false)
-	e := &base.Execution{Controller: base.New(st, nil, "test")}
+	e := &base.Execution{Controller: base.New(st, nil)}
 	e.Reads.Init(st, obj.Named(), nil)
 	if !e.Valid() {
 		t.Fatal("excluded assessment validated unconsumed output provenance")
@@ -660,7 +536,7 @@ func TestExecution_PendingProgressKeepsConditionStamp(t *testing.T) {
 	st := store.New()
 	obj := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	st.AddObject(obj)
-	c := base.New(st, nil, "test")
+	c := base.New(st, nil)
 	var messages []string
 	st.AddListener(store.EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		messages = append(messages, payload.(store.StatusInfo).Message)
@@ -676,7 +552,7 @@ func TestExecution_PendingProgressKeepsConditionStamp(t *testing.T) {
 	if !reads.Valid() {
 		t.Fatal("progress text invalidated pending readiness")
 	}
-	st.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	if reads.Valid() {
 		t.Fatal("readiness transition failed to invalidate the observer")
 	}
@@ -688,7 +564,7 @@ func TestExecution_GateReplacement(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "reader", Namespace: "apps"}
 	hr.Chart.Name = "before"
 	st.AddObject(hr)
-	c := base.New(st, task.NewBounded(2), "test")
+	c := base.New(st, task.NewBounded(2))
 	first := controllertest.NewExecution(c, hr.Named())
 	defer first.Close()
 	fresh := hr.Clone()
@@ -704,7 +580,8 @@ func TestExecution_GateReplacement(t *testing.T) {
 			t.Fatalf("predecessor changed: %+v", obj)
 		}
 		c.SetPendingUnlessReady(obj.Named(), "gate replacement")
-		return first.PreflightError(obj.Named())
+		_, err := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
+		return err
 	})
 	if first.Valid() || st.GetArtifact(hr.Named()) != nil {
 		t.Fatal("stale gate replacement admitted output")
@@ -741,13 +618,13 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 			st := store.New()
 			object := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			st.AddObject(object)
-			execution := controllertest.NewExecution(base.New(st, nil, "test"), object.Named())
+			execution := controllertest.NewExecution(base.New(st, nil), object.Named())
 			defer execution.Close()
 			execution.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error { return tc.err })
 			if execution.Outcome() != tc.want {
 				t.Fatalf("outcome=%v, want %v", execution.Outcome(), tc.want)
 			}
-			st.UpdateStatus(object.Named(), store.StatusReady, store.ReasonSkipped, "external update")
+			st.UpdateStatus(object.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "external update"})
 			if execution.Outcome() != tc.want {
 				t.Fatalf("status update replaced retained outcome: %v", execution.Outcome())
 			}

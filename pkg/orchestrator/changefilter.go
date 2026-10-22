@@ -35,7 +35,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context, repoRoot string) e
 	}
 	f := change.NewFilter(changes, o.index, o.store)
 	o.filter = f
-	slog.Debug("changed-only keep set", "filter", o.filter)
+	slog.Debug("orchestrator: changed-only keep set", "filter", o.filter)
 	return nil
 }
 
@@ -64,6 +64,6 @@ func (o *Orchestrator) computeChangeSet(ctx context.Context, repoRoot string) (*
 	if err != nil {
 		return nil, fmt.Errorf("change detect: %w", err)
 	}
-	slog.Debug("changed-only mode", "baseline", origRoot, "current", repoRoot, "changed_files", cs.Len())
+	slog.Debug("orchestrator: changed-only mode", "baseline", origRoot, "current", repoRoot, "changed_files", cs.Len())
 	return cs, nil
 }

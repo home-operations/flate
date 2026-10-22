@@ -14,7 +14,7 @@ func (f testInputs) readSet(obj manifest.BaseManifest) *store.ReadSet {
 	s := store.New()
 	seen := make(map[manifest.NamedResource]bool)
 	s.AddObject(obj)
-	for ref := range manifest.References(obj) {
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.Kind != manifest.KindSecret || f.secrets == nil || seen[ref.NamedResource] {
 			continue
 		}

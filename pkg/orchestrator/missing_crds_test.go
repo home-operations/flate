@@ -234,7 +234,7 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, rs *manifest.ResourceS
 	reads := new(store.ReadSet)
 	reads.Init(st, rs.Named(), nil)
 	reads.GetObject(rs.Named())
-	for ref := range manifest.References(rs) {
+	for ref := range manifest.References(rs, manifest.ReferenceRelations) {
 		if ref.Use == "dependsOn" {
 			reads.GetObject(ref.NamedResource)
 			reads.Require(ref.DependencyRef)
@@ -270,7 +270,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		}
 		s.AddObject(rs)
 		if tc.hasStatus {
-			s.UpdateStatus(rs.Named(), tc.status, "", "")
+			s.UpdateStatus(rs.Named(), store.StatusInfo{Status: tc.status, Reason: "", Message: ""})
 		}
 		if tc.artifact {
 			s.SetArtifact(rs.Named(), &store.Emission{})
@@ -292,7 +292,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 			}
 			st.AddObject(rs)
-			st.UpdateStatus(rs.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			st.SetArtifact(rs.Named(), &store.Emission{})
 			cfg := Config{AllowMissingCRDs: true}
 			switch state {
@@ -301,7 +301,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			case "foreign status":
 				foreign := crdA
 				foreign.Group = "example.test"
-				st.UpdateStatus(foreign, store.StatusReady, "", "")
+				st.UpdateStatus(foreign, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			case "object":
 				st.AddObject(&manifest.RawObject{APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name})
 			case "disabled":
@@ -314,7 +314,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				if state == "failed" {
 					status = store.StatusFailed
 				}
-				st.UpdateStatus(crdA, status, "", "")
+				st.UpdateStatus(crdA, store.StatusInfo{Status: status, Reason: "", Message: ""})
 			}
 			acceptCRDGatesForTest(t, st, rs)
 			(&Orchestrator{store: st, cfg: cfg}).warnMissingCRDs()
@@ -336,12 +336,12 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			tasks := task.NewBounded(2)
 			o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
 			parent := testutil.KustomizationID("flux-system", "parent")
-			s.UpdateStatus(parent, store.StatusReady, "", "")
+			s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			opts := base.Options{AllowMissingCRDs: true}
 			c := resourcesetctrl.New(s, tasks, true)
 			c.Configure(opts)
 			c.StartLifecycle()
-			t.Cleanup(c.Close)
+
 			t.Cleanup(tasks.BlockTillDone)
 			crd := fluxopv1.Dependency{APIVersion: "apiextensions.k8s.io/v1", Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", ResourcesTemplate: "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: old}\nspec: {value: old}\n"}
@@ -376,12 +376,12 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			}
 			s.AddObject(&fresh)
 			if strings.HasPrefix(state, "filter") {
-				c.Close()
+
 				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s)
 				c = resourcesetctrl.New(s, tasks, true)
 				c.Configure(opts)
 				c.StartLifecycle()
-				t.Cleanup(c.Close)
+
 				s.SetIncluded(rs.Named(), false)
 			}
 			publications := 0

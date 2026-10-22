@@ -34,7 +34,7 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 					c := New(s, tasks, true)
 					c.Configure(base.Options{})
 					c.StartLifecycle()
-					defer c.Close()
+
 					rs := selectorFixture("consumer", "blue")
 					s.AddObject(rs)
 					var pivot *manifest.ResourceSetInputProvider
@@ -130,7 +130,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				c := New(s, tasks, true)
 				c.Configure(base.Options{})
 				c.StartLifecycle()
-				defer c.Close()
+
 				sets := [2]*manifest.ResourceSet{independentWriterFixture("u", "blue"), independentWriterFixture("v", "green")}
 				for _, rs := range sets {
 					s.AddObject(rs)
@@ -180,12 +180,12 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						}
 						id := sets[i].Named()
 						_, next := s.GetEmission(id)
-						next.Children, next.Manifests = base.ParseChildren(id, artifacts[i].Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
+						next.Children, next.Manifests = c.ParseChildren(c.Store.GetObject(id), artifacts[i].Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
 						c.Emit(id, &next)
 						expected[i].fingerprint, expected[i].manifests = next.Fingerprint, next.Manifests
 						next.Finish()
-						s.UpdateStatus(sets[i].Named(), store.StatusReady, "", "")
+						s.UpdateStatus(sets[i].Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					}
 					for range 32 {
 						for _, i := range commitOrder {
@@ -241,7 +241,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	c := New(s, tasks, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
-	defer c.Close()
+
 	rs := independentWriterFixture("u", "blue")
 	s.AddObject(rs)
 	provider := staticRSIP("selected", "ns", map[string]string{"color": "blue"}, nil)
@@ -291,7 +291,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, inventory := replay.run.Reads.GetEmission(rs.Named())
-	inventory.Children, inventory.Manifests = base.ParseChildren(rs.Named(), initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
+	inventory.Children, inventory.Manifests = c.ParseChildren(rs, initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
 	inventory.Complete = true
 	replay.run.Emit(rs.Named(), &inventory)
 	inventory.Finish()
@@ -339,4 +339,15 @@ func selectorFixture(name, color string) *manifest.ResourceSet {
 	return &manifest.ResourceSet{Name: name, Namespace: "ns",
 		InputsFrom:        []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"color": color}}}},
 		ResourcesTemplate: "<< if inputs >>\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: selected}\n<< end >>\n"}
+}
+
+func publishResourceSetDocuments(tb testing.TB, c *Controller, id manifest.NamedResource, docs []map[string]any) {
+	tb.Helper()
+	parent := c.Store.GetObject(id).(*manifest.ResourceSet)
+	base.Stamp(parent.EmissionPolicy(), docs)
+	_, next := c.Store.GetEmission(id)
+	defer next.Finish()
+	next.Children, next.Manifests = c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
+	next.Complete = true
+	c.Emit(id, &next)
 }

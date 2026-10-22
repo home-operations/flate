@@ -78,7 +78,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 		var candidates []manifest.NamedResource
 		for _, obj := range doc.built {
-			for ref := range manifest.References(obj) {
+			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				candidates = append(candidates, ref.NamedResource)
 			}
 		}
@@ -535,7 +535,7 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 			if ns != obj.Named().Namespace {
 				obj = obj.WithNamespace(ns)
 			}
-			for ref := range manifest.References(obj) {
+			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				candidates = append(candidates, ref.NamedResource)
 			}
 		}

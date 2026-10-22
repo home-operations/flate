@@ -91,8 +91,8 @@ func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) 
 		t.Logf("Render returned err: %v", err)
 	}
 	for id, info := range res.Failed {
-		if strings.Contains(info.Message, "artifact not found") {
-			t.Errorf("issue #260 regressed: %s reports %s", id, info.Message)
+		if strings.Contains(info.String(), "artifact not found") {
+			t.Errorf("issue #260 regressed: %s reports %s", id, info.String())
 		}
 	}
 }

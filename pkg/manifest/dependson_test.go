@@ -73,7 +73,7 @@ spec:
 			if diff := cmp.Diff(before, original, cmp.AllowUnexported(Kustomization{}), cmpopts.IgnoreFields(Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("authored object mutated (-want +got):\n%s", diff)
 			}
-			for ref := range References(got) {
+			for ref := range References(got, ReferenceRelations) {
 				if ref.Use == "dependsOn" && ref.Position == 1 && (ref.Namespace != "apps" || got.DependsOn[1].Namespace != "") {
 					t.Fatal("omitted namespace lost inheritance")
 				}

@@ -125,7 +125,7 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 	for _, obj := range docs {
 		id := obj.Named()
 		record := manifest.DiscoveryRecord{File: l.fileCoordinate(builder)}
-		for ref := range manifest.References(obj) {
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 			if discoveryReference(ref) {
 				record.Refs = append(record.Refs, ref.NamedResource)
 			}

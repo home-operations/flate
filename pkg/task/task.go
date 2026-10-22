@@ -108,6 +108,7 @@ func (s *Service) YieldSlot(fn func()) {
 // Failures returns the number of panicked tasks observed.
 func (s *Service) Failures() int64 { return s.failures.Load() }
 
-// BlockTillDone waits until every active task has finished. Safe to
-// call concurrently with Go.
+// BlockTillDone waits until every active task has finished.
+// When idle, initial Go submissions MUST precede waiting. Tasks may submit more
+// work while active; a new phase MUST begin only after prior waits return.
 func (s *Service) BlockTillDone() { s.wgActive.Wait() }

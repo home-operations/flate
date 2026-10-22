@@ -81,7 +81,7 @@ func TestDependencySubstitutions_ParsedDependsOn(t *testing.T) {
 				}
 				target := parsedDependency(t, tt.want, "  path: ./target\n")
 				st.AddObject(target.WithNamespace(ns))
-				for ref := range manifest.References(resolved) {
+				for ref := range manifest.References(resolved, manifest.ReferenceRelations) {
 					if ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil {
 						t.Fatalf("resolved dependency does not match target: %s", ref.NamedResource)
 					}

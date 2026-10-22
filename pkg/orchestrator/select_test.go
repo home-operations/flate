@@ -98,7 +98,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	run.store.AddObject(hr)
 	run.store.AddObject(ks)
 	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
-	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
+	run.store.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
 	raw := outputByParent(run.Result.Manifests)
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
@@ -354,19 +354,19 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 			}
 			for _, resource := range []manifest.NamedResource{a, b} {
 				raw := run.Result.Failed[resource]
-				if res.Failed[resource].Message == raw.Message || !res.Failed[resource].IsDependencyFailure() {
+				if res.Failed[resource].String() == raw.String() || !res.Failed[resource].IsDependencyFailure() {
 					t.Fatalf("cycle message or typed evidence lost: raw=%+v selected=%+v unavailable=%+v", raw, res.Failed[resource], res.Unavailable[resource])
 				}
 				assert.Diff(t, res.Failed[resource].BlockedBy(), blocked[resource])
 				if !named {
-					assert.Equal(t, res.Unavailable[resource].Message, raw.Message)
+					assert.Equal(t, res.Unavailable[resource].String(), raw.String())
 				}
 			}
 			if !named {
-				assert.Equal(t, res.Statuses[a].Message, "blocked by apps/b")
-				assert.Equal(t, res.Statuses[consumer].Message, "blocked by apps/a")
+				assert.Equal(t, res.Statuses[a].String(), "blocked by apps/b")
+				assert.Equal(t, res.Statuses[consumer].String(), "blocked by apps/a")
 			} else {
-				assert.Equal(t, res.Statuses[selected].Message, "blocked by apps/missing (not found)")
+				assert.Equal(t, res.Statuses[selected].String(), "blocked by apps/missing (not found)")
 			}
 		})
 	}
@@ -378,7 +378,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}}})
 	for _, id := range []manifest.NamedResource{selected, root, other, a, b} {
 		run.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-		run.store.UpdateStatus(id, store.StatusFailed, "", id.Name+" failure")
+		run.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: id.Name + " failure"})
 		run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: id.Name + " failure"}
 	}
 	for id, deps := range run.Result.Blocked {
@@ -575,14 +575,14 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 	} {
 		disposition := tc.disposition
 		for _, reverse := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.Message, reverse), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.String(), reverse), func(t *testing.T) {
 				t.Parallel()
 				orig := selectedRun(&Result{Manifests: []manifest.DocumentBatch{{Parent: &manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace}, Documents: []map[string]any{{"kind": "Deployment"}}}}})
 				current := selectedRun(&Result{})
 				orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
 				publishFixture(t, orig.store, parent, []manifest.NamedResource{child})
 				current.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
-				current.store.UpdateStatus(parent, disposition.Status, disposition.Reason, disposition.Message)
+				current.store.UpdateStatus(parent, disposition)
 				if disposition.Status == store.StatusFailed {
 					canonical := disposition
 					canonical.Message = "canonical parent failure"
@@ -605,11 +605,11 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 					t.Fatalf("local ancestor availability = %+v, want unavailable=%t", results[index].Unavailable, want)
 				}
 				if want {
-					message := disposition.Message
+					message := disposition.String()
 					if disposition.Status == store.StatusFailed {
 						message = "canonical parent failure"
 					}
-					assert.Equal(t, results[index].Unavailable[child].Message, message)
+					assert.Equal(t, results[index].Unavailable[child].String(), message)
 				}
 				if len(results[1-index].Unavailable) != 0 {
 					t.Fatal("counterpart failure treated as local evidence")
@@ -637,7 +637,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: victim.Group, Kind: victim.Kind, Name: victim.Name}}, nil)
 	res := results[0]
 	assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{victim, extra})
-	assert.Equal(t, res.Statuses[victim].Message, "blocked by "+chart.NamespacedName()+": chart failed")
+	assert.Equal(t, res.Statuses[victim].String(), "blocked by "+chart.NamespacedName()+": chart failed")
 	assert.Equal(t, res.Statuses[victim].IsDependencyFailure(), true)
 	assert.Diff(t, res.Statuses[victim].BlockedBy(), []manifest.NamedResource{chart})
 	if _, exists := res.Statuses[chart]; exists || res.Counts[victim.Kind] != 1 {
@@ -652,10 +652,10 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	for _, obj := range []manifest.BaseManifest{bootstrap, ordinary, otherNamespace, foreignChart, statusless} {
 		run.store.AddObject(obj)
 	}
-	run.store.UpdateStatus(bootstrap.Named(), store.StatusFailed, "", "bootstrap failed")
-	run.store.UpdateStatus(ordinary.Named(), store.StatusReady, "", "")
-	run.store.UpdateStatus(otherNamespace.Named(), store.StatusReady, "", "")
-	run.store.UpdateStatus(foreignChart.Named(), store.StatusFailed, "", "foreign chart failed")
+	run.store.UpdateStatus(bootstrap.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "bootstrap failed"})
+	run.store.UpdateStatus(ordinary.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	run.store.UpdateStatus(otherNamespace.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	run.store.UpdateStatus(foreignChart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "foreign chart failed"})
 	run.Result.Failed = run.store.FailedResources()
 	run.Result.Manifests = nil
 	for _, obj := range run.store.ListObjects("", "") {
@@ -701,7 +701,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 			assert.Equal(t, maps.Equal(res.Failed, run.Result.Failed), true)
 			if info, ok := res.Statuses[statusless.Named()]; ok {
 				assert.Equal(t, info.Status, store.StatusFailed)
-				assert.Equal(t, info.Message, "no status reported")
+				assert.Equal(t, info.String(), "no status reported")
 			}
 			_, exists := run.store.GetStatus(statusless.Named())
 			assert.Equal(t, exists, false)
@@ -713,7 +713,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		run := selectedRun(&Result{})
 		obj := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 		run.store.AddObject(obj)
-		run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+		run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 		eligible := &manifest.ResourceSet{Name: obj.Name, Namespace: obj.Namespace}
 		for _, extra := range []*manifest.ResourceSet{
 			eligible,
@@ -721,7 +721,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 			{Name: obj.Name, Namespace: "other"},
 		} {
 			run.store.AddObject(extra)
-			run.store.UpdateStatus(extra.Named(), store.StatusFailed, "", "extra failure")
+			run.store.UpdateStatus(extra.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "extra failure"})
 		}
 		run.Result.Failed = run.store.FailedResources()
 		selected, _, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
@@ -800,15 +800,15 @@ func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 		publishFixture(t, run.store, parent, []manifest.NamedResource{child})
 		publishFixture(t, run.store, child, []manifest.NamedResource{parent})
 	}
-	current.store.UpdateStatus(child, store.StatusReady, store.ReasonSkipped, "own skip")
-	current.store.UpdateStatus(parent, store.StatusFailed, "", "ancestor failed")
+	current.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "own skip"})
+	current.store.UpdateStatus(parent, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "ancestor failed"})
 	results, _, _ := Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
-	assert.Equal(t, results[1].Unavailable[child].Message, "own skip")
+	assert.Equal(t, results[1].Unavailable[child].String(), "own skip")
 	assert.Equal(t, len(results[0].Unavailable), 0)
-	current.store.UpdateStatus(child, store.StatusReady, store.ReasonUnchanged, "unchanged")
+	current.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
 	results, _, _ = Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
-	assert.Equal(t, results[1].Unavailable[child].Message, "ancestor failed")
-	current.store.UpdateStatus(parent, store.StatusReady, "", "")
+	assert.Equal(t, results[1].Unavailable[child].String(), "ancestor failed")
+	current.store.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	results, _, _ = Select([]Rendered{orig, current}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}}, nil)
 	assert.Equal(t, len(results[1].Unavailable), 0)
 }
@@ -926,7 +926,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 		orig.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	}
 	current.store.AddObject(&manifest.Kustomization{Name: present.Name, Namespace: present.Namespace})
-	current.store.UpdateStatus(oldRoot, store.StatusFailed, "", "old ancestor failed")
+	current.store.UpdateStatus(oldRoot, store.StatusInfo{Status: store.StatusFailed, Message: "old ancestor failed"})
 	publishFixture(t, orig.store, oldRoot, []manifest.NamedResource{middle})
 	publishFixture(t, orig.store, middle, []manifest.NamedResource{present, absent})
 	publishFixture(t, current.store, newRoot, []manifest.NamedResource{middle})
@@ -938,7 +938,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	if _, ok := selected[1].Unavailable[present]; ok {
 		t.Fatal("moved producer inherited old ancestry")
 	}
-	assert.Equal(t, selected[1].Unavailable[absent].Message, "old ancestor failed")
+	assert.Equal(t, selected[1].Unavailable[absent].String(), "old ancestor failed")
 }
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
@@ -961,7 +961,7 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 			run := selectedRun(&Result{})
 			run.store.AddObject(obj)
 			run.store.AddObject(&manifest.OCIRepository{Name: "source", Namespace: "apps"})
-			run.store.UpdateStatus(obj.Named(), store.StatusReady, tc.reason, tc.message)
+			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
 			root := []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Named().Kind}}
 			selected, err, _ := Select([]Rendered{run}, nil, root, nil)
 			if err != nil || selected[0].External != nil {
@@ -988,7 +988,7 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 			run := selectedRun(&Result{})
 			obj := &manifest.RawObject{Kind: kind, APIVersion: "seaweed.seaweedfs.com/v1", Name: "foreign", Namespace: "apps"}
 			run.store.AddObject(obj)
-			run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Kind}}, nil)
 			if err != nil || len(selected[0].Statuses) != 0 {
 				t.Fatalf("foreign Flux lookalike entered roster: %+v %v", selected[0].Statuses, err)
@@ -1196,7 +1196,7 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 					name = "child-hr"
 				}
 				run.store.RecordEmitted(obj.Named(), &store.Emission{Manifests: []map[string]any{document("v1", manifest.KindConfigMap, "unrelated", name)}, Complete: true})
-				run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+				run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			run.Result.Manifests = run.collectManifests()
 			selected, err, _ := Select([]Rendered{run}, nil, tc.roots, tc.labels)
@@ -1227,7 +1227,7 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 				run := selectedRun(&Result{})
 				ks := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
 				run.store.AddObject(ks)
-				run.store.UpdateStatus(ks.Named(), outcome.Status, outcome.Reason, outcome.Message)
+				run.store.UpdateStatus(ks.Named(), outcome)
 				run.documents = []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": ks.Name, "namespace": ks.Namespace}}}
 				run.Result.Manifests = run.collectManifests()
 				run.Result.Failed = run.store.FailedResources()
@@ -1262,7 +1262,7 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 		descendant := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "descendant", "namespace": "apps"}}
 		run.store.RecordEmitted(hr.Named(), &store.Emission{Manifests: []map[string]any{descendant}, Complete: true})
 		for _, obj := range []manifest.BaseManifest{ks, hr} {
-			run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 		}
 		run.Result.Manifests = run.collectManifests()
 		selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)

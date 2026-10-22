@@ -41,13 +41,12 @@ func registeredScheduler(t *testing.T, objects []manifest.BaseManifest, reconcil
 	t.Helper()
 	st, tasks := store.New(), task.NewBounded(4)
 	st.AddObjects(objects)
-	c := base.New(st, tasks, "scheduler-test")
+	c := base.New(st, tasks)
 	c.StartLifecycle()
-	t.Cleanup(c.Close)
 	s := schedule.New(tasks, &registeredDispatcher{controller: c, reconcile: reconcile})
-	c.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) })
+	t.Cleanup(st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, true))
 	for _, event := range []store.EventKind{store.EventArtifactUpdated, store.EventStatusUpdated} {
-		c.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() })
+		t.Cleanup(st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, true))
 	}
 	return s, st
 }
@@ -122,7 +121,7 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 		{name: "bookkeeping", wantAssessments: 1},
 		{name: "lazy self", expression: `dep.metadata.name == "dependency"`, wantAssessments: 1},
 		{name: "self metadata", expression: `self.metadata.namespace == dep.metadata.namespace`, wantAssessments: 1},
-		{name: "self conditions", expression: `self.status.conditions.size() >= 0`, wantAssessments: 2},
+		{name: "self conditions", expression: `self.status.conditions.size() >= 0`, wantAssessments: 3},
 		{name: "feedback", expression: `self.status.conditions.size() >= 0`, feedback: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,11 +135,11 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 				}
 				count := assessments.Add(1)
 				e.SetPendingUnlessReady(id, "working")
-				if err := e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: tc.expression}}, level); err != nil {
+				if err := e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: new(tc.expression)}}, level); err != nil {
 					return err
 				}
 				if tc.feedback {
-					e.Store.UpdateStatus(id, store.StatusReady, "", fmt.Sprintf("feedback %d", count))
+					e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: fmt.Sprintf("feedback %d", count)})
 					return nil
 				}
 				fp, reused, err := e.FingerprintDedup(id, "unchanged output")
@@ -154,7 +153,7 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 				output.Finish()
 				return nil
 			})
-			st.UpdateStatus(dependency.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			s.Seed([]schedule.NodeID{consumer.Named()})
 			err := s.Run(t.Context())
 			if tc.feedback {
@@ -191,7 +190,7 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 						if data {
 							st.AddObject(&manifest.ConfigMap{Name: "late", Namespace: "ns", Data: map[string]any{"value": "ready"}})
 						} else {
-							st.UpdateStatus(dependency.Named(), store.StatusReady, "", "")
+							st.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 						}
 						close(published)
 						return nil
@@ -298,7 +297,7 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 					}
 					return nil
 				})
-				c := base.New(st, nil, "seed")
+				c := base.New(st, nil)
 				for _, obj := range []*manifest.Kustomization{x, y} {
 					child := &manifest.ConfigMap{Name: obj.Name, Namespace: "ns", Data: map[string]any{"value": int64(0)}}
 					c.Emit(obj.Named(), &store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true})
@@ -515,9 +514,8 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 		input := &manifest.ConfigMap{Name: "input", Namespace: "ns", Data: map[string]any{"value": "old"}}
 		st, bodies := store.New(), task.NewBounded(2)
 		st.AddObjects([]manifest.BaseManifest{consumer, driver, input})
-		controller := base.New(st, bodies, "completed-publication")
+		controller := base.New(st, bodies)
 		controller.StartLifecycle()
-		defer controller.Close()
 		completed, started, settled := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		tasks := &completedTasks{Service: bodies, name: "schedule/" + consumer.Named().String(), completed: completed}
 		var active, renders atomic.Int64
@@ -546,13 +544,12 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 			child := &manifest.ConfigMap{Name: "output", Namespace: "ns", Data: map[string]any{"value": captured.Data["value"]}}
 			next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
 			next.Manifests, next.Complete = []map[string]any{child.Snapshot()}, true
-			e.Emit(id, &next)
-			return nil
+			return e.Emit(id, &next)
 		}}
 		s := schedule.New(tasks, d)
-		controller.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) })
+		defer st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, true)()
 		for _, event := range []store.EventKind{store.EventArtifactUpdated, store.EventStatusUpdated} {
-			controller.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() })
+			defer st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, true)()
 		}
 		assert.NoError(t, s.Run(t.Context()))
 		if got := renders.Load(); got != 2 {

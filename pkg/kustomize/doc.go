@@ -1,7 +1,7 @@
 // Package kustomize wraps sigs.k8s.io/kustomize/api so the rest of
 // flate never invokes the `kustomize` CLI. It provides:
 //
-//   - Render: render disk inputs through Flux's secure FS,
+//   - Render: return unstamped output from disk inputs through Flux's secure FS,
 //     or immutable source artifacts through their authoritative fs.FS. Generated
 //     files use one private overlay; artifact labels need not exist on disk.
 //   - Prepare: the standard pre-render dance (Clone + expand
@@ -21,6 +21,6 @@
 // fluxcd/pkg/kustomize guards its own Build for the same reason; every
 // flate-owned krusty entrypoint MUST hold that same mutex.
 //
-// Render persists rendered output with its input read-set snapshot and
+// Render persists unstamped output with its input read-set snapshot and
 // validates that snapshot against the source view before reusing a frame.
 package kustomize

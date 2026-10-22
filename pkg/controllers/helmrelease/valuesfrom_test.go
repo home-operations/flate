@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -45,15 +46,15 @@ metadata: {name: demo}
 data:
   greeting: {{ .Values.greeting | default "fallback" | quote }}
 `)
-			c, st := newTestControllerWithOptions(t, ReconcileOptions{})
+			c, st := newTestControllerWithOptions(t, base.Options{})
 			src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 			st.AddObject(src)
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 			})
-			st.UpdateStatus(src.Named(), store.StatusPending, "", "fetching")
+			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "fetching"})
 			if tc.waitValues {
-				st.UpdateStatus(src.Named(), store.StatusReady, "", "")
+				st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			}
 			publishRawFixture(t, c, &manifest.RawObject{
 				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
@@ -94,7 +95,7 @@ data:
 			if tc.fail {
 				status = store.StatusFailed
 			}
-			st.UpdateStatus(src.Named(), status, "", "chart source")
+			st.UpdateStatus(src.Named(), store.StatusInfo{Status: status, Reason: "", Message: "chart source"})
 			assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, status)
 			assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
 			for _, warning := range st.Warnings() {
@@ -114,25 +115,25 @@ data:
 
 func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	t.Parallel()
-	c, s := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
+	c, s := newTestControllerWithOptions(t, base.Options{AllowMissingSecrets: true})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
-	s.UpdateStatus(chart.Named(), store.StatusFailed, "", "chart unavailable")
+	s.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "chart unavailable"})
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: chart.Name}}}
 	s.AddObject(hr)
 	attempts := 0
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		if id == hr.Named() && payload.(store.StatusInfo).Message == "awaiting pre-render references" {
+		if id == hr.Named() && payload.(store.StatusInfo).Message == "resolving dependencies" {
 			attempts++
 			if attempts > 1 {
 				t.Fatal("retried a failed chartRef with no removable valuesFrom refs")
 			}
 			// Identical status writes suppress events, so reset the progress message.
-			s.UpdateStatus(id, store.StatusPending, "", "checking references")
+			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "checking references"})
 		}
 	}, false)
 	t.Cleanup(unsub)
-	err := c.newExecution((hr).Named()).resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainForce)
+	err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainForce)
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
 	if !ok {
 		t.Fatalf("error = %v, want DependencyFailedError", err)
@@ -145,7 +146,7 @@ func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
 	for _, declarationFirst := range []bool{false, true} {
 		for _, materializer := range []string{"none", "pending", "actual"} {
 			t.Run(fmt.Sprintf("declarationFirst=%t/%s", declarationFirst, materializer), func(t *testing.T) {
-				c, s := newTestControllerWithOptions(t, ReconcileOptions{})
+				c, s := newTestControllerWithOptions(t, base.Options{})
 				target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
 				owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "a"}
 				if !declarationFirst {
@@ -159,7 +160,7 @@ func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
 					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"values.yaml": "real"}})
 				}
 				execution := c.newExecution(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"})
-				s.UpdateStatus(testutil.KustomizationID("apps", "producer-root"), store.StatusReady, "", "")
+				s.UpdateStatus(testutil.KustomizationID("apps", "producer-root"), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 				input := execution.data.Lookup(target)
 				w := depwait.Waiter{Store: &execution.run.Reads, Parent: execution.run.Reads.ID()}
 				result := w.Available(t.Context(), depwait.DataDependency{NamedResource: target, Input: input}, manifest.DrainNone)

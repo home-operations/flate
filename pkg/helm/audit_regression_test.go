@@ -36,8 +36,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 
 func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	ch := minimalChart()
 	ch.Files = []*common.File{{Name: "empty.yaml", Data: []byte{}}}
 	archive, err := chartutil.Save(ch, t.TempDir())
@@ -62,10 +61,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\n")
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	hr := newHR()
 	hr.DisableSchemaValidation = true

@@ -91,10 +91,7 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := NewSources(st)
 	for _, name := range []string{"first", "second", "first", "missing-key", "invalid-metadata", "invalid-archive"} {
 		key := name
@@ -158,10 +155,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 }
 
 func BenchmarkLoadChart_FSWarm(b *testing.B) {
-	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
-	if err != nil {
-		b.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(b, "", sourcecache.New))
 	st := store.New()
 	cliSources := NewSources(st)
 	st.SetArtifact(manifest.NamedResource{
@@ -309,17 +303,14 @@ func TestLoadChart_ReleasedPinRejectsHostChart(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	owner := cachetest.New(t, "", sourcecache.New)
-	cli, err := NewClient(owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(owner)
 	cliSources := NewSources(st)
 	label := t.TempDir()
 	testutil.WriteFile(t, label, "Chart.yaml", "apiVersion: v2\nname: host\nversion: 1.0.0\n")
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: "chart", Namespace: "n"}}}
 	art := &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(label)), LocalPath: label, Key: "pin"}
 	st.SetArtifact(hr.ChartSource(), art)
-	_, err = loadDecodedChart(t.Context(), cli, hr, cliSources)
+	_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	released := *art
 	released.FS = nil
@@ -333,8 +324,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 	t.Parallel()
 	roots := []string{t.TempDir(), t.TempDir()}
 	st := store.New()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := NewSources(st)
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "n", Name: "chart"}
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: id.Group, Kind: id.Kind, Namespace: id.Namespace, Name: id.Name}}}
@@ -378,8 +368,7 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 
 func TestLoadChart_AnonymousMutableInputsDoNotShareMemo(t *testing.T) {
 	st := store.New()
-	client, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	client := NewClient(cachetest.New(t, "", sourcecache.New))
 	clientSources := NewSources(st)
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "test", Name: "anonymous"}
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: id.Group, Kind: id.Kind, Name: id.Name, Namespace: id.Namespace}}}
@@ -469,8 +458,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, string(laterChart.Dependencies()[0].Templates[0].Data), "new")
 		clear(reads)
-		cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-		assert.NoError(t, err)
+		cli := NewClient(cachetest.New(t, "", sourcecache.New))
 		st := store.New()
 		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo"}}}
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
@@ -505,8 +493,7 @@ func TestLoadFSChart_CaptureIdentity(t *testing.T) {
 		assert.Equal(t, captured.fingerprint(), key)
 		assert.Equal(t, bytesRead, int64(len(data)))
 		bytesRead = 0
-		cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-		assert.NoError(t, err)
+		cli := NewClient(cachetest.New(t, "", sourcecache.New))
 		st := store.New()
 		hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: "chart.tgz", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo"}}}
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
@@ -587,13 +574,12 @@ func TestLoadFSChart_FailureRecovery(t *testing.T) {
 				t.Cleanup(func() { archive.MaxDecompressedChartSize = old })
 				input[".helmignore"] = &fstest.MapFile{Data: bytes.Repeat([]byte("#"), 65)}
 			}
-			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-			assert.NoError(t, err)
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			st := store.New()
 			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo"}}}
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed, Key: "untrusted"})
 			cliSources := NewSources(st)
-			_, err = loadDecodedChart(t.Context(), cli, hr, cliSources)
+			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			if err == nil {
 				t.Fatal("failed input accepted")
 			}

@@ -25,10 +25,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 				resolver := benchChartResolver(b, dir, os.DirFS(dir))
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 				newClient := func() *Client {
-					cli, err := NewClient(owner)
-					if err != nil {
-						b.Fatal(err)
-					}
+					cli := NewClient(owner)
 					return cli
 				}
 				cli := newClient()
@@ -62,10 +59,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				if disk {
 					root = b.TempDir()
 				}
-				cli, err := NewClient(cachetest.New(b, root, sourcecache.New))
-				if err != nil {
-					b.Fatal(err)
-				}
+				cli := NewClient(cachetest.New(b, root, sourcecache.New))
 				cliSources := NewSources(st)
 				opts := Options{DisableChartDigestTracking: disabled}
 				if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}); err != nil {
@@ -85,10 +79,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-	cli, err := NewClient(cachetest.New(b, "", sourcecache.New))
-	if err != nil {
-		b.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(b, "", sourcecache.New))
 	cliSources := NewSources(st)
 	loaded, err := loadDecodedChart(b.Context(), cli, hr, cliSources)
 	if err != nil {
@@ -113,10 +104,7 @@ func BenchmarkChartValues_PinnedSource(b *testing.B) {
 		testutil.WriteFile(b, dir, names[i], fmt.Sprintf("layer-%d:\n  key: value-%d\nshared:\n  nested-%d: %d\n", i, i, i, i))
 	}
 	owner := cachetest.New(b, "", sourcecache.New)
-	cli, err := NewClient(owner)
-	if err != nil {
-		b.Fatal(err)
-	}
+	cli := NewClient(owner)
 	cliSources := benchChartResolver(b, dir, acquireChartFS(b, owner, os.DirFS(dir)))
 	hr := newHR()
 	hr.ChartValuesFiles = names

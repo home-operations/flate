@@ -47,7 +47,7 @@ func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
 			input := values.Input{Generated: tc.generated, Offline: tc.offline, Private: tc.private}
 			if tc.producer {
 				s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
-				s.UpdateStatus(owner, tc.status, "", "materializer failed")
+				s.UpdateStatus(owner, store.StatusInfo{Status: tc.status, Reason: "", Message: "materializer failed"})
 				input.Materializers = []manifest.NamedResource{owner}
 			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}

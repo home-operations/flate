@@ -21,7 +21,7 @@ import (
 // of user CR files is deliberately left un-flattened.
 //
 // Returns docs unchanged (no allocation) when no List is present;
-// otherwise lazily allocates on the first List, mirroring DropKinds.
+// otherwise lazily allocates on the first List.
 func FlattenLists(docs []map[string]any) []map[string]any {
 	var out []map[string]any
 	for i, d := range docs {

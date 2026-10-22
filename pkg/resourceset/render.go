@@ -21,7 +21,6 @@
 //   - spec.steps (ordered builds with cross-step duplicate rejection)
 //   - spec.resources (typed JSON template list)
 //   - spec.resourcesTemplate (multi-document YAML string)
-//   - spec.commonMetadata (labels + annotations applied to every emitted object)
 //   - Deduplication by (API group, kind, namespace, name)
 //
 // Deferred:
@@ -50,7 +49,8 @@ import (
 type ProviderResolver func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error)
 
 // Render evaluates the ResourceSet's resources or ordered steps across its
-// input matrix, deduplicates within each step, and stamps common metadata.
+// input matrix and returns deduplicated, unstamped decoded documents.
+// Controller metadata belongs to the shared emission operation.
 // Referenced providers with no combined inputs produce no resources.
 // admit receives borrowed canonical content before matrix/template work; true skips rendering.
 // resolve is optional and supplies providers referenced by spec.inputsFrom.
@@ -124,10 +124,6 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 		} else {
 			docs = append(docs, rendered...)
 		}
-	}
-	for _, doc := range docs {
-		applyOwnerLabels(doc, rs)
-		applyCommonMetadata(doc, rs.CommonMetadata)
 	}
 	return docs, warnings, nil
 }

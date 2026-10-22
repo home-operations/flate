@@ -294,7 +294,7 @@ func (s *selectionSide) prepareStatuses(name string) {
 			if info, known := s.run.store.GetStatus(root); !known {
 				names[i] += " (not found)"
 			} else if !seen[root] && info.Status == store.StatusFailed {
-				names[i] += ": " + manifest.TrimSentinelPrefix(info.Message)
+				names[i] += ": " + manifest.TrimSentinelPrefix(info.String())
 			}
 		}
 		info := s.result.Statuses[victim]
@@ -311,7 +311,7 @@ func selectedFailures(res *selection.Selection) error {
 	blocked := res.BlockedCount()
 	for root := range res.Causes {
 		if info, failed := res.Failed[root]; failed {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", root, info.Message))
+			msgs = append(msgs, fmt.Sprintf("%s: %s", root, info.String()))
 		} else {
 			msgs = append(msgs, fmt.Sprintf("%s: not found", root))
 		}

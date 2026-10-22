@@ -43,36 +43,6 @@ func DocAPIVersion(doc map[string]any) string {
 	return v
 }
 
-// DropKinds returns docs with every entry whose kind appears in drop removed.
-// drop=nil returns docs unchanged. Orchestrator Render and the stream emitter
-// use it to apply skipped kinds to HelmRelease and Kustomization output.
-func DropKinds(docs []map[string]any, drop []string) []map[string]any {
-	if len(drop) == 0 || len(docs) == 0 {
-		return docs
-	}
-	dropSet := make(map[string]struct{}, len(drop))
-	for _, kind := range drop {
-		dropSet[kind] = struct{}{}
-	}
-	var out []map[string]any
-	for i, doc := range docs {
-		if _, skip := dropSet[DocKind(doc)]; skip {
-			if out == nil {
-				out = make([]map[string]any, 0, len(docs)-1)
-				out = append(out, docs[:i]...)
-			}
-			continue
-		}
-		if out != nil {
-			out = append(out, doc)
-		}
-	}
-	if out == nil {
-		return docs
-	}
-	return out
-}
-
 // DocIdentity extracts a document's resource identity without validation or namespace defaulting.
 func DocIdentity(doc map[string]any) NamedResource {
 	name, namespace := DocMetadata(doc)

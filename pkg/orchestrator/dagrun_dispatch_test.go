@@ -38,7 +38,7 @@ func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
 	c := resourceset.New(s, tasks, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
-	t.Cleanup(c.Close)
+
 	rs := &manifest.ResourceSet{Name: "dedup", Namespace: "ns", ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
@@ -70,7 +70,7 @@ data: {key: value}
 	if second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() || arrivals.Load() != 1 || statusEvents.Load() != 0 || artifactEvents.Load() != 0 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
 		t.Fatalf("dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d", second.Assessment, reader.Valid(), arrivals.Load()-1, statusEvents.Load(), artifactEvents.Load())
 	}
-	s.UpdateStatus(rs.Named(), store.StatusReady, store.ReasonSkipped, "")
+	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: ""})
 	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer skipped.Assessment.Close()
 	info, _ := s.GetStatus(rs.Named())
@@ -107,7 +107,7 @@ data: {key: fixed}
 					t.Fatalf("fresh setup failed: %+v", initial.Assessment)
 				}
 				before := s.GetArtifact(rs.Named()).(*store.Emission)
-				c.Close()
+
 				opts := base.Options{}
 				wantUnresolved := false
 				fresh := *rs
@@ -130,7 +130,7 @@ data: {key: fixed}
 					if name == "failed gate" {
 						gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns"}
 						s.AddObject(gate)
-						s.UpdateStatus(gate.Named(), store.StatusFailed, "", "gate failed")
+						s.UpdateStatus(gate.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "gate failed"})
 						wantUnresolved = false
 					}
 				case "preflight failure":
@@ -151,12 +151,12 @@ data: {key: fixed}
 						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 					}
 					s.AddObject(&fresh)
-					s.UpdateStatus(gate.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
-					s.UpdateStatus(rs.Named(), store.StatusPending, "", "queued")
+					s.UpdateStatus(gate.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
+					s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 					var published atomic.Bool
 					unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
-						if id == rs.Named() && ok && info.Message == "resolving inputs" && !published.Swap(true) {
+						if id == rs.Named() && ok && info.String() == "resolving dependencies" && !published.Swap(true) {
 							suspended := fresh
 							suspended.Suspend = true
 							s.AddObject(&suspended)
@@ -170,7 +170,7 @@ data: {key: fixed}
 				c = resourceset.New(s, tasks, true)
 				c.Configure(opts)
 				c.StartLifecycle()
-				t.Cleanup(c.Close)
+
 				d.o.rsc = c
 				var arrivals, outputArrivals, outputWithdrawals atomic.Int64
 				unsub := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
@@ -239,7 +239,7 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	c := resourceset.New(s, tasks, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
-	t.Cleanup(c.Close)
+
 	rs := &manifest.ResourceSet{Name: "concurrent", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
 kind: ConfigMap
 metadata: {name: output}
@@ -248,7 +248,7 @@ data: {key: initial}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
 	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-	s.UpdateStatus(rs.Named(), store.StatusPending, "", "queued")
+	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unsub := s.AddListener(store.EventStatusUpdated, func(nid manifest.NamedResource, _ any) {
@@ -326,7 +326,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
 					_, late := s.GetEmission(k)
 					doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "late", "namespace": "apps"}, "data": map[string]any{"value": "private"}}
-					late.Children, late.Manifests = base.ParseChildren(k, []map[string]any{doc}, manifest.ParseDocOptions{})
+					late.Children, late.Manifests = parseChildrenForTest(k, []map[string]any{doc}, manifest.ParseDocOptions{})
 					late.Complete = true
 					publishRelease, entered, deliveryRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
 					consumerStarted, woken := make(chan struct{}), make(chan struct{})
@@ -341,7 +341,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					defer releaseDelivery()
 					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 						if id == consumer {
-							execution := controllertest.NewExecution(base.New(s, tasks, "fixture"), id)
+							execution := controllertest.NewExecution(base.New(s, tasks), id)
 							execution.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 								if calls.Add(1) == 1 {
 									close(consumerStarted)
@@ -429,7 +429,7 @@ data: {value: rendered}
 			}})
 			s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true})
 			s.SetArtifact(l.Named(), &store.SourceArtifact{Key: "static-l"})
-			s.UpdateStatus(l.Named(), store.StatusReady, "", "")
+			s.UpdateStatus(l.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if s.GetObject(l.Named()) != l || s.GetArtifact(l.Named()) == nil {
 				t.Fatal("fixture L is not live with an artifact")
 			}
@@ -443,7 +443,7 @@ data: {value: rendered}
 			c := resourceset.New(s, tasks, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-			t.Cleanup(c.Close)
+
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
 			unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
 				if id == l.Named() {
@@ -524,7 +524,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					"metadata": map[string]any{"name": "shared", "namespace": "apps"},
 					"spec":     map[string]any{"url": "https://charts.example", "interval": "1h"},
 				}
-				children, _ := base.ParseChildren(p, []map[string]any{doc}, manifest.ParseDocOptions{})
+				children, _ := parseChildrenForTest(p, []map[string]any{doc}, manifest.ParseDocOptions{})
 				if len(children) != 1 {
 					t.Fatal("repository fixture was not parsed")
 				}
@@ -543,7 +543,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 				o.configureControllers()
 				o.src.StartLifecycle()
 				o.ksc.StartLifecycle()
-				o.hrc.Start(t.Context())
+				o.hrc.StartLifecycle()
 				acquired, published := make(chan struct{}), make(chan struct{})
 				var once sync.Once
 				unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -559,12 +559,12 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
 					}
 					_, next := s.GetEmission(p)
-					next.Children, next.Manifests = base.ParseChildren(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
+					next.Children, next.Manifests = parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
 					next.Complete = true
 					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, s.Productions(repo, nil))
 					o.ksc.Emit(p, &next)
 					next.Finish()
-					s.UpdateStatus(p, store.StatusReady, "", "")
+					s.UpdateStatus(p, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					close(published)
 				})
 				d := dagDispatcher{o}
@@ -690,7 +690,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	o.configureControllers()
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
-	o.hrc.Start(t.Context())
+	o.hrc.StartLifecycle()
 	o.rsc.StartLifecycle()
 	consumer, pin := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "pin")
 	var blocked, settled atomic.Bool

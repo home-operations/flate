@@ -158,7 +158,7 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 				t.Fatalf("consumer %s not stored", consumer)
 			}
 			refs := 0
-			for ref := range manifest.References(obj) {
+			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				if ref.Use == "substituteFrom" {
 					refs++
 					assert.Equal(t, ref.Namespace, tc.namespace)

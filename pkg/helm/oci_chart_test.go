@@ -69,10 +69,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			t.Parallel()
 
 			st, hr, dir := ociRenderFixture(t)
-			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-			if err != nil {
-				t.Fatal(err)
-			}
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 			hrB := hr.Clone()
 			hrB.Name = "second"
@@ -159,10 +156,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 			st.SetArtifact(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
-			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-			if err != nil {
-				t.Fatal(err)
-			}
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 			if _, err := cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}); err != nil {
 				t.Fatal(err)

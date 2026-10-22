@@ -591,10 +591,11 @@ func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.B
 	obj := sh.objectLocked(id)
 	hidden := sh.cells[id].hidden
 	var observed Observation
+	var record conditionRecord
 	if !hidden {
 		observed.Statusful = obj != nil && manifest.KindOf(obj).Status || obj == nil && id.KindInfo().Status
 		if observed.Statusful || obj == nil || conditions {
-			record := sh.conditions[id]
+			record = sh.conditions[id]
 			observed.StatusInfo, _ = record.statusInfo()
 			if conditions {
 				observed.Conditions = slices.Clone(record.conditions)
@@ -602,6 +603,7 @@ func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.B
 		}
 	}
 	sh.mu.RUnlock()
+	record.project(observed.Conditions)
 	return obj, observed
 }
 

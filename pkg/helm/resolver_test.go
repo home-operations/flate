@@ -50,10 +50,7 @@ data:
 	})
 
 	owner := cachetest.New(t, "", cache.New)
-	cli, err := helm.NewClient(owner)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	cli := helm.NewClient(owner)
 	resolver := helm.NewSources(st)
 	chart := &manifest.HelmChartSource{Name: "chart-repo", Namespace: "flux-system"}
 	st.AddObject(chart)
@@ -104,10 +101,7 @@ data:
 func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	client, err := helm.NewClient(cachetest.New(t, "", cache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := helm.NewClient(cachetest.New(t, "", cache.New))
 	entered, release := make(chan struct{}, 2), make(chan struct{})
 	var reads [2]store.ReadSet
 	var releases [2]*manifest.HelmRelease

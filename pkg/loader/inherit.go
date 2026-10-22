@@ -315,7 +315,7 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 				record.Refs = old.Refs
 			} else {
 				record.Refs = nil
-				for ref := range manifest.References(projected) {
+				for ref := range manifest.References(projected, manifest.ReferenceRelations) {
 					if discoveryReference(ref) {
 						record.Refs = append(record.Refs, ref.NamedResource)
 					}

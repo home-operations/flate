@@ -57,7 +57,7 @@ data: {greeting: hi}
 	input, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
 	s.SetArtifact(bootstrap.Named(), input)
-	s.UpdateStatus(bootstrap.Named(), store.StatusReady, "", "ready")
+	s.UpdateStatus(bootstrap.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "ready"})
 
 	owner := cachetest.New(t, "", sourcecache.New)
 	tasks := task.NewBounded(2)
@@ -72,7 +72,7 @@ data: {greeting: hi}
 	c.Configure(Options{}, sourcecache.RetryConfig{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
-		c.Close()
+
 		cache.Close()
 		tasks.BlockTillDone()
 	})
@@ -242,6 +242,28 @@ data: {greeting: '%s'}
 				t.Errorf("greeting = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReconcile_UnresolvedWarningRequiresData(t *testing.T) {
+	t.Parallel()
+	c, s, _ := newControllerWithFixture(t)
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system", Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"},
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+			{Kind: manifest.KindSecret, Name: "missing-secret"},
+			{Kind: manifest.KindConfigMap, Name: "missing-configmap"},
+		}},
+	}
+	s.AddObject(ks)
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
+	assert.Equal(t, info.Status, store.StatusFailed)
+	if warnings := s.Warnings(); len(warnings) != 0 {
+		t.Fatalf("failed data gate published warnings: %+v", warnings)
+	}
+	if artifact := s.GetArtifact(ks.Named()); artifact != nil {
+		t.Fatalf("failed data gate published output: %+v", artifact)
 	}
 }
 
@@ -588,7 +610,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 	c, s, _ := newControllerWithFixture(t)
 	dep := &manifest.Kustomization{Name: "dep", Namespace: "flux-system"}
 	s.AddObject(dep)
-	s.UpdateStatus(dep.Named(), store.StatusFailed, "", "synthetic dep failure")
+	s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "synthetic dep failure"})
 
 	ks := &manifest.Kustomization{
 		Name: "depender", Namespace: "flux-system",
@@ -654,7 +676,7 @@ data: {greeting: hi}
 `)
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 			st.AddObject(parent)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			doc := map[string]any{
 				"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization,
 				"metadata": map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -665,7 +687,7 @@ data: {greeting: hi}
 			}
 			if tt.cascade {
 				doc["spec"].(map[string]any)["sourceRef"] = map[string]any{"kind": manifest.KindOCIRepository, "name": "missing"}
-				st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "", "")
+				st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
@@ -674,7 +696,7 @@ data: {greeting: hi}
 			ks := obj.(*manifest.Kustomization)
 			original := ks.Clone()
 			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: ks, Doc: doc}}, Complete: true})
-			st.UpdateStatus(ks.Named(), store.StatusPending, "", "")
+			st.UpdateStatus(ks.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			replacement := manifest.DeepCopyMap(doc)
 			spec := replacement["spec"].(map[string]any)
 			spec["suspend"] = suspended
@@ -735,11 +757,11 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 		t.Fatalf("first reconcile: %+v", info)
 	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Key: "released"})
-	_, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainNone)
+	_, err := c.newExecution(ks.Named()).run.RequireRefresh(t.Context(), ks, manifest.GateArtifacts, manifest.DrainNone)
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != manifest.BootstrapSourceID {
 		t.Fatalf("released pin did not wait for source acquisition: %v", err)
 	}
-	if _, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+	if _, err := c.newExecution(ks.Named()).run.RequireRefresh(t.Context(), ks, manifest.GateArtifacts, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("unavailable content at fixpoint: %v", err)
 	}
 }
@@ -770,7 +792,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 		t.Run(fmt.Sprint(swapDuringRender), func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [objects.yaml]\n")
-			testutil.WriteFile(t, root, "apps/objects.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: apps}\ndata: {value: original}\n---\napiVersion: v1\nkind: Secret\nmetadata: {name: exclusive, namespace: apps}\nstringData: {value: original}\n")
+			testutil.WriteFile(t, root, "apps/objects.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared, namespace: apps, labels: {flag: true, code: 012}}\ndata: {value: '${VALUE}'}\n---\napiVersion: v1\nkind: Secret\nmetadata: {name: exclusive, namespace: apps}\nstringData: {value: original}\n")
 			s := store.New()
 			sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
 			location, err := gitrepo.Locate(t.Context(), root, "")
@@ -784,8 +806,8 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			next.Key, next.FS = "different-pin", input.FS
 			s.AddObject(&manifest.GitRepository{Name: sourceID.Name, Namespace: sourceID.Namespace, URL: "file://" + root})
 			s.SetArtifact(sourceID, &initial)
-			s.UpdateStatus(sourceID, store.StatusReady, "", "")
-			docs, err := manifest.DecodeDocs(strings.NewReader("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: apps, namePrefix: 'first-', sourceRef: {kind: GitRepository, name: source, namespace: apps}}\n"))
+			s.UpdateStatus(sourceID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			docs, err := manifest.DecodeDocs(strings.NewReader("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: apps, namePrefix: 'first-', sourceRef: {kind: GitRepository, name: source, namespace: apps}, postBuild: {substitute: {VALUE: original, OWNER: accepted}}, commonMetadata: {labels: {kustomize.toolkit.fluxcd.io/name: '${OWNER}'}}}\n"))
 			assert.NoError(t, err)
 			obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
 			assert.NoError(t, err)
@@ -835,6 +857,19 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			if s.GetObject(exclusive) == nil {
 				t.Fatal("unaccepted source render retired prediction from another source view")
 			}
+			freshOutput := s.GetArtifact(ks.Named()).(*store.Emission)
+			wantManifests := make([]map[string]any, len(freshOutput.Manifests))
+			for i, doc := range freshOutput.Manifests {
+				wantManifests[i] = manifest.DeepCopyMap(doc)
+				labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+				assert.Equal(t, labels["kustomize.toolkit.fluxcd.io/name"], any("accepted"))
+				if manifest.DocKind(doc) == manifest.KindConfigMap {
+					assert.Equal(t, labels["flag"], any("true"))
+					assert.Equal(t, labels["code"], any("012"))
+					assert.Equal(t, doc["data"].(map[string]any)["value"], any("original"))
+				}
+			}
+
 			if s.GetObject(shared) == nil {
 				t.Fatal("coverage retired Q support")
 			}
@@ -866,7 +901,23 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			} else {
 				t.Log("raw render persistence unavailable for this build identity")
 			}
+			t.Logf("persisted renderer hit enabled: %t", persistent)
 			before := guard.opened.Load()
+			prepared, err := kustomize.Prepare(ks, nil, nil)
+			assert.NoError(t, err)
+			rendered, err := kustomize.Render(t.Context(), trees, kustomize.RenderRequest{Source: &initial, SubPath: ks.Path, Spec: prepared}, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			for _, doc := range rendered {
+				metadata := doc["metadata"].(map[string]any)
+				labels, _ := metadata["labels"].(map[string]any)
+				if _, stamped := labels["kustomize.toolkit.fluxcd.io/name"]; stamped {
+					t.Fatal("persisted renderer document already stamped")
+				}
+				metadata["name"] = "caller-mutation"
+				if data, ok := doc["data"].(map[string]any); ok {
+					data["value"] = "caller-mutation"
+				}
+			}
 			if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
 				t.Fatalf("raw cache hit: %v", err)
 			}
@@ -874,6 +925,14 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 				t.Fatal("expected immutable-source raw cache hit without input reads")
 			}
 			guard.deny.Store(false)
+			cachedOutput := s.GetArtifact(ks.Named()).(*store.Emission)
+			assert.Diff(t, cachedOutput.Manifests, wantManifests)
+			assert.Equal(t, len(cachedOutput.Children), len(freshOutput.Children))
+			for _, child := range cachedOutput.Children {
+				if configMap, ok := child.Obj.(*manifest.ConfigMap); ok {
+					assert.Equal(t, configMap.Data["value"], any("original"))
+				}
+			}
 			fresh := ks.Clone()
 			fresh.NamePrefix = "arbitrary-second-"
 

@@ -21,7 +21,7 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 	err := fmt.Errorf("reconcile: %w", &manifest.DependencyFailedError{Parent: id, Failed: deps})
 	st.UpdateFailure(id, err)
 	info, ok := st.GetStatus(id)
-	if !ok || info.Status != StatusFailed || info.Reason != ReasonFailed || info.Message != err.Error() || !info.IsDependencyFailure() {
+	if !ok || info.Status != StatusFailed || info.Reason != ReasonFailed || info.String() != err.Error() || !info.IsDependencyFailure() {
 		t.Fatalf("failure snapshot = %+v, present = %v", info, ok)
 	}
 	if allocs := testing.AllocsPerRun(100, func() {
@@ -39,7 +39,7 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 	if info.BlockedBy()[0] != a {
 		t.Fatal("reader mutated blockers")
 	}
-	st.UpdateStatus(id, StatusReady, "", "done")
+	st.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "done"})
 	if !slices.Equal(info.BlockedBy(), []manifest.NamedResource{a, b}) {
 		t.Fatal("later transition mutated the retained snapshot")
 	}
@@ -68,11 +68,13 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			StatusFailed, metav1.ConditionFalse, ReasonFailed, manifest.ErrInput.Error(), false},
 		{"empty dependency error", func(st *Store) { st.UpdateFailure(id, empty) },
 			StatusFailed, metav1.ConditionFalse, ReasonFailed, empty.Error(), false},
-		{"primary status", func(st *Store) { st.UpdateStatus(id, StatusFailed, "", "primary") },
+		{"primary status", func(st *Store) { st.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "primary"}) },
 			StatusFailed, metav1.ConditionFalse, ReasonFailed, "primary", false},
-		{"ready", func(st *Store) { st.UpdateStatus(id, StatusReady, "", "done") },
+		{"ready", func(st *Store) { st.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "done"}) },
 			StatusReady, metav1.ConditionTrue, ReasonSucceeded, "done", false},
-		{"pending", func(st *Store) { st.UpdateStatus(id, StatusPending, "", "retrying") },
+		{"pending", func(st *Store) {
+			st.UpdateStatus(id, StatusInfo{Status: StatusPending, Reason: "", Message: "retrying"})
+		},
 			StatusPending, metav1.ConditionUnknown, ReasonReconciling, "retrying", false},
 		{"Ready condition", func(st *Store) {
 			st.SetCondition(id, readyCondition(StatusFailed, "", "primary"))
@@ -90,7 +92,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 
 			tc.write(st)
 			info, ok := st.GetStatus(id)
-			if !ok || info.Status != tc.status || info.Reason != StatusReason(tc.reason) || info.Message != tc.message || info.IsDependencyFailure() != tc.failed {
+			if !ok || info.Status != tc.status || info.Reason != StatusReason(tc.reason) || info.String() != tc.message || info.IsDependencyFailure() != tc.failed {
 				t.Fatalf("transition snapshot = %+v, present = %v", info, ok)
 			}
 			if tc.failed {
@@ -118,7 +120,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			if tc.name == "Healthy condition" {
 				want = append(want, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue})
 			}
-			if !slices.EqualFunc(conds, want, conditionEqual) {
+			if !slices.Equal(conds, want) {
 				t.Fatalf("conditions = %+v, want %+v", conds, want)
 			}
 			conds[0].Message = "caller mutation"
@@ -201,7 +203,7 @@ func TestUpdateFailure_StatusEvents(t *testing.T) {
 	if replay.Reason != ReasonFailed || !replay.IsDependencyFailure() || !slices.Equal(replay.BlockedBy(), []manifest.NamedResource{b}) {
 		t.Fatalf("replay snapshot = %+v", replay)
 	}
-	st.UpdateStatus(id, StatusFailed, "", "dependencies failed")
+	st.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "dependencies failed"})
 	if len(events) != 3 || events[2].IsDependencyFailure() || events[2].BlockedBy() != nil {
 		t.Fatalf("provenance-only clear did not dispatch: %+v", events)
 	}
@@ -233,7 +235,7 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 			return
 		}
 		for _, err := range errs {
-			if info.Message == err.Error() && slices.Equal(info.BlockedBy(), err.Failed) {
+			if info.String() == err.Error() && slices.Equal(info.BlockedBy(), err.Failed) {
 				return
 			}
 		}
@@ -271,7 +273,7 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	for _, info := range st.FailedResources() {
 		check(info)
 	}
-	st.UpdateStatus(id, StatusPending, "CustomPending", "reassessing")
+	st.UpdateStatus(id, StatusInfo{Status: StatusPending, Reason: "CustomPending", Message: "reassessing"})
 	check(first)
 	check(second)
 	info, _ = st.GetStatus(id)

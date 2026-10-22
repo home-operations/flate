@@ -59,7 +59,7 @@ func TestResolve_SelectedData(t *testing.T) {
 				if tc.pending {
 					status = store.StatusPending
 				}
-				st.UpdateStatus(supplier, status, "", "successor")
+				st.UpdateStatus(supplier, store.StatusInfo{Status: status, Reason: "", Message: "successor"})
 			}
 			supplied := map[manifest.NamedResource]manifest.BaseManifest{data.Named(): &manifest.Kustomization{Name: "not-data"}}
 			if tc.supplied {

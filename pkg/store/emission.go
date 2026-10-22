@@ -190,7 +190,7 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 	if reads != nil {
 		getArtifact = reads.GetArtifact
 	}
-	for ref := range manifest.References(obj) {
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.Use == "source" {
 			e.binding.source = ref.NamedResource
 			if a, ok := getArtifact(ref.NamedResource).(*SourceArtifact); ok {
@@ -615,7 +615,7 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 	}
 	for _, child := range next.Children {
 		if child.Obj != nil {
-			for ref := range manifest.References(child.Obj) {
+			for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
 				refs = append(refs, ref.NamedResource)
 			}
 		}
@@ -651,7 +651,7 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 		for _, entry := range prev.entries {
 			if entry.binding == next.binding {
 				_, replacement := byID[entry.child.Obj.Named()]
-				for ref := range manifest.References(entry.child.Obj) {
+				for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
 					if replacement {
 						superseded = append(superseded, ref.NamedResource)
 					} else {

@@ -15,6 +15,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -59,7 +60,7 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	assert.NoError(t, err)
 	o.store.SetArtifact(manifest.BootstrapSourceID, input)
 	o.store.AddObject(&manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace})
-	o.store.UpdateStatus(manifest.BootstrapSourceID, store.StatusReady, "", "")
+	o.store.UpdateStatus(manifest.BootstrapSourceID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	supplier := &manifest.Kustomization{Name: "supplier", Namespace: "flux-system", Path: "supplier"}
 	target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "input"}
 	var reader manifest.BaseManifest
@@ -83,7 +84,7 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	}}
 	o.store.AddObject(supplier)
 	o.store.AddObject(reader)
-	o.store.UpdateStatus(supplier.Named(), store.StatusReady, "", "retained")
+	o.store.UpdateStatus(supplier.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "retained"})
 	return r4Fixture{o: o, reader: reader.Named(), supplier: supplier.Named(), target: target}
 }
 
@@ -441,7 +442,7 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 					assert.NoError(t, admitErr)
 					o.store.SetArtifact(manifest.BootstrapSourceID, input)
 					o.store.AddObject(&manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace})
-					o.store.UpdateStatus(manifest.BootstrapSourceID, store.StatusReady, "", "")
+					o.store.UpdateStatus(manifest.BootstrapSourceID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					facts := o.store.ReferenceFacts(target, o.index)
 					if !slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool { return p.Owner == supplier }) || !o.filter.ShouldReconcile(supplier) {
 						t.Fatalf("ResourceSet supplier unreachable: %+v", facts)
@@ -498,10 +499,9 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			if !o.filter.ShouldReconcile(producer) {
 				t.Fatal("prediction owner not selected")
 			}
-			assessment := d.Dispatch(t.Context(), producer, manifest.DrainNone).Assessment
-			defer assessment.Close()
-			if assessment.Outcome() == schedule.Blocked {
-				t.Fatal("producer did not render")
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: o.tasks, Store: o.store, ID: producer, ReconcileNode: o.ksc.ReconcileNode})
+			if info.Status != store.StatusReady {
+				t.Fatalf("producer did not settle: %+v", info)
 			}
 			facts := o.store.ReferenceFacts(target, o.index)
 			if facts.Data != nil || facts.Accepted || !slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
@@ -512,7 +512,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
 			defer reader.Close()
 			if reader.Outcome() != schedule.Blocked || !slices.Contains(reader.(*base.Execution).Blocked, target) {
-				t.Fatal("prediction bypassed ordinary source wait")
+				t.Fatalf("prediction bypassed ordinary source wait: outcome=%v blocked=%v status=%v selected=%t", reader.Outcome(), reader.(*base.Execution).Blocked, o.store.FailedResources(), o.filter.ShouldReconcile(testutil.KustomizationID("apps", "reader")))
 			}
 		})
 	}

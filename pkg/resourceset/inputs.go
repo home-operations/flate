@@ -65,7 +65,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		return nil, nil
 	}
 	providers := make(map[manifest.NamedResource]*manifest.ResourceSetInputProvider)
-	for edge := range manifest.References(rs) {
+	for edge := range manifest.References(rs, manifest.ReferenceRelations) {
 		if edge.Use != "inputsFrom" {
 			continue
 		}

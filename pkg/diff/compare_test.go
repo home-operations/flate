@@ -87,9 +87,9 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 		reason        string
 		keepError     bool
 	}{
-		{name: "current failure with stale output", right: failedCurrent, leftN: 3, rightN: 1, withheld: true, side: SideCurrent, count: 3, reason: failedCurrent.Message, keepError: true},
-		{name: "orig failure", left: failedOrig, leftN: 1, rightN: 2, withheld: true, side: SideOrig, count: 2, reason: failedOrig.Message, keepError: true},
-		{name: "out-of-scope failure stays nonfatal", right: failedCurrent, leftN: 2, withheld: true, side: SideCurrent, count: 2, reason: failedCurrent.Message},
+		{name: "current failure with stale output", right: failedCurrent, leftN: 3, rightN: 1, withheld: true, side: SideCurrent, count: 3, reason: failedCurrent.String(), keepError: true},
+		{name: "orig failure", left: failedOrig, leftN: 1, rightN: 2, withheld: true, side: SideOrig, count: 2, reason: failedOrig.String(), keepError: true},
+		{name: "out-of-scope failure stays nonfatal", right: failedCurrent, leftN: 2, withheld: true, side: SideCurrent, count: 2, reason: failedCurrent.String()},
 		{name: "current soft skip", right: skipped, leftN: 2, rightN: 1, withheld: true, side: SideCurrent, count: 2, reason: "missing source"},
 		{name: "both failed", left: failedOrig, right: failedCurrent, leftN: 2, rightN: 1, withheld: true, side: SideBoth, count: 3, reason: "failed on both sides: orig: orig build failed; current: current build failed", keepError: true},
 		{name: "both failed without documents", left: failedOrig, right: failedCurrent, withheld: true, side: SideBoth, reason: "failed on both sides: orig: orig build failed; current: current build failed", keepError: true},
@@ -105,7 +105,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 		{name: "failure and skip control", left: failedOrig, right: skipped, leftN: 1, rightN: 1, keepError: true},
 		{name: "skip and failure control", left: skipped, right: failedCurrent, leftN: 1, rightN: 1, keepError: true},
 		{name: "unchanged is available", left: unchanged, right: unchanged, leftN: 1, rightN: 1},
-		{name: "blocked is failed", right: blocked, left: suspended, leftN: 1, rightN: 2, withheld: true, side: SideBoth, count: 3, reason: "suspended on orig; current: " + blocked.Message, keepError: true},
+		{name: "blocked is failed", right: blocked, left: suspended, leftN: 1, rightN: 2, withheld: true, side: SideBoth, count: 3, reason: "suspended on orig; current: " + blocked.String(), keepError: true},
 		{name: "empty typed skip", right: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped}, leftN: 1, withheld: true, side: SideCurrent, count: 1},
 		{name: "nested skip", right: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth"}, leftN: 1, withheld: true, side: SideCurrent, count: 1, reason: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped: skipped: missing auth"},
 		{name: "boundary whitespace", right: store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth"}, leftN: 1, withheld: true, side: SideCurrent, count: 1, reason: "source OCIRepository.source.toolkit.fluxcd.io/ns/source skipped:   missing auth"},

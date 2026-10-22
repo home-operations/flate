@@ -53,14 +53,14 @@ func TestScopeStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := r.resolutions
-	for ref := range manifest.References(obj) {
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.Namespace != "" {
 			t.Fatalf("cluster dependency namespace = %q", ref.Namespace)
 		}
 	}
 	direct := &manifest.ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "direct.example/v1", Kind: "Widget", Name: "widget"}}}
 	if !panics(func() {
-		for range manifest.References(direct) {
+		for range manifest.References(direct, manifest.ReferenceRelations) {
 			t.Error("unprepared dependency yielded a reference")
 		}
 	}) || r.resolutions != before {
@@ -68,7 +68,7 @@ func TestScopeStartup(t *testing.T) {
 	}
 	manifest.KindOf(&manifest.RawObject{APIVersion: "direct.example/v1", Kind: "Widget"}).Namespaced()
 	count := 0
-	for range manifest.References(direct) {
+	for range manifest.References(direct, manifest.ReferenceRelations) {
 		count++
 	}
 	if count != 1 {

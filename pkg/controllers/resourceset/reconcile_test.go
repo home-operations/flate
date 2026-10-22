@@ -31,12 +31,12 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			c.StartLifecycle()
 			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(resume) })
-			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.Close() })
+			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			st.AddObject(parent)
 			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
 			st.AddObject(provider)
-			st.UpdateStatus(provider.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			docA := map[string]any{
 				"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
 				"metadata": map[string]any{"name": "binding", "namespace": "apps"},
@@ -52,7 +52,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 			}
 			publish(docA)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "binding"}
 			rs, ok := st.Get[*manifest.ResourceSet](id)
 			if !ok {
@@ -109,7 +109,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				for _, warning := range warnings {
 					st.AddWarning(id, warning)
 				}
-				attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{})
+				attempt.Children, attempt.Manifests = c.ParseChildren(c.Store.GetObject(id), docs, manifest.ParseDocOptions{})
 				attempt.Complete = true
 				c.Emit(id, &attempt)
 			})
@@ -157,7 +157,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			rs.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: '<< inputs.value >>'}"
 			owner := &manifest.Kustomization{Name: "providers", Namespace: "ns"}
 			st.AddObjects([]manifest.BaseManifest{rs, owner})
-			st.UpdateStatus(owner.Named(), store.StatusReady, "", "")
+			st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			a := staticRSIP("a", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "first"})
 			b := staticRSIP("b", "ns", map[string]string{"color": "blue"}, map[string]string{"value": "second"})
 			publish := func(providers ...*manifest.ResourceSetInputProvider) {
@@ -182,7 +182,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				c := New(st, tasks, false)
 				c.Configure(base.Options{Filter: filter, Index: index})
 				c.StartLifecycle()
-				defer c.Close()
+
 				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
 				if info.Status != status {
 					t.Fatalf("status=%+v, want %s", info, status)

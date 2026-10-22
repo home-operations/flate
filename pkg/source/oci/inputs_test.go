@@ -17,7 +17,7 @@ func (f testInputs) readSet(obj manifest.BaseManifest) *store.ReadSet {
 	var admit func(manifest.BaseManifest)
 	admit = func(obj manifest.BaseManifest) {
 		s.AddObject(obj)
-		for ref := range manifest.References(obj) {
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 			if seen[ref.NamedResource] {
 				continue
 			}

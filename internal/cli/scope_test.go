@@ -559,7 +559,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	if _, ok := selection[0].Failed[id]; !ok {
 		t.Fatal("stale artifact weakened selected failure")
 	}
-	if len(selection[0].Failed) != 2 || selection[0].Failed[current].Message != "current input failure" ||
+	if len(selection[0].Failed) != 2 || selection[0].Failed[current].String() != "current input failure" ||
 		len(selection[0].Unrelated) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id) != nil {
 		t.Fatalf("projection did not follow current canonical refs: %+v", selection[0])
 	}

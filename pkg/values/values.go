@@ -164,10 +164,6 @@ type Cache struct {
 	m sync.Map // map[string]map[string]any
 }
 
-// NewCache returns an empty *Cache ready for use. Construct one per
-// orchestrator run and pass to ExpandValueReferences.
-func NewCache() *Cache { return &Cache{} }
-
 func (c *Cache) lookup(key string) (map[string]any, bool) {
 	if c == nil {
 		return nil, false
@@ -210,7 +206,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 	var omitted []manifest.NamedResource
 	values := map[string]any{}
 	owned := true
-	for edge := range manifest.References(hr) {
+	for edge := range manifest.References(hr, manifest.ReferenceRelations) {
 		if edge.Use != "valuesFrom" {
 			continue
 		}

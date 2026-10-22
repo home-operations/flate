@@ -45,8 +45,9 @@ type Input struct {
 }
 
 type readinessGate struct {
-	expr string
-	next *readinessGate
+	expr                                       *string
+	artifact, unknownArtifactRoot, chartSource bool
+	next                                       *readinessGate
 }
 
 // Init starts an execution using caller-owned dependency storage.
@@ -208,6 +209,7 @@ func (r *ReadSet) Snapshot(id manifest.NamedResource, conditions bool) (manifest
 				input.status, input.hasStatus = record.statusInfo()
 			}
 			sh.mu.RUnlock()
+			record.project(input.conditions)
 			input.derived |= 2 | 16
 			r.observe(input, conditionFacet, generation)
 		}
@@ -341,17 +343,18 @@ func (r *ReadSet) Require(ref manifest.DependencyRef) {
 	input.required = true
 	if !input.gate {
 		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
+		input.Ref.Artifact, input.Ref.UnknownArtifactRoot, input.Ref.ChartSource = ref.Artifact, ref.UnknownArtifactRoot, ref.ChartSource
 		return
 	}
-	if input.Ref.ReadyExpr == ref.ReadyExpr {
+	if sameReadinessGate(input.Ref, ref) {
 		return
 	}
 	for gate := &input.gates; ; gate = &(*gate).next {
 		if *gate == nil {
-			*gate = &readinessGate{expr: ref.ReadyExpr}
+			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource}
 			return
 		}
-		if (*gate).expr == ref.ReadyExpr {
+		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, UnknownArtifactRoot: (*gate).unknownArtifactRoot, ChartSource: (*gate).chartSource}, ref) {
 			return
 		}
 	}
@@ -368,7 +371,7 @@ func (r *ReadSet) Gates() iter.Seq[manifest.DependencyRef] {
 				return
 			}
 			for gate := input.gates; gate != nil; gate = gate.next {
-				if !yield(manifest.DependencyRef{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr}) {
+				if !yield(manifest.DependencyRef{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource}) {
 					return
 				}
 			}
@@ -520,7 +523,7 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 			}
 		} else if input.derived&16 != 0 {
 			status, ok := r.GetStatus(id)
-			if ok != input.hasStatus || status.Status != input.status.Status || status.Reason != input.status.Reason || status.Message != input.status.Message || !slices.Equal(status.BlockedBy(), input.status.BlockedBy()) {
+			if ok != input.hasStatus || status.Status != input.status.Status || status.Reason != input.status.Reason || !sameMessage(status.Message, status.applyingObjects, input.status.Message, input.status.applyingObjects) || !slices.Equal(status.BlockedBy(), input.status.BlockedBy()) {
 				return false
 			}
 		}
@@ -558,4 +561,14 @@ func (r *ReadSet) Close() {
 	}
 	sh.mu.RUnlock()
 	reads.Retire()
+}
+
+func sameReadinessGate(a, b manifest.DependencyRef) bool {
+	if a.ReadyExpr != b.ReadyExpr {
+		if a.ReadyExpr == nil || b.ReadyExpr == nil || *a.ReadyExpr != *b.ReadyExpr {
+			return false
+		}
+		a.ReadyExpr = b.ReadyExpr
+	}
+	return a == b
 }

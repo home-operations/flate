@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"sync"
 
@@ -34,34 +33,24 @@ type Client struct {
 	// Cached values MUST remain immutable; chartMu guards lookup and publication.
 	chartValuesCache map[string]*chartValuesEntry
 
-	// valuesCache memoizes parsed-YAML output of ExpandValueReferences
-	// across HRs in this Client's lifetime. One HR with 10 valuesFrom
-	// refs hits each entry once; M HRs sharing a platform-wide values
-	// CM re-yaml.Unmarshal'd the same bytes M times without this.
-	// Lives for the Client lifetime — re-creating per Template call
-	// would defeat the cross-HR sharing that delivers the win.
-	valuesCache *values.Cache
+	valuesCache values.Cache
 
 	cache *cache.Cache
 }
 
 // NewClient constructs a Client borrowing the supplied nonnil cache owner.
 // The caller MUST keep the owner open until all Client operations finish.
-func NewClient(owner *cache.Cache) (*Client, error) {
+func NewClient(owner *cache.Cache) *Client {
 	return &Client{
 		chartCache:       map[string]chartDescription{},
 		chartValuesCache: map[string]*chartValuesEntry{},
 		chartLoadLocks:   keylock.New[string](),
-		valuesCache:      values.NewCache(),
 		cache:            owner,
-	}, nil
+	}
 }
 
-// ValuesCache returns the Client's per-orchestrator valuesFrom parse
-// cache so callers (helm.Prepare, the HR controller) can pass it
-// through to values.ExpandValueReferences. Always non-nil for
-// Clients constructed via NewClient.
-func (c *Client) ValuesCache() *values.Cache { return c.valuesCache }
+// ValuesCache returns the Client's shared valuesFrom parse cache.
+func (c *Client) ValuesCache() *values.Cache { return &c.valuesCache }
 
 type chartDescription struct {
 	captured      capturedChart
@@ -82,14 +71,9 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	if hr == nil {
 		return chartDescription{}, errors.New("nil HelmRelease")
 	}
-	switch hr.Chart.Source.Kind {
-	case manifest.KindGitRepository, manifest.KindBucket, manifest.KindExternalArtifact,
-		manifest.KindOCIRepository, manifest.KindHelmChart:
-	case manifest.KindHelmRepository, "":
-		return chartDescription{}, fmt.Errorf("%w: HelmRepository chart %s reached chart loading unmaterialized: render via the orchestrator",
-			manifest.ErrInput, hr.Chart.RepoFullName())
-	default:
-		return chartDescription{}, fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.Source.Kind)
+	location, auto, err := hr.Chart.ChartLocation()
+	if err != nil {
+		return chartDescription{}, err
 	}
 	art := sources.LocalSourceArtifact(hr.ChartSource())
 	if art == nil || art.FS == nil {
@@ -103,13 +87,8 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	selector := struct {
 		Pin, Path string
 		Auto      bool
-	}{Pin: pin, Auto: true}
-	switch hr.Chart.Source.Kind {
-	case manifest.KindBucket, manifest.KindGitRepository, manifest.KindExternalArtifact:
-		selector.Path, selector.Auto = path.Clean(hr.Chart.Name), false
-	}
+	}{Pin: pin, Path: location, Auto: auto}
 	var captured capturedChart
-	var location string
 	capture := func() error {
 		location = selector.Path
 		if selector.Auto {

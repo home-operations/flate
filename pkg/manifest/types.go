@@ -91,6 +91,7 @@ type BaseManifest interface {
 	WithNamespace(string) BaseManifest
 	Named() NamedResource
 	Suspended() bool
+	ReferenceCapacity() (int, int)
 	kind() KindInfo
 	producerTargets([]NamedResource) []ProducerTarget
 }
@@ -98,16 +99,45 @@ type BaseManifest interface {
 // DependencyRef is a compact prerequisite identity and optional CEL gate.
 type DependencyRef struct {
 	NamedResource
-	// ReadyExpr replaces the built-in readiness check when non-empty.
-	ReadyExpr string
+	// ReadyExpr borrows an immutable authored expression and replaces built-in readiness when non-empty.
+	ReadyExpr *string
+	// Artifact requires acquired filesystem content after readiness.
+	Artifact bool
+	// UnknownArtifactRoot preserves the unresolved source-root diagnostic at drain.
+	UnknownArtifactRoot bool
+	// ChartSource retains chart-source context on acquisition failures and skips.
+	ChartSource bool
 }
+
+// GateStage selects the prerequisites needed at a reconciliation checkpoint.
+type GateStage uint8
+
+// GateParents checks structural owners before any input preparation.
+const GateParents GateStage = 0
+
+const (
+	// GateInputs waits for ordering and synchronous preparation inputs.
+	GateInputs GateStage = 1 << iota
+	// GateArtifacts waits for effective rendering source content.
+	GateArtifacts
+)
+
+// ReferenceView selects relationships or all reconciliation prerequisites.
+type ReferenceView uint8
+
+const (
+	// ReferenceRelations selects authored dependencies and resolved source relationships.
+	ReferenceRelations ReferenceView = iota
+	// ReferenceAll also includes implicit reconciliation prerequisites.
+	ReferenceAll
+)
 
 // Reference contains transient facts for one authored dependency or resolved source.
 // Consumers MUST retain only DependencyRef or NamedResource, never the full value.
 type Reference struct {
 	DependencyRef
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
-	// certSecretRef, proxySecretRef or inputsFrom.
+	// certSecretRef, proxySecretRef or inputsFrom; empty selects an implicit gate only.
 	Use string
 	// Position indexes the authored field; credentials use secret=0, cert=1, proxy=2.
 	Position int
@@ -115,21 +145,27 @@ type Reference struct {
 	Optional bool
 	// Content selects changed-only content dependents; ordering edges are false.
 	Content bool
+	// Gate selects reconciliation checkpoints without changing Content edges.
+	Gate GateStage
+	// ArtifactStages selects checkpoints requiring filesystem content.
+	ArtifactStages GateStage
+	// Ordering permits changed-only pruning of an ordering prerequisite.
+	Ordering bool
 	// Files borrows immutable source-relative input declarations.
 	Files []string
 }
 
-// References yields dependencies in source-field order without deduplication.
+// References yields dependencies in source-field order for the selected view without deduplication.
 // The object and its embedded spec MUST remain immutable during iteration.
 // Direct SDK objects MUST satisfy their reference schemas, including valid explicit API versions.
 // Before walking a directly constructed ResourceSet, prepare each dependsOn GVK with
 // KindOf on a RawObject carrying its APIVersion and Kind, then Namespaced. ParseDoc does this at admission.
 // Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
-func References(obj BaseManifest) iter.Seq[Reference] {
+func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 	return func(yield func(Reference) bool) {
 		switch obj := obj.(type) {
 		case *Kustomization:
-			obj.references(yield)
+			obj.references(yield, view)
 		case *HelmRelease:
 			obj.references(yield)
 		case *ResourceSet:
@@ -245,4 +281,11 @@ func (r *RawObject) kind() KindInfo {
 
 func (r *RawObject) isArtifactGenerator() bool {
 	return r.Kind == kindTable[kindArtifactGenerator].Kind && apiGroup(r.APIVersion) == kindTable[kindArtifactGenerator].Group
+}
+
+func referenceExpression(expr *string) *string {
+	if *expr == "" {
+		return nil
+	}
+	return expr
 }

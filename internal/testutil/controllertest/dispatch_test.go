@@ -55,7 +55,7 @@ func TestReconcile_TaskFailures(t *testing.T) {
 					if tc.panics {
 						panic("reconcile failure")
 					}
-					execution := NewExecution(base.New(store.New(), tasks, "test"), testutil.HelmReleaseID("media", "sonarr"))
+					execution := NewExecution(base.New(store.New(), tasks), testutil.HelmReleaseID("media", "sonarr"))
 					object := &manifest.HelmRelease{Name: "sonarr", Namespace: "media"}
 					execution.Store.AddObject(object)
 					execution.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
@@ -81,7 +81,7 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 	tasks := task.NewBounded(2)
 	st := store.New()
 	id := testutil.HelmReleaseID("media", "sonarr")
-	st.UpdateStatus(id, store.StatusReady, "", "ready before reconciliation")
+	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "ready before reconciliation"})
 	recorder := &recordingTB{TB: t}
 	d := Dispatch{
 		Tasks: tasks,
@@ -110,7 +110,7 @@ func TestDispatchToFixpoint_SettlesRetainedAssessment(t *testing.T) {
 		Tasks: tasks, Store: st, ID: obj.Named(),
 		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 			dispatches++
-			execution := NewExecution(base.New(st, tasks, "test"), id)
+			execution := NewExecution(base.New(st, tasks), id)
 			execution.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
 				return execution.Require(ctx, []manifest.DependencyRef{dependency}, level)
 			})

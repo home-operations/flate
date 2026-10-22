@@ -133,7 +133,7 @@ data:
 		}
 		if info.Outcome() != store.OutcomeUnchanged {
 			t.Errorf("%s: keep-cascade leaked; expected OutcomeUnchanged, got Status=%s Message=%q",
-				id, info.Status, info.Message)
+				id, info.Status, info.String())
 		}
 	}
 

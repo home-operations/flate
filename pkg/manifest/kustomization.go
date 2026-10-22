@@ -104,6 +104,11 @@ func (k *Kustomization) SourceID() NamedResource {
 // IsFragment identifies patch fragments without a render path or source name.
 func (k *Kustomization) IsFragment() bool { return k.Path == "" && k.SourceRef.Name == "" }
 
+// SubstituteStrategy returns the upstream post-build substitution policy.
+func (k *Kustomization) SubstituteStrategy() kustomizev1.SubstituteStrategy {
+	return (kustomizev1.Kustomization{Spec: k.KustomizationSpec}).GetSubstituteStrategy()
+}
+
 func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kustomization {
 	var out *Kustomization
 	for i, dep := range k.DependsOn {
@@ -127,12 +132,22 @@ func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kusto
 	return out
 }
 
-func (k *Kustomization) references(yield func(Reference) bool) {
-	if k.SourceRef.Kind != "" || k.SourceRef.Name != "" {
+func (k *Kustomization) references(yield func(Reference) bool, view ReferenceView) {
+	authoredSource := k.SourceRef.Kind != "" || k.SourceRef.Name != ""
+	implicitSource := view == ReferenceAll && k.Path != ""
+	if authoredSource || implicitSource {
 		src := k.SourceID()
-		if !yield(Reference{
+		content := src.Kind != "" && src.Name != ""
+		use := "source"
+		if !content && k.Path != "" {
+			src = BootstrapSourceID
+			use = ""
+		}
+		if (view == ReferenceAll || use != "") && !yield(Reference{
 			NamedResource: src,
-			Use:           "source", Content: src.Kind != "" && src.Name != "",
+			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
+			ArtifactStages:      GateInputs | GateArtifacts,
+			UnknownArtifactRoot: src.Group == SourceDomain && src.Kind == KindOCIRepository,
 		}) {
 			return
 		}
@@ -141,7 +156,7 @@ func (k *Kustomization) references(yield func(Reference) bool) {
 		dep := &k.DependsOn[i]
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: dep.Namespace, Name: dep.Name}, "", k.Namespace),
-			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
+			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true,
 		}) {
 			return
 		}

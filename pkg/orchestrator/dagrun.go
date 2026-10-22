@@ -74,7 +74,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
-	o.hrc.Start(ctx)
+	o.hrc.StartLifecycle()
 	o.rsc.StartLifecycle()
 
 	unsubscribe := o.watchDAG(sched)

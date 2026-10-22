@@ -336,7 +336,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 		Data: map[string]any{"values.yaml": "replicaCount: 5\nimage:\n  tag: v2\n"},
 	}
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
-	cache := NewCache()
+	cache := &Cache{}
 	hr := func() *manifest.HelmRelease {
 		return &manifest.HelmRelease{
 			Name: "demo", Namespace: "default",
@@ -390,7 +390,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 		Data: map[string]any{"values.yaml": "replicaCount: 5\n"},
 	}
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
-	cache := NewCache()
+	cache := &Cache{}
 	mk := func() *manifest.HelmRelease {
 		return &manifest.HelmRelease{
 			Name: "demo", Namespace: "default",
@@ -708,7 +708,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
 		Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
 	}}}
-	cache := NewCache()
+	cache := &Cache{}
 	prior := wholeDocHR()
 	expandValuesForTest(t, prior, provider, cache)
 	before := manifest.DeepCopyMap(prior.Values)
@@ -780,7 +780,7 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 			t.Parallel()
 			var cache *Cache
 			if tc.cached {
-				cache = NewCache()
+				cache = &Cache{}
 			}
 			hr := wholeDocHR()
 			cm := nestedValuesCM()
@@ -821,7 +821,7 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{first, second, {
 				Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
 			}}}
-			cache := NewCache()
+			cache := &Cache{}
 			priorFirst := wholeDocHR()
 			priorSecond := &manifest.HelmRelease{Name: "prior", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: second.Name}}}
 			expandValuesForTest(t, priorFirst, provider, cache)
@@ -937,7 +937,7 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 				st := store.New()
 				st.AddObject(&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"requested.yaml": tc.document}})
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional}}}
-				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), NewCache())
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), &Cache{})
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("malformed values must retain input/domain identity: %v", err)
 				}

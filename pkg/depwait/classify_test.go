@@ -19,9 +19,9 @@ func TestClassify_CoreStates(t *testing.T) {
 	statusless := manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "ns", Name: "statusless"}
 	absent := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "absent")}
 	s.AddObject(&manifest.Kustomization{Name: ready.Name, Namespace: ready.Namespace})
-	s.UpdateStatus(ready.NamedResource, store.StatusReady, "", "")
-	s.UpdateStatus(failed.NamedResource, store.StatusFailed, "", "boom")
-	s.UpdateStatus(pending.NamedResource, store.StatusPending, "", "working")
+	s.UpdateStatus(ready.NamedResource, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	s.UpdateStatus(failed.NamedResource, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "boom"})
+	s.UpdateStatus(pending.NamedResource, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
 	s.AddObject(&manifest.HelmChartSource{Name: "statusless", Namespace: "ns"})
 
 	w := &Waiter{Store: s}
@@ -31,7 +31,7 @@ func TestClassify_CoreStates(t *testing.T) {
 	}
 	for _, reason := range []store.StatusReason{store.ReasonSkipped, store.ReasonUnchanged, store.ReasonSuspended} {
 		t.Run(string(reason), func(t *testing.T) {
-			s.UpdateStatus(ready.NamedResource, store.StatusReady, reason, "")
+			s.UpdateStatus(ready.NamedResource, store.StatusInfo{Status: store.StatusReady, Reason: reason, Message: ""})
 			if got := w.Classify(t.Context(), ready, manifest.DrainNone); got.Kind != schedule.Terminal {
 				t.Fatalf("typed Ready reason %s blocked dependency: %+v", reason, got)
 			}
@@ -78,7 +78,7 @@ func TestClassify_CoreStates(t *testing.T) {
 			if got := w.Classify(t.Context(), foreign, manifest.DrainCascade); got.Kind != schedule.DependencyFailed || got.Message != "dependency not found" {
 				t.Fatalf("absent lookalike at drain: %+v", got)
 			}
-			s.UpdateStatus(foreign.NamedResource, store.StatusPending, "", "foreign status")
+			s.UpdateStatus(foreign.NamedResource, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign status"})
 			if got := w.Classify(t.Context(), foreign, manifest.DrainNone); got.Kind != schedule.Terminal {
 				t.Fatalf("status-only lookalike acquired Flux readiness: %+v", got)
 			}
@@ -109,8 +109,8 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "infra")}
-	s.UpdateStatus(dep.NamedResource, store.StatusReady, "", "")
-	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
+	s.UpdateStatus(dep.NamedResource, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	dep.ReadyExpr = new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`) // not satisfied
 
 	w := &Waiter{Store: s}
 	if got := w.Classify(t.Context(), dep, manifest.DrainNone); got.Kind != schedule.Blocked {
@@ -140,9 +140,9 @@ func TestClassify_EdgeReadiness(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			s.AddObject(tc.obj)
-			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "", "working")
+			s.UpdateStatus(tc.obj.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
 			w := &Waiter{Store: s}
-			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: tc.expr}, manifest.DrainNone)
+			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: new(tc.expr)}, manifest.DrainNone)
 			if got.Kind != tc.want {
 				t.Fatalf("classification = %+v, want %v", got, tc.want)
 			}
@@ -174,7 +174,7 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 	if got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce); got != next {
 		t.Fatalf("unchanged failure changed: %+v", got)
 	}
-	s.UpdateStatus(a, store.StatusFailed, "", "leaf failure")
+	s.UpdateStatus(a, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "leaf failure"})
 	if got := w.Classify(t.Context(), ref, manifest.DrainForce); got.Message != "leaf failure" {
 		t.Fatalf("direct failure lost its reason: %+v", got)
 	}
@@ -203,7 +203,7 @@ func TestClassify_OrdinaryPromotion(t *testing.T) {
 			if tc.status != "" {
 				data = &manifest.Kustomization{Name: "input", Namespace: "apps"}
 				defer st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-					st.UpdateStatus(id, tc.status, "", "boom")
+					st.UpdateStatus(id, store.StatusInfo{Status: tc.status, Reason: "", Message: "boom"})
 				}, false)()
 			}
 			promotion := &inputPromotion{store: st, data: data, materialize: tc.materialize}

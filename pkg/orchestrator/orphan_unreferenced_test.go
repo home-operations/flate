@@ -48,7 +48,7 @@ func TestOrchestrator_UnreferencedBaseKSOrphaned(t *testing.T) {
 	for _, name := range []string{"app-a", "app-b"} {
 		id := testutil.KustomizationID("flux-system", name)
 		if info, failed := res.Failed[id]; failed {
-			t.Errorf("%s hard-failed, want orphaned: %s", name, info.Message)
+			t.Errorf("%s hard-failed, want orphaned: %s", name, info.String())
 		}
 		if _, orphaned := res.Orphans[id]; !orphaned {
 			t.Errorf("%s not orphaned; want it demoted (unreferenced base manifest)", name)

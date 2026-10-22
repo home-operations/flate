@@ -308,10 +308,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	ssrfguard.Restrict(cfg.RestrictEgress)
 
 	st := store.New()
-	client, err := helm.NewClient(owner)
-	if err != nil {
-		return nil, err
-	}
+	client := helm.NewClient(owner)
 	ts := task.NewBounded(cfg.Concurrency)
 	o := &Orchestrator{inputs: source.NewHTTPInputs(owner, cfg.Network, ts)}
 	trees := kustomize.NewTreeCache(owner, &o.inputs, ts)
@@ -343,7 +340,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	o.tasks = ts
 	o.src = srcCtrl
 	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
-	o.hrc = helmrelease.New(base.New(st, ts, "helmrelease"), client, cfg.HelmOptions, cfg.WipeSecrets)
+	o.hrc = helmrelease.New(base.New(st, ts), client, cfg.HelmOptions, cfg.WipeSecrets)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
 	o.depGraph = newDependencyGraph()
 	if cfg.DisableChartDigestTracking != nil {
@@ -474,7 +471,13 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
-	o.documents = res.Documents
+	var entryPolicy manifest.EmissionPolicy
+	skipKinds := o.cfg.HelmOptions.SkipResourceKinds()
+	for _, doc := range res.Documents {
+		if output, _ := entryPolicy.SelectDocument(doc, skipKinds); output {
+			o.documents = append(o.documents, doc)
+		}
+	}
 	o.dependencySubstitutions = res.DependencySubstitutions
 
 	o.freezeSubstitutions()

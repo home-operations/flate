@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -46,7 +45,7 @@ type RenderRequest struct {
 	Spec *manifest.Kustomization
 }
 
-// Render consumes admitted sources through one filesystem and a private overlay.
+// Render returns unstamped renderer documents from an admitted source and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
 func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, error) {
@@ -167,13 +166,12 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		}
 		return nil, built
 	}
-	if req.Spec != nil {
-		// Flux applies owner labels before commonMetadata, which may override them.
-		if err := applyOwnerLabels(rm, ks); err != nil {
-			return nil, fmt.Errorf("apply owner labels %s: %w", subPath, err)
-		}
-		if err := applyCommonMetadata(rm, ks); err != nil {
-			return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
+	// AsYAML converts through JSON, so label scalar spelling MUST be retained first.
+	if req.Spec != nil && req.Spec.EmissionPolicy().StringLabels {
+		for _, r := range rm.Resources() {
+			if err := r.SetLabels(r.GetLabels()); err != nil {
+				return nil, fmt.Errorf("%w: normalize labels: %w", manifest.ErrInput, err)
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -258,85 +256,4 @@ func (c *TreeCache) sourceRootFor(ctx context.Context, artifact *store.SourceArt
 	})
 	actual, _ := c.sourceRoots.LoadOrStore(key, load)
 	return actual.(func() (*sourceRoot, error))()
-}
-
-// applyCommonMetadata merges spec.commonMetadata.labels and
-// spec.commonMetadata.annotations into every rendered resource —
-// mirroring kustomize-controller's ssautil.SetCommonMetadata pass,
-// which fluxcd/pkg/kustomize.Generator does NOT perform.
-func applyCommonMetadata(rm resmap.ResMap, rawSpec map[string]any) error {
-	spec, _ := rawSpec["spec"].(map[string]any)
-	cm, _ := spec["commonMetadata"].(map[string]any)
-	labels := stringMap(cm["labels"])
-	annotations := stringMap(cm["annotations"])
-	if len(labels) == 0 && len(annotations) == 0 {
-		return nil
-	}
-	for _, r := range rm.Resources() {
-		if len(labels) > 0 {
-			if err := r.SetLabels(overlayStringMap(r.GetLabels(), labels)); err != nil {
-				return err
-			}
-		}
-		if len(annotations) > 0 {
-			if err := r.SetAnnotations(overlayStringMap(r.GetAnnotations(), annotations)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// applyOwnerLabels stamps every rendered resource with the parent's
-// "kustomize.toolkit.fluxcd.io/name" + "/namespace" labels — matching
-// what kustomize-controller injects via ssa.ResourceManager.SetOwnerLabels
-// before apply. These labels are how real Flux tracks ownership for
-// pruning + selection (kubectl get -l kustomize.toolkit.fluxcd.io/name=...).
-//
-// Inject during render so flate's output matches what lands in-cluster
-// rather than what's on disk.
-func applyOwnerLabels(rm resmap.ResMap, rawSpec map[string]any) error {
-	md, _ := rawSpec["metadata"].(map[string]any)
-	name, _ := md["name"].(string)
-	if name == "" {
-		return nil
-	}
-	namespace, _ := md["namespace"].(string)
-	const group = manifest.FluxKustomizeDomain
-	// Build owner overlay with only non-empty values so a cluster-scoped
-	// Kustomization (no namespace) doesn't clobber an existing namespace label.
-	owner := make(map[string]string, 2)
-	owner[group+"/name"] = name
-	if namespace != "" {
-		owner[group+"/namespace"] = namespace
-	}
-	for _, r := range rm.Resources() {
-		if err := r.SetLabels(overlayStringMap(r.GetLabels(), owner)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// overlayStringMap returns a copy of base with every entry from overlay
-// merged in. overlay wins on key collisions. RNode.GetLabels /
-// GetAnnotations always return a non-nil map, so base is never nil here.
-func overlayStringMap(base, overlay map[string]string) map[string]string {
-	out := maps.Clone(base)
-	maps.Copy(out, overlay)
-	return out
-}
-
-func stringMap(v any) map[string]string {
-	m, ok := v.(map[string]any)
-	if !ok || len(m) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, val := range m {
-		if s, ok := val.(string); ok {
-			out[k] = s
-		}
-	}
-	return out
 }

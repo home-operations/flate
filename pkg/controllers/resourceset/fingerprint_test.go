@@ -247,7 +247,7 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 	s := store.New()
 	s.AddObject(rs)
 	s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: previous, Complete: true})
-	c := base.New(s, nil, "test")
+	c := base.New(s, nil)
 	run := controllertest.NewExecution(c, rs.Named())
 	defer run.Close()
 	var fp string

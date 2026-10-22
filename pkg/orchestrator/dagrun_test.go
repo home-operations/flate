@@ -72,8 +72,8 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if !ok || original.Suspend {
 						t.Fatal("active child missing")
 					}
-					o.store.UpdateStatus(gate, store.StatusReady, store.ReasonSuspended, "suspended")
-					o.store.UpdateStatus(child, store.StatusPending, "", "queued")
+					o.store.UpdateStatus(gate, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
+					o.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 					o.configureControllers()
 					var result schedule.Result
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
@@ -93,7 +93,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					var publication, arrivals atomic.Int64
 					unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
-						if id != child || !ok || info.Message != "resolving dependencies" || !publication.CompareAndSwap(0, 1) {
+						if id != child || !ok || info.String() != "resolving dependencies" || !publication.CompareAndSwap(0, 1) {
 							return
 						}
 						docs, err := manifest.DecodeDocs(strings.NewReader(strings.Replace(ksYAML("child", "child", "gate"), "spec:\n", "spec:\n  suspend: true\n", 1)))
@@ -101,7 +101,16 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 							t.Error(err)
 							return
 						}
-						publishDocuments(o.ksc.Controller, gate, docs, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: gate.Namespace})
+						children, retained := parseChildrenForTest(gate, docs, manifest.ParseDocOptions{DefaultNamespace: gate.Namespace})
+						for _, emitted := range children {
+							if o.filter != nil {
+								o.filter.AddEmitted(gate, emitted.Obj, o.store)
+							}
+						}
+						_, next := o.store.GetEmission(gate)
+						defer next.Finish()
+						next.Children, next.Manifests, next.Complete = children, retained, true
+						o.store.RecordEmitted(gate, &next)
 					}, false)
 					t.Cleanup(unsub)
 					unsubArrivals := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -354,11 +363,11 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 		t.Fatal("Render returned nil result")
 	}
 	leafInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "leaf")]
-	if !ok || !strings.Contains(leafInfo.Message, "dependency not found") {
+	if !ok || !strings.Contains(leafInfo.String(), "dependency not found") {
 		t.Fatalf("leaf: want FAILED 'dependency not found', got %+v (ok=%v)", leafInfo, ok)
 	}
 	midInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "mid")]
-	if !ok || !strings.Contains(midInfo.Message, "leaf") {
+	if !ok || !strings.Contains(midInfo.String(), "leaf") {
 		t.Fatalf("mid: want FAILED cascading leaf's failure, got %+v (ok=%v)", midInfo, ok)
 	}
 }

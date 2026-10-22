@@ -33,12 +33,9 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
 			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
-			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-			if err != nil {
-				t.Fatal(err)
-			}
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			cliSources := NewSources(st)
-			_, err = loadDecodedChart(t.Context(), cli, hr, cliSources)
+			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			_, typed := errors.AsType[chart.ValidationError](err)
 			if !typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("validation chain = %v", err)
@@ -56,10 +53,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	second := t.TempDir()
 	writeChartFiles(t, second, "podinfo", "6.15.0")
 	testutil.WriteFile(t, second, "prod.yaml", "marker: second\n")
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := NewSources(st)
 	var previous string
 	for i, dir := range []string{first, second} {
@@ -92,10 +86,7 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 				hr.ChartRef = nil
 			}
 			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
-			cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-			if err != nil {
-				t.Fatal(err)
-			}
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			cliSources := NewSources(st)
 			withoutFiles := hr.Clone()
 			withoutFiles.ChartValuesFiles = nil

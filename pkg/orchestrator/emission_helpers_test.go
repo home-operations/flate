@@ -9,11 +9,15 @@ import (
 )
 
 func publishDocuments(c *base.Controller, id manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions) ([]store.Child, []map[string]any) {
-	children, retained := base.ParseChildren(id, docs, opts)
+	prior, hadStatus := c.Store.GetStatus(id)
+	children, retained := parseChildrenForTest(id, docs, opts)
 	_, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = children, retained, true
 	c.Emit(id, &next)
+	if hadStatus && prior.Status == store.StatusPending {
+		c.Store.UpdateStatus(id, prior)
+	}
 	return children, retained
 }
 

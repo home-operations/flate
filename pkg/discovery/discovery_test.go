@@ -300,7 +300,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		slices.Sort(ids)
 		assert.Diff(t, ids, wantIDs)
 		status, present := st.GetStatus(source)
-		if !present || status.Status != store.StatusReady || status.Message != "local entry source" {
+		if !present || status.Status != store.StatusReady || status.String() != "local entry source" {
 			t.Fatalf("source readiness = %+v, present = %t", status, present)
 		}
 		alias, ok := st.GetArtifact(source).(*store.SourceArtifact)

@@ -42,7 +42,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			dep := manifest.NamedResource{Group: tc.group, Kind: tc.kind, Namespace: "ns", Name: "infra"}
-			s.UpdateStatus(dep, store.StatusReady, "", "")
+			s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			expr := fmt.Sprintf(`dep.status.observedGeneration == dep.metadata.generation && dep.apiVersion == %q`, tc.version)
 			ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
 			if err != nil || !ok {
@@ -59,12 +59,12 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "infra")
-	s.UpdateStatus(dep, store.StatusFailed, "", "still rolling out") // built-in says Failed
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "still rolling out"}) // built-in says Failed
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
 	w := &Waiter{Store: s}
 	ref := manifest.DependencyRef{NamedResource: dep,
-		ReadyExpr: `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
+		ReadyExpr: new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`),
 	}
 	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Terminal {
 		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want schedule.Terminal", got)
@@ -79,14 +79,14 @@ func TestReadyExpr_CompileError(t *testing.T) {
 			s := store.New()
 			dep := testutil.KustomizationID("ns", "x")
 			if present {
-				s.UpdateStatus(dep, store.StatusReady, "", "ok")
+				s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "ok"})
 			}
 
 			if _, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep); err == nil {
 				t.Fatal("expected compile error")
 			}
 			w := &Waiter{Store: s}
-			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
+			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(`this isn't valid CEL`)}
 			got := w.Classify(t.Context(), ref, manifest.DrainNone)
 			if got.Kind != schedule.DependencyFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
 				t.Errorf("compile error: got %+v, want schedule.DependencyFailed with 'readyExpr:' prefix", got)
@@ -101,7 +101,7 @@ func TestReadyExpr_NonBoolResult(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "x")
-	s.UpdateStatus(dep, store.StatusReady, "", "ok")
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "ok"})
 
 	_, err := evaluateReadyExpr(`dep.metadata.name`, s, manifest.NamedResource{}, dep) // string, not bool
 	if err == nil || !strings.Contains(err.Error(), "must return bool") {
@@ -120,17 +120,17 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := testutil.KustomizationID("ns", "infra")
-	s.UpdateStatus(dep, store.StatusReady, "", "")
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 
 	w := &Waiter{Store: s}
 	const expr = `dep.status.conditions[100].type == "Ready"` // index out of range → runtime eval error
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
-	if ready, failMsg := w.tryReadyExpr(manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}, obj, conds); ready || failMsg != "" {
+	if ready, failMsg := w.tryReadyExpr(manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)}, obj, conds); ready || failMsg != "" {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
-	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
+	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(expr)}
 	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Blocked {
 		t.Errorf("transient eval error@none: got %+v, want schedule.Blocked (re-runnable, not failed)", got)
 	}
@@ -147,7 +147,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 		Labels:      map[string]string{"tier": "data"},
 		Annotations: map[string]string{"app.kubernetes.io/version": "1.2.3"},
 	})
-	s.UpdateStatus(dep, store.StatusReady, "", "")
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
@@ -155,7 +155,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	fresh.Labels = map[string]string{"tier": "changed"}
 	fresh.Annotations = map[string]string{"app.kubernetes.io/version": "2.0.0"}
 	s.AddObject(fresh)
-	s.UpdateStatus(dep, store.StatusFailed, "", "replacement")
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "replacement"})
 	w := Waiter{Store: s}
 
 	for _, expr := range []string{
@@ -177,8 +177,8 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	s := store.New()
 	self := testutil.KustomizationID("ns", "parent")
 	dep := testutil.KustomizationID("ns", "child")
-	s.UpdateStatus(self, store.StatusReady, "", "")
-	s.UpdateStatus(dep, store.StatusReady, store.ReasonSkipped, "changed diagnostic")
+	s.UpdateStatus(self, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "changed diagnostic"})
 
 	ok, err := evaluateReadyExpr(`self.metadata.namespace == dep.metadata.namespace && self.status.conditions.exists(c, c.type == "Ready" && c.reason == "Succeeded") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`, s, self, dep)
 	if err != nil || !ok {
@@ -187,7 +187,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
-	s.UpdateStatus(dep, store.StatusFailed, "", "replacement")
+	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "replacement"})
 	for _, tc := range []struct {
 		name   string
 		self   manifest.NamedResource
@@ -214,7 +214,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 			if ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep); err != nil || !ok {
 				t.Fatalf("foreign projection borrowed Flux identity or conditions: ok=%v err=%v", ok, err)
 			}
-			s.UpdateStatus(foreignDep, store.StatusPending, "", "foreign")
+			s.UpdateStatus(foreignDep, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign"})
 			if ok, err := evaluateReadyExpr(expr, s, foreignSelf, foreignDep); err != nil || !ok {
 				t.Fatalf("status-only projection borrowed Flux identity: ok=%v err=%v", ok, err)
 			}
@@ -227,8 +227,8 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 		dependency := &manifest.Kustomization{Name: "child", Namespace: "ns"}
 		s.AddObject(parent)
 		s.AddObject(dependency)
-		s.UpdateStatus(parent.Named(), store.StatusPending, "", "waiting on child")
-		s.UpdateStatus(dependency.Named(), store.StatusReady, "", "")
+		s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "waiting on child"})
+		s.UpdateStatus(dependency.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 		pending, _ := s.GetStatus(parent.Named())
 		expr := fmt.Sprintf(`dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True") && self.status.conditions.exists(c, c.type == "Ready" && c.status == %q && c.reason == %q && c.message == %q)`, metav1.ConditionUnknown, pending.Reason, pending.Message)
 		if ok, err := evaluateReadyExpr(expr, s, parent.Named(), dependency.Named()); err != nil || !ok {
@@ -303,8 +303,8 @@ func TestReadyExpr_SelfCapture(t *testing.T) {
 			}
 			s.AddObject(self)
 			s.AddObject(dep)
-			s.UpdateStatus(self.Named(), store.StatusReady, "", "")
-			s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+			s.UpdateStatus(self.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			var reads store.ReadSet
 			reads.Init(s, self.Named(), nil)
 			defer reads.Retire()
@@ -321,7 +321,7 @@ func TestReadyExpr_SelfCapture(t *testing.T) {
 			if !reads.Valid() {
 				t.Fatal("fresh read set invalid")
 			}
-			s.UpdateStatus(self.Named(), store.StatusPending, "", "rendering")
+			s.UpdateStatus(self.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
 			if got := reads.Valid(); got == tc.status {
 				t.Fatalf("valid after self status change = %v, want %v", got, !tc.status)
 			}
@@ -339,7 +339,7 @@ func TestReadyExpr_DeclarationChanges(t *testing.T) {
 			dep := &manifest.Kustomization{Name: "dep", Namespace: "ns"}
 			s.AddObject(self)
 			s.AddObject(dep)
-			s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+			s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			var reads store.ReadSet
 			reads.Init(s, self.Named(), nil)
 			defer reads.Retire()
@@ -374,16 +374,16 @@ func TestReadyExpr_DependencyConditions(t *testing.T) {
 	s := store.New()
 	dep := &manifest.Kustomization{Name: "dep", Namespace: "ns"}
 	s.AddObject(dep)
-	s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+	s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	var reads store.ReadSet
 	reads.Init(s, testutil.KustomizationID("ns", "parent"), nil)
 	defer reads.Retire()
 	w := Waiter{Store: &reads, Parent: testutil.KustomizationID("ns", "parent")}
-	ref := manifest.DependencyRef{NamedResource: dep.Named(), ReadyExpr: `dep.status.conditions.exists(c, c.status == 'True')`}
+	ref := manifest.DependencyRef{NamedResource: dep.Named(), ReadyExpr: new(`dep.status.conditions.exists(c, c.status == 'True')`)}
 	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Terminal {
 		t.Fatalf("dependency: %+v", got)
 	}
-	s.UpdateStatus(dep.Named(), store.StatusPending, "", "rendering")
+	s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
 	if reads.Valid() {
 		t.Fatal("dependency conditions did not invalidate reads")
 	}

@@ -730,7 +730,7 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	r := manifest.DiscoveryRecord{Authored: id, Path: absPath, File: l.fileCoordinate(absPath)}
 	var buf [16]manifest.NamedResource
 	refs := buf[:0]
-	for ref := range manifest.References(obj) {
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if !discoveryReference(ref) {
 			continue
 		}

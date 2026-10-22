@@ -47,8 +47,7 @@ data:
   nested: {{ include "mychart.deterministic" . | quote }}
 `)
 
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	hr := newHR()
 	values := map[string]any{
@@ -90,8 +89,7 @@ metadata:
 data:
   parsed: {{ mustToDate "2006-01-02" "invalid" | unixEpoch | quote }}
 `)
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	out, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if err == nil {
@@ -106,10 +104,7 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  cleartext: {{ encryptAES \"key\" .Values.plaintext | decryptAES \"key\" | quote }}\n")
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
 		t.Run(plaintext, func(t *testing.T) {

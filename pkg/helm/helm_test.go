@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -37,10 +38,7 @@ data:
   greeting: {{ .Values.greeting }}
 `)
 
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
@@ -71,10 +69,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  tag: {{ .Values.image.tag }}\n  repository: {{ .Values.image.repository }}\n  pullPolicy: {{ .Values.image.pullPolicy }}\n")
 
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
@@ -134,8 +129,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 
 func helmChartFixture(t *testing.T) (*Client, Sources) {
 	t.Helper()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
 	return cli, cliSources
 }
@@ -309,7 +303,7 @@ func TestReleaseManifest_HookSeparators(t *testing.T) {
 	}
 }
 
-func TestApplyHRMetadata(t *testing.T) {
+func TestStamp_HelmMetadata(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name          string
@@ -461,10 +455,9 @@ metadata:
 			}
 			want, err := manifest.SplitDocs([]byte(tc.want))
 			assert.NoError(t, err)
-			ApplyHRCommonMetadata(docs, hr.CommonMetadata)
-			if tc.origin {
-				ApplyHROriginLabels(docs, hr)
-			}
+			policy := hr.EmissionPolicy()
+			policy.Owner = tc.origin
+			base.Stamp(policy, docs)
 			assert.Diff(t, docs, want)
 		})
 	}
@@ -472,8 +465,7 @@ metadata:
 
 func TestMergeChartValuesFiles(t *testing.T) {
 	t.Parallel()
-	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 	chartWith := func(files map[string]string) *chart.Chart {
 		c := &chart.Chart{}
 		for name, body := range files {

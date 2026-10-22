@@ -80,7 +80,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			c.Fetchers[manifest.KindOCIRepository] = src.Wrap(manifest.KindOCIRepository, f)
 			c.StartLifecycle()
 			t.Cleanup(func() {
-				c.Close()
+
 				ts.BlockTillDone()
 			})
 			repos := []*manifest.OCIRepository{

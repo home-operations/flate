@@ -80,7 +80,7 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 	switch {
 	case lf && rf:
 		plan.note.Side = SideBoth
-		plan.note.Reason = "failed on both sides: orig: " + left.Message + "; current: " + right.Message
+		plan.note.Reason = "failed on both sides: orig: " + left.String() + "; current: " + right.String()
 		plan.discloseEmpty = true
 	case ls && rs:
 		plan.note.Side = SideBoth
@@ -92,14 +92,14 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 		plan.discloseEmpty = true
 	case lu && !ru:
 		plan.note.Side = SideOrig
-		plan.note.Reason = left.Message
+		plan.note.Reason = left.String()
 		if ls {
 			plan.note.Reason = "suspended on orig"
 			plan.discloseEmpty = true
 		}
 	case ru && !lu:
 		plan.note.Side = SideCurrent
-		plan.note.Reason = right.Message
+		plan.note.Reason = right.String()
 		if rs {
 			plan.note.Reason = "suspended on current"
 			plan.discloseEmpty = true
@@ -114,7 +114,7 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 	if info.Outcome() == store.OutcomeSuspended {
 		return "suspended on " + string(side)
 	}
-	return string(side) + ": " + info.Message
+	return string(side) + ": " + info.String()
 }
 
 // Producer identity excludes paths; counts measure withheld document entries.

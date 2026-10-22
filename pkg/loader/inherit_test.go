@@ -339,7 +339,7 @@ spec:
 					t.Fatal("projected Kustomization missing")
 				}
 				var deps []manifest.NamedResource
-				for ref := range manifest.References(ks) {
+				for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 					if ref.Use == "dependsOn" {
 						deps = append(deps, ref.NamedResource)
 					}

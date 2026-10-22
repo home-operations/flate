@@ -40,7 +40,7 @@ func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 // New constructs a ResourceSet controller.
 func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	return &Controller{
-		Controller:  base.New(s, t, "resourceset"),
+		Controller:  base.New(s, t),
 		WipeSecrets: wipeSecrets,
 	}
 }
@@ -54,19 +54,9 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 
 func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {
 	id := rs.Named()
-	if err := c.run.PreflightError(id); err != nil {
-		return err
-	}
-	c.SetPendingUnlessReady(id, "resolving inputs")
-
-	deps := c.collectDeps(rs)
-	if len(deps) > 0 {
-		err := c.run.Require(ctx, deps, level)
-		if err != nil {
-			return err
-		}
-	}
-	if err := c.run.PreflightError(id); err != nil {
+	var err error
+	rs, err = c.run.RequireRefresh(ctx, rs, manifest.GateInputs, level)
+	if err != nil {
 		return err
 	}
 
@@ -92,46 +82,13 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 		c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
 	}
 	if err != nil {
-		c.Store.UpdateStatus(id, store.StatusFailed, "", err.Error())
 		return err
 	}
 	if handled {
 		return nil
 	}
-	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
-	for i, child := range attempt.Children {
-		if child.Obj.Named().Namespace == "" && manifest.KindOf(child.Obj).Namespaced() {
-			attempt.Children[i].Obj = child.Obj.WithNamespace(id.Namespace)
-		}
-	}
+	base.Stamp(rs.EmissionPolicy(), docs)
+	attempt.Children, attempt.Manifests = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Complete = true
-	c.run.Emit(id, attempt)
-	return nil
-}
-
-// collectDeps gates explicit dependencies, named inputs and the structural parent.
-// Authored dependsOn Ready=false still requests readiness here.
-func (c *execution) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
-	parents := c.run.Reads.Productions(rs.Named(), nil)
-	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
-	for _, p := range parents {
-		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
-			capacity++
-		}
-	}
-	deps := make([]manifest.DependencyRef, capacity)
-	n := 0
-	for ref := range manifest.References(rs) {
-		if ref.Use == "dependsOn" || ref.Use == "inputsFrom" && ref.Name != "" {
-			deps[n] = ref.DependencyRef
-			n++
-		}
-	}
-	deps = deps[:n]
-	for _, p := range parents {
-		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
-			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
-		}
-	}
-	return deps
+	return c.run.Emit(id, attempt)
 }

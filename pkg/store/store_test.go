@@ -2,8 +2,6 @@ package store
 
 import (
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"reflect"
 	"slices"
 	"strings"
@@ -11,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/testutil"
 
@@ -49,7 +50,7 @@ func TestStore_Snapshot(t *testing.T) {
 				st.AddObject(tc.obj)
 			}
 			if tc.status != "" {
-				st.UpdateStatus(tc.id, tc.status, "", "observed")
+				st.UpdateStatus(tc.id, StatusInfo{Status: tc.status, Reason: "", Message: "observed"})
 			}
 			statusful := tc.obj != nil && manifest.KindOf(tc.obj).Status || tc.obj == nil && tc.id.KindInfo().Status
 			for _, requested := range []bool{false, true} {
@@ -346,7 +347,7 @@ func TestStore_AdmissionInvalidatesWithoutStatusReset(t *testing.T) {
 	id := obj.Named()
 	s.AddObject(obj)
 	s.SetIncluded(id, false)
-	s.UpdateStatus(id, StatusReady, ReasonUnchanged, "unchanged")
+	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: ReasonUnchanged, Message: "unchanged"})
 	var reads ReadSet
 	reads.Init(s, id, nil)
 	reads.GetObject(id)
@@ -389,7 +390,7 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Sub
 		{"failed reset", StatusFailed, "", ReasonFailed, 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s.UpdateStatus(id, tc.status, tc.reason, "same message")
+			s.UpdateStatus(id, StatusInfo{Status: tc.status, Reason: tc.reason, Message: "same message"})
 			info, ok := s.GetStatus(id)
 			if !ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count {
 				t.Fatalf("status=%+v present=%v events=%d, want reason=%s events=%d", info, ok, len(events), tc.want, tc.count)
@@ -446,7 +447,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("ns", "k")
-	s.UpdateStatus(id, StatusPending, "", "starting")
+	s.UpdateStatus(id, StatusInfo{Status: StatusPending, Reason: "", Message: "starting"})
 	statusEvents := 0
 	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, _ any) {
 		statusEvents++
@@ -508,14 +509,14 @@ func TestStore_FailedResources(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "x", Namespace: ""}
 	id := ks.Named()
 	s.AddObject(ks)
-	s.UpdateStatus(id, StatusFailed, "", "boom")
+	s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "boom"})
 	assert.Equal(t, len(s.FailedResources()), 1)
 
 	// Phantom guard: a SetCondition that races after DeleteObject must
 	// not resurrect a failure entry for an id that no longer exists.
 	s.DeleteObject(id)
-	s.UpdateStatus(id, StatusFailed, "", "phantom") // simulates the race
-	assert.Equal(t, len(s.FailedResources()), 0)    // phantom entry must not leak
+	s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "phantom"}) // simulates the race
+	assert.Equal(t, len(s.FailedResources()), 0)                                         // phantom entry must not leak
 }
 
 func TestStore_ListObjects_ByKindIndex(t *testing.T) {
@@ -1004,7 +1005,7 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 		if i%2 == 0 {
 			status = StatusReady
 		}
-		s.UpdateStatus(id, status, "", fmt.Sprintf("iter-%d", i))
+		s.UpdateStatus(id, StatusInfo{Status: status, Reason: "", Message: fmt.Sprintf("iter-%d", i)})
 	}
 
 	var observation Observation
@@ -1018,7 +1019,7 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	s := New()
 	id := (&manifest.Kustomization{Name: "a", Namespace: "ns"}).Named()
 
-	s.UpdateStatus(id, StatusReady, "", "ok")
+	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "ok"})
 	healthy := Condition{
 		Type:    ConditionHealthy,
 		Status:  metav1.ConditionTrue,
@@ -1039,7 +1040,7 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	}
 	assert.Diff(t, conds, want)
 
-	s.UpdateStatus(id, StatusFailed, "", "boom")
+	s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "boom"})
 	assert.Diff(t, conds, want)
 	conds[0].Message = "caller mutation"
 	var after Observation
@@ -1090,7 +1091,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							parent.Name = "parent-" + id.Name
 							s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
 							s.RecordEmitted(parent, &Emission{Children: []Child{{Obj: obj}}, Complete: true})
-							s.UpdateStatus(id, StatusReady, "", id.Group)
+							s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: id.Group})
 							s.SetArtifact(id, &SourceArtifact{URL: id.Group})
 						}
 						for _, obj := range objects {
@@ -1188,7 +1189,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 				case 3:
 					ks := &manifest.Kustomization{Name: fmt.Sprintf("ks-w%d-i%d", w, i), Namespace: "ns"}
 					s.AddObject(ks)
-					s.UpdateStatus(ks.Named(), StatusFailed, "", "boom")
+					s.UpdateStatus(ks.Named(), StatusInfo{Status: StatusFailed, Reason: "", Message: "boom"})
 				case 4:
 					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-w%d-i%d", w, i), Namespace: "ns"}
 					s.AddObject(hr)

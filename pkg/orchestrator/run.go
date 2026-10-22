@@ -8,7 +8,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/loader"
@@ -79,11 +78,6 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	return o.runDAG(ctx)
 }
 
-// configureControllers wires reconcile-shaping config (filter, parent
-// resolver, existence + render-inflight bundles, preflight lookups)
-// onto all three controllers. Called once at the top of Run before any
-// controller Start, since Configure panics if invoked after dispatch
-// begins.
 func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
@@ -108,23 +102,22 @@ func (o *Orchestrator) configureControllers() {
 	// The reconcile-shaping config common to all three render controllers,
 	// built once; each Configure adds its controller-specific fields.
 	common := base.Options{
+		SubstituteFrom:          o.substitutionSources,
+		SkipKinds:               o.cfg.HelmOptions.SkipResourceKinds(),
 		DependencySubstitutions: o.dependencySubstitutions,
 		Filter:                  o.filter,
 		Index:                   o.index,
 		Existence:               existence,
 		PreflightFailure:        o.preflightFailure,
 		AllowMissingCRDs:        o.cfg.AllowMissingCRDs,
+		AllowMissingSecrets:     o.cfg.AllowMissingSecrets,
 	}
 	o.ksc.Configure(kustomization.Options{
-		Options:        common,
-		SubstituteFrom: o.substitutionSources, Substitute: o.cfg.Substitute,
+		Options:             common,
+		Substitute:          o.cfg.Substitute,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
 	}, o.cfg.SourceRetry)
-	o.hrc.Configure(helmrelease.ReconcileOptions{
-		Options:             common,
-		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
-		SubstituteFrom:      o.substitutionSources,
-	})
+	o.hrc.Configure(common)
 	o.rsc.Configure(common)
 }
 
@@ -143,7 +136,7 @@ func (o *Orchestrator) configureControllers() {
 //
 // Idempotent: a second call returns the cached Result/err pair from
 // the first. The controllers' Configure hooks panic if invoked after
-// Start (reconcile-shaping config is frozen once dispatch begins), so
+// StartLifecycle (reconcile-shaping config is frozen once dispatch begins), so
 // a re-Run would panic. Caching at this boundary lets embedders retry
 // Render without restarting controllers — pair with Bootstrap's same
 // guarantee guard above.
@@ -192,7 +185,6 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 // collectManifests filters completed output without changing stored documents needed by value consumers.
 // Accepted completed output MUST remain available after a failed successor.
 func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
-	skip := o.cfg.HelmOptions.SkipResourceKinds()
 	var objects []manifest.BaseManifest
 	for _, info := range reconcilableKinds {
 		objects = append(objects, o.store.ListObjects(info.Group, info.Kind)...)
@@ -221,7 +213,7 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 				selected[target] = !parentAttributed || !manifest.KindOf(child.Obj).Render && o.store.EmissionOwner(target) == id
 			}
 		}
-		for _, doc := range manifest.DropKinds(attempt.Manifests, skip) {
+		for _, doc := range attempt.Manifests {
 			target := resourceset.DedupKey(doc)
 			apiVersion := manifest.DocAPIVersion(doc)
 			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" && target.Group != manifest.KustomizeDomain
@@ -240,7 +232,7 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		}
 	}
 	var documents []map[string]any
-	for _, doc := range manifest.DropKinds(o.documents, skip) {
+	for _, doc := range o.documents {
 		id := manifest.DocIdentity(doc)
 		if o.store.EmissionOwner(id) == (manifest.NamedResource{}) && o.filter.ShouldReconcile(id) {
 			documents = append(documents, doc)
@@ -252,16 +244,12 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 	return out
 }
 
-// Stop unsubscribes controllers and joins remote workers before releasing owned
+// Stop joins remote workers before releasing owned
 // backing. Repeated calls return the same cleanup error; Store stays readable.
 // Callers MUST cancel and join any active Run before Stop. An injected Cache
 // and Network remain caller-owned.
 func (o *Orchestrator) Stop() error {
 	o.stopOnce.Do(func() {
-		o.rsc.Close()
-		o.hrc.Close()
-		o.ksc.Close()
-		o.src.Close()
 		o.ksc.Trees.Close()
 		o.inputs.Close()
 		if o.ownNetwork {

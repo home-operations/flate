@@ -60,8 +60,7 @@ func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
 				if pinned {
 					input = acquireChartFS(t, owner, input)
 				}
-				cli, err := NewClient(owner)
-				assert.NoError(t, err)
+				cli := NewClient(owner)
 				st := store.New()
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: location, Source: manifest.NamedResource{Name: "repo", Namespace: "default", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, LocalPath: root, Key: "untrusted"})
@@ -105,10 +104,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	for name, body := range files {
 		testutil.WriteFile(t, dir, name, body)
 	}
-	cli, err := NewClient(cachetest.New(t, "", cache.New))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	hr := newHR()
 	first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
@@ -165,8 +161,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 		"charts/child/values.yaml":       {Data: []byte("value: canonical\n")},
 		"charts/child/templates/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: child\ndata:\n  value: {{ .Values.value | quote }}\n")},
 	}
-	cli, err := NewClient(cachetest.New(t, "", cache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", cache.New))
 	st := store.New()
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Name: "repo", Namespace: "default", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
@@ -236,8 +231,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		}
 		return head.Hash(), nil
 	}
-	cli, err := NewClient(owner)
-	assert.NoError(t, err)
+	cli := NewClient(owner)
 	st := store.New()
 	cliSources := NewSources(st)
 	hr := &manifest.HelmRelease{Name: "first", Namespace: "default", Chart: manifest.HelmChart{Name: "one", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo", Namespace: "default"}}}
@@ -257,8 +251,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 					outputRoot = t.TempDir()
 				}
 				outputOwner := cachetest.New(t, outputRoot, cache.New)
-				renderer, err := NewClient(outputOwner)
-				assert.NoError(t, err)
+				renderer := NewClient(outputOwner)
 				backing := &chartBacking{Filesystem: generation.Backing}
 				input, _, err := gittree.New(t.Context(), backing, generation.Commit, gittree.ViewOptions{Content: struct{ Source string }{id}})
 				assert.NoError(t, err)
@@ -297,8 +290,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				})
 				assert.NoError(t, err)
 				assert.NoError(t, r.Close())
-				fresh, err := NewClient(cachetest.New(t, outputRoot, cache.New))
-				assert.NoError(t, err)
+				fresh := NewClient(cachetest.New(t, outputRoot, cache.New))
 				freshSources := NewSources(sources)
 				before := backing.opens.Load()
 				hit, err := fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
@@ -383,8 +375,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 			t.Parallel()
 			cacheRoot := t.TempDir()
 			owner := cachetest.New(t, cacheRoot, cache.New)
-			cli, err := NewClient(owner)
-			assert.NoError(t, err)
+			cli := NewClient(owner)
 			st := store.New()
 			cliSources := NewSources(st)
 			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "chart"}}}

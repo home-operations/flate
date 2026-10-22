@@ -21,7 +21,7 @@ func (o *Orchestrator) failDependsOnCycles() {
 // graph reports.
 //
 // Returns nothing — failures land in preflightFailures and the
-// controllers read them via PreflightFailure on their next status
+// controllers read them through the base preflight gate on their next status
 // check.
 func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
 	obj := o.store.GetObject(id)
@@ -75,7 +75,7 @@ func (o *Orchestrator) rebuildDependencyGraphFromStore() {
 
 // Flux Kustomization and HelmRelease dependsOn references are kind-homogeneous.
 func sameKindDepTargets(obj manifest.BaseManifest, out []manifest.NamedResource) []manifest.NamedResource {
-	for ref := range manifest.References(obj) {
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.Use == "dependsOn" {
 			out = append(out, ref.NamedResource)
 		}

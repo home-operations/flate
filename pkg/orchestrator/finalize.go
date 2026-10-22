@@ -52,7 +52,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 			// dir's kustomization.yaml) is one real Flux never applies — demote it
 			// rather than hard-failing a file that isn't wired into any tree (#777).
 			if record.Excluded {
-				out[id] = info.Message
+				out[id] = info.String()
 			}
 			continue
 		}
@@ -126,7 +126,7 @@ func (o *Orchestrator) classifyCompleted() {
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(orphans), manifest.NamedResource.Compare) {
 		o.orphans[id] = orphans[id]
-		o.store.UpdateStatus(id, store.StatusReady, "", orphanedMessage)
+		o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: orphanedMessage})
 	}
 }
 
@@ -204,7 +204,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 
 func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo, ksCount, hrCount int) {
 	// Counts describe the final supported inventory.
-	slog.Debug("reconcile complete",
+	slog.Debug("orchestrator: reconcile complete",
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,
 		"failed", len(failed))
@@ -220,18 +220,13 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 }
 
 func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]store.StatusInfo) {
-	for id, info := range sanitizeFailed(failed) {
-		// Demoted to Debug: the same failure list is surfaced as a
-		// structured error by aggregateFailures (with file paths
-		// included) AND echoed by the test runner / build CLI's own
-		// per-resource output. Logging at Warn here double-emits to
-		// stderr alongside the user-facing report and reads as
-		// "flate had an internal error" when it's just normal
-		// per-resource Flux failures the user expects to see.
+	failed = sanitizeFailed(failed)
+	for _, id := range slices.SortedFunc(maps.Keys(failed), manifest.NamedResource.Compare) {
+		info := failed[id]
 		if f := o.fileOf(id); f != "" {
-			slog.Debug("resource failed", "id", id.String(), "reason", info.Message, "file", f)
+			slog.Debug("orchestrator: resource failed", "id", id.String(), "reason", info.String(), "file", f)
 		} else {
-			slog.Debug("resource failed", "id", id.String(), "reason", info.Message)
+			slog.Debug("orchestrator: resource failed", "id", id.String(), "reason", info.String())
 		}
 	}
 }
@@ -248,9 +243,9 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 	msgs := make([]string, 0, len(failed))
 	for id, info := range sanitizeFailed(failed) {
 		if f := o.fileOf(id); f != "" {
-			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, info.Message))
+			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, info.String()))
 		} else {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.Message))
+			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.String()))
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
@@ -276,7 +271,7 @@ func (o *Orchestrator) fileOf(id manifest.NamedResource) string {
 func sanitizeFailed(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]store.StatusInfo {
 	out := make(map[manifest.NamedResource]store.StatusInfo, len(failed))
 	for id, info := range failed {
-		info.Message = manifest.TrimSentinelPrefix(info.Message)
+		info.Message = manifest.TrimSentinelPrefix(info.String())
 		out[id] = info
 	}
 	return out

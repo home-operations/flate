@@ -205,28 +205,35 @@ func (p *ResourceSetInputProvider) derivedID() string {
 }
 
 func (r *ResourceSet) references(yield func(Reference) bool) {
-	for i, dep := range r.DependsOn {
-		gv, _ := schema.ParseGroupVersion(dep.APIVersion)
-		id := Resolve(NamedResource{Group: gv.Group, Kind: dep.Kind, Namespace: dep.Namespace, Name: dep.Name}, "", r.Namespace)
+	for i := range r.DependsOn {
+		dep := &r.DependsOn[i]
+		id := NamedResource{Group: apiGroup(dep.APIVersion), Kind: dep.Kind, Name: dep.Name}
 		namespaced, prepared := scopes.LookupScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
 		if !prepared {
 			panic("manifest: ResourceSet dependency scope was not prepared")
 		}
-		if !namespaced {
-			id.Namespace = ""
+		if namespaced {
+			id.Namespace = r.Namespace
+			if dep.Namespace != "" {
+				id.Namespace = dep.Namespace
+			}
 		}
 		if !yield(Reference{
 			NamedResource: id,
-			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
+			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs,
 		}) {
 			return
 		}
 	}
 	for i, ref := range r.InputsFrom {
 		kind := cmp.Or(ref.Kind, KindResourceSetInputProvider)
+		var gate GateStage
+		if ref.Name != "" {
+			gate = GateInputs
+		}
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name}, "", r.Namespace),
-			Use:           "inputsFrom", Position: i, Content: true,
+			Use:           "inputsFrom", Position: i, Content: true, Gate: gate,
 		}) {
 			return
 		}

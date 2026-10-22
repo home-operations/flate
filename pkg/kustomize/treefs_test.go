@@ -370,7 +370,7 @@ func TestRender_ConcurrentPrivateOverlays(t *testing.T) {
 								}
 								r := &manifest.ResourceSet{Namespace: "apps"}
 								r.DependsOn = []fluxopv1.Dependency{{APIVersion: tc.version, Kind: tc.kind, Name: "scope"}}
-								for ref := range manifest.References(r) {
+								for ref := range manifest.References(r, manifest.ReferenceRelations) {
 									if ref.Namespace != tc.namespace {
 										t.Errorf("%s %s dependency namespace=%q, want %q", tc.version, tc.kind, ref.Namespace, tc.namespace)
 										return

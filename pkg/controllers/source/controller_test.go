@@ -178,7 +178,7 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 					t.Errorf("provisional unresolved=%t acquisitions=%d, want deferred with no acquisition", provisional.Outcome() == schedule.Blocked, f.calls)
 				}
 				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true})
-				st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			})
 			c.Tasks.BlockTillDone()
 			provisional.Retire()
@@ -256,7 +256,7 @@ func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts
 	c.Configure(opts, sourcecache.RetryConfig{Attempts: 3})
 	c.StartLifecycle()
 	t.Cleanup(func() {
-		c.Close()
+
 		ts.BlockTillDone()
 	})
 	return c, st
@@ -323,8 +323,8 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	if info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want StatusFailed", info)
 	}
-	if info.Message != "boom" {
-		t.Errorf("Failed reason = %q, want %q", info.Message, "boom")
+	if info.String() != "boom" {
+		t.Errorf("Failed reason = %q, want %q", info.String(), "boom")
 	}
 }
 
@@ -356,7 +356,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 						message, calls = "suspended", 0
 						outcome = store.OutcomeSuspended
 					}
-					if info.Outcome() != outcome || info.Message != message || f.calls != calls {
+					if info.Outcome() != outcome || info.String() != message || f.calls != calls {
 						t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
 					}
 					if st.GetArtifact(tc.obj.Named()) != nil {
@@ -376,7 +376,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		c.Fetchers[manifest.KindGitRepository] = f
 		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, controllertest.MapLister{})
 		c.Configure(FetchOptions{Filter: filter}, sourcecache.RetryConfig{})
-		t.Cleanup(func() { c.Close(); tasks.BlockTillDone() })
+		t.Cleanup(func() { tasks.BlockTillDone() })
 		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 		st.AddObject(repo)
 		c.StartLifecycle()
@@ -387,7 +387,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		})
 		tasks.BlockTillDone()
 		info, _ := st.GetStatus(repo.Named())
-		if info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || f.calls != 0 {
+		if info.Outcome() != store.OutcomeUnchanged || info.String() != "unchanged" || f.calls != 0 {
 			t.Fatalf("status=%+v fetch calls=%d, want Ready/unchanged calls=0", info, f.calls)
 		}
 	})
@@ -591,7 +591,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.wantSkip {
 				wantStatus = store.StatusReady
 			}
-			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip || !strings.Contains(info.Message, detail) || !strings.Contains(info.Message, secret.Name) {
+			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip || !strings.Contains(info.String(), detail) || !strings.Contains(info.String(), secret.Name) {
 				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
 			}
 			if st.GetArtifact(repo.Named()) != nil {

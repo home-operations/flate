@@ -1,12 +1,13 @@
 package manifest
 
 import (
+	"testing"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/assert"
-	"testing"
 )
 
-func TestHelmRelease_UsesDirectOCIRepository(t *testing.T) {
+func TestHelmRelease_TracksDigest(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, refKind, repoKind, apiVersion string
@@ -26,7 +27,7 @@ func TestHelmRelease_UsesDirectOCIRepository(t *testing.T) {
 			if tc.refKind != "" {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{APIVersion: tc.apiVersion, Kind: tc.refKind, Name: "chart"}
 			}
-			assert.Equal(t, hr.UsesDirectOCIRepository(), tc.want)
+			assert.Equal(t, hr.TracksDigest(), tc.want)
 		})
 	}
 }

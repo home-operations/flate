@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
+
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -35,7 +37,7 @@ func TestRender_RespectsCanceledContext(t *testing.T) {
 	}
 }
 
-func TestRender_Metadata(t *testing.T) {
+func TestRender_UnstampedMetadata(t *testing.T) {
 	t.Parallel()
 	const plain = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: c, namespace: ns}\ndata: {k: v}\n"
 	const ownerName = "kustomize.toolkit.fluxcd.io/name"
@@ -48,7 +50,7 @@ func TestRender_Metadata(t *testing.T) {
 	}{
 		{
 			name:    "common metadata merges and overrides",
-			fixture: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels: {app: x}\n  annotations: {note: y}\ndata: {k: v}\n",
+			fixture: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n  namespace: ns\n  labels: {app: x}\n  annotations: {note: 'y'}\ndata: {k: v}\n",
 			owner:   map[string]any{"name": "k", "namespace": "ns"},
 			common: map[string]any{
 				"labels":      map[string]any{"team": "flate", "app": "override"},
@@ -142,6 +144,10 @@ func TestRender_Metadata(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
 			got := out[0]
+			rawWant, err := manifest.SplitDocs([]byte(tc.fixture))
+			assert.NoError(t, err)
+			assert.Diff(t, out, rawWant)
+			base.Stamp(ks.EmissionPolicy(), out)
 			md := got["metadata"].(map[string]any)
 			labels, _ := md["labels"].(map[string]any)
 			annotations, _ := md["annotations"].(map[string]any)

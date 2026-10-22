@@ -26,25 +26,25 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 				id.Group = manifest.FluxKustomizeDomain
 				id.Kind = manifest.KindKustomization
 				id.Namespace = "ns"
-				s.UpdateStatus(id, store.StatusPending, "", "")
+				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			case "ready Kustomization", "CEL dep only", "CEL same identity", "CEL distinct self":
 				id = manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "dependency", Namespace: "ns"}
 				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-				s.UpdateStatus(id, store.StatusReady, "", "")
+				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			}
 			w := &Waiter{Store: s}
 			dep := manifest.DependencyRef{NamedResource: id}
 			switch state {
 			case "CEL dep only", "CEL same identity", "CEL distinct self":
-				dep.ReadyExpr = `dep.metadata.name == "dependency" && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
+				dep.ReadyExpr = new(`dep.metadata.name == "dependency" && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`)
 				if state != "CEL dep only" {
 					w.Parent = id
 					if state == "CEL distinct self" {
 						w.Parent.Name = "self"
 						s.AddObject(&manifest.Kustomization{Name: w.Parent.Name, Namespace: id.Namespace})
-						s.UpdateStatus(w.Parent, store.StatusReady, "", "")
+						s.UpdateStatus(w.Parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					}
-					dep.ReadyExpr += ` && self.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
+					*dep.ReadyExpr += ` && self.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
 				}
 				w.Classify(b.Context(), dep, manifest.DrainCascade)
 			}

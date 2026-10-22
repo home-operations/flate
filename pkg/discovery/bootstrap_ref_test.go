@@ -529,10 +529,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			t.Fatalf("alias coordinates: %+v", art)
 		}
 		owner := cachetest.New(t, "", sourcecache.New)
-		cli, err := helm.NewClient(owner)
-		if err != nil {
-			t.Fatal(err)
-		}
+		cli := helm.NewClient(owner)
 
 		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: alias.Named().Group, Kind: alias.Named().Kind, Namespace: alias.Namespace, Name: alias.Name}}}
 		for _, exists := range []bool{false, true, false} {

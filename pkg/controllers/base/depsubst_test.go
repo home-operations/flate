@@ -41,7 +41,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			c := New(st, nil, "test")
+			c := New(st, nil)
 			parent, parentDoc := emissionDependency(t, "parent", "  path: ./children\n")
 			st.AddObject(parent)
 			for i, declaration := range tt.declarations {
@@ -127,7 +127,7 @@ func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 	children := make([]*manifest.Kustomization, 2)
 	docs := make([]map[string]any, 2)
 	for i := range 2 {
-		controllers[i] = New(st, nil, "test")
+		controllers[i] = New(st, nil)
 		controllers[i].Configure(Options{DependencySubstitutions: d})
 		parents[i], _ = emissionDependency(t, fmt.Sprintf("parent-%d", i), "  path: ./children\n")
 		children[i], docs[i] = emissionDependency(t, fmt.Sprintf("child-%d", i), "  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n")

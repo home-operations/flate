@@ -74,7 +74,7 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 					o.tasks.YieldSlot(func() { <-attempted })
 					o.store.AddObject(obj)
 				case consumer:
-					execution := controllertest.NewExecution(base.New(o.store, o.tasks, "fixture"), id)
+					execution := controllertest.NewExecution(base.New(o.store, o.tasks), id)
 					execution.Dispatch(ctx, level, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
 						if execution.Reads.GetObject(obj.Named()) == nil {
 							close(attempted)
@@ -124,7 +124,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		t.Fatalf("derived failure = %+v, want ghost blocker", info)
 	}
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
-	o.store.UpdateStatus(ghost, store.StatusReady, "", "")
+	o.store.UpdateStatus(ghost, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	result = d.Dispatch(t.Context(), victim, manifest.DrainNone)
 	info, _ = o.store.GetStatus(victim)
 	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
@@ -159,7 +159,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		o.store.AddObject(repo)
 		o.store.AddObject(consumer)
 		o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
-		o.store.UpdateStatus(repo.Named(), store.StatusReady, "", "")
+		o.store.UpdateStatus(repo.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 		attempted, acquired := make(chan struct{}), make(chan struct{})
 		dispatch := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 			assert.Equal(t, level, manifest.DrainNone)

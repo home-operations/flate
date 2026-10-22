@@ -117,7 +117,7 @@ metadata: {name: issuer}
 			st.SetArtifact(src.Named(), &store.SourceArtifact{
 				Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: revision, Digest: digest,
 			})
-			st.UpdateStatus(src.Named(), store.StatusReady, "", "recorded artifact")
+			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "recorded artifact"})
 			st.AddObject(hr)
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("reconcile: %+v", info)
@@ -281,7 +281,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 		Chart: manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "podinfo"}},
 	}
 	st.AddObject(hr)
-	err := c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainForce)
+	err := c.newExecution((hr).Named()).requireChartForTest(t.Context(), hr, manifest.DrainForce)
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("chart gate category = %v", err)
 	}
@@ -301,7 +301,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 	c, st := newTestController(t, nil)
 	dep := &manifest.HelmRelease{Name: "dep", Namespace: "flux-system"}
 	st.AddObject(dep)
-	st.UpdateStatus(dep.Named(), store.StatusFailed, "", "synthetic dep failure")
+	st.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "synthetic dep failure"})
 
 	hr := &manifest.HelmRelease{
 		Name: "depender", Namespace: "flux-system",
@@ -357,7 +357,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	// Resolver returns the parent for the HR only — closes over
 	// captured state, the production shape (which combines a map +
 	// a Store render ownership lookup).
-	c, st := newTestControllerWithOptions(t, ReconcileOptions{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{hr.Named(): parent.Named()})})
+	c, st := newTestControllerWithOptions(t, base.Options{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{hr.Named(): parent.Named()})})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
@@ -393,11 +393,11 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 		name, message    string
 		parent, retained bool
 	}{
-		{"parent", "waiting for parent KS", true, false},
+		{"parent", "waiting for structural parents", true, false},
 		{"dependencies_after_parent", "resolving dependencies", true, false},
 		{"dependencies_without_parent", "resolving dependencies", false, false},
-		{"pre_render", "awaiting pre-render references", false, false},
-		{"pre_render_retained", "awaiting pre-render references", true, true},
+		{"pre_render", "resolving values inputs", false, false},
+		{"pre_render_retained", "resolving values inputs", true, true},
 	} {
 		t.Run(site.name, func(t *testing.T) {
 			t.Parallel()
@@ -412,10 +412,10 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 					}
 					c, st := newTestControllerWithParentOf(t, parents)
 					st.AddObject(parent)
-					st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+					st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					dep := &manifest.HelmRelease{Name: "dependency", Namespace: "apps"}
 					st.AddObject(dep)
-					st.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+					st.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					dir := t.TempDir()
 					testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: refresh\nversion: 1.0.0\n")
 					testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
@@ -426,7 +426,7 @@ data: {greeting: hi}
 					src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
 					st.AddObject(src)
 					st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8", Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"})
-					st.UpdateStatus(src.Named(), store.StatusReady, "", "")
+					st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					doc := map[string]any{
 						"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
 						"metadata": map[string]any{"name": id.Name, "namespace": id.Namespace},
@@ -436,7 +436,7 @@ data: {greeting: hi}
 							"values":    map[string]any{"output": "stale-output"},
 						},
 					}
-					if site.message == "awaiting pre-render references" {
+					if site.message == "resolving values inputs" {
 						input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "{}"}}
 						st.AddObject(input)
 						doc["spec"].(map[string]any)["valuesFrom"] = []any{map[string]any{"kind": manifest.KindConfigMap, "name": input.Name}}
@@ -448,7 +448,7 @@ data: {greeting: hi}
 					hr := obj.(*manifest.HelmRelease)
 					original := hr.Clone()
 					st.AddObject(hr)
-					st.UpdateStatus(id, store.StatusPending, "", "")
+					st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 					var retained *store.Emission
 					if site.retained {
 						retained = &store.Emission{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
@@ -465,10 +465,10 @@ data: {greeting: hi}
 						if other != id || !ok {
 							return
 						}
-						if info.Message == "rendering chart" {
+						if info.Message == "rendering" {
 							renders.Add(1)
 						}
-						if info.Message == "waiting for parent KS" {
+						if info.Message == "waiting for structural parents" {
 							parentEvents.Add(1)
 						}
 						if info.Message != site.message {
@@ -564,16 +564,13 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 						t.Fatal(err)
 					}
 					t.Cleanup(func() { _ = owner.Close() })
-					client, err := helm.NewClient(owner)
-					if err != nil {
-						t.Fatal(err)
-					}
-					c := New(base.New(st, tasks, "helmrelease"), client, helm.Options{}, false)
-					c.Configure(ReconcileOptions{})
-					c.Start(t.Context())
+					client := helm.NewClient(owner)
+					c := New(base.New(st, tasks), client, helm.Options{}, false)
+					c.Configure(base.Options{})
+					c.StartLifecycle()
 					started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 					release := sync.OnceFunc(func() { close(resume) })
-					t.Cleanup(func() { release(); tasks.BlockTillDone(); c.Close() })
+					t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
 					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 					if rescue {
 						parent.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}
@@ -597,7 +594,7 @@ data:
 						Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
 					}
 					st.SetArtifact(src.Named(), source)
-					st.UpdateStatus(src.Named(), store.StatusReady, "", "")
+					st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					required := "present"
 					if rescue {
 						required = ""
@@ -615,7 +612,7 @@ data:
 					publish := func(doc map[string]any) {
 						_, next := st.GetEmission(parent.Named())
 						defer next.Finish()
-						next.Children, next.Manifests = base.ParseChildren(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+						next.Children, next.Manifests = c.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 						next.Complete = true
 						if rescue {
 							next.Unreadable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: parent.Namespace, Name: "unreadable"}}
@@ -623,7 +620,7 @@ data:
 						c.Emit(parent.Named(), &next)
 					}
 					publish(docA)
-					st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+					st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					id := testutil.HelmReleaseID("apps", "release")
 					hr, ok := st.Get[*manifest.HelmRelease](id)
 					if !ok {
@@ -711,7 +708,7 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	repository := &manifest.HelmRepository{Name: "charts", Namespace: "apps"}
 	repository.URL = "https://charts.invalid"
 	st.AddObject(repository)
-	st.UpdateStatus(repository.Named(), store.StatusReady, "", "")
+	st.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "value: first\n"}}
 	st.AddObject(input)
 	hr := &manifest.HelmRelease{
@@ -760,7 +757,7 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 		testutil.WriteFile(t, fixture.dir, "templates/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-first'}\ndata: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-second'}\ndata: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n")
 	}
 	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-one", FS: os.DirFS(firstDir), LocalPath: firstDir})
-	st.UpdateStatus(chart, store.StatusReady, "", "")
+	st.UpdateStatus(chart, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	initialRun := reconcile()
 	initial, ok := st.GetArtifact(hr.Named()).(*store.Emission)
 	if !ok || initialRun.Outcome() == schedule.Blocked || initialRun.Reused || len(initial.Manifests) != 2 {
@@ -840,7 +837,7 @@ func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
 	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
 	st.AddObject(source)
 	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: input, LocalPath: root})
-	st.UpdateStatus(source.Named(), store.StatusReady, "", "")
+	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	hr := &manifest.HelmRelease{
 		Name: "app", Namespace: "apps",
 		Chart:            manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: source.Namespace, Name: source.Name}},

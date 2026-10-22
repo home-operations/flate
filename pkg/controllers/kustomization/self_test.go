@@ -26,7 +26,7 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 			c, s, _ := newControllerWithFixture(t)
 			dep := &manifest.Kustomization{Name: "dep", Namespace: "flux-system"}
 			s.AddObject(dep)
-			s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+			s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			ks := &manifest.Kustomization{
 				Name: "apps", Namespace: "flux-system",
 				Labels: map[string]string{"tier": "data"}, Path: "./apps",
@@ -58,7 +58,7 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 				if info.Status == store.StatusPending && info.Message == "rendering" {
 					rendering.Store(true)
 				}
-				if info.Status == store.StatusPending && strings.HasPrefix(info.Message, "applying ") {
+				if info.Status == store.StatusPending && strings.HasPrefix(info.String(), "applying ") {
 					applying.Store(true)
 				}
 			}, false)

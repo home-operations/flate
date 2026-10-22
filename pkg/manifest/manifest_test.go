@@ -582,8 +582,8 @@ spec:
 	if deps[0].Name != "infra" {
 		t.Errorf("name: %q", deps[0].Name)
 	}
-	if !strings.Contains(deps[0].ReadyExpr, "InfraInitialized") {
-		t.Errorf("ReadyExpr lost: %q", deps[0].ReadyExpr)
+	if !strings.Contains(*deps[0].ReadyExpr, "InfraInitialized") {
+		t.Errorf("ReadyExpr lost: %q", *deps[0].ReadyExpr)
 	}
 }
 

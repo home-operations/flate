@@ -26,9 +26,9 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 				},
 			}
 			st.AddObject(ks)
-			st.UpdateStatus(ks.Named(), store.StatusPending, "", "")
+			st.UpdateStatus(ks.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			if failed {
-				st.UpdateStatus(ks.SourceID(), store.StatusFailed, "", "fetch failed")
+				st.UpdateStatus(ks.SourceID(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "fetch failed"})
 			}
 			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
 				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade).Blocked; len(blocked) != 0 {
@@ -78,7 +78,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 			// render's `patches:` block.
 		},
 	}
-	got, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainNone)
+	got, _, err := c.newExecution(ks.Named()).resolveSource(ks)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		Path:      "./app",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	}
-	got, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainNone)
+	got, _, err := c.newExecution(ks.Named()).resolveSource(ks)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 		Name: "foo", Namespace: "flux-system",
 		Path: "./app",
 	}
-	_, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainNone)
+	_, _, err := c.newExecution(ks.Named()).resolveSource(ks)
 	if err == nil {
 		t.Fatalf("expected error when bootstrap source is absent")
 	}

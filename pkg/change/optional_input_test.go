@@ -83,7 +83,7 @@ data: {VALUE: available}
 				t.Fatal("optional input is inside app's rendered ownership")
 			}
 			optional := false
-			for ref := range manifest.References(st.GetObject(app)) {
+			for ref := range manifest.References(st.GetObject(app), manifest.ReferenceRelations) {
 				optional = optional || ref.NamedResource == input && ref.Use == "substituteFrom" && ref.Optional
 			}
 			if !optional {

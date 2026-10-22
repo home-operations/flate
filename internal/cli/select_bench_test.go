@@ -69,7 +69,7 @@ func completedScopeFixture(tb testing.TB, count int, failures, cycle bool) orche
 		}}})
 	}
 	for i, id := range ids {
-		o.Store().UpdateStatus(id, store.StatusReady, "", "")
+		o.Store().UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 		if failures && i%4 == 0 {
 			o.Store().UpdateFailure(id, errors.New("render failed"))
 		}

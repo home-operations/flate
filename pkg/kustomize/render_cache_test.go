@@ -726,8 +726,10 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	if err != nil || !hasRenderField(updated, "name", "changed") {
 		t.Fatalf("bare cache missed input invalidation: %s, %v", updated, err)
 	}
+	req.Spec = req.Spec.Clone()
+	req.Spec.NamePrefix = "owned-"
 	owned, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
-	if err != nil || !hasRenderField(owned, manifest.FluxKustomizeDomain+"/name", "demo") || !hasRenderField(owned, "name", "changed") {
+	if err != nil || hasRenderField(owned, manifest.FluxKustomizeDomain+"/name", "demo") || !hasRenderField(owned, "name", "owned-changed") {
 		t.Fatalf("owned render reused bare output: %s, %v", owned, err)
 	}
 

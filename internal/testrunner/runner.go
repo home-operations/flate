@@ -56,19 +56,19 @@ func Run(result *selection.Selection) output.TestReport {
 func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
 	switch info.Outcome() {
 	case store.OutcomeBlocked:
-		return output.Case{ID: id, Outcome: output.OutcomeBlocked, Reason: info.Message}
+		return output.Case{ID: id, Outcome: output.OutcomeBlocked, Reason: info.String()}
 	case store.OutcomeFailed:
-		return output.Case{ID: id, Outcome: output.OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.Message)}
+		return output.Case{ID: id, Outcome: output.OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.String())}
 	case store.OutcomeUnchanged:
 		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: "unchanged"}
 	case store.OutcomeSuspended:
 		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: "suspended"}
 	case store.OutcomeSkipped:
-		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: info.Message}
+		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: info.String()}
 	case store.OutcomePassed:
 		return output.Case{ID: id, Outcome: output.OutcomePassed}
 	default:
 		return output.Case{ID: id, Outcome: output.OutcomeFailed,
-			Reason: "still " + string(info.Status) + ": " + manifest.TrimSentinelPrefix(info.Message)}
+			Reason: "still " + string(info.Status) + ": " + manifest.TrimSentinelPrefix(info.String())}
 	}
 }

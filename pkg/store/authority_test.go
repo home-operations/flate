@@ -82,12 +82,12 @@ func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
 			}
 			assert.Equal(t, headsForTest(s, child.Obj.Named()), h4)
 			assert.Equal(t, fourth.Valid(), true)
-			s.UpdateStatus(child.Obj.Named(), StatusReady, "", "")
+			s.UpdateStatus(child.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 			s.SetArtifact(child.Obj.Named(), &SourceArtifact{Key: "a"})
 			h5 := headsForTest(s, child.Obj.Named())
 			assert.Equal(t, fourth.Valid(), false)
 			fifth := captureReads()
-			s.UpdateStatus(child.Obj.Named(), StatusReady, "", "")
+			s.UpdateStatus(child.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 			s.SetArtifact(child.Obj.Named(), &SourceArtifact{Key: "a"})
 			assert.Equal(t, headsForTest(s, child.Obj.Named()), h5)
 			assert.Equal(t, fifth.Valid(), true)
@@ -200,7 +200,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 			s.AddObject(obj)
 			publish := func(value string) {
 				if kind == "condition" {
-					s.UpdateStatus(obj.Named(), StatusReady, "", value)
+					s.UpdateStatus(obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: value})
 				} else {
 					s.SetArtifact(obj.Named(), &SourceArtifact{Key: value})
 				}
@@ -223,7 +223,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 		t.Parallel()
 		s := New()
 		id := ownerID("condition-exhausted")
-		s.UpdateStatus(id, StatusReady, "", "")
+		s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 		sh := s.shardFor(id)
 		sh.mu.Lock()
 		sh.conditions[id].state.generation = math.MaxUint64
@@ -238,7 +238,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 					t.Error("condition exhaustion did not fail before mutation")
 				}
 			}()
-			s.UpdateStatus(id, StatusFailed, "", "changed")
+			s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "changed"})
 		}()
 		info, ok := s.GetStatus(id)
 		assert.Equal(t, ok, true)

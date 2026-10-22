@@ -67,7 +67,7 @@ type execution struct {
 // returned struct's Fetchers map before StartLifecycle.
 func New(s *store.Store, t *task.Service) *Controller {
 	return &Controller{
-		Controller: base.New(s, t, "source"),
+		Controller: base.New(s, t),
 		Fetchers:   map[string]src.Fetcher{},
 	}
 }
@@ -153,7 +153,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	// fallback so an in-repo Secret takes precedence over the global
 	// registry config.
 	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && level == manifest.DrainNone {
-		c.Store.UpdateStatus(id, store.StatusPending, "", "waiting for source Secret")
+		c.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "waiting for source Secret"})
 		return &pendingSource{execution: c, object: obj, missing: missing}
 	}
 	return c.completeFetch(obj, artifact, fetchErr)
@@ -191,7 +191,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	if err != nil {
 		if errors.Is(err, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(err)) {
 			if c.run.Reads.Valid() {
-				slog.Info("skipped (missing secret)", "id", obj.Named().String(), "err", err)
+				slog.Info("source: skipped (missing secret)", "id", obj.Named().String(), "err", err)
 			}
 			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(err.Error()))
 		}
@@ -209,7 +209,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 			current.Reads.Retire()
 		}
 	}
-	slog.Debug("fetch complete", "id", obj.Named().String())
+	slog.Debug("source: fetch complete", "id", obj.Named().String())
 	return nil
 }
 

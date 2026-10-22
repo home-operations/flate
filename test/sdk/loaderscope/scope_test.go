@@ -31,7 +31,7 @@ spec:
 	if !ok {
 		t.Fatal("standalone loader did not admit the ResourceSet")
 	}
-	for ref := range manifest.References(rs) {
+	for ref := range manifest.References(rs, manifest.ReferenceRelations) {
 		if ref.Namespace != "" {
 			t.Fatalf("cluster dependency namespace = %q", ref.Namespace)
 		}

@@ -400,7 +400,7 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 		t.Error("capture tail was lost")
 	}
 	before := out.String()
-	st.UpdateStatus(id, store.StatusFailed, "", "after cleanup")
+	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "after cleanup"})
 	assert.Equal(t, out.String(), before)
 }
 

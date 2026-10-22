@@ -558,7 +558,7 @@ spec:
 				if !ok || ks.SourceRef.Namespace != "" || ks.Path != "./broken" {
 					t.Fatalf("expected implicit source in consumer namespace, got %+v", ks)
 				}
-				for ref := range manifest.References(ks) {
+				for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 					if ref.Use == "source" {
 						assert.Equal(t, ref.Namespace, namespace)
 					}
@@ -762,7 +762,7 @@ spec:
 				t.Fatalf("expected surviving consumer with inherited namespace and unchanged path/source, got %+v", ks)
 			}
 			var sourceRef manifest.NamedResource
-			for ref := range manifest.References(ks) {
+			for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 				if ref.Use == "source" {
 					sourceRef = ref.NamedResource
 					break

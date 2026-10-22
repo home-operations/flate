@@ -77,7 +77,7 @@ func TestParseDoc_ScopeMemo(t *testing.T) {
 						var wg sync.WaitGroup
 						for range workers {
 							wg.Go(func() {
-								for ref := range manifest.References(obj) {
+								for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 									want := ""
 									if ref.Kind == meta.Kind {
 										want = "explicit"
@@ -108,7 +108,7 @@ func TestParseDoc_ScopeMemo(t *testing.T) {
 		done := make(chan any, 1)
 		go func() {
 			defer func() { done <- recover() }()
-			for range manifest.References(rs) {
+			for range manifest.References(rs, manifest.ReferenceRelations) {
 				t.Error("unprepared dependency yielded a reference")
 			}
 		}()
@@ -158,7 +158,7 @@ func TestParseDoc_ScopeMemo(t *testing.T) {
 								assert.Equal(t, ns, tc.namespace)
 								rs := &manifest.ResourceSet{Namespace: "apps"}
 								rs.DependsOn = []fluxopv1.Dependency{{APIVersion: tc.version, Kind: tc.kind, Name: "scope"}}
-								for ref := range manifest.References(rs) {
+								for ref := range manifest.References(rs, manifest.ReferenceRelations) {
 									assert.Equal(t, ref.Namespace, tc.namespace)
 								}
 								for _, namespace := range []string{"", "authored"} {

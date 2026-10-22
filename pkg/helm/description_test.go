@@ -111,8 +111,7 @@ func TestDescription_SourceObservation(t *testing.T) {
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: observed})
 	hr = hr.Clone()
 	hr.ChartValuesFiles = []string{"config/prod.yaml", "config/../config/prod.yaml"}
-	cli, err := NewClient(cachetest.New(t, "", cache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
 	out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
@@ -137,8 +136,7 @@ func TestDescription_HitHydration(t *testing.T) {
 			}
 			var want []map[string]any
 			for i := range 2 {
-				cli, err := NewClient(cachetest.New(t, root, cache.New))
-				assert.NoError(t, err)
+				cli := NewClient(cachetest.New(t, root, cache.New))
 				cliSources := NewSources(st)
 				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
@@ -156,7 +154,7 @@ func TestDescription_HitHydration(t *testing.T) {
 				}
 				assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources), []string{"unused"})
 				if persistent {
-					_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					_, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
 					hit, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
@@ -197,8 +195,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 				hr = hr.Clone()
 				hr.Chart.Name = "chart.tgz"
 			}
-			cli, err := NewClient(cachetest.New(t, "", cache.New))
-			assert.NoError(t, err)
+			cli := NewClient(cachetest.New(t, "", cache.New))
 			cliSources := NewSources(st)
 			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
@@ -278,8 +275,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 	var want []map[string]any
 	for i := range 2 {
 		owner := cachetest.New(t, root, cache.New)
-		cli, err := NewClient(owner)
-		assert.NoError(t, err)
+		cli := NewClient(owner)
 		cliSources := NewSources(st)
 		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		if validOutput {
@@ -328,10 +324,9 @@ func TestReview_NestedWarnings(t *testing.T) {
 			defer log.SetOutput(previous)
 			for range 2 {
 				diagnostics.Reset()
-				cli, err := NewClient(cachetest.New(t, cacheRoot, cache.New))
-				assert.NoError(t, err)
+				cli := NewClient(cachetest.New(t, cacheRoot, cache.New))
 				cliSources := NewSources(st)
-				_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				_, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
 				if !strings.Contains(diagnostics.String(), "Warning:") {
 					t.Fatal("real nested loader diagnostics were suppressed")
@@ -359,10 +354,9 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		hr = hr.Clone()
 		hr.ChartValuesFiles = []string{"absent.yaml"}
 		hr.IgnoreMissingValuesFiles = false
-		cli, err := NewClient(cachetest.New(t, "", cache.New))
-		assert.NoError(t, err)
+		cli := NewClient(cachetest.New(t, "", cache.New))
 		cliSources := NewSources(st)
-		_, err = cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources})
+		_, err := cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources})
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "load chart") {
 			t.Fatalf("chart validation lost precedence: %v", err)
 		}
@@ -372,10 +366,9 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			t.Parallel()
 			st, hr, dir := ociRenderFixture(t)
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: os.DirFS(dir), Revision: "invalid"})
-			cli, err := NewClient(cachetest.New(t, "", cache.New))
-			assert.NoError(t, err)
+			cli := NewClient(cachetest.New(t, "", cache.New))
 			cliSources := NewSources(st)
-			_, err = cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources})
+			_, err := cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources})
 			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version") {
 				t.Fatalf("OCI validation lost precedence: %v", err)
 			}
@@ -414,12 +407,11 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			st.SetArtifact(hr.ChartSource(), art)
 			root := t.TempDir()
 			owner := cachetest.New(t, root, cache.New)
-			cli, err := NewClient(owner)
-			assert.NoError(t, err)
+			cli := NewClient(owner)
 			cliSources := NewSources(st)
 			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
-			if hr.UsesDirectOCIRepository() {
+			if hr.TracksDigest() {
 				d.oci = &ociChartContent{Digest: art.Digest, Revision: art.Revision, DisableTracking: opts.DisableChartDigestTracking}
 			}
 			d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
@@ -477,8 +469,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		testutil.WriteFile(t, root, "charts/demo/templates/fail.yaml", `{{ fail "action must wait for cache error" }}`)
 		testutil.WriteFile(t, root, "charts/demo/requirements.yaml", "dependencies: []\n")
 		owner := cachetest.New(t, t.TempDir(), cache.New)
-		cli, err := NewClient(owner)
-		assert.NoError(t, err)
+		cli := NewClient(owner)
 		cliSources := NewSources(st)
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
@@ -512,8 +503,7 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 	hr := minimalHR()
 	hr.Chart = manifest.HelmChart{Name: "first", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo", Namespace: "default"}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-	cli, err := NewClient(cachetest.New(t, "", cache.New))
-	assert.NoError(t, err)
+	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
 	for _, location := range []string{"first", "second"} {
 		request := hr.Clone()

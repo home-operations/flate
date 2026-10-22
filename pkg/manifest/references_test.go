@@ -6,6 +6,9 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -18,18 +21,58 @@ import (
 func refsForUse(t *testing.T, obj BaseManifest, use string) []Reference {
 	t.Helper()
 	var refs []Reference
-	for ref := range References(obj) {
+	count := 0
+	for ref := range References(obj, ReferenceRelations) {
+		count++
 		if ref.Use == use {
 			refs = append(refs, ref)
 		}
 	}
+	capacity, _ := obj.ReferenceCapacity()
+	if count > capacity {
+		t.Fatalf("reference capacity %d is below the %d authored references", capacity, count)
+	}
 	return refs
+}
+
+func TestReferenceCapacity_DataInputBounds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		obj  BaseManifest
+		data int
+	}{
+		{"source", &Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: KindGitRepository, Name: "source"}}, 0},
+		{"ordering", &Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "parent"}}}, 0},
+		{"selector", &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{}}}}, 0},
+		{"chart", &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindOCIRepository, Name: "chart"}}}, 0},
+		{"credentials", &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, 0},
+		{"substitution", &Kustomization{PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "config"}, {Kind: KindSecret, Name: "secret", Optional: true}}}}, 2},
+		{"values", &HelmRelease{ValuesFrom: []ValuesReference{{Kind: KindConfigMap, Name: "values"}}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			capacity, data := tc.obj.ReferenceCapacity()
+			count, inputs := 0, 0
+			for ref := range References(tc.obj, ReferenceAll) {
+				count++
+				if ref.Use == "substituteFrom" || ref.Use == "valuesFrom" {
+					inputs++
+				}
+			}
+			if count == 0 || count > capacity {
+				t.Fatalf("reference count %d, capacity %d", count, capacity)
+			}
+			assert.Equal(t, data, tc.data)
+			assert.Equal(t, inputs, data)
+		})
+	}
 }
 
 func TestReferences_EffectiveNamespace(t *testing.T) {
 	t.Parallel()
 	k := &Kustomization{Namespace: "authored"}
-	assert.Equal(t, len(slices.Collect(References(k))), 0)
+	assert.Equal(t, len(slices.Collect(References(k, ReferenceRelations))), 0)
 	k.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: KindGitRepository, Name: "source"}
 	k.DependsOn = []kustomizev1.DependencyReference{{Name: "relative", ReadyExpr: "true"}, {Name: "explicit", Namespace: "other"}}
 	k.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{
@@ -71,7 +114,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	}{
 		{"kustomization", "effective", k, []Reference{
 			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true},
-			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: "true"},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: new("true")},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Content: true},
 			{Kind: KindSecret, Namespace: "effective", Name: "shared", Use: "substituteFrom", Position: 2, Content: true},
@@ -84,7 +127,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
 		}},
 		{"resourceset", "apps", r, []Reference{
-			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: "true"},
+			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", ReadyExpr: new("true")},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "exists", Use: "dependsOn", Position: 1},
 			{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "cluster", Use: "dependsOn", Position: 2},
 			{Group: "foreign.example", Kind: "ClusterRole", Namespace: "apps", Name: "foreign", Use: "dependsOn", Position: 3},
@@ -107,7 +150,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Diff(t, slices.Collect(References(tc.obj.WithNamespace(tc.namespace))), tc.want)
+			assertReferenceEdges(t, slices.Collect(References(tc.obj.WithNamespace(tc.namespace), ReferenceRelations)), tc.want)
 			assert.Equal(t, tc.obj.Named().Namespace, "authored")
 			var spec any
 			switch obj := tc.obj.(type) {
@@ -127,7 +170,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			before := DeepCopyMap(doc)
 			obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: tc.namespace})
 			assert.NoError(t, err)
-			assert.Diff(t, slices.Collect(References(obj)), tc.want)
+			assertReferenceEdges(t, slices.Collect(References(obj, ReferenceRelations)), tc.want)
 			switch parsed := obj.(type) {
 			case *Kustomization:
 				assert.Diff(t, parsed.KustomizationSpec, spec)
@@ -145,7 +188,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 	hr = hr.WithNamespace("effective").(*HelmRelease)
 	hr.Chart = HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "resolved"}}
 	hr.ChartValuesFiles = []string{"./config/prod.yaml"}
-	assert.Diff(t, refsForUse(t, hr, "source"), []Reference{{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true, Files: hr.ChartValuesFiles}})
+	assertReferenceEdges(t, refsForUse(t, hr, "source"), []Reference{{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "resolved", Use: "source", Content: true, Files: hr.ChartValuesFiles}})
 	assert.Equal(t, r.InputsFrom[0].Kind, "Unsupported")
 }
 
@@ -214,7 +257,7 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 	o := &OCIRepository{Namespace: "effective"}
 	o.SecretRef, o.CertSecretRef, o.ProxySecretRef = &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}
 	o.Verify = &sourcev1.OCIRepositoryVerification{Provider: "cosign", SecretRef: &LocalObjectReference{Name: "ignored"}}
-	assert.Diff(t, slices.Collect(References(o)), []Reference{
+	assertReferenceEdges(t, slices.Collect(References(o, ReferenceRelations)), []Reference{
 		{Kind: KindSecret, Namespace: "effective", Name: "auth", Use: "secretRef", Content: true},
 		{Kind: KindSecret, Namespace: "effective", Name: "cert", Use: "certSecretRef", Position: 1, Content: true},
 		{Kind: KindSecret, Namespace: "effective", Name: "proxy", Use: "proxySecretRef", Position: 2, Content: true},
@@ -346,19 +389,48 @@ func TestReferences_NoAllocations(t *testing.T) {
 		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(136))
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
-	for _, obj := range []BaseManifest{&Kustomization{SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "source"}}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
+	KindOf(&RawObject{APIVersion: "v1", Kind: KindConfigMap}).Namespaced()
+	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindGitRepository, Name: "source"}}, ChartValuesFiles: []string{"./config/prod.yaml"}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			assert.Equal(t, testing.AllocsPerRun(100, func() { KindOf(obj) }), float64(0))
 			count := 0
 			assert.Equal(t, testing.AllocsPerRun(100, func() {
-				for range References(obj) {
+				for range References(obj, ReferenceRelations) {
 					count++
 				}
 			}), float64(0))
 			stops := 0
-			References(obj)(func(Reference) bool { stops++; return false })
+			References(obj, ReferenceRelations)(func(Reference) bool { stops++; return false })
 			assert.Equal(t, stops, 1)
 			assert.Equal(t, count > 0, true)
+		})
+	}
+}
+
+func TestReferences_Views(t *testing.T) {
+	obj := &Kustomization{
+		Name: "consumer", Namespace: "apps", Path: "./consumer",
+		DependsOn: []kustomizev1.DependencyReference{{Name: "dependency"}},
+	}
+	dependency := Reference{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "dependency", Use: "dependsOn", Gate: GateInputs, Ordering: true}
+	bootstrap := Reference{NamedResource: BootstrapSourceID, Gate: GateInputs | GateArtifacts, ArtifactStages: GateInputs | GateArtifacts, Artifact: true}
+	for _, tc := range []struct {
+		name string
+		view ReferenceView
+		want []Reference
+	}{
+		{"relationships", ReferenceRelations, []Reference{dependency}},
+		{"all prerequisites", ReferenceAll, []Reference{bootstrap, dependency}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Diff(t, slices.Collect(References(obj, tc.view)), tc.want)
+			assert.Equal(t, testing.AllocsPerRun(100, func() {
+				for range References(obj, tc.view) {
+				}
+			}), float64(0))
+			calls := 0
+			References(obj, tc.view)(func(Reference) bool { calls++; return false })
+			assert.Equal(t, calls, 1)
 		})
 	}
 }
@@ -405,7 +477,7 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 					case "standalone":
 						obj = chart.WithNamespace("effective")
 					}
-					refs := slices.Collect(References(obj))
+					refs := slices.Collect(References(obj, ReferenceRelations))
 					source := Reference{Group: tc.group, Kind: tc.kind, Namespace: "effective", Name: "source", Use: "source", Content: true}
 					if tc.files {
 						source.Files = files
@@ -414,7 +486,7 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 					if form == "resolved" {
 						want = append([]Reference{{Group: SourceDomain, Kind: KindHelmChart, Namespace: "effective", Name: "chart", Use: "chart", Content: true}}, want...)
 					}
-					assert.Diff(t, refs, want)
+					assertReferenceEdges(t, refs, want)
 					if tc.files && len(refs[len(refs)-1].Files) != 0 {
 						got := refs[len(refs)-1].Files
 						assert.Equal(t, &got[0] == &files[0], true)
@@ -423,5 +495,12 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func assertReferenceEdges(t *testing.T, got, want []Reference) {
+	t.Helper()
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "UnknownArtifactRoot", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering")); diff != "" {
+		t.Fatalf("reference edges (-want +got):\n%s", diff)
 	}
 }

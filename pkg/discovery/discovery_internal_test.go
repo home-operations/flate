@@ -67,7 +67,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			d.loader.Index.Records[ks.Named()] = r
 			for _, repo := range []*manifest.GitRepository{repository, other} {
 				st.SetArtifact(repo.Named(), artifact)
-				st.UpdateStatus(repo.Named(), store.StatusReady, "", "pinned")
+				st.UpdateStatus(repo.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "pinned"})
 			}
 			d.discardPinnedWorkingTreeFiles(root)
 			for _, repo := range []*manifest.GitRepository{repository, other} {

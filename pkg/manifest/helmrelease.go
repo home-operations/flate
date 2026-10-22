@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -19,6 +20,25 @@ type HelmChart struct {
 	// Version is omitted from output for tidy diffs but kept in memory.
 	Version string        `json:"-" yaml:"-"`
 	Source  NamedResource `json:"source" yaml:"source"`
+}
+
+// Materializes reports whether the chart requires HelmRepository acquisition.
+func (h HelmChart) Materializes() bool {
+	return h.Source.Group == SourceDomain && (h.Source.Kind == "" || h.Source.Kind == KindHelmRepository)
+}
+
+// ChartLocation validates the source kind and selects a source path or artifact discovery.
+func (h HelmChart) ChartLocation() (string, bool, error) {
+	switch h.Source.Kind {
+	case KindGitRepository, KindBucket, KindExternalArtifact:
+		return path.Clean(h.Name), false, nil
+	case KindOCIRepository, KindHelmChart:
+		return "", true, nil
+	case KindHelmRepository, "":
+		return "", false, inputf("HelmRepository chart %s reached chart loading unmaterialized: render via the orchestrator", h.RepoFullName())
+	default:
+		return "", false, inputf("unsupported chart repo kind %s", h.Source.Kind)
+	}
 }
 
 // UsesSourceValuesFiles reports whether values files are relative to the source artifact root.
@@ -149,8 +169,8 @@ func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
-// UsesDirectOCIRepository reports whether chartRef directly names an OCIRepository.
-func (h *HelmRelease) UsesDirectOCIRepository() bool {
+// TracksDigest reports whether chartRef directly selects an OCIRepository chart identity.
+func (h *HelmRelease) TracksDigest() bool {
 	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository &&
 		referenceGroup(h.ChartRef.Kind, h.ChartRef.APIVersion) == kindTable[kindOCIRepository].Group
 }
@@ -207,7 +227,7 @@ func (h *HelmRelease) ReleaseNamespace() string {
 // ChartSource returns the effective source reference used by the chart.
 func (h *HelmRelease) ChartSource() NamedResource {
 	var source NamedResource
-	for ref := range References(h) {
+	for ref := range References(h, ReferenceRelations) {
 		if ref.Use == "chart" || ref.Use == "source" {
 			source = ref.NamedResource
 		}
@@ -307,49 +327,73 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 }
 
 func (h *HelmRelease) references(yield func(Reference) bool) {
-	source := Resolve(h.Chart.Source, "", h.Namespace)
-	var files []string
-	if source.Group == SourceDomain && h.Chart.UsesSourceValuesFiles() {
-		files = h.ChartValuesFiles
+	if h.hasChartReferences() {
+		source := Resolve(h.Chart.Source, "", h.Namespace)
+		var files []string
+		if source.Group == SourceDomain && h.Chart.UsesSourceValuesFiles() {
+			files = h.ChartValuesFiles
+		}
+		var authored NamedResource
+		gate := func(id NamedResource) (GateStage, bool) {
+			if id != source || id.Name == "" {
+				return 0, false
+			}
+			stage := GateArtifacts
+			if id.Group == SourceDomain && id.Kind == KindHelmChart && h.Chart.Version == "" {
+				stage |= GateInputs
+			}
+			return stage, true
+		}
+		if ref := h.ChartRef; ref != nil {
+			authored = Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
+			if source.Kind == "" && source.Name == "" {
+				source = authored
+			}
+			stage, artifact := gate(authored)
+			if !yield(Reference{NamedResource: authored, Use: "chart", Content: true, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+				return
+			}
+		} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
+			ref := tmpl.Spec.SourceRef
+			authored = Resolve(NamedResource{Group: referenceGroup(cmp.Or(ref.Kind, KindHelmRepository), ref.APIVersion), Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
+			refFiles := files
+			if authored != source {
+				refFiles = nil
+			}
+			if source.Kind == "" && source.Name == "" {
+				source = authored
+			}
+			stage, artifact := gate(authored)
+			if !yield(Reference{NamedResource: authored, Use: "source", Content: true, Files: refFiles, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+				return
+			}
+		}
+		if source.Kind != "" && authored != source {
+			stage, artifact := gate(source)
+			if !yield(Reference{
+				NamedResource: source,
+				Use:           "source", Content: true, Files: files, Gate: stage, Artifact: artifact, ChartSource: artifact,
+				ArtifactStages: GateArtifacts,
+			}) {
+				return
+			}
+		}
 	}
-	var authored NamedResource
-	if ref := h.ChartRef; ref != nil {
-		authored = Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
-		if !yield(Reference{NamedResource: authored, Use: "chart", Content: true}) {
-			return
-		}
-	} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
-		ref := tmpl.Spec.SourceRef
-		authored = Resolve(NamedResource{Group: referenceGroup(cmp.Or(ref.Kind, KindHelmRepository), ref.APIVersion), Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
-		refFiles := files
-		if authored != source {
-			refFiles = nil
-		}
-		if !yield(Reference{NamedResource: authored, Use: "source", Content: true, Files: refFiles}) {
-			return
-		}
-	}
-	if source.Kind != "" && authored != source {
-		if !yield(Reference{
-			NamedResource: source,
-			Use:           "source", Content: true, Files: files,
-		}) {
-			return
-		}
-	}
+
 	for i := range h.DependsOn {
 		dep := &h.DependsOn[i]
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Group: kindTable[kindHelmRelease].Group, Kind: KindHelmRelease, Namespace: dep.Namespace, Name: dep.Name}, "", h.Namespace),
-			Use:           "dependsOn", Position: i, ReadyExpr: dep.ReadyExpr,
+			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true,
 		}) {
 			return
 		}
 	}
-	for i, ref := range h.ValuesFrom {
+	for i := range h.ValuesFrom {
+		ref := &h.ValuesFrom[i]
 		if !yield(Reference{
-			NamedResource: Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", h.Namespace),
-			Use:           "valuesFrom", Position: i, Optional: ref.Optional, Content: true,
+			Kind: ref.Kind, Name: ref.Name, Namespace: h.Namespace,
+			Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true,
 		}) {
 			return
 		}

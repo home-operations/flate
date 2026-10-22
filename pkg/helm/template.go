@@ -42,7 +42,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	if err != nil {
 		return nil, err
 	}
-	if hr.UsesDirectOCIRepository() {
+	if hr.TracksDigest() {
 		loaded.oci = &ociChartContent{Digest: loaded.artifact.Digest, Revision: loaded.artifact.Revision, DisableTracking: opts.DisableChartDigestTracking}
 	}
 	caps, capabilityErr := opts.capabilities()
@@ -107,7 +107,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		return nil, err
 	}
 	var trackedVersion string
-	if hr.UsesDirectOCIRepository() {
+	if hr.TracksDigest() {
 		version, err := ociChartVersion(loaded.chart.Metadata.Version, loaded.artifact.Revision)
 		if err != nil {
 			return nil, fmt.Errorf("track oci chart version: %w", err)
@@ -526,81 +526,6 @@ func chartValuesCacheKey(loaded chartDescription, names []string, ignoreMissing 
 		Pin           string `json:",omitempty"`
 		Inputs        string `json:",omitempty"`
 	}{loaded.fingerprint, loaded.oci, names, ignoreMissing, loaded.valuesFS != nil, loaded.valuesPin, inputs})
-}
-
-// ApplyHROriginLabels stamps the helm.toolkit.fluxcd.io/{name,namespace}
-// ownership labels onto every non-hook rendered doc, mirroring
-// helm-controller's OriginLabels post-renderer fed through
-// PostRenderStrategyNoHooks. Real Flux uses these to track which HR
-// owns each in-cluster resource for pruning + selection
-// (`kubectl get -l helm.toolkit.fluxcd.io/name=...`), and they take
-// precedence over CommonMetadata when keys collide — so the caller runs
-// this pass AFTER ApplyHRCommonMetadata, matching the upstream order.
-//
-// Helm hooks (Job / ConfigMap with helm.sh/hook annotation) are
-// intentionally NOT stamped — upstream's BuildPostRenderers chain is
-// fed only the non-hook stream via PostRenderStrategyNoHooks. Stamping
-// hooks in flate would produce labels real Flux never applies in
-// cluster.
-func ApplyHROriginLabels(docs []map[string]any, hr *manifest.HelmRelease) {
-	group := helmv2.GroupVersion.Group
-	origin := map[string]string{
-		group + "/name":      hr.Name,
-		group + "/namespace": hr.Namespace,
-	}
-	for _, doc := range docs {
-		if isHookDoc(doc) {
-			continue
-		}
-		manifest.MergeStringMap(manifest.EnsureMetadata(doc), "labels", origin)
-	}
-}
-
-// ApplyHRCommonMetadata merges spec.commonMetadata.labels and .annotations
-// onto every workload rendered doc's metadata, mirroring helm-controller's
-// CommonRenderer pass fed through PostRenderStrategyNoHooks. commonMetadata
-// overwrites chart-template defaults but loses to origin labels on
-// collision — ApplyHROriginLabels runs AFTER this and reasserts the
-// helm.toolkit.fluxcd.io/{name,namespace} keys, matching helm-controller's
-// build.go:46 comment.
-//
-// Excluded from the stamping pass:
-//   - Hooks (helm.sh/hook annotation): upstream's post-render chain
-//     runs after hook separation via PostRenderStrategyNoHooks.
-//   - CRDs (CustomResourceDefinition kind): upstream's separate
-//     applyCRDs path attaches only origin labels via setOriginVisitor,
-//     never commonMetadata. Stamping CRDs in flate produced labels
-//     real Flux never applies in cluster.
-func ApplyHRCommonMetadata(docs []map[string]any, cm *helmv2.CommonMetadata) {
-	if cm == nil || (len(cm.Labels) == 0 && len(cm.Annotations) == 0) {
-		return
-	}
-	for _, doc := range docs {
-		if isHookDoc(doc) || manifest.DocKind(doc) == manifest.KindCustomResourceDefinition {
-			continue
-		}
-		md := manifest.EnsureMetadata(doc)
-		manifest.MergeStringMap(md, "labels", cm.Labels)
-		manifest.MergeStringMap(md, "annotations", cm.Annotations)
-	}
-}
-
-// isHookDoc reports whether a rendered manifest is a Helm hook
-// (carrying the helm.sh/hook annotation). Used to gate the
-// commonMetadata + origin-label post-render passes so they only apply
-// to "real" workload resources — matching upstream helm-controller's
-// PostRenderStrategyNoHooks contract.
-func isHookDoc(doc map[string]any) bool {
-	md, _ := doc["metadata"].(map[string]any)
-	if md == nil {
-		return false
-	}
-	anns, _ := md["annotations"].(map[string]any)
-	if anns == nil {
-		return false
-	}
-	_, has := anns[release.HookAnnotation]
-	return has
 }
 
 func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests bool) string {

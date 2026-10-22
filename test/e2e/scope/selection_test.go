@@ -966,6 +966,35 @@ spec: {url: https://must-not-run.invalid/charts}
 		}
 	})
 
+	t.Run("excluded entry dependency", func(t *testing.T) {
+		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [child.yaml, settings.yaml]\nnameSuffix: -dev\n")
+		testutil.WriteFile(t, root, "app/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: resolved}\n")
+		testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", `  path: ./leaf
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: settings-dev}]
+`))
+		testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [account.yaml]\n")
+		testutil.WriteFile(t, root, "leaf/account.yaml", "apiVersion: v1\nkind: ServiceAccount\nmetadata: {name: visible, annotations: {value: '${VALUE}'}}\n")
+		args := append([]string{"build", "all", "--skip-kinds", "ConfigMap"}, flags...)
+		out, _ := harness.RequireCLIOK(t, args...)
+		warm, _ := harness.RequireCLIOK(t, args...)
+		if out != warm {
+			t.Fatal("excluded dependency output changed on a cache hit")
+		}
+		docs, err := manifest.SplitDocs([]byte(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, doc := range docs {
+			if manifest.DocKind(doc) == manifest.KindConfigMap {
+				t.Fatalf("excluded entry dependency leaked into output: %v", doc)
+			}
+		}
+		if !strings.Contains(out, "kind: ServiceAccount\n") || !strings.Contains(out, "value: resolved") || !strings.Contains(out, "kustomize.toolkit.fluxcd.io/name: child-dev") {
+			t.Fatalf("excluded entry values lost admission or visible descendant stamping: %s", out)
+		}
+	})
+
 }
 
 func TestE2E_SelectedKustomizeClassification(t *testing.T) {

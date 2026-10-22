@@ -15,6 +15,7 @@ import (
 )
 
 type stateReader interface {
+	GetArtifact(manifest.NamedResource) store.Artifact
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Snapshot(manifest.NamedResource, bool) (manifest.BaseManifest, store.Observation)
@@ -66,7 +67,7 @@ type ExistenceLookup interface {
 //     (typically a missing attribute because the dep's status isn't populated
 //     yet) — the dep is not yet satisfied but may still become so.
 func (w *Waiter) tryReadyExpr(dep manifest.DependencyRef, obj manifest.BaseManifest, conds []store.Condition) (ready bool, failMsg string) {
-	ok, err := w.evaluateReadyExpr(dep.ReadyExpr, dep.NamedResource, obj, conds)
+	ok, err := w.evaluateReadyExpr(*dep.ReadyExpr, dep.NamedResource, obj, conds)
 	if err != nil {
 		if _, isCompile := errors.AsType[*celCompileErr](err); isCompile {
 			return false, "readyExpr: " + err.Error()

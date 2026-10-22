@@ -169,7 +169,7 @@ func TestSelection_CompletedReadClosure(t *testing.T) {
 			run.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 		}
 		info := store.StatusInfo{Status: store.StatusFailed, Message: "failed " + id.Name}
-		run.store.UpdateStatus(id, info.Status, info.Reason, info.Message)
+		run.store.UpdateStatus(id, store.StatusInfo{Status: info.Status, Reason: info.Reason, Message: info.Message})
 		run.Result.Failed[id] = info
 	}
 	setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: optional})
@@ -210,7 +210,7 @@ func TestSelection_SkippedHasNoConsumedPrerequisites(t *testing.T) {
 	obj.Suspend = true
 	obj.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "unconsumed"}}
 	st.AddObject(obj)
-	e := controllertest.NewExecution(base.New(st, tasks, "test"), obj.Named())
+	e := controllertest.NewExecution(base.New(st, tasks), obj.Named())
 	e.Dispatch[*manifest.HelmRelease](t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 		t.Fatal("suspended declaration reconciled")
 		return nil
@@ -271,13 +271,13 @@ func TestDAGSweep_ClassifiesBeforeTermination(t *testing.T) {
 	st := store.New()
 	parent, child, reader := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "child", Namespace: "apps"}, &manifest.Kustomization{Name: "reader", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{parent, child, reader})
-	st.UpdateStatus(child.Named(), store.StatusFailed, "", "unwired")
+	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unwired"})
 	o := &Orchestrator{store: st, index: indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"})}
 	d := dagDispatcher{o}
 	assert.Equal(t, len(d.Sweep(t.Context(), true)), 0)
 	info, _ := st.GetStatus(child.Named())
 	assert.Equal(t, info.Status, store.StatusFailed)
-	st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	var reads store.ReadSet
 	reads.Init(st, reader.Named(), nil)
 	reads.GetStatus(child.Named())
@@ -300,8 +300,8 @@ func TestFinalize_InspectionDoesNotChangeStatus(t *testing.T) {
 	st := store.New()
 	parent, child := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{parent, child})
-	st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
-	st.UpdateStatus(child.Named(), store.StatusFailed, "", "unwired")
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unwired"})
 	o := &Orchestrator{store: st, tasks: task.NewBounded(2), index: indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"})}
 	publications := 0
 	u := st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { publications++ }, false)
@@ -317,7 +317,7 @@ func TestDAGSweep_DecodeFailureAttribution(t *testing.T) {
 	st := store.New()
 	producer, consumer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{producer, consumer})
-	st.UpdateStatus(producer.Named(), store.StatusReady, "", "")
+	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	failure := fmt.Errorf("%w: invalid yaml", manifest.ErrInput)
 	index := indexForTest(map[manifest.NamedResource]string{producer.Named(): "root.yaml"})
 	index.Errors = map[string]error{"apps/invalid.yaml": failure}
@@ -348,7 +348,7 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	orphan := &manifest.Kustomization{Name: "orphan", Namespace: "apps", Path: "./apps/orphan"}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{parent, orphan, consumer})
-	st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	failure := fmt.Errorf("%w: invalid yaml", manifest.ErrInput)
 	st.UpdateFailure(orphan.Named(), failure)
 	index := indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", orphan.Named(): "apps/orphan/ks.yaml"})

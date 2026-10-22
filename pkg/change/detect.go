@@ -1,6 +1,7 @@
 package change
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -20,13 +22,14 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Set is the immutable result of Detect — the set of file paths
-// (relative to the scan roots) whose contents differ.
+// Set is the immutable result of Detect, containing changed relative paths
+// and exact one-sided data identities for selection.
 type Set struct {
-	paths map[string]struct{}
+	paths  map[string]struct{}
+	inputs map[manifest.NamedResource]struct{}
 }
 
-// NewSet constructs a Set from an iterable of relative paths.
+// NewSet constructs a path-only Set without Detect's one-sided input identities.
 func NewSet(paths []string) *Set {
 	out := &Set{paths: make(map[string]struct{}, len(paths))}
 	for _, p := range paths {
@@ -88,10 +91,14 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 		changed bool
 	}
 	var jobs []hashJob
+	var oneSided []string
 	for name, right := range aft {
 		left, ok := bef[name]
 		if !ok || left.size != right.size {
 			paths[name] = struct{}{}
+			if !ok {
+				oneSided = append(oneSided, name)
+			}
 			continue
 		}
 		jobs = append(jobs, hashJob{name: name})
@@ -99,6 +106,7 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	for name := range bef {
 		if _, ok := aft[name]; !ok {
 			paths[name] = struct{}{}
+			oneSided = append(oneSided, name)
 		}
 	}
 	hg, hashCtx := errgroup.WithContext(ctx)
@@ -131,10 +139,77 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 			paths[job.name] = struct{}{}
 		}
 	}
+	out := &Set{paths: paths}
+	slices.Sort(oneSided)
+	for _, name := range oneSided {
+		input := before.FS
+		if _, ok := aft[name]; ok {
+			input = after.FS
+		}
+		if err := out.collectInputs(ctx, input, name); err != nil {
+			return nil, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &Set{paths: paths}, nil
+	return out, nil
+}
+
+func (s *Set) collectInputs(ctx context.Context, input fs.FS, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".yaml", ".yml", ".json":
+	default:
+		return nil
+	}
+	f, err := input.Open(name)
+	if err != nil {
+		return fmt.Errorf("%w: open input %s: %w", manifest.ErrInput, name, err)
+	}
+	defer func() { _ = f.Close() }()
+	buf := hashBuffers.Get().(*hashBuffer)
+	defer hashBuffers.Put(buf)
+	var data bytes.Buffer
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := f.Read(buf.bytes[:])
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, _ = data.Write(buf.bytes[:n])
+		if err == io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("%w: read input %s: %w", manifest.ErrInput, name, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	docs, err := manifest.DecodeDocs(bytes.NewReader(data.Bytes()))
+	if err != nil {
+		return nil
+	}
+	for _, doc := range docs {
+		id := manifest.NamedResource{Kind: manifest.DocKind(doc)}
+		id.Name, id.Namespace = manifest.DocMetadata(doc)
+		eligible := manifest.DocAPIVersion(doc) == manifest.CoreAPIVersion && id.KindInfo().Data &&
+			id.Name != "" && !manifest.HasEnvsubstReference(id.Name) && !manifest.HasEnvsubstReference(id.Namespace)
+		manifest.ReleaseDoc(doc)
+		if eligible {
+			if s.inputs == nil {
+				s.inputs = make(map[manifest.NamedResource]struct{})
+			}
+			s.inputs[id] = struct{}{}
+		}
+	}
+	return ctx.Err()
 }
 
 type fileMeta struct {

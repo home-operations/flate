@@ -51,7 +51,7 @@ func BenchmarkBuildOwnership(b *testing.B) {
 	}
 }
 
-// BenchmarkTransitiveDeps measures transitiveDeps for a single
+// BenchmarkTransitiveDeps measures selection references for a single
 // Kustomization with several substituteFrom CMs and a sourceRef —
 // the unit cost the resolve BFS pays per kept entry.
 func BenchmarkTransitiveDeps(b *testing.B) {
@@ -72,7 +72,10 @@ func BenchmarkTransitiveDeps(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = transitiveDeps(s, id)
+		var refs [8]manifest.NamedResource
+		if deps := appendReferences(refs[:0], s.GetObject(id), false); len(deps) != 5 {
+			b.Fatalf("dependencies=%v", deps)
+		}
 	}
 }
 

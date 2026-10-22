@@ -171,7 +171,8 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 	for _, accepted := range f.acceptedChildren(id) {
 		added = append(added, f.addRecursiveLocked(accepted.Obj.Named())...)
 	}
-	for _, dep := range transitiveDepsOf(child) {
+	var refs [8]manifest.NamedResource
+	for _, dep := range appendReferences(refs[:0], child, false) {
 		added = append(added, f.addRecursiveLocked(dep)...)
 		added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)
 	}
@@ -224,7 +225,8 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 		for _, child := range f.acceptedChildren(cur) {
 			stack = append(stack, child.Obj.Named())
 		}
-		for _, dep := range transitiveDeps(f.objs, cur) {
+		var refs [8]manifest.NamedResource
+		for _, dep := range appendReferences(refs[:0], f.objs.GetObject(cur), false) {
 			if _, ok := f.primary[dep]; !ok {
 				stack = append(stack, dep)
 			}
@@ -268,7 +270,8 @@ func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource)
 		if f.objs == nil {
 			continue
 		}
-		for _, dep := range transitiveDeps(f.objs, cur) {
+		var refs [8]manifest.NamedResource
+		for _, dep := range appendReferences(refs[:0], f.objs.GetObject(cur), false) {
 			stack = append(stack, dep)
 			for _, producer := range f.producersFor(dep) {
 				if producer == cur {
@@ -302,7 +305,7 @@ func (f *Filter) resolve() {
 		keep[id] = struct{}{}
 		// Always re-queue when promoting an ancestor-only entry
 		// to primary: the BFS body uses the head's primacy at
-		// dequeue time to decide whether transitiveDeps propagate
+		// dequeue time to decide whether dependencies propagate
 		// as primary or ancestor. Without the re-queue, an entry
 		// walked first as ancestor would never have its deps re-
 		// walked as primary, so chained transitive deps (a future
@@ -378,9 +381,11 @@ func (f *Filter) resolve() {
 			enqueueAncestor(ancestor)
 		}
 	}
+	changedInputs := len(f.changes.inputs) != 0
 	for id, record := range f.index.Files() {
 		src := record.File
 		if f.changes.Contains(src) {
+			changedInputs = changedInputs || id.KindInfo().Data
 			enqueuePrimary(id)
 			continue
 		}
@@ -393,38 +398,24 @@ func (f *Filter) resolve() {
 		}
 	}
 
-	// Reverse edge: when a changed file IS the source a HelmRelease or
-	// Kustomization references, that consumer must re-render — the
-	// forward transitiveDeps walk only goes consumer→source, so a
-	// centralized source (an OCIRepository in its own Kustomization tree,
-	// separate from the HelmReleases that chartRef it) would otherwise
-	// leave its consumers out of the keep set entirely. consumerRefs is
-	// the only view of these edges at resolve() time: HelmReleases are
-	// absent from the Store under render-driven discovery. Iterating it
-	// and testing the referenced source's file directly also gives the
-	// guard for free — a consumer is pulled only when a source it
-	// references actually changed on disk, never when its own edit
-	// merely drags the source in as a forward dep.
-	//
-	// The consumer is primary: its render (an HR's helm template against
-	// the new chart version) differs from baseline, and its namespace
-	// must enter KeepNamespaces for diff scoping. Its owner Kustomization
-	// is ancestor-only — it must render to emit the HR into the Store,
-	// but its own kustomize output is unchanged (the HR manifest is
-	// identical; only the downstream helm render moved), so it must not
-	// cascade unrelated siblings into keep (the #58/#204 rationale).
 	for consumer, record := range records {
-		sources := record.Refs
+		var refs [8]manifest.NamedResource
+		sources := append(refs[:0], record.Refs...)
+		if changedInputs && objs != nil {
+			sources = appendReferences(sources, objs.GetObject(consumer), true)
+		}
 		for _, src := range sources {
 			sr, ok := f.index.Lookup(src)
-			sf := sr.File
-			if !ok || !f.changes.Contains(sf) {
+			_, oneSided := f.changes.inputs[src]
+			if changedInputs && !oneSided {
+				src.Namespace = ""
+				_, oneSided = f.changes.inputs[src]
+			}
+			if (!ok || !f.changes.Contains(sr.File)) && !oneSided {
 				continue
 			}
 			enqueuePrimary(consumer)
-			if cr, ok := f.index.Lookup(consumer); ok {
-				enqueueAncestorChain(cr.File, manifest.NamedResource{})
-			}
+			enqueueAncestorChain(record.File, manifest.NamedResource{})
 			break
 		}
 	}
@@ -439,17 +430,12 @@ func (f *Filter) resolve() {
 				enqueuePrimary(child.Obj.Named())
 			}
 		}
-		// transitiveDeps reads the consumer from the Store; that covers
-		// Kustomizations but NOT HelmReleases, which are render-driven and
-		// absent from the Store at resolve() time (see the reverse-edge note
-		// above). consumerRefs is the discovery-supplied view of those
-		// consumer→source edges (chartRef / chart.spec.sourceRef / valuesFrom),
-		// keyed identically to the keep seed. Union it so a changed HelmRelease
-		// still pulls its chart source into keep; without it a one-file HR edit
-		// would leave its OCIRepository/HelmRepository unfetched.
-		deps := transitiveDeps(objs, queue[head])
+		var refs [8]manifest.NamedResource
 		record, _ := f.index.Lookup(queue[head])
-		deps = append(deps, record.Refs...)
+		deps := append(refs[:0], record.Refs...)
+		if objs != nil {
+			deps = appendReferences(deps, objs.GetObject(queue[head]), false)
+		}
 		for _, d := range deps {
 			if headPrimary {
 				enqueuePrimary(d)
@@ -563,32 +549,13 @@ type ObjectLister interface {
 	ListObjects(group, kind string) []manifest.BaseManifest
 }
 
-// transitiveDeps returns the references the resource id needs to render,
-// resolved from the Store. Thin wrapper over transitiveDepsOf — see it
-// for the edge set. Returns nil when id isn't in the Store (a render-
-// emitted child not yet AddObject'd); callers that hold the manifest
-// should use transitiveDepsOf directly so those deps aren't missed.
-func transitiveDeps(objs ObjectLister, id manifest.NamedResource) []manifest.NamedResource {
-	return transitiveDepsOf(objs.GetObject(id))
-}
-
-// transitiveDepsOf returns the references obj needs to render — chart
-// sources, KS sourceRef, valuesFrom, and named postBuild.substituteFrom inputs.
-// Optional inputs must participate in selection without becoming required
-// readiness dependencies. Reading straight off the manifest
-// (rather than a Store id lookup) lets the runtime keep-extension resolve
-// a render-emitted child's deps BEFORE it lands in the Store, where the
-// child's effective chart source identity is the authority. dependsOn is
-// intentionally excluded: it's a reconcile-ordering signal in real Flux,
-// not a content dependency, so it adds nothing to an offline render.
-// Skipped resources still get marked Ready by their controllers, so
-// downstream depwait completes naturally.
-func transitiveDepsOf(obj manifest.BaseManifest) []manifest.NamedResource {
-	var out []manifest.NamedResource
+// Reverse admission retains discovery's scope; only named substitution inputs
+// extend it. Forward traversal also follows content dependencies.
+func appendReferences(dst []manifest.NamedResource, obj manifest.BaseManifest, reverse bool) []manifest.NamedResource {
 	for ref := range manifest.References(obj) {
-		if ref.Content || (ref.Use == "substituteFrom" && ref.Name != "") {
-			out = append(out, ref.NamedResource)
+		if (!reverse && ref.Content) || (ref.Use == "substituteFrom" && ref.Name != "") {
+			dst = append(dst, ref.NamedResource)
 		}
 	}
-	return out
+	return dst
 }

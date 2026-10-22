@@ -1077,7 +1077,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 			}
 			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
 			id := testutil.KustomizationID("apps", "consumer")
-			if got := filter.ShouldReconcile(id); got == optional {
+			if got := filter.ShouldReconcile(id); !got {
 				t.Fatalf("optional=%t consumer selected=%t", optional, got)
 			}
 		})

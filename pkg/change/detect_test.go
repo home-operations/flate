@@ -17,6 +17,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -421,4 +422,153 @@ func (f *hashReadFile) Close() error {
 	f.reads.closed.Add(1)
 	f.reads.active.Add(-1)
 	return f.File.Close()
+}
+
+func TestDetect_OneSidedInputEvidence(t *testing.T) {
+	t.Parallel()
+	cm := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: apps}\n"
+	secret := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps}\n"
+	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}
+	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
+	for _, tc := range []struct {
+		name, file, body string
+		after            bool
+		want             []manifest.NamedResource
+	}{
+		{"before", "input.yaml", cm, false, []manifest.NamedResource{cmID}},
+		{"after", "input.yaml", cm, true, []manifest.NamedResource{cmID}},
+		{"multiple documents", "input.YML", cm + "---\n- noise\n---\n" + secret, false, []manifest.NamedResource{cmID, secretID}},
+		{"json", "input.JSON", `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"optional","namespace":"apps"}}`, false, []manifest.NamedResource{cmID}},
+		{"wrong suffix", "input.txt", cm, false, nil},
+		{"foreign group", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: foreign.test/v1", 1), false, nil},
+		{"noncanonical core", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: v2", 1), false, nil},
+		{"nondata", "input.yaml", strings.Replace(cm, "kind: ConfigMap", "kind: Pod", 1), false, nil},
+		{"empty name", "input.yaml", strings.Replace(cm, "name: optional", "name: ''", 1), false, nil},
+		{"template name", "input.yaml", strings.Replace(cm, "name: optional", "name: '${NAME}'", 1), false, nil},
+		{"template namespace", "input.yaml", strings.Replace(cm, "namespace: apps", "namespace: '${NAMESPACE}'", 1), false, nil},
+		{"empty namespace exact", "input.yaml", strings.Replace(cm, "namespace: apps", "namespace: ''", 1), false, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "optional"}}},
+		{"malformed", "input.yaml", cm + "---\nmalformed: [", false, nil},
+		{"empty", "input.yaml", "", false, nil},
+		{"incomplete", "input.yaml", "hello: world\n", false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			before, after := fstest.MapFS{}, fstest.MapFS{}
+			if tc.after {
+				after[tc.file] = &fstest.MapFile{Data: []byte(tc.body)}
+			} else {
+				before[tc.file] = &fstest.MapFile{Data: []byte(tc.body)}
+			}
+			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+			assert.NoError(t, err)
+			assert.Diff(t, set.Paths(), []string{tc.file})
+			var want map[manifest.NamedResource]struct{}
+			if len(tc.want) > 0 {
+				want = make(map[manifest.NamedResource]struct{})
+				for _, id := range tc.want {
+					want[id] = struct{}{}
+				}
+			}
+			assert.Diff(t, set.inputs, want)
+		})
+	}
+}
+
+func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
+	t.Parallel()
+	for _, ignored := range []string{"before", "after", "both"} {
+		t.Run(ignored, func(t *testing.T) {
+			t.Parallel()
+			body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s, namespace: apps}\n"
+			before := fstest.MapFS{"input.yaml": {Data: fmt.Appendf(nil, body, "before")}}
+			after := fstest.MapFS{"input.yaml": {Data: fmt.Appendf(nil, body, "after")}}
+			if ignored != "after" {
+				before[".sourceignore"] = &fstest.MapFile{Data: []byte("input.yaml\n")}
+			}
+			if ignored != "before" {
+				after[".sourceignore"] = &fstest.MapFile{Data: []byte("input.yaml\n")}
+			}
+			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+			assert.NoError(t, err)
+			assert.Equal(t, set.Contains("input.yaml"), ignored != "both")
+			var want map[manifest.NamedResource]struct{}
+			if ignored != "both" {
+				name := "after"
+				if ignored == "after" {
+					name = "before"
+				}
+				want = map[manifest.NamedResource]struct{}{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}: {}}
+			}
+			assert.Diff(t, set.inputs, want)
+		})
+	}
+}
+
+func TestDetect_OneSidedInputReadFailure(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"open", "read"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			cause := errors.New("evidence unavailable")
+			input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")}}, operation: operation, cause: cause}
+			set, err := Detect(t.Context(), &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
+			if set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml") {
+				t.Fatalf("read failure set=%v err=%v", set, err)
+			}
+			if operation == "read" {
+				assert.Equal(t, input.closed.Load(), int32(1))
+			}
+		})
+	}
+}
+
+type evidenceFailureFS struct {
+	fs.FS
+	operation string
+	cause     error
+	closed    atomic.Int32
+}
+
+func (f *evidenceFailureFS) Open(name string) (fs.File, error) {
+	if name == "input.yaml" && f.operation == "open" {
+		return nil, f.cause
+	}
+	file, err := f.FS.Open(name)
+	if err != nil || name != "input.yaml" {
+		return file, err
+	}
+	return &evidenceFailureFile{File: file, input: f}, nil
+}
+
+type evidenceFailureFile struct {
+	fs.File
+	input *evidenceFailureFS
+}
+
+func (f *evidenceFailureFile) Read([]byte) (int, error) { return 0, f.input.cause }
+func (f *evidenceFailureFile) Close() error             { f.input.closed.Add(1); return f.File.Close() }
+
+func TestDetect_OneSidedInputCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	input := &cancellingInput{FS: fstest.MapFS{"file.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")}}, cancel: cancel, cancelled: func() bool { return ctx.Err() != nil }, dataEOF: true}
+	set, err := Detect(ctx, &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
+	if set != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation set=%v err=%v", set, err)
+	}
+	assert.Equal(t, input.opened.Load(), int32(1))
+	assert.Equal(t, input.closed.Load(), input.opened.Load())
+	assert.Equal(t, input.postCancel.Load(), int32(0))
+}
+
+func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
+	t.Parallel()
+	body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: apps}\n"
+	before := fstest.MapFS{"input.yaml": {Data: []byte(body)}}
+	after := fstest.MapFS{"input.yaml": {Data: []byte(body + "data: {VALUE: after}\n")}}
+	set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+	assert.NoError(t, err)
+	assert.Equal(t, set.Contains("input.yaml"), true)
+	assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}(nil))
 }

@@ -1140,7 +1140,7 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 // counterpart to the reverse edge: when a HelmRelease's OWN file changes, its
 // chartRef/sourceRef source must enter keep so the source controller fetches
 // the chart. HelmReleases are render-driven (absent from the store at
-// resolve()), so transitiveDeps' store lookup returns nil; the keep walk
+// resolve()), so the stored reference lookup returns nil; the keep walk
 // relies on the discovery-supplied consumerRefs for the forward edge too.
 // Regression: a one-file HR edit left its OCIRepository unfetched and render
 // failed "artifact not available" (surfaced after #566 removed the anonymous
@@ -1624,4 +1624,38 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFilter_ReverseAdmissionScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		obj  manifest.BaseManifest
+		dep  manifest.NamedResource
+	}{
+		{"auth", &manifest.GitRepository{Name: "repo", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}},
+		{"provider", &manifest.ResourceSet{Name: "set", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "input"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			objects := controllertest.MapLister{tc.obj.Named(): tc.obj}
+			index := filterFixture{files: map[manifest.NamedResource]string{tc.obj.Named(): "consumer.yaml", tc.dep: "input.yaml"}, objects: objects}.index()
+			f := NewFilter(NewSet([]string{"input.yaml"}), index, objects)
+			assert.Equal(t, f.ShouldReconcile(tc.dep), true)
+			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), false)
+		})
+	}
+}
+
+func TestFilter_ReferenceSnapshotUnchanged(t *testing.T) {
+	t.Parallel()
+	ks := &manifest.Kustomization{Name: "app", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}}}}
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster"}
+	untouched := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "sentinel"}
+	backing := []manifest.NamedResource{source, untouched, untouched, untouched}
+	want := slices.Clone(backing)
+	objects := controllertest.MapLister{ks.Named(): ks}
+	index := filterFixture{files: map[manifest.NamedResource]string{ks.Named(): "app.yaml", source: "source.yaml"}, refs: map[manifest.NamedResource][]manifest.NamedResource{ks.Named(): backing[:1]}, objects: objects}.index()
+	NewFilter(NewSet([]string{"source.yaml"}), index, objects)
+	assert.Diff(t, backing, want)
 }

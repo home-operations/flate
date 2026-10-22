@@ -30,7 +30,8 @@ konflate embeds.
 - **Smallest diff.** Solve the stated problem: no speculative abstractions, no interface or options
   struct with one caller, no new flags, no new dependencies, no drive-by refactors. Remove what
   your change orphans. Clean up touched code within the same concern (simplify, delete dead code,
-  fix stale comments); leave other dead code alone and mention it.
+  fix stale comments); leave other dead code alone and mention it. Approved dependency
+  exceptions: `automemlimit`, `doublestar/v4`.
 - **Replace, don't add.** A change that introduces a new way migrates every consumer and deletes
   the old path in the same PR; never land a new path beside the old one. In a planned series one
   PR may grow when a later PR deletes; the series as a whole shrinks. PRs state production lines
@@ -47,7 +48,8 @@ konflate embeds.
   discard old cache directories; upgrade notes go in the PR body.
 - **Call upstream.** Use helm, Flux, kustomize, go-git, oras and the stdlib instead of
   re-implementing them; if upstream lacks a hook, post-process its output. No compatibility shims
-  or aliases past their last caller.
+  or aliases past their last caller. `internal/kustomize.Build` is the one approved replacement
+  (it keeps the builtin schema loaded across builds).
 - **The SDK.** List every exported `pkg/` API or `Warning.Category` change in the PR; remove unused
   or test-only exports when the result is leaner. konflate is not a constraint: never keep an
   export, option or cache for it; it migrates.
@@ -117,6 +119,8 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
   writers stay library-owned. The SSRF guard is process-global and opt-in via `RestrictEgress`.
 - **Deterministic output.** Order never depends on goroutine scheduling; sort anything derived
   from a map.
+- **Flux parity beats strictness.** Where Flux renders, flate never fails: conflicting producers
+  yield one object, a deterministic winner and one `ConflictingProducers` warning.
 
 ## Performance and concurrency
 
@@ -197,7 +201,7 @@ mise run lint
 go mod tidy && git diff --exit-code go.mod go.sum
 mise run test        # go test -race, all packages including test/e2e
 mise run vulncheck
-mise run bench       # when touching a package with benchmarks; paste benchstat vs bench/baseline.txt
+mise run bench       # when touching a package with benchmarks; paste benchstat, base against branch
 ```
 
 CI runs the same plus a goreleaser snapshot and workflow lint; "Build Success" is the merge gate

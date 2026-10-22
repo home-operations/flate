@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -72,7 +73,6 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 	}
 }
 
-// Suppression headers must remain visible even when no changes render.
 func TestRenderDocs_SuppressionHeader(t *testing.T) {
 	t.Parallel()
 	parent := ksParent
@@ -83,7 +83,6 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 		{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "chart not ready"},
 		{Parent: ksParent, Side: SideOrig, Count: 1, Reason: "suspended on orig"},
 	}
-	note := suppressed[0].String()
 	const humanBody = `
 data.k  (v1/ConfigMap/apps/keep)
   ± value change
@@ -99,12 +98,11 @@ data.k  (v1/ConfigMap/apps/other)
 
 	for _, tc := range []struct {
 		format Format
-		prefix string
 		body   string
 	}{
-		{"", "⚠ ", humanBody},
-		{FormatHuman, "⚠ ", humanBody},
-		{FormatGitHub, "! ", `
+		{"", humanBody},
+		{FormatHuman, humanBody},
+		{FormatGitHub, `
 @@ data.k @@
 # v1/ConfigMap/apps/keep
 ! ± value change
@@ -118,7 +116,7 @@ data.k  (v1/ConfigMap/apps/other)
 + after
 
 `},
-		{FormatGitLab, "# ", `
+		{FormatGitLab, `
 = data.k
 = v1/ConfigMap/apps/keep
 # ± value change
@@ -132,7 +130,7 @@ data.k  (v1/ConfigMap/apps/other)
 + after
 
 `},
-		{FormatGitea, "! ", `
+		{FormatGitea, `
 @@ data.k @@
 = v1/ConfigMap/apps/keep
 ! ± value change
@@ -146,8 +144,8 @@ data.k  (v1/ConfigMap/apps/other)
 + after
 
 `},
-		{FormatBrief, "⚠ ", "two changes detected between from, two documents and to, two documents\n\n"},
-		{FormatDiff, "# ", `--- ConfigMap apps/keep (apps/<path>)
+		{FormatBrief, "two changes detected between from, two documents and to, two documents\n\n"},
+		{FormatDiff, `--- ConfigMap apps/keep (apps/<path>)
 +++ ConfigMap apps/keep (apps/<path>)
 @@ -1,6 +1,6 @@
  apiVersion: v1
@@ -172,26 +170,27 @@ data.k  (v1/ConfigMap/apps/other)
 	} {
 		t.Run(cmp.Or(string(tc.format), "default"), func(t *testing.T) {
 			t.Parallel()
-			out, err := RenderDocs(l, r, Options{Format: tc.format, Suppressed: suppressed})
+			out, warnings, err := RenderDocs(l, r, Options{Format: tc.format, Suppressed: suppressed})
 			if err != nil {
 				t.Fatalf("render: %v", err)
 			}
-			header := tc.prefix + note + "\n" + tc.prefix + suppressed[1].String() + "\n"
-			body, err := RenderDocs(l, r, Options{Format: tc.format})
+			assert.Equal(t, len(warnings), 0)
+			body, _, err := RenderDocs(l, r, Options{Format: tc.format})
 			if err != nil {
 				t.Fatalf("body: %v", err)
 			}
 			if string(body) != tc.body {
 				t.Errorf("body = %q, want %q", body, tc.body)
 			}
-			if want := header + "\n" + tc.body; string(out) != want {
+			if want := tc.body; string(out) != want {
 				t.Errorf("output = %q, want %q", out, want)
 			}
-			out, err = RenderDocs(nil, nil, Options{Format: tc.format, Suppressed: suppressed})
-			if err != nil || string(out) != header {
-				t.Errorf("notes only = %q, %v; want %q, nil", out, err, header)
+			out, warnings, err = RenderDocs(nil, nil, Options{Format: tc.format, Suppressed: suppressed})
+			assert.Equal(t, len(warnings), 0)
+			if err != nil || len(out) != 0 {
+				t.Errorf("suppression only = %q, %v; want empty product", out, err)
 			}
-			out, err = RenderDocs(nil, nil, Options{Format: tc.format})
+			out, _, err = RenderDocs(nil, nil, Options{Format: tc.format})
 			if err != nil || len(out) != 0 {
 				t.Errorf("empty = %q, %v; want empty bytes, nil", out, err)
 			}
@@ -200,23 +199,25 @@ data.k  (v1/ConfigMap/apps/other)
 
 	t.Run("html", func(t *testing.T) {
 		t.Parallel()
-		out, err := RenderDocs(l, r, Options{Format: FormatHTML, Suppressed: suppressed})
+		out, _, err := RenderDocs(l, r, Options{Format: FormatHTML, Suppressed: suppressed})
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
-		if !strings.Contains(string(out), `class="suppressed"`) || !strings.Contains(string(out), "not rendered on the current side") {
-			t.Errorf("html should carry the suppression banner")
+		body, _, bodyErr := RenderDocs(l, r, Options{Format: FormatHTML})
+		assert.NoError(t, bodyErr)
+		if string(out) != string(body) {
+			t.Error("suppression changed the HTML product")
 		}
 	})
 
-	t.Run("suppression alone still emits", func(t *testing.T) {
+	t.Run("suppression alone has no product", func(t *testing.T) {
 		t.Parallel()
-		out, err := RenderDocs(nil, nil, Options{Format: FormatHTML, Suppressed: suppressed})
+		out, _, err := RenderDocs(nil, nil, Options{Format: FormatHTML, Suppressed: suppressed})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(out), "not rendered on the current side") {
-			t.Errorf("an otherwise-empty HTML diff must still disclose the suppression; got %q", out)
+		if len(out) != 0 {
+			t.Errorf("suppression-only HTML must have no product; got %q", out)
 		}
 	})
 }

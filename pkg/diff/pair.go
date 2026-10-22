@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"iter"
-	"log/slog"
 	"slices"
 
 	"sigs.k8s.io/yaml"
@@ -26,11 +25,9 @@ type pairedResource struct {
 	bChart     string
 }
 
-// changedPairs yields YAML differences after normalization, which can change identities.
 // A nil side marshals to an empty document, so its counterpart is a full add/remove.
-func changedPairs(left, right []Doc, opts Options) iter.Seq2[output.LineChange, error] {
+func changedPairs(paired []pairedResource) iter.Seq2[output.LineChange, error] {
 	return func(yield func(output.LineChange, error) bool) {
-		paired, _, _ := pair(left, right, opts)
 		for _, p := range paired {
 			from, err := marshalForUnified(p.a)
 			if err != nil {
@@ -74,15 +71,11 @@ type pairKey struct {
 	parent, resource manifest.NamedResource
 }
 
-// pair matches each resource in left against its counterpart in right
-// by canonical parent and resource identity, so a Deployment
-// rendered by HelmRelease A never diffs against the same-named
-// Deployment from HelmRelease B. The result is sorted by parent then
-// resource identity for deterministic output. Duplicate identities retain
-// the last document on each side, matching apply order, and emit a warning.
-func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
+// Duplicate identities must retain the last normalized document, matching apply order.
+func pair(left, right []Doc, opts Options) ([]pairedResource, []manifest.Warning, bool, bool) {
 	idx := make(map[pairKey]*pairedResource, len(left)+len(right))
-	add := func(side string, d Doc, chart string, pos int) {
+	var warnings []manifest.Warning
+	add := func(side Side, d, original Doc, pos int) {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		resource := manifest.DocIdentity(d.Manifest)
 		k := pairKey{d.Parent.NamedResource, resource}
@@ -94,25 +87,26 @@ func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 		p.parent = d.Parent
 		p.apiVersion = apiVersion
 		dst, dstChart, dstPos := &p.a, &p.aChart, &p.aPos
-		if side == "right" {
+		if side == SideCurrent {
 			dst, dstChart, dstPos = &p.b, &p.bChart, &p.bPos
 		}
 		if *dst != nil {
-			slog.Warn("diff: duplicate document shadows an earlier document",
-				"side", side, "parentGroup", d.Parent.Group, "parentKind", d.Parent.Kind,
-				"parentNamespace", d.Parent.Namespace, "parentName", d.Parent.Name,
-				"parentPath", d.Parent.Path, "apiVersion", apiVersion,
-				"group", resource.Group, "kind", resource.Kind, "namespace", resource.Namespace, "name", resource.Name)
+			warnings = append(warnings, manifest.Warning{
+				Resource: resource, Category: manifest.WarnDuplicateDocument,
+				Message: "duplicate document shadows an earlier document",
+				Detail: []string{"side: " + string(side), "parent: " + d.Parent.String(),
+					"parent path: " + d.Parent.Path, "apiVersion: " + manifest.DocAPIVersion(original.Manifest)},
+			})
 		}
-		*dst, *dstChart, *dstPos = d.Manifest, chart, pos
+		*dst, *dstChart, *dstPos = d.Manifest, chartLabel(original.Manifest), pos
 	}
 	normalizedLeft, leftCopied := normalizeDocs(left, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	for i, d := range normalizedLeft {
-		add("left", d, chartLabel(left[i].Manifest), i)
+		add(SideOrig, d, left[i], i)
 	}
 	normalizedRight, rightCopied := normalizeDocs(right, opts.StripAttrs, opts.StripFields, opts.Normalize)
 	for i, d := range normalizedRight {
-		add("right", d, chartLabel(right[i].Manifest), i)
+		add(SideCurrent, d, right[i], i)
 	}
 	out := make([]pairedResource, 0, len(idx))
 	for _, p := range idx {
@@ -124,5 +118,6 @@ func pair(left, right []Doc, opts Options) ([]pairedResource, bool, bool) {
 			a.resource.Compare(b.resource),
 		)
 	})
-	return out, leftCopied, rightCopied
+	slices.SortFunc(warnings, manifest.CompareWarning)
+	return out, warnings, leftCopied, rightCopied
 }

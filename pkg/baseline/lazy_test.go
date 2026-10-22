@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 
@@ -105,7 +107,7 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				entries, err := treeEntries(t.Context(), tree)
 				assert.NoError(t, err)
 				s := selection{repo: repo, current: input.FS.(*gittree.FS), base: &resolution{Repo: &git.Repository{Storer: memory.NewStorage()}}}
-				candidates, err := s.candidates(t.Context(), tree, entries)
+				candidates, _, err := s.candidates(t.Context(), tree, entries)
 				assert.NoError(t, err)
 				dirty, present := candidates["file"]
 				assert.Equal(t, present, true)
@@ -115,6 +117,11 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				assert.Diff(t, routing, []string{"file"})
 			}
 			res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
+			if tc.name == "malformed_index" {
+				if res == nil || len(res.Source.Warnings) != 1 || res.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable || len(res.BaseInput.Warnings) != 0 {
+					t.Fatalf("current-only status evidence = %+v", res)
+				}
+			}
 			assert.NoError(t, err)
 			if res.BaseInput.Key == "" || res.Source.Key != "" || res.BaseInput.Revision != pin.String() || res.BaseInput.LocalRoot != root {
 				t.Fatalf("baseline identity = %+v; current identity = %+v", res.BaseInput, res.Source)
@@ -291,4 +298,62 @@ func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
 		t.Fatal("expected missing-objects error")
 	}
 	assert.Equal(t, strings.Contains(err.Error(), hash.String()), true)
+}
+
+func TestAutoResolve_StatusWarningSurvivesFailure(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	pin := initRepoWithFile(t, root, "file", "base")
+	repo := openHelper(t, root)
+	commit, err := repo.CommitObject(pin)
+	assert.NoError(t, err)
+	tree, err := commit.Tree()
+	assert.NoError(t, err)
+	entry, err := tree.FindEntry("file")
+	assert.NoError(t, err)
+	writeAndCommit(t, root, "file", "head")
+	oid := entry.Hash.String()
+	assert.NoError(t, os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:])))
+	testutil.WriteFile(t, root, ".git/index", "invalid index")
+	owner := cachetest.New(t, "", sourcecache.New)
+	result, err := AutoResolve(t.Context(), root, pin.String(), owner)
+	if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "missing objects") {
+		t.Fatalf("original body failure lost: %v", err)
+	}
+	if result == nil || result.Source == nil || result.Source.FS != nil || result.BaseInput != nil || len(result.Source.Warnings) != 1 || result.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable || result.Source.Warnings[0].Resource != (manifest.NamedResource{}) {
+		t.Fatalf("warning-only baseline = %+v", result)
+	}
+}
+
+func TestAutoResolve_SubmoduleWarningAttribution(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	pin := initRepoWithFile(t, root, "file", "base")
+	repo := openHelper(t, root)
+	commit, err := repo.CommitObject(pin)
+	assert.NoError(t, err)
+	tree, err := commit.Tree()
+	assert.NoError(t, err)
+	tree.Entries = append(tree.Entries, object.TreeEntry{Name: "module", Mode: filemode.Submodule, Hash: pin})
+	sort.Sort(object.TreeEntrySorter(tree.Entries))
+	encoded := repo.Storer.NewEncodedObject()
+	assert.NoError(t, tree.Encode(encoded))
+	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	encoded = repo.Storer.NewEncodedObject()
+	assert.NoError(t, commit.Encode(encoded))
+	pin, err = repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	setRef(t, repo, plumbing.NewBranchReferenceName("base-with-module"), pin)
+	result, err := AutoResolve(t.Context(), root, "base-with-module", cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	warnings := result.BaseInput.Warnings
+	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSkippedSubmodule || warnings[0].Resource != manifest.BootstrapSourceID || len(result.Source.Warnings) != 0 {
+		t.Fatalf("baseline source evidence = %+v, current=%+v", warnings, result.Source.Warnings)
+	}
+	raw := result.BaseInput.FS.(*gittree.FS).Warnings
+	if len(raw) != 1 || raw[0].Resource != (manifest.NamedResource{}) {
+		t.Fatalf("borrowed filesystem evidence mutated: %+v", raw)
+	}
+	assert.Diff(t, warnings[0].Detail, raw[0].Detail)
 }

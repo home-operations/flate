@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -117,6 +118,26 @@ func TestNew_EntryPolicy(t *testing.T) {
 				assert.Equal(t, label, tc.want)
 				assert.Equal(t, key, tc.key)
 			})
+		}
+	})
+
+	t.Run("warning evidence reuse", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.GitInit(t, t.TempDir())
+		commit := craftedCommit(t, repo, object.TreeEntry{Name: "module", Mode: filemode.Submodule})
+		input, _, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, ViewOptions{Content: "pinned", Mode: Direct})
+		assert.NoError(t, err)
+		if len(input.Warnings) != 1 {
+			t.Fatalf("traversal evidence = %+v", input.Warnings)
+		}
+		for _, mode := range []ViewMode{Direct, Source} {
+			view, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: input})
+			assert.NoError(t, err)
+			var want []manifest.Warning
+			if mode == Direct {
+				want = input.Warnings
+			}
+			assert.Diff(t, view.Warnings, want)
 		}
 	})
 
@@ -1167,4 +1188,58 @@ func TestNew_EntryPolicy(t *testing.T) {
 		}
 	})
 
+}
+
+func TestNew_WarningsSurviveFailure(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"traversal", "shape", "refresh"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			repo := testutil.GitInit(t, t.TempDir())
+			entries := []object.TreeEntry{{Name: "module", Mode: filemode.Submodule, Hash: plumbing.NewHash(strings.Repeat("a", 40))}}
+			if failure == "traversal" {
+				entries = append(entries, object.TreeEntry{Name: "zmissing", Mode: filemode.Dir, Hash: plumbing.NewHash(strings.Repeat("b", 40))})
+			} else {
+				encoded := repo.Storer.NewEncodedObject()
+				assert.NoError(t, (&object.Tree{}).Encode(encoded))
+				hash, err := repo.Storer.SetEncodedObject(encoded)
+				assert.NoError(t, err)
+				name := ".sourceignore"
+				if failure == "refresh" {
+					name = "zsubtree"
+				}
+				entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Dir, Hash: hash})
+			}
+			encoded := repo.Storer.NewEncodedObject()
+			sort.Sort(object.TreeEntrySorter(entries))
+			assert.NoError(t, (&object.Tree{Entries: entries}).Encode(encoded))
+			treeHash, err := repo.Storer.SetEncodedObject(encoded)
+			assert.NoError(t, err)
+			encoded = repo.Storer.NewEncodedObject()
+			assert.NoError(t, (&object.Commit{TreeHash: treeHash}).Encode(encoded))
+			commit, err := repo.Storer.SetEncodedObject(encoded)
+			assert.NoError(t, err)
+			opts := ViewOptions{}
+			if failure == "refresh" {
+				opts = ViewOptions{Mode: Direct, Content: "captured", Current: fstest.MapFS{}}
+			}
+			input, identity, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, opts)
+			if failure == "refresh" {
+				assert.NoError(t, err)
+				for _, entry := range entries {
+					if entry.Name == "zsubtree" {
+						oid := entry.Hash.String()
+						assert.NoError(t, os.Remove(filepath.Join(repo.Storer.(*filesystem.Storage).Filesystem().Root(), "objects", oid[:2], oid[2:])))
+					}
+				}
+				input, identity, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: input})
+			}
+			if err == nil || identity != "" || input == nil || input.view != nil || len(input.Warnings) != 1 || input.Warnings[0].Category != manifest.WarnSkippedSubmodule || input.Warnings[0].Detail[0] != "module" {
+				t.Fatalf("failed admission = %+v, %q, %v", input, identity, err)
+			}
+			if failure == "traversal" && !errors.Is(err, plumbing.ErrObjectNotFound) {
+				t.Fatalf("original error lost: %v", err)
+			}
+		})
+	}
 }

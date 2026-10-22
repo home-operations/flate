@@ -459,12 +459,18 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 				stdout, stderr, code := runCLI(t, args...)
 				assert.Equal(t, code, 0)
 				diagnostic, data := stderr, stdout
-				if command[0] == "test" {
-					diagnostic, data = stdout, stderr
-				}
 				assert.Equal(t, strings.Count(diagnostic, advisory), 1)
+				assert.Equal(t, strings.Count(diagnostic, "[UnresolvedSubstitution]"), 1)
 				assert.Equal(t, strings.Contains(data, advisory), false)
-				if command[0] != "test" {
+				if command[0] == "test" {
+					normalized := regexp.MustCompile(`   [0-9]+\.[0-9]+s\n$`).ReplaceAllString(stdout, "")
+					if run == 0 {
+						firstOut, firstErr = normalized, stderr
+					} else {
+						assert.Equal(t, normalized, firstOut)
+						assert.Equal(t, stderr, firstErr)
+					}
+				} else {
 					if !json.Valid([]byte(stdout)) {
 						t.Fatalf("invalid payload: %s", stdout)
 					}
@@ -476,7 +482,18 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 					}
 				}
 			}
+			for _, level := range []string{"debug", "info", "warn", "error"} {
+				args := append(slices.Clone(command), "--path", k8s, "--concurrency=2", "--log-level", level)
+				stdout, stderr, code := runCLI(t, args...)
+				if code != 0 || strings.Count(stderr, "[UnresolvedSubstitution]") != 1 || strings.Count(stderr, advisory) != 1 || strings.Contains(stdout, advisory) || strings.Contains(stderr, "level=WARN") {
+					t.Fatalf("%s destination: exit=%d stdout=%s stderr=%s", level, code, stdout, stderr)
+				}
+			}
 		})
+	}
+	stdout, stderr, code := runCLI(t, "test", "ks", "absent", "--path", k8s, "--concurrency=2")
+	if code != 1 || stdout != "" || strings.Count(stderr, "[UnresolvedSubstitution]") != 1 || !strings.Contains(stderr, "no Kustomization named") {
+		t.Fatalf("absent roster diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
 
@@ -504,7 +521,7 @@ func TestRun_TestAll_RespectsNamespace(t *testing.T) {
 }
 
 func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
-	path := writeFixture(t)
+	path := writeUnreadableSecretFixture(t)
 	want := errors.New("stdout closed")
 	var stderr bytes.Buffer
 	code := Run([]string{"test", "all", "--path", path}, failingWriter{err: want}, &stderr)
@@ -513,6 +530,9 @@ func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), want.Error()) {
 		t.Errorf("stderr should include writer error %q: %q", want, stderr.String())
+	}
+	if strings.Count(stderr.String(), "[UnresolvedSubstitution]") != 1 {
+		t.Fatalf("stdout failure skipped warning report: %s", stderr.String())
 	}
 }
 
@@ -863,15 +883,9 @@ func (w failingWriter) Write(_ []byte) (int, error) {
 	return 0, w.err
 }
 
-// TestRun_Diff_OneSidedFailureSuppressed is the #938 regression: when the
-// Kustomization renders on the orig side but fails on the current side, its
-// objects must not be diffed as removals. The output leads with a suppression
-// note, the failure summary is printed on stderr, and the exit code stays
-// non-zero.
 func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	orig := writeFixture(t)
 	current := writeFixture(t)
-	// Break the current side's kustomize entry point so the KS fails there only.
 	testutil.WriteFileAt(t, filepath.Join(current, "apps", "kustomization.yaml"),
 		"resources:\n- missing.yaml\n")
 
@@ -882,8 +896,8 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	if strings.Contains(stdout, "document removed") || strings.Contains(stdout, "greeting") {
 		t.Errorf("the orig-only objects must be suppressed, not diffed as removals:\n%s", stdout)
 	}
-	if !strings.HasPrefix(stdout, "! Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps: 1 object not rendered on the current side; diff suppressed (") {
-		t.Errorf("stdout should lead with the suppression note; got:\n%s", stdout)
+	if strings.Count(stderr, "1 object not rendered on the current side; diff suppressed (") != 1 || stdout != "" {
+		t.Errorf("suppression must appear once on stderr with no product: stdout=%s stderr=%s", stdout, stderr)
 	}
 	if !strings.Contains(stderr, "flate error: current snapshot: reconcile completed with 1 failure(s)") {
 		t.Errorf("stderr should carry the failure summary:\n%s", stderr)
@@ -1016,6 +1030,7 @@ data:
 
 func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	root := writeMultiNamespaceFixture(t)
+	testutil.WriteFile(t, root, "apps-a/stray.yaml", testutil.KustomizationYAML("stray", "alpha", "  path: ./missing-stray\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, root, "apps-b/kustomization.yaml", "resources: [missing.yaml]\n")
 	args := []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json"}
 	full, stderr, code := runCLI(t, args...)
@@ -1040,11 +1055,13 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	}
 	assert.Equal(t, writer.buf.String(), full[:limit])
 	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
+	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 1)
 	writer = &outputFailWriter{remaining: limit, err: writeErr}
 	errOut.Reset()
 	assert.Equal(t, Run(args, writer, &errOut), 1)
 	assert.Equal(t, writer.buf.String(), full[:limit])
 	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
+	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 1)
 }
 
 type outputFailWriter struct {

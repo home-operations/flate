@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestCacheGC_ExplicitRoot(t *testing.T) {
@@ -60,5 +64,58 @@ func TestCache_RemovedSurfaceUnavailable(t *testing.T) {
 		if _, stderr, code := runCLI(t, args...); code != 1 {
 			t.Fatalf("removed surface %v exited %d: %s", args, code, stderr)
 		}
+	}
+}
+
+func TestCacheGC_WarningWriteError(t *testing.T) {
+	root := t.TempDir()
+	owner, err := cache.New(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, "oci", "index.json")
+	if err := os.Chmod(index, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(index, 0o600) })
+	if writable, err := os.OpenFile(index, os.O_WRONLY, 0); err == nil {
+		_ = writable.Close()
+		t.Skip("filesystem does not enforce fixture permissions")
+	}
+	args := []string{"cache", "gc", "--cache-dir", root, "--max-age=0"}
+	var wantOut, wantErr string
+	for run := range 2 {
+		stdout, stderr, code := runCLI(t, args...)
+		if code != 0 || strings.Count(stderr, "[CacheMaintenance]") != 1 || !strings.Contains(stderr, "save swept index") || strings.Contains(stdout, "save swept index") || !strings.Contains(stdout, "0 entries") || !strings.Contains(stdout, "1 errors") {
+			t.Fatalf("cache advisory: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		if run == 0 {
+			wantOut, wantErr = stdout, stderr
+		} else if stdout != wantOut || stderr != wantErr {
+			t.Fatal("cache warning order or product changed")
+		}
+	}
+	writeErr := errors.New("diagnostic closed")
+	cmd := New("test")
+	cmd.SetArgs(args)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(failingWriter{err: writeErr})
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, writeErr) {
+		t.Fatalf("warning write error = %v", err)
+	}
+	if stdout.String() != wantOut {
+		t.Fatalf("product = %q, want %q", stdout.String(), wantOut)
+	}
+	cmd = New("test")
+	cmd.SetArgs(args)
+	cmd.SetOut(failingWriter{err: io.ErrClosedPipe})
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	if err := cmd.ExecuteContext(t.Context()); !errors.Is(err, io.ErrClosedPipe) || stderr.String() != wantErr {
+		t.Fatalf("product error = %v, diagnostics = %q", err, stderr.String())
 	}
 }

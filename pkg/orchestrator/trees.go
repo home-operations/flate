@@ -30,12 +30,9 @@ type Tree struct {
 	SelfURLs []string
 }
 
-// Rendered is one side of a RenderTrees comparison: the Orchestrator
-// (already Stopped — its background reconcile loops are released, but its
-// Store stays readable for diff doc gathering) paired with its render
-// Result and that side's render error. Result is nil only on a fatal
-// (Bootstrap) error; a per-resource render failure keeps Result non-nil
-// (the failures are in Result.Failed) and is reported in Err.
+// Rendered pairs a completed orchestrator and result with its error.
+// A failed bootstrap retains only Result.Warnings and no Orchestrator;
+// per-resource failures retain the completed result and readable Store.
 type Rendered struct {
 	*Orchestrator
 	Result *Result
@@ -60,8 +57,8 @@ type Rendered struct {
 //
 // Both orchestrators are Stopped before return; their Stores remain
 // readable. err is non-nil if either side had any failure; callers that
-// still want the partial diff check Rendered.Result != nil (nil only on a
-// fatal Bootstrap error) and treat err as advisory. baseTree is the
+// still want a partial diff require both Orchestrator and Result, and treat
+// per-resource errors as advisory. baseTree is the
 // left/old side and headTree the right/new — matching diff.Changes(left,
 // right). Each side reconciles changed-only against the OTHER tree's
 // RepoRoot.
@@ -151,7 +148,7 @@ func renderOne(ctx context.Context, cfg Config) (*Orchestrator, *Result, error) 
 	}
 	res, err := o.Render(ctx)
 	if res == nil {
-		return nil, nil, err
+		return nil, &Result{Warnings: o.store.Warnings()}, err
 	}
 	return o, res, err
 }

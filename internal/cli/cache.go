@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -59,19 +61,26 @@ Set --dry-run to see what would be removed without touching disk.`,
 			if f.dryRun {
 				prefix = "[dry-run] "
 			}
+			var writeErr error
 			for _, p := range res.Removed {
-				_, _ = fmt.Fprintln(w, prefix+p)
+				_, err := fmt.Fprintln(w, prefix+p)
+				writeErr = errors.Join(writeErr, err)
 			}
-			_, _ = fmt.Fprintf(w, "%s%d entries, %s in Git generations; blob reclamation is decided by OCI graph GC",
+			_, err = fmt.Fprintf(w, "%s%d entries, %s in Git generations; blob reclamation is decided by OCI graph GC",
 				prefix, len(res.Removed), formatBytes(res.Bytes))
+			writeErr = errors.Join(writeErr, err)
 			if len(res.Errors) > 0 {
-				_, _ = fmt.Fprintf(w, ", %d errors", len(res.Errors))
+				_, err = fmt.Fprintf(w, ", %d errors", len(res.Errors))
+				writeErr = errors.Join(writeErr, err)
 			}
-			_, _ = fmt.Fprintln(w)
-			for _, e := range res.Errors {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warn: %v\n", e)
+			_, err = fmt.Fprintln(w)
+			writeErr = errors.Join(writeErr, err)
+			warnings := make([]manifest.Warning, len(res.Errors))
+			for i, err := range res.Errors {
+				warnings[i] = manifest.Warning{Category: manifest.WarnCacheMaintenance, Message: err.Error()}
 			}
-			return nil
+			stderr := cmd.ErrOrStderr()
+			return errors.Join(writeErr, (output.Encoder{Writer: stderr, Color: output.ColorEnabled(stderr)}).Report(output.Model{Warnings: warnings}))
 		},
 	}
 	cmd.Flags().DurationVar(&f.maxAge, "max-age", 30*24*time.Hour,

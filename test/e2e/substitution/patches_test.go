@@ -2,6 +2,7 @@
 package substitution
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -93,5 +94,28 @@ data:
 			t.Fatal("generator substitution output differs across concurrency levels")
 		}
 		previous = out
+	}
+}
+
+func TestE2E_SubstitutionPrecedence(t *testing.T) {
+	root, external := t.TempDir(), t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"))
+	testutil.WriteFile(t, root, "flux/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}'}\n")
+	testutil.WriteFile(t, external, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: private-value}\n")
+	for _, verb := range []string{"build", "test"} {
+		t.Run(verb, func(t *testing.T) {
+			for range 2 {
+				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--substitute-from", filepath.Join(external, "settings.yaml"), "--concurrency=2", "--log-level=info")
+				if strings.Count(stderr, "[SubstitutionPrecedence]") != 1 || !strings.Contains(stderr, "ConfigMap apps/settings") || strings.Contains(stdout, "repository substitution source takes precedence") || strings.Contains(stdout+stderr, "private-value") || strings.Contains(stderr, "level=WARN") {
+					t.Fatalf("precedence destination: stdout=%s stderr=%s", stdout, stderr)
+				}
+				if verb == "build" && !strings.Contains(stdout, "value: repository") || verb == "test" && !strings.Contains(stdout, "passed") {
+					t.Fatalf("precedence product: %s", stdout)
+				}
+			}
+		})
 	}
 }

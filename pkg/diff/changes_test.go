@@ -30,7 +30,7 @@ func cmDoc(parent Parent, id manifest.NamedResource, dataVal, chart string) Doc 
 func jsonChanges(t *testing.T, left, right []Doc, opts Options) []Change {
 	t.Helper()
 	opts.Format = FormatJSON
-	out, err := RenderDocs(left, right, opts)
+	out, _, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
 	var report struct {
 		Changes []Change `json:"changes"`
@@ -58,7 +58,7 @@ func TestChanges_Classification(t *testing.T) {
 		meta["name"] = meta["name"].(string) + "-normalized"
 		meta["namespace"] = "normalized-ns"
 	}}
-	changes := Changes(left, right, opts)
+	changes, _ := Changes(left, right, opts)
 	assert.Diff(t, jsonChanges(t, left, right, opts), changes)
 	got := map[string]ChangeStatus{}
 	for _, c := range changes {
@@ -140,7 +140,7 @@ func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 				want[0].Old["data"].(map[string]any)["normalized"] = "yes"
 				want[0].New["data"].(map[string]any)["normalized"] = "yes"
 			}
-			got := Changes(left, right, tt.opts)
+			got, _ := Changes(left, right, tt.opts)
 			assert.Diff(t, got, want)
 			if len(got) != 1 {
 				t.Fatalf("want one change with unchanged resource omitted, got %d", len(got))
@@ -158,7 +158,8 @@ func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 			}
 			assert.Diff(t, left, wantLeft)
 			assert.Diff(t, right, wantRight)
-			assert.Diff(t, Changes(left, right, tt.opts), want)
+			again, _ := Changes(left, right, tt.opts)
+			assert.Diff(t, again, want)
 		})
 	}
 }
@@ -169,7 +170,9 @@ func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
 	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
 	opts := Options{StripAttrs: DefaultStripAttrs}
-	assert.Equal(t, len(Changes(left, right, opts)), 0)
+	changes, warnings := Changes(left, right, opts)
+	assert.Equal(t, len(changes), 0)
+	assert.Equal(t, len(warnings), 0)
 	assert.Equal(t, len(jsonChanges(t, left, right, opts)), 0)
 }
 
@@ -188,7 +191,7 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 					meta["labels"] = map[string]any{helmChartLabel: replacement}
 				}
 			}}
-			got := Changes(left, right, opts)
+			got, _ := Changes(left, right, opts)
 			if len(got) != 1 {
 				t.Fatalf("want 1 change, got %d: %+v", len(got), got)
 			}
@@ -227,7 +230,7 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 	left := []Doc{secret("AAAA")}
 	right := []Doc{secret("BBBB")}
 
-	if got := Changes(left, right, Options{}); len(got) != 1 {
+	if got, _ := Changes(left, right, Options{}); len(got) != 1 {
 		t.Fatalf("without redaction the value change must show; got %d", len(got))
 	}
 	redact := func(m map[string]any) {
@@ -240,7 +243,7 @@ func TestChanges_NormalizeHookSuppressesChange(t *testing.T) {
 			}
 		}
 	}
-	if got := Changes(left, right, Options{Normalize: redact}); len(got) != 0 {
+	if got, _ := Changes(left, right, Options{Normalize: redact}); len(got) != 0 {
 		t.Fatalf("redaction hook should suppress the render-random change; got %+v", got)
 	}
 }
@@ -258,12 +261,13 @@ func TestChanges_Sorted(t *testing.T) {
 		meta := m["metadata"].(map[string]any)
 		meta["name"] = meta["name"].(string) + "-normalized"
 	}}
-	got := Changes(left, right, opts)
-	assert.Diff(t, Changes(left, right, opts), got)
+	got, _ := Changes(left, right, opts)
+	again, _ := Changes(left, right, opts)
+	assert.Diff(t, again, got)
 	opts.Format = FormatJSON
-	first, err := RenderDocs(left, right, opts)
+	first, _, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
-	second, err := RenderDocs(left, right, opts)
+	second, _, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
 	assert.Equal(t, string(second), string(first))
 	if len(got) != 3 || got[0].Parent != pa || got[1].Parent != pa || got[2].Parent != pb ||
@@ -293,7 +297,11 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 				calls[meta["name"].(string)]++
 				meta["name"] = "normalized"
 			}}
-			got := Changes(left, right, opts)
+			got, warnings := Changes(left, right, opts)
+			assert.Equal(t, len(warnings), 2)
+			for _, warning := range warnings {
+				assert.Equal(t, warning.Category, manifest.WarnDuplicateDocument)
+			}
 			wantCalls := map[string]int{"first-left": 1, "last-left": 1, "first-right": 1, "last-right": 1}
 			assert.Diff(t, calls, wantCalls)
 			calls = map[string]int{}
@@ -301,7 +309,8 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 			assert.Diff(t, calls, wantCalls)
 			calls = map[string]int{}
 			lineCount := 0
-			for _, err := range changedPairs(left, right, opts) {
+			paired, _, _, _ := pair(left, right, opts)
+			for _, err := range changedPairs(paired) {
 				assert.NoError(t, err)
 				lineCount++
 			}

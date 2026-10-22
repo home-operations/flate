@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"path"
 	"slices"
@@ -35,21 +34,21 @@ type selection struct {
 	content any
 }
 
-func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, error) {
+func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
 	baseTree, entries, err := s.baseEntries(ctx)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", nil, err
 	}
-	candidates, err := s.candidates(ctx, baseTree, entries)
+	candidates, warnings, err := s.candidates(ctx, baseTree, entries)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", warnings, err
 	}
 	if err := s.acquireBodies(ctx, entries, candidates); err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", warnings, err
 	}
 	routing, err := s.compareCandidates(ctx, candidates, entries)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", warnings, err
 	}
 	slices.Sort(routing)
 	backing := s.repo.Storer.(*filesystem.Storage).Filesystem()
@@ -58,13 +57,13 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	}
 	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Location: s.current.Location(), Content: s.content, Mode: gittree.Direct, Current: s.current, Changes: routing})
 	if err != nil {
-		return nil, nil, "", err
+		return baseline, nil, "", warnings, err
 	}
 	changes, err := s.filterChanges(ctx, baseline, routing, entries)
 	if err != nil {
-		return nil, nil, "", err
+		return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, err
 	}
-	return baseline, changes, identity, nil
+	return baseline, changes, identity, warnings, nil
 }
 
 func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]object.TreeEntry, error) {
@@ -91,26 +90,26 @@ func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]ob
 	return baseTree, entries, nil
 }
 
-func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entries map[string]object.TreeEntry) (map[string]bool, error) {
+func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entries map[string]object.TreeEntry) (map[string]bool, []manifest.Warning, error) {
 	candidates := make(map[string]bool)
 	headEntries := map[string]object.TreeEntry{}
 	head, err := s.repo.Head()
 	if err == nil {
 		commit, err := s.repo.CommitObject(head.Hash())
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		headTree, err := commit.Tree()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		headEntries, err = treeEntries(ctx, headTree)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		diff, err := object.DiffTree(baseTree, headTree)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, c := range diff {
 			if c.From.Name != "" {
@@ -125,18 +124,20 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 			candidates[name] = true
 		}
 	} else {
-		return nil, err
+		return nil, nil, err
 	}
 	worktree, err := s.repo.Worktree()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	status, statusErr := worktree.Status()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+	var warnings []manifest.Warning
 	if statusErr != nil {
-		slog.Warn("baseline: Git status unavailable; comparing checkout conservatively", "error", statusErr)
+		warnings = []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable,
+			Message: "Git status unavailable; comparing checkout conservatively", Count: 1, Detail: []string{statusErr.Error()}}}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, warnings, err
 	}
 	for name, st := range status {
 		if st.Staging != git.Unmodified || st.Worktree != git.Unmodified {
@@ -149,14 +150,14 @@ func (s selection) candidates(ctx context.Context, baseTree *object.Tree, entrie
 		}
 	})
 	if err != nil {
-		return nil, err
+		return nil, warnings, err
 	}
 	if statusErr != nil {
 		for name := range entries {
 			candidates[name] = true
 		}
 	}
-	return candidates, nil
+	return candidates, warnings, nil
 }
 
 func (s selection) acquireBodies(ctx context.Context, entries map[string]object.TreeEntry, candidates map[string]bool) error {

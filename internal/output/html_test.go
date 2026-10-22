@@ -2,7 +2,6 @@ package output
 
 import (
 	"bytes"
-	"slices"
 	"strings"
 	"testing"
 
@@ -15,7 +14,7 @@ func TestEncoderLines_PreservesStatus(t *testing.T) {
 		yield(LineChange{Resource: manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "ns", Name: "same"}, Parent: manifest.NamedResource{Group: "parents.test", Kind: "Producer", Namespace: "ns", Name: "same"}, From: "key: old\n", To: "key: new\n"}, nil)
 	}
 	var buf bytes.Buffer
-	if err := (Encoder{Writer: &buf, Format: FormatHTML}).Lines(changes, slices.Values([]string(nil))); err != nil {
+	if err := (Encoder{Writer: &buf, Format: FormatHTML}).Lines(changes); err != nil {
 		t.Fatal(err)
 	}
 	if out := buf.String(); !strings.Contains(out, "1 changed") || !strings.Contains(out, `<span class="status status-"></span>`) || !strings.Contains(out, "Widget.example.test ns/same") || !strings.Contains(out, "Producer.parents.test ns/same") {

@@ -124,7 +124,7 @@ func openStore(ctx context.Context, root *os.Root) (*oci.Store, error) {
 	if removeErr := root.Remove(indexPath()); removeErr != nil {
 		return nil, errors.Join(err, removeErr)
 	}
-	slog.Warn("cache: rebuilding unreadable store index", "path", indexPath(), "root", root.Name(), "error", err)
+	slog.Debug("cache: rebuilding unreadable store index", "path", indexPath(), "root", root.Name(), "error", err)
 	return oci.NewWithContext(ctx, filepath.Join(root.Name(), ociDir))
 }
 

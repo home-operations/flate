@@ -106,9 +106,8 @@ func (o *Orchestrator) finalize() error {
 	o.orphans = o.detectOrphans(failed, prefixes)
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
 		o.store.UpdateStatus(id, store.StatusReady, "", "orphaned (not referenced by any parent kustomization.yaml)")
-		slog.Warn("resource orphaned", "id", id.String(),
-			"file", o.fileOf(id),
-			"reason", o.orphans[id])
+		o.store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource,
+			Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
 		delete(failed, id)
 	}
 	o.warnMissingCRDs()

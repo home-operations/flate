@@ -32,7 +32,7 @@ func Example() {
 	base := []diff.Doc{{Parent: parent, Manifest: deployment("4.0.0", "ghcr.io/home-operations/sonarr:4.0.0")}}
 	head := []diff.Doc{{Parent: parent, Manifest: deployment("4.1.0", "ghcr.io/home-operations/sonarr:4.1.0")}}
 
-	changes := diff.Changes(
+	changes, _ := diff.Changes(
 		base, head,
 		diff.Options{StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields},
 	)

@@ -17,7 +17,7 @@ func BenchmarkDiff_LargeTree(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderDocs(left, right, Options{Format: FormatGitHub})
+		out, _, err := RenderDocs(left, right, Options{Format: FormatGitHub})
 		if err != nil {
 			b.Fatalf("RenderDocs: %v", err)
 		}

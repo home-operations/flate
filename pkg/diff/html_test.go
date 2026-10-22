@@ -21,7 +21,7 @@ func htmlDoc(t *testing.T, y string) Doc {
 
 func renderHTMLString(t *testing.T, left, right []Doc) string {
 	t.Helper()
-	out, err := RenderDocs(left, right, Options{Format: FormatHTML})
+	out, _, err := RenderDocs(left, right, Options{Format: FormatHTML})
 	if err != nil {
 		t.Fatalf("RenderDocs(html): %v", err)
 	}
@@ -37,10 +37,13 @@ func TestRenderHTML_Changed(t *testing.T) {
 		d.Manifest["data"].(map[string]any)["payload"] = "<yaml>"
 		d.Parent.Name, d.Parent.Path = "web<parent>", "apps/<path>"
 	}
-	raw, err := RenderDocs([]Doc{from}, []Doc{to}, Options{Format: FormatHTML,
+	raw, warnings, err := RenderDocs([]Doc{from}, []Doc{to}, Options{Format: FormatHTML,
 		Suppressed: []Suppression{{Parent: from.Parent, Side: SideCurrent, Reason: "<suppression>"}}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("HTML renderer constructed presentation warnings: %+v", warnings)
 	}
 	out := string(raw)
 
@@ -63,7 +66,7 @@ func TestRenderHTML_Changed(t *testing.T) {
 		"1 changed",                                   // summary count
 		"ConfigMap apps/web",                          // per-resource title
 		"HelmRelease.helm.toolkit.fluxcd.io apps/web", // parent attribution
-		"&lt;resource&gt;", "&lt;parent&gt;", "apps/&lt;path&gt;", "&lt;yaml&gt;", "&lt;suppression&gt;",
+		"&lt;resource&gt;", "&lt;parent&gt;", "apps/&lt;path&gt;", "&lt;yaml&gt;",
 		// Column widths must live on <col>: the tables are table-layout:fixed,
 		// whose column sizing comes from the first row — usually a colspan
 		// expander — so a width on the line-number cells alone collapses every

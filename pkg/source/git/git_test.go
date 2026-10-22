@@ -22,6 +22,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -656,6 +658,7 @@ func malformedViewRepo(t *testing.T) string {
 	tree, err := commit.Tree()
 	assert.NoError(t, err)
 	tree.Entries[0].Name = "bad/name"
+	tree.Entries = append([]object.TreeEntry{{Name: "a-module", Mode: filemode.Submodule, Hash: hash}}, tree.Entries...)
 	encoded := repo.Storer.NewEncodedObject()
 	assert.NoError(t, tree.Encode(encoded))
 	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
@@ -692,7 +695,7 @@ func TestFetcher_GenerationAdmission(t *testing.T) {
 					repo := &manifest.GitRepository{URL: "file://" + src}
 					policy := sourcecache.Policy{MaxAge: time.Hour}
 					artifact, err := f.Fetch(t.Context(), repo, policy)
-					if artifact != nil || !errors.Is(err, manifest.ErrInput) {
+					if !errors.Is(err, manifest.ErrInput) || invalid == "metadata" && (artifact == nil || artifact.FS != nil || len(artifact.Warnings) != 1 || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule || artifact.Warnings[0].Resource != repo.Named()) || invalid == "ignore" && artifact != nil {
 						t.Fatalf("cold invalid view = %v, %v", artifact, err)
 					}
 					assert.NoError(t, os.RemoveAll(src))
@@ -733,6 +736,11 @@ func testGenerationWaiter(t *testing.T, disk bool, fetch func(context.Context, *
 		"apps/keep.yaml": "keep", "apps/drop.tmp": "drop", "other/keep.yaml": "other",
 		".hidden/secret.yaml": "hidden", ".sourceignore": "other/\n",
 	})
+	repository, err := git.PlainOpen(src)
+	assert.NoError(t, err)
+	head, err := repository.Head()
+	assert.NoError(t, err)
+	assert.NoError(t, repository.Storer.SetReference(plumbing.NewHashReference(head.Name(), submoduleCommit(t, repository, head.Hash()))))
 	revision := mustHead(t, src)
 	started, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
@@ -786,6 +794,9 @@ func testGenerationWaiter(t *testing.T, disk bool, fetch func(context.Context, *
 		if artifact.Key == "" {
 			t.Fatal("missing cache identity")
 		}
+		if len(artifact.Warnings) != 1 || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule || artifact.Warnings[0].Detail[0] != "module" {
+			t.Fatalf("generation warning lost: %+v", artifact.Warnings)
+		}
 		var files []string
 		assert.NoError(t, fs.WalkDir(artifact.FS, ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil {
@@ -811,4 +822,15 @@ func testGenerationWaiter(t *testing.T, disk bool, fetch func(context.Context, *
 	assert.NoError(t, err)
 	assert.Equal(t, advertisements.Load(), before)
 	check(hit)
+}
+
+func TestGitWarnings_ImmutableCoordinates(t *testing.T) {
+	t.Parallel()
+	raw := manifest.Warning{Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"module", "commit"}}
+	input := &gittree.FS{Warnings: []manifest.Warning{raw}}
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	warnings := gitWarnings(input, id, "https://credential:password@example.test/repository.git?token=private#private", "main")
+	assert.Equal(t, warnings[0].Resource, id)
+	assert.Diff(t, warnings[0].Detail, []string{"module", "commit", "https://example.test/repository.git", "main"})
+	assert.Diff(t, input.Warnings, []manifest.Warning{raw})
 }

@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -9,26 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// failDependsOnCycles refreshes the dependency graph from the store
-// and installs the resulting cycle membership as preflight failures.
-// Called once at Bootstrap (covers the file-loaded objects) and again
-// by tests that mutate the store directly — see
-// updateDependencyGraphFor for the per-event incremental path the
-// post-Bootstrap listener takes.
-//
-// Flux blocks cyclic dependency graphs; flate must fail those
-// resources before render instead of stripping edges and rendering
-// manifests that would not reconcile in-cluster.
-//
-// preflightMu serializes the write to preflightFailures so concurrent
-// listeners do not overwrite each other's deltas. The graph itself
-// owns finer-grained synchronization for its in-memory state.
 func (o *Orchestrator) failDependsOnCycles() {
-	// Refresh the graph from the canonical store state. This walks
-	// every KS + HR and pushes their current dependsOn list through
-	// ReplaceEdges. After Bootstrap this is the only path that runs
-	// (the per-event listener uses updateDependencyGraphFor); on
-	// re-Bootstrap (test harnesses) the graph picks up the new state.
 	o.rebuildDependencyGraphFromStore()
 	o.syncPreflightFailures()
 }
@@ -59,47 +39,19 @@ func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
 	o.syncPreflightFailures()
 }
 
-// syncPreflightFailures snapshots the dependency-graph's current
-// failure set and installs it under preflightMu, refiring any ids
-// whose status was cleared. Shared by the bootstrap and incremental
-// paths so the lock-and-refire dance lives in one place.
-//
-// Logs each newly-introduced cycle once (deduped by message) so
-// render-emitted children that close a loop still surface in the
-// log — the listener that calls this path would otherwise be
-// silent.
 func (o *Orchestrator) syncPreflightFailures() {
 	failures := o.depGraph.Failures()
 	o.preflightMu.Lock()
-	prev := o.preflightFailures
 	cleared := o.replacePreflightFailures(failures)
 	o.preflightMu.Unlock()
-	logNewCycleMessages(prev, failures)
-	o.refireClearedPreflightFailures(cleared)
-}
-
-// logNewCycleMessages logs cycle messages that appear in next but
-// were absent from prev. Dedupes within next so a multi-member
-// cycle still produces one log line.
-func logNewCycleMessages(prev, next map[manifest.NamedResource]string) {
-	if len(next) == 0 {
-		return
-	}
-	// Seed the seen-set with prev's messages so a cycle carried over
-	// from the previous snapshot is suppressed, then let it double as
-	// the within-next dedup so a multi-member cycle logs once.
-	seen := make(map[string]struct{}, len(prev)+len(next))
-	for _, msg := range prev {
-		seen[msg] = struct{}{}
-	}
-	for _, id := range slices.SortedFunc(maps.Keys(next), manifest.NamedResource.Compare) {
-		msg := next[id]
-		if _, dup := seen[msg]; dup {
-			continue
+	if len(failures) > 0 {
+		// Formatting the full member list for each member would be quadratic.
+		for _, message := range slices.Compact(slices.Sorted(maps.Values(failures))) {
+			o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnDependencyCycle,
+				Message: "dependency cycle detected", Detail: []string{message}})
 		}
-		seen[msg] = struct{}{}
-		slog.Warn("dependency cycle detected", "message", msg)
 	}
+	o.refireClearedPreflightFailures(cleared)
 }
 
 // rebuildDependencyGraphFromStore pushes every KS + HR's current
@@ -139,7 +91,6 @@ func (o *Orchestrator) refireClearedPreflightFailures(ids []manifest.NamedResour
 	}
 }
 
-// formatCyclePath returns the cycle as "A → B → C → A" for log output.
 func formatCyclePath(path []manifest.NamedResource) string {
 	parts := make([]string, len(path))
 	for i, id := range path {

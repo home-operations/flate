@@ -10,7 +10,7 @@ import (
 
 func renderDiff(t *testing.T, left, right []Doc, opts Options) string {
 	t.Helper()
-	out, err := RenderDocs(left, right, opts)
+	out, _, err := RenderDocs(left, right, opts)
 	if err != nil {
 		t.Fatalf("RenderDocs: %v", err)
 	}
@@ -36,7 +36,9 @@ func TestRenderDocs_NormalizeBeforePair(t *testing.T) {
 			}}
 			switch format {
 			case "changes":
-				assert.Equal(t, len(Changes([]Doc{left}, []Doc{right}, opts)), 0)
+				changes, warnings := Changes([]Doc{left}, []Doc{right}, opts)
+				assert.Equal(t, len(changes), 0)
+				assert.Equal(t, len(warnings), 0)
 			case "json":
 				got := jsonChanges(t, []Doc{left}, []Doc{right}, opts)
 				if len(got) != 0 {

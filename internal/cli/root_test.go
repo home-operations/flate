@@ -15,16 +15,16 @@ import (
 )
 
 const persistenceReason = "the binary was built from a dirty checkout"
-const persistenceNotice = "flate warning: render persistence is disabled: " + persistenceReason + "; source caching remains available\n"
+const persistenceNotice = "\n  ⚠ warnings (1)\n    [RenderPersistenceDisabled] render persistence is disabled: " + persistenceReason + "; source caching remains available\n"
 
 func preservePersistenceNoticeState(t *testing.T) {
 	t.Helper()
 	savedReason := renderPersistenceDisabledReason
-	savedBar, savedBuffer := barSink, logBuffer
+	savedBar := barSink
 	savedLogger, savedLogWriter := slog.Default(), log.Writer()
 	t.Cleanup(func() {
 		renderPersistenceDisabledReason = savedReason
-		barSink, logBuffer = savedBar, savedBuffer
+		barSink = savedBar
 		slog.SetDefault(savedLogger)
 		log.SetOutput(savedLogWriter)
 	})
@@ -82,8 +82,8 @@ func TestRun_RenderPersistenceNoticeEnvAndLevel(t *testing.T) {
 	}{
 		{name: "environment directory", count: 1},
 		{name: "empty flag overrides directory", args: []string{"--cache-dir="}},
-		{name: "explicit error threshold", args: []string{"--log-level=error"}},
-		{name: "environment error threshold", envLevel: "error"},
+		{name: "explicit error threshold", args: []string{"--log-level=error"}, count: 1},
+		{name: "environment error threshold", envLevel: "error", count: 1},
 		{name: "explicit warn threshold", args: []string{"--log-level=warn"}, count: 1},
 		{name: "explicit info threshold", args: []string{"--log-level=info"}, count: 1},
 		{name: "explicit debug threshold", args: []string{"--log-level=debug"}, count: 1},
@@ -176,13 +176,16 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 	}
 	t.Run("advisory write failure", func(t *testing.T) {
 		renderPersistenceDisabledReason = ""
-		want, _, wantCode := runCLI(t, args...)
+		_, _, wantCode := runCLI(t, args...)
 		assert.Equal(t, wantCode, 0)
 		renderPersistenceDisabledReason = persistenceReason
 		var stdout bytes.Buffer
 		var stderr persistenceNoticeFailWriter
-		assert.Equal(t, Run(args, &stdout, &stderr), wantCode)
-		assert.Equal(t, stdout.String(), want)
+		assert.Equal(t, Run(args, &stdout, &stderr), 1)
+		assert.Equal(t, stdout.String(), "")
+		if !strings.Contains(stderr.String(), io.ErrClosedPipe.Error()) {
+			t.Fatalf("missing diagnostic writer error: %s", stderr.String())
+		}
 		assert.Equal(t, stderr.rejected, 1)
 	})
 }
@@ -192,8 +195,10 @@ type persistenceNoticeFailWriter struct {
 	rejected int
 }
 
+func (w *persistenceNoticeFailWriter) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
+
 func (w *persistenceNoticeFailWriter) Write(p []byte) (int, error) {
-	if bytes.HasPrefix(p, []byte("flate warning: render persistence is disabled:")) {
+	if bytes.Contains(p, []byte("[RenderPersistenceDisabled]")) {
 		w.rejected++
 		return failingWriter{err: io.ErrClosedPipe}.Write(p)
 	}
@@ -201,10 +206,10 @@ func (w *persistenceNoticeFailWriter) Write(p []byte) (int, error) {
 }
 
 func TestRun_ProgressSinkResetsPerCommand(t *testing.T) {
-	savedBar, savedBuffer := barSink, logBuffer
+	savedBar := barSink
 	savedLogger, savedLogWriter := slog.Default(), log.Writer()
 	t.Cleanup(func() {
-		barSink, logBuffer = savedBar, savedBuffer
+		barSink = savedBar
 		slog.SetDefault(savedLogger)
 		log.SetOutput(savedLogWriter)
 	})

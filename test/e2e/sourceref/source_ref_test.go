@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/google/go-cmp/cmp"
@@ -164,11 +165,37 @@ patches:
 }
 
 func TestE2E_SourceRef_NonHEADTag(t *testing.T) {
-	root, _, _, _ := sourceRefFixture(t)
-	out, stderr := harness.RequireCLIOK(t, "build", "all", "--path", root+"/flux",
-		"--concurrency", "2", "--cache-dir", t.TempDir())
-	if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: v2.0.0") {
-		t.Fatalf("expected pinned v1.0.0 content:\n%s\nstderr:\n%s", out, stderr)
+	root, repo, older, _ := sourceRefFixture(t)
+	commit, err := repo.CommitObject(older)
+	assert.NoError(t, err)
+	tree, err := commit.Tree()
+	assert.NoError(t, err)
+	tree.Entries = append(tree.Entries, object.TreeEntry{Name: "module", Mode: filemode.Submodule, Hash: older})
+	slices.SortFunc(tree.Entries, func(a, b object.TreeEntry) int { return strings.Compare(a.Name, b.Name) })
+	encoded := repo.Storer.NewEncodedObject()
+	assert.NoError(t, tree.Encode(encoded))
+	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	encoded = repo.Storer.NewEncodedObject()
+	assert.NoError(t, commit.Encode(encoded))
+	pinned, err := repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), pinned)))
+	for _, verb := range []string{"build", "test"} {
+		var previous string
+		for range 2 {
+			out, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root+"/flux", "--concurrency=2", "--cache-dir", t.TempDir())
+			if strings.Count(stderr, "[SkippedSubmodule]") != 1 || !strings.Contains(stderr, "module") || !strings.Contains(stderr, "flux-system/cluster") || strings.Contains(out, "skipped submodule") {
+				t.Fatalf("submodule destination: stdout=%s stderr=%s", out, stderr)
+			}
+			if verb == "build" && (!strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: v2.0.0")) || verb == "test" && !strings.Contains(out, "passed") {
+				t.Fatalf("pinned product: %s", out)
+			}
+			if previous != "" && stderr != previous {
+				t.Fatal("submodule warning changed")
+			}
+			previous = stderr
+		}
 	}
 }
 
@@ -431,7 +458,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", "2", "--cache-dir", t.TempDir())
 				if tt.unreadable {
-					if code != 1 || out != "" || stderr != wantError || transport.calls.Load() != 0 {
+					if code != 1 || out != "" || !strings.HasSuffix(stderr, wantError) || strings.Count(stderr, "[RenderPersistenceDisabled]") > 1 || transport.calls.Load() != 0 {
 						t.Fatalf("unreadable file: exit=%d stdout=%q stderr=%s", code, out, stderr)
 					}
 				} else if code != 1 || !strings.Contains(stderr, "kustomize build ./"+heldPath) || !strings.Contains(stderr, "flux-system/b-second") {
@@ -709,8 +736,14 @@ spec:
 			transport := installSourceRefTransport(t, repo.Storer)
 			out, stderr, code := harness.RunCLIBuffers("build", "ks", "probe", "-n", "flux-system",
 				"--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
-			if code != 0 || stderr != "" || transport.calls.Load() != 0 ||
-				!strings.Contains(out, "name: ok") {
+			aliases := 1
+			if tt.pinned || tt.external {
+				aliases = 0
+			}
+			persistence := strings.Count(stderr, "[RenderPersistenceDisabled]")
+			if code != 0 || persistence > 1 ||
+				strings.Count(stderr, "[BootstrapAliases]") != aliases || strings.Count(stderr, "warnings (") != aliases+persistence ||
+				strings.Contains(stderr, "held/broken.yaml") || transport.calls.Load() != 0 || !strings.Contains(out, "name: ok") {
 				t.Fatalf("re-keyed held consumer: exit=%d transport=%d stdout=%q\nstderr (-want +got):\n%s",
 					code, transport.calls.Load(), out, cmp.Diff("", stderr))
 			}

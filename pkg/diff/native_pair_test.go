@@ -1,10 +1,8 @@
 package diff
 
 import (
-	"bytes"
 	"cmp"
 	"html"
-	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
@@ -74,7 +72,8 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 	}
 	t.Run("report bodies", func(t *testing.T) {
 		t.Parallel()
-		report, err := nativeReport([]Doc{left}, []Doc{right}, Options{})
+		paired, _, _, _ := pair([]Doc{left}, []Doc{right}, Options{})
+		report, err := nativeReport(paired)
 		assert.NoError(t, err)
 		if len(report.Diffs) != 2 {
 			t.Fatalf("want two report diffs, got %+v", report.Diffs)
@@ -155,8 +154,8 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 		format Format
 		want   string
 	}{
-		{FormatGitHub, "! " + note.String() + "\n\n" + github},
-		{FormatBrief, "⚠ " + note.String() + "\n\nfour changes detected between from, four documents and to, four documents\n\n"},
+		{FormatGitHub, github},
+		{FormatBrief, "four changes detected between from, four documents and to, four documents\n\n"},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
 			t.Parallel()
@@ -171,12 +170,14 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 		absent, empty := ncm("cluster", "greeting", "old"), ncm("empty", "greeting", "old")
 		delete(absent.Manifest["metadata"].(map[string]any), "namespace")
 		empty.Manifest["metadata"].(map[string]any)["namespace"] = ""
-		report, err := nativeReport([]Doc{absent, empty}, nil, Options{})
+		paired, _, _, _ := pair([]Doc{absent, empty}, nil, Options{})
+		report, err := nativeReport(paired)
 		assert.NoError(t, err)
 		assert.Equal(t, report.Diffs[0].Path.RootDescription(), "v1/ConfigMap/cluster")
 		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap//empty")
 	})
-	report, err := nativeReport(left, right, Options{})
+	paired, _, _, _ := pair(left, right, Options{})
+	report, err := nativeReport(paired)
 	assert.NoError(t, err)
 	if len(report.From.Documents) != 4 || len(report.To.Documents) != 4 || len(report.Diffs) != 4 {
 		t.Fatalf("incomplete display context: %+v", report)
@@ -222,7 +223,8 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 						md["namespace"] = ""
 					}
 				}
-				report, err := nativeReport([]Doc{left}, []Doc{right}, Options{})
+				paired, _, _, _ := pair([]Doc{left}, []Doc{right}, Options{})
+				report, err := nativeReport(paired)
 				assert.NoError(t, err)
 				assert.Diff(t, report.From.Names, []string{tc.want})
 				assert.Diff(t, report.To.Names, []string{tc.want})
@@ -256,7 +258,8 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				opts := Options{Format: FormatGitHub, Normalize: func(m map[string]any) { delete(m, "apiVersion") }}
-				report, err := nativeReport(tc.left, tc.right, opts)
+				paired, _, _, _ := pair(tc.left, tc.right, opts)
+				report, err := nativeReport(paired)
 				assert.NoError(t, err)
 				if len(report.Diffs) != len(tc.wantKinds) {
 					t.Fatalf("wrong canonical operations: %+v", report.Diffs)
@@ -290,7 +293,7 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
-				out, err := RenderDocs(tc.left, tc.right, Options{Format: FormatGitHub, Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "not ready"}}})
+				out, _, err := RenderDocs(tc.left, tc.right, Options{Format: FormatGitHub, Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "not ready"}}})
 				if out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix) {
 					t.Fatalf("RenderDocs = %q, %v; want nil and %s", out, err, tc.prefix)
 				}
@@ -304,6 +307,7 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 }
 
 func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
+	t.Parallel()
 	for _, side := range []string{"left", "right"} {
 		for _, collision := range []bool{false, true} {
 			name := side + " duplicate"
@@ -311,10 +315,8 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 				name += " normalized"
 			}
 			t.Run(name, func(t *testing.T) {
-				var logs bytes.Buffer
-				previous := slog.Default()
-				slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-				t.Cleanup(func() { slog.SetDefault(previous) })
+				t.Parallel()
+
 				shadow, old, current := ncm("hello", "greeting", "shadowed"), ncm("hello", "greeting", "retained"), ncm("hello", "greeting", "counterpart")
 				opts := Options{Format: FormatGitHub}
 				if collision {
@@ -329,20 +331,26 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 				if strings.Count(out, "@@ data.greeting @@") != 1 || strings.Contains(out, "shadowed") || !strings.Contains(out, "retained") || !strings.Contains(out, "counterpart") {
 					t.Fatalf("wrong winning content:\n%s", out)
 				}
-				if strings.Count(logs.String(), "level=WARN") != 2 || strings.Count(logs.String(), "side="+side) != 2 {
-					t.Fatalf("want one warning per shadowed input: %s", logs.String())
+				_, warnings, err := RenderDocs(left, right, opts)
+				assert.NoError(t, err)
+				assert.Equal(t, len(warnings), 2)
+				warningSide := SideOrig
+				if side == "right" {
+					warningSide = SideCurrent
+				}
+				for _, warning := range warnings {
+					assert.Equal(t, warning.Detail[0], "side: "+string(warningSide))
 				}
 			})
 		}
 	}
 	t.Run("duplicate winning order", func(t *testing.T) {
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		t.Cleanup(func() { slog.SetDefault(previous) })
+		t.Parallel()
+
 		left := []Doc{ncm("a", "greeting", "shadowed"), ncm("z", "greeting", "old-z"), ncm("a", "greeting", "old-a")}
 		right := []Doc{ncm("a", "greeting", "new-a"), ncm("z", "greeting", "new-z")}
-		report, err := nativeReport(left, right, Options{})
+		paired, _, _, _ := pair(left, right, Options{})
+		report, err := nativeReport(paired)
 		assert.NoError(t, err)
 		if len(report.Diffs) != 2 || len(report.From.Documents) != 2 {
 			t.Fatalf("duplicate not removed: %+v", report)

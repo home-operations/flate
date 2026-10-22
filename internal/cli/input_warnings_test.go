@@ -36,9 +36,6 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 				t.Fatalf("changed-only %s failed: code=%d stdout=%s stderr=%s", verb, code, stdout, stderr)
 			}
 			advisories, other := stderr, stdout
-			if verb == "test" {
-				advisories, other = stdout, stderr
-			}
 			message := "changed-only input coverage is incomplete"
 			if strings.Count(advisories, message) != 1 {
 				t.Fatalf("expected one coverage warning: %s", advisories)

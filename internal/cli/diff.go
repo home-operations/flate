@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -89,11 +90,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 			diff.Snapshot{Objects: current.Objects, Manifests: current.Manifests, Unavailable: current.Unavailable},
 			nil, includeRemoved,
 		)
-		var warnings []manifest.Warning
-		for _, note := range suppressed {
-			warnings = append(warnings, manifest.Warning{Message: note.String()})
-		}
-		return selectedPayload{warnings: warnings, err: errors.Join(err,
+		return selectedPayload{warnings: appendSuppressionWarnings(nil, suppressed), err: errors.Join(err,
 			(output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs))}
 	})
 }
@@ -108,14 +105,29 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentDiff,
 	}, func(inv *selectedInvocation) selectedPayload {
 		orig, current := inv.sides[0], inv.sides[1]
-		formatted, err := diff.Compare(
+		formatted, warnings, suppressed, err := diff.Compare(
 			diff.Snapshot{Objects: orig.Objects, Manifests: orig.Manifests, Unavailable: orig.Unavailable},
 			diff.Snapshot{Objects: current.Objects, Manifests: current.Manifests, Unavailable: current.Unavailable},
 			nil, diff.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output)},
 		)
 		_, writeErr := cmd.OutOrStdout().Write(formatted)
-		return selectedPayload{err: errors.Join(err, writeErr)}
+		return selectedPayload{warnings: appendSuppressionWarnings(warnings, suppressed), err: errors.Join(err, writeErr)}
 	})
+}
+
+func appendSuppressionWarnings(warnings []manifest.Warning, suppressed []diff.Suppression) []manifest.Warning {
+	if len(suppressed) == 0 {
+		return warnings
+	}
+	warnings = slices.Grow(warnings, len(suppressed))
+	for _, note := range suppressed {
+		warnings = append(warnings, manifest.Warning{
+			Resource: note.Parent.NamedResource, Category: manifest.WarnDiffSuppressed,
+			Message: note.String(),
+		})
+	}
+	slices.SortFunc(warnings, manifest.CompareWarning)
+	return warnings
 }
 
 func runDiffOrchestrators(ctx context.Context, c *commonFlags) (orchestrator.Rendered, orchestrator.Rendered, error) {
@@ -125,7 +137,14 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags) (orchestrator.Ren
 	}
 	cleanup, err := resolveBaseline(ctx, c, true)
 	if err != nil {
-		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
+		var orig, current []manifest.Warning
+		if c.baseInput != nil {
+			orig = c.baseInput.Warnings
+		}
+		if c.input != nil {
+			current = c.input.Warnings
+		}
+		return orchestrator.Rendered{Result: &orchestrator.Result{Warnings: orig}}, orchestrator.Rendered{Result: &orchestrator.Result{Warnings: current}, Err: err}, err
 	}
 	base, head, runErr := orchestrator.RenderTrees(ctx,
 		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},

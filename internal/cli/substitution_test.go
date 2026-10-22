@@ -395,7 +395,7 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	if code != 0 {
 		t.Fatal(diagnostic)
 	}
-	if strings.Count(diagnostic, "repository substitution source takes precedence") != 1 || !strings.Contains(diagnostic, input) || !strings.Contains(diagnostic, "ConfigMap/apps/external") || strings.Contains(diagnostic, "private-fixture-value") {
+	if strings.Count(diagnostic, "repository substitution source takes precedence") != 1 || !strings.Contains(diagnostic, input) || !strings.Contains(diagnostic, "ConfigMap apps/external") || strings.Contains(diagnostic, "private-fixture-value") {
 		t.Fatalf("collision diagnostic: %s", diagnostic)
 	}
 	if strings.Contains(out, "private-fixture-value") {

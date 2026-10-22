@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
@@ -372,10 +372,6 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				testutil.WriteFile(t, root, "producer/external-secret.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n"+data)
 				input.Object = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "private-fixture-value"}}
 			}
-			var log bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
-			t.Cleanup(func() { slog.SetDefault(previous) })
 			cfg := Config{Path: root, SubstituteFrom: []SubstitutionSource{input}}
 			if kind == "known Kustomization producer" {
 				cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
@@ -416,19 +412,21 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			if got := substitutionValue(t, res, id); got != want {
 				t.Fatalf("repository precedence got %q, want %q", got, want)
 			}
-			text := log.String()
-			if strings.Count(text, "repository substitution source takes precedence") != 1 || !strings.Contains(text, "ci-values.yaml") || !strings.Contains(text, input.Object.Named().String()) || strings.Contains(text, "private-fixture-value") {
-				t.Fatalf("collision warning incorrect: %s", text)
+			var collisions []manifest.Warning
+			for _, warning := range res.Warnings {
+				if warning.Category == manifest.WarnSubstitutionPrecedence {
+					collisions = append(collisions, warning)
+				}
 			}
+			wantWarning := manifest.Warning{Resource: input.Object.Named(), Category: manifest.WarnSubstitutionPrecedence,
+				Message: "repository substitution source takes precedence", Detail: []string{"ci-values.yaml"}, Count: 1}
+			assert.Diff(t, collisions, []manifest.Warning{wantWarning})
 		})
 	}
 }
 
 func TestBootstrap_SubstitutionWarningsSortedAndDeduplicated(t *testing.T) {
-	var log bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	t.Parallel()
 	sources := []SubstitutionSource{suppliedSubstitution("z"), suppliedSubstitution("a"), suppliedSubstitution("a")}
 	sources[1].Path = "first.yaml"
 	sources[2].Path = "last.yaml"
@@ -442,9 +440,13 @@ func TestBootstrap_SubstitutionWarningsSortedAndDeduplicated(t *testing.T) {
 	if err := o.Bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	text := log.String()
-	if strings.Count(text, "repository substitution source takes precedence") != 2 || strings.Index(text, "ConfigMap/apps/a") > strings.Index(text, "ConfigMap/apps/z") || strings.Contains(text, "first.yaml") || !strings.Contains(text, "last.yaml") {
-		t.Fatalf("warnings not sorted/final-identity scoped: %s", text)
+	warnings := o.store.Warnings()
+	if len(warnings) != 2 || warnings[0].Resource.Name != "a" || warnings[1].Resource.Name != "z" || warnings[0].Detail[0] != "last.yaml" {
+		t.Fatalf("warnings not sorted/final-identity scoped: %+v", warnings)
+	}
+	for _, warning := range warnings {
+		assert.Equal(t, warning.Category, manifest.WarnSubstitutionPrecedence)
+		assert.Equal(t, warning.Count, 1)
 	}
 }
 

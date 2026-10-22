@@ -3,9 +3,11 @@ package crds
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,13 +22,33 @@ import (
 )
 
 func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
-	// The resourceset/ fixture has one ResourceSet that templates a
-	// Namespace + a Kustomization per tenant (frontend, backend). After
-	// loading, flate should expose the rendered child Kustomizations
-	// via `get ks` alongside the static parent — confirming the
-	// load-time expansion pass plumbed each rendered doc through the
-	// store.
-	out := harness.RunCLIOutputOnly(t, "get", "ks", "--path", harness.TestdataPath(t, "resourceset"))
+	root := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "resourceset"), root)
+	inputFile := filepath.Join(root, "tenants", "apps.yaml")
+	body, err := os.ReadFile(inputFile)
+	assert.NoError(t, err)
+	testutil.WriteFile(t, root, "tenants/apps.yaml", strings.Replace(string(body), "  inputs:", "  inputsFrom: [{name: branches}]\n  inputs:", 1))
+	testutil.WriteFile(t, root, "tenants/provider.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: branches, namespace: flux-system}\nspec: {type: GitHubBranch, url: https://example.invalid/branches}\n")
+	testutil.WriteFile(t, root, "tenants/kustomization.yaml", "resources: [apps.yaml, provider.yaml]\n")
+	var out string
+	for _, verb := range []string{"get", "build", "test"} {
+		for range 2 {
+			args := []string{verb, "all", "--path", root, "--concurrency=2", "--allow-missing-crds"}
+			if verb == "get" {
+				args[1] = "ks"
+			}
+			stdout, stderr := harness.RequireCLIOK(t, args...)
+			if strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") || strings.Contains(stdout, "warnings (") {
+				t.Fatalf("provider warning: stdout=%s stderr=%s", stdout, stderr)
+			}
+			if verb == "get" {
+				out = stdout
+			}
+			if verb == "build" && (!strings.Contains(stdout, "frontend") || !strings.Contains(stdout, "backend")) || verb == "test" && !strings.Contains(stdout, "passed") {
+				t.Fatalf("provider product: %s", stdout)
+			}
+		}
+	}
 	for _, want := range []string{
 		"cluster-tenants", // parent KS from cluster/flux-system.yaml
 		"apps-frontend",   // emitted by ResourceSet for tenant=frontend
@@ -189,6 +211,33 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 			assert.Equal(t, out, previous)
 		}
 		previous = out
+	}
+
+	original := t.TempDir()
+	testutil.CopyTree(t, path, original)
+	body, err := os.ReadFile(filepath.Join(path, "apps/rs.yaml"))
+	assert.NoError(t, err)
+	testutil.WriteFile(t, path, "apps/rs.yaml", strings.ReplaceAll(string(body), "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}", "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}\n      spec: {replicas: 2}"))
+	var previousDiff, previousWarnings string
+	for run := range 2 {
+		product, diagnostics := harness.RequireCLIOK(t, "diff", "all", "--path", path, "--path-orig", original, "--output=json", "--concurrency=2")
+		if strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") || !strings.Contains(diagnostics, "orig") || !strings.Contains(diagnostics, "current") || strings.Contains(product, "[DuplicateDocument]") {
+			t.Fatalf("duplicate diff: stdout=%s stderr=%s", product, diagnostics)
+		}
+		var changes struct {
+			Changes    []map[string]any
+			Suppressed []any
+		}
+		assert.NoError(t, json.Unmarshal([]byte(product), &changes))
+		if len(changes.Changes) == 0 || len(changes.Suppressed) != 0 {
+			t.Fatalf("duplicate product changed: %s", product)
+		}
+		if run == 0 {
+			previousDiff, previousWarnings = product, diagnostics
+		} else {
+			assert.Equal(t, product, previousDiff)
+			assert.Equal(t, diagnostics, previousWarnings)
+		}
 	}
 
 	testutil.WriteFile(t, path, "apps/rs.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n")

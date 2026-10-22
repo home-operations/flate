@@ -18,17 +18,18 @@ type Snapshot struct {
 }
 
 // Compare compares two selected snapshots in orig/current order. Selected errors
-// remain errors even when the snapshots produce a usable partial diff.
-func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, error) {
+// remain errors even when the snapshots produce a usable partial diff; discovered
+// warnings and structured suppressions remain available alongside those errors.
+func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, []manifest.Warning, []Suppression, error) {
 	left, right, suppressed := suppress(orig, current)
 	opts.Suppressed = append(slices.Clone(opts.Suppressed), suppressed...)
-	out, err := RenderDocs(selectedDocs(left, orig.Manifests), selectedDocs(right, current.Manifests), opts)
-	return out, errors.Join(err, selectedErr)
+	out, warnings, err := RenderDocs(selectedDocs(left, orig.Manifests), selectedDocs(right, current.Manifests), opts)
+	return out, warnings, opts.Suppressed, errors.Join(err, selectedErr)
 }
 
 // CompareImages returns the sorted images added between selected orig/current
 // snapshots, plus removals when requested. Unavailable producer batches are
-// withheld before extraction and disclosed as document counts.
+// withheld before extraction and disclosed as structured suppressions with document counts.
 func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved bool) ([]string, []Suppression, error) {
 	left, right, suppressed := suppress(orig, current)
 	origImages := imageutil.Collect(left, orig.Manifests)

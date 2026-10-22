@@ -4,6 +4,7 @@ package scope
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -108,16 +109,48 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 			t.Errorf("snapshot failure missing resource detail:\n%s", stderr)
 		}
 	}
+	if stdout != "" {
+		t.Errorf("suppressed diff must have no product: %s", stdout)
+	}
 	for _, want := range []string{"Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps", "diff suppressed", "failed on both sides: orig:", "; current:"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
-	for side := range strings.SplitSeq(stdout, "; current:") {
+	for side := range strings.SplitSeq(stderr, "; current:") {
 		if !strings.Contains(side, "missing.yaml") {
-			t.Errorf("suppressed failure missing resource detail:\n%s", stdout)
+			t.Errorf("suppressed failure missing resource detail:\n%s", stderr)
 		}
 	}
+	for _, format := range []string{"html", "json"} {
+		product, diagnostic, exit := harness.RunCLIBuffers("diff", "all", "--path", root, "--path-orig", root, "--concurrency=2", "-o", format)
+		if exit != 1 || strings.Count(diagnostic, "[DiffSuppressed]") != 1 {
+			t.Fatalf("%s suppression: exit=%d stdout=%s stderr=%s", format, exit, product, diagnostic)
+		}
+		if format == "html" {
+			if product != "" {
+				t.Fatalf("suppressed HTML product: %s", product)
+			}
+		} else {
+			var result struct {
+				Changes    []any
+				Suppressed []struct {
+					Side   string
+					Count  int
+					Reason string
+				}
+			}
+			if err := json.Unmarshal([]byte(product), &result); err != nil || len(result.Changes) != 0 || len(result.Suppressed) != 1 || result.Suppressed[0].Side != "both" || result.Suppressed[0].Count != 0 || !strings.Contains(result.Suppressed[0].Reason, "missing.yaml") {
+				t.Fatalf("structured suppression lost: %s, %v", product, err)
+			}
+		}
+	}
+	images, imageDiagnostic, imageExit := harness.RunCLIBuffers("diff", "images", "--path", root, "--path-orig", root, "--concurrency=2", "-o", "json")
+	var imageProduct []string
+	if err := json.Unmarshal([]byte(images), &imageProduct); err != nil || len(imageProduct) != 0 || imageExit != 1 || strings.Count(imageDiagnostic, "[DiffSuppressed]") != 1 {
+		t.Fatalf("image suppression: exit=%d stdout=%s stderr=%s err=%v", imageExit, images, imageDiagnostic, err)
+	}
+
 }
 
 func TestE2E_Diff_OwnershipCycle(t *testing.T) {

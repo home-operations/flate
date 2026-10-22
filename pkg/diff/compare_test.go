@@ -48,7 +48,7 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, docErr := Compare(tc.orig, tc.current, selectedErr, Options{Format: FormatJSON})
+			_, _, _, docErr := Compare(tc.orig, tc.current, selectedErr, Options{Format: FormatJSON})
 			_, _, imageErr := CompareImages(tc.orig, tc.current, selectedErr, false)
 			for _, err := range []error{docErr, imageErr} {
 				if !errors.Is(err, selectedErr) {
@@ -57,9 +57,13 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 			}
 		})
 	}
-	_, err := Compare(valid, valid, selectedErr, Options{Format: "invalid"})
+	unavailable := selectedSnapshot(hrParent, nil, store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
+	_, warnings, suppressed, err := Compare(valid, unavailable, selectedErr, Options{Format: "invalid"})
 	if !errors.Is(err, selectedErr) {
 		t.Errorf("format error discarded selected error: %v", err)
+	}
+	if len(warnings) != 0 || !slices.Equal(suppressed, []Suppression{{Parent: hrParent, Side: SideCurrent, Count: 1, Reason: "failed"}}) {
+		t.Errorf("format error lost structured suppression: %+v; warnings: %+v", suppressed, warnings)
 	}
 }
 
@@ -124,7 +128,7 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			if tc.keepError {
 				runErr = selectedErr
 			}
-			out, err := Compare(selected[0], selected[1], runErr, Options{Format: FormatJSON})
+			out, warnings, suppressed, err := Compare(selected[0], selected[1], runErr, Options{Format: FormatJSON})
 			if errors.Is(err, selectedErr) != tc.keepError {
 				t.Errorf("selected error = %v; want preserved=%t", err, tc.keepError)
 			}
@@ -140,11 +144,14 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 				if len(document.Changes) != 0 || len(document.Suppressed) != 1 || document.Suppressed[0] != want {
 					t.Fatalf("withheld output = %+v; want note %+v and no changes", document, want)
 				}
-			} else if len(document.Changes) == 0 || len(document.Suppressed) != 0 {
+				if !slices.Equal(suppressed, []Suppression{want}) || len(warnings) != 0 {
+					t.Errorf("structured suppressions = %+v; warnings = %+v", suppressed, warnings)
+				}
+			} else if len(document.Changes) == 0 || len(document.Suppressed) != 0 || len(warnings) != 0 || len(suppressed) != 0 {
 				t.Fatalf("control must remain comparable: %+v", document)
 			}
 			images, notes, err := CompareImages(selected[0], selected[1], runErr, true)
-			if errors.Is(err, selectedErr) != tc.keepError || !slices.Equal(notes, document.Suppressed) {
+			if errors.Is(err, selectedErr) != tc.keepError || !slices.Equal(notes, suppressed) {
 				t.Errorf("image disclosure/error differs: %+v / %v", notes, err)
 			}
 			if tc.withheld != (len(images) == 0) {
@@ -165,7 +172,7 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 	before := slices.Clone(backing)
 	original := manifest.DeepCopyMap(left.Manifests[id][0])
 	normalized := 0
-	out, err := Compare(left, right, nil, Options{
+	out, warnings, suppressed, err := Compare(left, right, nil, Options{
 		Format: FormatJSON, Suppressed: backing[:1],
 		Normalize: func(doc map[string]any) { normalized++; doc["kind"] = "Changed" },
 	})
@@ -181,6 +188,13 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 	want := Suppression{Parent: moved, Side: SideCurrent, Count: 1, Reason: "failed"}
 	if len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] || document.Suppressed[1] != want {
 		t.Errorf("supplied or moved producer notes differ: %+v", document.Suppressed)
+	}
+	if !slices.Equal(suppressed, document.Suppressed) || len(warnings) != 0 {
+		t.Errorf("structured suppressions = %+v; warnings = %+v", suppressed, warnings)
+	}
+	_, directWarnings := Changes(nil, nil, Options{Suppressed: backing[:1]})
+	if len(directWarnings) != 0 {
+		t.Errorf("structured changes constructed presentation warnings: %+v", directWarnings)
 	}
 	if !slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[id][0], original) || len(left.Objects) != 1 || normalized != 0 {
 		t.Error("comparison modified caller data or normalized withheld documents")
@@ -209,7 +223,8 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 		if !slices.Equal(images, want) || !errors.Is(err, selectedErr) {
 			t.Errorf("images=%v err=%v; want %v and selected error", images, err, want)
 		}
-		if len(notes) != 1 || notes[0].Count != 2 {
+		wantSuppression := Suppression{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "failed"}
+		if !slices.Equal(notes, []Suppression{wantSuppression}) {
 			t.Errorf("suppression must count documents: %+v", notes)
 		}
 	}
@@ -223,7 +238,7 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 	} {
 		left := selectedSnapshot(hrParent, nil, store.StatusInfo{})
 		right := selectedSnapshot(hrParent, hrDocs(1), unavailable)
-		out, err := Compare(left, right, nil, Options{Format: FormatDiff})
+		out, _, _, err := Compare(left, right, nil, Options{Format: FormatDiff})
 		if err != nil || len(out) != 0 {
 			t.Errorf("one unavailable side without healthy documents: out=%q err=%v", out, err)
 		}
@@ -238,11 +253,11 @@ func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 	before := manifest.DeepCopyMap(left[0].Manifest)
 	opts := Options{Format: FormatJSON, StripAttrs: DefaultStripAttrs, StripFields: DefaultStripFields,
 		Normalize: func(doc map[string]any) { doc["metadata"].(map[string]any)["namespace"] = "normalized" }}
-	want, err := RenderDocs(left, right, opts)
+	want, _, err := RenderDocs(left, right, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Compare(selected[0], selected[1], nil, opts)
+	got, _, _, err := Compare(selected[0], selected[1], nil, opts)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Errorf("selected formatting differs: got %q want %q err=%v", got, want, err)
 	}

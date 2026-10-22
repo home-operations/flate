@@ -531,10 +531,15 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 			o = run.Orchestrator
 			result, err := run.Result, run.Err
 			switch name {
-			case "fatal-construction", "fatal-bootstrap":
+			case "fatal-construction":
 				if err == nil || o != nil || result != nil {
 					t.Fatalf("fatal run returned orchestrator=%v result=%v err=%v", o, result, err)
 				}
+			case "fatal-bootstrap":
+				if err == nil || o != nil {
+					t.Fatalf("fatal run exposed orchestrator=%v, err=%v", o, err)
+				}
+				assert.Diff(t, result, &orchestrator.Result{})
 			case "partial-render":
 				if err == nil || o == nil || result == nil || len(result.Failed) == 0 {
 					t.Fatalf("partial run lost state: %+v", run)
@@ -620,8 +625,12 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expected := "orig snapshot:" + output.Document(output.WarningsBlock(want, false)) + "current snapshot:" + output.Document(output.WarningsBlock([]manifest.Warning{base}, false))
-		assert.Equal(t, stderr.String(), expected)
+		var expected bytes.Buffer
+		expected.WriteString("orig snapshot:")
+		assert.NoError(t, (output.Encoder{Writer: &expected}).Report(output.Model{Warnings: want}))
+		expected.WriteString("current snapshot:")
+		assert.NoError(t, (output.Encoder{Writer: &expected}).Report(output.Model{Warnings: []manifest.Warning{base}}))
+		assert.Equal(t, stderr.String(), expected.String())
 		if run == 0 {
 			first = stderr.String()
 		} else {
@@ -695,3 +704,95 @@ func TestRenderKinds_Capabilities(t *testing.T) {
 	}
 	assert.Diff(t, renderKinds, want)
 }
+
+func TestRun_DiagnosticOnlyComparison(t *testing.T) {
+	root := writeFixture(t)
+	repo := testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "work.txt", "before")
+	pin := testutil.GitCommitAll(t, repo, "base", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
+	commit, err := repo.CommitObject(pin)
+	assert.NoError(t, err)
+	tree, err := commit.Tree()
+	assert.NoError(t, err)
+	entry, err := tree.FindEntry("work.txt")
+	assert.NoError(t, err)
+	testutil.WriteFile(t, root, "work.txt", "after")
+	testutil.GitCommitAll(t, repo, "head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}})
+	oid := entry.Hash.String()
+	assert.NoError(t, os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:])))
+	testutil.WriteFile(t, root, ".git/index", "invalid index")
+	for _, command := range [][]string{{"diff", "all"}, {"diff", "images"}, {"test", "ks", "named"}, {"build", "all"}, {"get", "all"}} {
+		t.Run(strings.Join(command, "/"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append(slices.Clone(command), "--path", root, "--base", pin.String(), "--concurrency", "2")
+			code := Run(args, &stdout, &stderr)
+			if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "Git status unavailable") || !strings.Contains(stderr.String(), "missing objects") || strings.Contains(stderr.String(), `no Kustomization named`) {
+				t.Fatalf("diagnostic-only %v = exit %d, stdout %q, stderr %q", command, code, stdout.String(), stderr.String())
+			}
+		})
+	}
+	for _, mode := range []presentation{presentBuild, presentData, presentTest, presentDiff} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			called := false
+			rootID := testutil.KustomizationID("", "")
+			if mode == presentTest {
+				rootID.Name = "named"
+			}
+			err := runSelected(t.Context(), selectedRequest{
+				flags: commonFlags{path: root, base: pin.String(), concurrency: 2},
+				roots: []manifest.NamedResource{rootID},
+				pair:  mode == presentDiff, stdout: &stdout, stderr: &stderr, presentation: mode,
+			}, func(*selectedInvocation) selectedPayload { called = true; return selectedPayload{} })
+			if err == nil || called || !strings.Contains(stderr.String(), "Git status unavailable") {
+				t.Fatalf("incomplete input invoked product=%v: %v, %s", called, err, stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunOrchestratorCfg_BootstrapWarningOnly(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
+	cfg := orchestrator.Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2}
+	run := runOrchestratorCfg(t.Context(), cfg)
+	if run.Orchestrator != nil || run.Result == nil || !errors.Is(run.Err, manifest.ErrInput) || len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
+		t.Fatalf("failed bootstrap exposed content: %+v", run)
+	}
+	assert.Diff(t, run.Result.Warnings, []manifest.Warning{warning})
+}
+
+func TestFinishSelected_JoinsWriterErrors(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []presentation{presentBuild, presentData, presentTest, presentDiff} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			t.Parallel()
+			productErr, reportErr, renderErr := errors.New("product closed"), errors.New("report closed"), errors.New("render failed")
+			side := &selection.Selection{Warnings: []manifest.Warning{{Category: manifest.WarnEmptyScan, Message: "advisory"}}}
+			inv := &selectedInvocation{sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr}
+			payload := selectedPayload{err: productErr, warnings: []manifest.Warning{{Category: manifest.WarnDiffSuppressed, Message: "payload warning"}}}
+			if mode == presentTest {
+				payload.err = nil
+				payload.roster = &output.TestReport{}
+			}
+			writer := &countFailWriter{err: reportErr}
+			err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindKustomization}}, stdout: failingWriter{err: productErr}, stderr: writer, presentation: mode, pair: true}, inv, payload)
+			for _, want := range []error{productErr, reportErr, renderErr} {
+				if !errors.Is(err, want) {
+					t.Fatalf("lost %v: %v", want, err)
+				}
+			}
+			if writer.writes < 5 {
+				t.Fatalf("report stopped after %d writes", writer.writes)
+			}
+		})
+	}
+}
+
+type countFailWriter struct {
+	writes int
+	err    error
+}
+
+func (w *countFailWriter) Write([]byte) (int, error) { w.writes++; return 0, w.err }

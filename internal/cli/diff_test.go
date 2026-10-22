@@ -14,7 +14,21 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestAppendSuppressionWarnings_Presentation(t *testing.T) {
+	t.Parallel()
+	duplicate := manifest.Warning{Category: manifest.WarnDuplicateDocument, Message: "shadowed"}
+	suppressed := []diff.Suppression{{Parent: diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")}, Side: diff.SideCurrent, Count: 2, Reason: "missing source"}}
+	want := manifest.Warning{
+		Resource: suppressed[0].Parent.NamedResource, Category: manifest.WarnDiffSuppressed,
+		Message: "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the current side; diff suppressed (missing source)",
+	}
+	assert.Diff(t, appendSuppressionWarnings(nil, suppressed), []manifest.Warning{want})
+	assert.Diff(t, appendSuppressionWarnings([]manifest.Warning{duplicate}, suppressed), []manifest.Warning{want, duplicate})
+	assert.Diff(t, appendSuppressionWarnings([]manifest.Warning{duplicate}, nil), []manifest.Warning{duplicate})
+}
 
 func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
 	preservePersistenceNoticeState(t)
@@ -114,7 +128,7 @@ spec:
 					side = "current"
 				}
 				prefix := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + side + " side; diff suppressed ("
-				if strings.Count(imageStderr, prefix) != 1 || strings.Contains(imageStderr, "×2") || !strings.Contains(imageStderr, "missing-ca") {
+				if strings.Count(imageStderr, "[DiffSuppressed]") != 1 || strings.Count(imageStderr, prefix) != 1 || strings.Contains(imageStderr, "×2") || !strings.Contains(imageStderr, "missing-ca") {
 					t.Fatalf("image suppression missing: %s", imageStderr)
 				}
 				writeErr := errors.New("image disclosure write failed")
@@ -148,11 +162,11 @@ spec:
 				return
 			}
 			if tc.wantSide != "" {
-				prefix := "# HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + tc.wantSide + " side; diff suppressed ("
-				if !strings.HasPrefix(stdout, prefix) || !strings.Contains(stdout, "missing-ca") {
-					t.Errorf("expected suppression with the missing Secret reason; got:\n%s", stdout)
+				prefix := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + tc.wantSide + " side; diff suppressed ("
+				if strings.Count(stderr, "[DiffSuppressed]") != 1 || strings.Count(stderr, prefix) != 1 || !strings.Contains(stderr, "missing-ca") {
+					t.Errorf("expected suppression with the missing Secret reason; got:\n%s", stderr)
 				}
-				if strings.Contains(stdout, "ConfigMap apps/demo") {
+				if strings.Contains(stdout, "diff suppressed") || strings.Contains(stdout, "ConfigMap apps/demo") {
 					t.Errorf("skipped release must not appear as added or removed:\n%s", stdout)
 				}
 			} else if strings.Contains(stdout, "diff suppressed") {
@@ -223,17 +237,17 @@ spec:
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
 				"--namespace", tc.namespace, "--allow-missing-secrets", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, tc.wantCode)
-			parent := "# Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps:"
+			parent := "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps:"
 			if tc.namespace != "" {
-				parent = "# HelmRelease.helm.toolkit.fluxcd.io apps/x-demo:"
+				parent = "HelmRelease.helm.toolkit.fluxcd.io apps/x-demo:"
 			}
-			if !strings.Contains(stdout, parent) || !strings.Contains(stdout, "on the "+tc.side+" side; diff suppressed (") {
+			if !strings.Contains(stderr, parent) || !strings.Contains(stderr, "on the "+tc.side+" side; diff suppressed (") {
 				t.Errorf("missing ownership suppression: stdout=%s stderr=%s", stdout, stderr)
 			}
 			for _, name := range []string{"x-demo", "y-demo"} {
-				assert.Equal(t, strings.Contains(stdout, "# HelmRelease.helm.toolkit.fluxcd.io apps/"+name+":"), true)
+				assert.Equal(t, strings.Contains(stderr, "HelmRelease.helm.toolkit.fluxcd.io apps/"+name+":"), true)
 			}
-			assert.Equal(t, strings.Contains(stdout, "(skipped:"), false)
+			assert.Equal(t, strings.Contains(stderr, "(skipped:"), false)
 			if strings.Contains(stdout, "ConfigMap apps/") {
 				t.Errorf("owned resources must not appear as wholesale changes:\n%s", stdout)
 			}

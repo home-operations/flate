@@ -1,11 +1,9 @@
 package discovery
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -28,6 +27,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -198,10 +198,6 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				t.Fatal(err)
 			}
 			st.AddObject(repository)
-			var logs bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(previous) })
 			bootstrap := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 			side := bootstrap.LocalPath
 			d.cfg.Path = side
@@ -235,8 +231,9 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				if status, ok := st.GetStatus(repository.Named()); ok && status.Status == store.StatusReady {
 					t.Fatal("fallback marked source ready")
 				}
-				if strings.Count(logs.String(), "level=WARN") != 1 || !strings.Contains(logs.String(), "cluster") || !strings.Contains(logs.String(), (*manifest.GitRepositoryRef)(repository.Reference).String()) {
-					t.Fatalf("fallback warning = %s", logs.String())
+				warnings := st.Warnings()
+				if len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable || warnings[0].Resource != repository.Named() || warnings[0].Count != 1 || warnings[0].Detail[0] != (*manifest.GitRepositoryRef)(repository.Reference).String() {
+					t.Fatalf("fallback warning = %+v", warnings)
 				}
 				return
 			}
@@ -291,8 +288,8 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			if err != nil || string(content) != want {
 				t.Fatalf("source content = %q, %v; want %s", content, err, want)
 			}
-			if logs.Len() != 0 {
-				t.Fatalf("materialization/HEAD unexpectedly warns: %s", logs.String())
+			if warnings := st.Warnings(); len(warnings) != 0 {
+				t.Fatalf("materialization/HEAD unexpectedly warns: %+v", warnings)
 			}
 		})
 	}
@@ -671,5 +668,59 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 				t.Fatalf("committed source = %+v", artifact)
 			}
 		}
+	}
+}
+
+type warningFailureFS struct{}
+
+func (warningFailureFS) Open(name string) (fs.File, error) {
+	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
+}
+
+func TestEntrySourceView_WarningEvidence(t *testing.T) {
+	t.Parallel()
+	for _, subtree := range []string{".", "app"} {
+		t.Run(subtree, func(t *testing.T) {
+			t.Parallel()
+			for _, failed := range []bool{false, true} {
+				t.Run(fmt.Sprint(failed), func(t *testing.T) {
+					t.Parallel()
+					root := t.TempDir()
+					testutil.WriteFile(t, root, "app/file.yaml", "content")
+					current := os.DirFS(root)
+					if failed {
+						current = warningFailureFS{}
+					}
+					input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})
+					assert.NoError(t, err)
+					raw := manifest.Warning{Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
+					input.Warnings = []manifest.Warning{raw}
+					invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
+					bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
+					obj := &manifest.OCIRepository{Name: "alias", Namespace: "apps"}
+					d := &discoverer{}
+					for range 2 {
+						artifact, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, subtree: subtree})
+						if failed && !errors.Is(err, fs.ErrPermission) || !failed && err != nil {
+							t.Fatalf("source view error=%v, failed=%t", err, failed)
+						}
+						if failed {
+							if artifact != nil {
+								t.Fatalf("failed source view = %+v", artifact)
+							}
+							continue
+						}
+						if artifact == nil || len(artifact.Warnings) != 0 {
+							t.Fatalf("alias warning evidence = %+v", artifact)
+						}
+						if input := artifact.FS.(*gittree.FS); len(input.Warnings) != 0 {
+							t.Fatalf("derived filesystem warnings = %+v", input.Warnings)
+						}
+					}
+					assert.Diff(t, input.Warnings, []manifest.Warning{raw})
+					assert.Diff(t, bootstrap.Warnings, []manifest.Warning{invocation})
+				})
+			}
+		})
 	}
 }

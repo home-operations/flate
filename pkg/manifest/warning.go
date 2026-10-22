@@ -5,18 +5,8 @@ import (
 	"slices"
 )
 
-// Warning is a non-fatal render advisory: a user-actionable signal ABOUT the
-// rendered output that flate surfaces at end-of-run and that a library consumer
-// (e.g. konflate, which reads orchestrator.Result) can present in a PR diff.
-//
-// It is distinct from a failure (which blocks a resource and lands in
-// Result.Failed) and from operational/diagnostic logs (submodule skips, cache
-// resets) which stay as plain slog lines; a
-// Warning means "the render succeeded, but you probably want to look at this".
-//
-// Producers record Warnings on the Store; the orchestrator collects them into
-// Result.Warnings. Consumers filter on the stable Category code rather than
-// parsing Message.
+// Warning is a categorized advisory collected alongside successful or failed runs.
+// Owners record warnings on the Store for selection and diagnostic presentation.
 type Warning struct {
 	// Resource is the object the warning concerns. The zero value means the
 	// warning is render-global (not tied to one object), e.g. an empty --path
@@ -25,9 +15,9 @@ type Warning struct {
 	// Category is a stable machine-readable code (one of the Warn* constants).
 	// Consumers switch/filter on this; it never carries free text.
 	Category string
-	// Message is a one-line human-readable summary for the footer.
+	// Message is a one-line human-readable summary.
 	Message string
-	// Detail is an optional structured payload — e.g. the dotted value key paths
+	// Detail is an optional structured payload, e.g. the dotted value key paths
 	// a WarnStaleValues advisory lists.
 	Detail []string
 	// Count is the number of distinct advisory origins sharing this payload,
@@ -64,6 +54,53 @@ const (
 	// out of the render. Render-global (Message names the Secret) so the many
 	// per-namespace KSes a cluster-config KS re-emits collapse to one line.
 	WarnUnresolvedSubstitution = "UnresolvedSubstitution"
+	// WarnBootstrapAliases reports that multiple sources alias the working tree.
+	WarnBootstrapAliases = "BootstrapAliases"
+
+	// WarnSourceRefUnavailable reports that a declared ref cannot be satisfied locally.
+	WarnSourceRefUnavailable = "SourceRefUnavailable"
+
+	// WarnInputParseFailed reports that an advisory input parse failed.
+	WarnInputParseFailed = "InputParseFailed"
+
+	// WarnInputReadFailed reports that an advisory input read failed.
+	WarnInputReadFailed = "InputReadFailed"
+
+	// WarnSubstitutionPrecedence reports that repository substitution data overrides supplied data.
+	WarnSubstitutionPrecedence = "SubstitutionPrecedence"
+
+	// WarnDuplicateDocument reports that a later document shadows the same identity.
+	WarnDuplicateDocument = "DuplicateDocument"
+
+	// WarnSkippedSubmodule reports that a Git tree omits a submodule.
+	WarnSkippedSubmodule = "SkippedSubmodule"
+
+	// WarnOfflineInputProvider reports that a dynamic provider has no offline inputs.
+	WarnOfflineInputProvider = "OfflineInputProvider"
+
+	// WarnOrphanedResource reports that an unowned resource was downgraded.
+	WarnOrphanedResource = "OrphanedResource"
+
+	// WarnBaselineStatusUnavailable reports that Git status required conservative comparison.
+	WarnBaselineStatusUnavailable = "BaselineStatusUnavailable"
+
+	// WarnDependencyCycle reports that a dependency cycle prevents reconciliation.
+	WarnDependencyCycle = "DependencyCycle"
+
+	// WarnDiffSuppressed reports that a comparison was withheld.
+	WarnDiffSuppressed = "DiffSuppressed"
+
+	// WarnRenderPersistenceDisabled reports that the build lacks persistent render identity.
+	WarnRenderPersistenceDisabled = "RenderPersistenceDisabled"
+
+	// WarnCacheMaintenance reports that cache maintenance encountered an advisory error.
+	WarnCacheMaintenance = "CacheMaintenance"
+
+	// WarnExternalSource reports that a source is outside the local tree.
+	WarnExternalSource = "ExternalSource"
+
+	// WarnUnrelatedFailure reports that an out-of-scope resource failed.
+	WarnUnrelatedFailure = "UnrelatedFailure"
 )
 
 // CompareWarning orders warnings by category, resource, message and ordered detail.

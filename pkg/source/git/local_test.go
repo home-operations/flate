@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -231,6 +232,26 @@ func TestResolveLocal_IncompleteHistory(t *testing.T) {
 	}
 }
 
+func TestResolveLocal_NoWarningAllocations(t *testing.T) {
+	empty := []*manifest.GitRepository{localSource(sourcev1.GitRepositoryRef{})}
+	authored := []*manifest.GitRepository{localSource(sourcev1.GitRepositoryRef{Tag: "v1.0.0"})}
+	selected := (*manifest.GitRepositoryRef)(authored[0].Reference)
+	emptyAllocs := testing.AllocsPerRun(1000, func() {
+		_, err := ResolveLocal(t.Context(), nil, empty, "")
+		assert.NoError(t, err)
+	})
+	validationAllocs := testing.AllocsPerRun(1000, func() {
+		assert.NoError(t, selected.Validate())
+	})
+	authoredAllocs := testing.AllocsPerRun(1000, func() {
+		_, err := ResolveLocal(t.Context(), nil, authored, "")
+		assert.NoError(t, err)
+	})
+	if want := emptyAllocs + validationAllocs; authoredAllocs > want {
+		t.Fatalf("reference formatting without warnings: %g allocations, want %g", authoredAllocs, want)
+	}
+}
+
 func TestResolveLocal_NoStoreValidatesEffectiveSyntax(t *testing.T) {
 	t.Parallel()
 	for _, ref := range []sourcev1.GitRepositoryRef{
@@ -272,6 +293,9 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	t.Parallel()
 	root, repo, a, b := localFixture(t)
 
+	a = submoduleCommit(t, repo, a)
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), a)))
+
 	first := localSource(sourcev1.GitRepositoryRef{Tag: "v1.0.0"})
 	second := localSource(sourcev1.GitRepositoryRef{Commit: a.String()})
 	second.Name = "second"
@@ -282,6 +306,12 @@ func TestResolveLocal_CacheReuseIsolationAndMovedTags(t *testing.T) {
 	got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{first, second, ignored}, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, source := range []*manifest.GitRepository{first, second, ignored} {
+		artifact := got[source.Named()]
+		if len(artifact.Warnings) != 1 || artifact.Warnings[0].Resource != source.Named() || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule {
+			t.Fatalf("pin evidence lost: %+v", artifact)
+		}
 	}
 	key := got[first.Named()].Key
 	if key != got[second.Named()].Key || key == got[ignored.Named()].Key {
@@ -667,4 +697,63 @@ func localLocation(tb testing.TB, root string) *gitrepo.Location {
 	location, err := gitrepo.Locate(tb.Context(), root, root)
 	assert.Equal(tb, err, nil)
 	return location
+}
+
+func TestResolveLocal_WarningsSurviveFailure(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"current entry", "later entry"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			root, repo, pin, _ := localFixture(t)
+			commit, err := repo.CommitObject(pin)
+			assert.NoError(t, err)
+			tree, err := commit.Tree()
+			assert.NoError(t, err)
+			tree.Entries = append(tree.Entries, object.TreeEntry{Name: "module", Mode: filemode.Submodule, Hash: pin})
+			if failure == "current entry" {
+				tree.Entries = append(tree.Entries, object.TreeEntry{Name: "zmissing", Mode: filemode.Dir, Hash: plumbing.NewHash(strings.Repeat("f", 40))})
+			}
+			encoded := repo.Storer.NewEncodedObject()
+			sort.Sort(object.TreeEntrySorter(tree.Entries))
+			assert.NoError(t, tree.Encode(encoded))
+			commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+			assert.NoError(t, err)
+			encoded = repo.Storer.NewEncodedObject()
+			assert.NoError(t, commit.Encode(encoded))
+			pin, err = repo.Storer.SetEncodedObject(encoded)
+			assert.NoError(t, err)
+			first := localSource(sourcev1.GitRepositoryRef{Commit: pin.String()})
+			repositories := []*manifest.GitRepository{first}
+			if failure == "later entry" {
+				repositories = append(repositories, nil)
+			}
+			artifacts, err := ResolveLocal(t.Context(), localLocation(t, root), repositories, "")
+			if !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("original failure lost: %v", err)
+			}
+			artifact := artifacts[first.Named()]
+			if artifact == nil || artifact.FS != nil || artifact.Key != "" || len(artifact.Warnings) != 1 || artifact.Warnings[0].Resource != first.Named() || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule {
+				t.Fatalf("warning-only local result = %+v", artifact)
+			}
+		})
+	}
+}
+
+func submoduleCommit(t *testing.T, repo *git.Repository, hash plumbing.Hash) plumbing.Hash {
+	t.Helper()
+	commit, err := repo.CommitObject(hash)
+	assert.NoError(t, err)
+	tree, err := commit.Tree()
+	assert.NoError(t, err)
+	tree.Entries = append(tree.Entries, object.TreeEntry{Name: "module", Mode: filemode.Submodule, Hash: hash})
+	sort.Sort(object.TreeEntrySorter(tree.Entries))
+	encoded := repo.Storer.NewEncodedObject()
+	assert.NoError(t, tree.Encode(encoded))
+	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	encoded = repo.Storer.NewEncodedObject()
+	assert.NoError(t, commit.Encode(encoded))
+	hash, err = repo.Storer.SetEncodedObject(encoded)
+	assert.NoError(t, err)
+	return hash
 }

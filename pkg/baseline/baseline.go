@@ -44,6 +44,7 @@ type resolution struct {
 
 // AutoResolve resolves the base once and admits lazy readers owned by owner.
 // The checkout MUST remain stable until all readers have joined.
+// An error may return diagnostic-only inputs with no usable content.
 func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cache) (*Result, error) {
 	if owner == nil {
 		return nil, fmt.Errorf("%w: baseline cache owner is required", manifest.ErrInput)
@@ -74,9 +75,21 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		Root    string
 		Remotes []string
 	}{root, urls}
-	before, selected, identity, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, owner: owner, content: content})
+	before, selected, identity, warnings, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, owner: owner, content: content})
+	input.Warnings = append(slices.Clone(input.Warnings), warnings...)
+	var baseWarnings []manifest.Warning
+	if before != nil {
+		baseWarnings = slices.Clone(before.Warnings)
+		for i := range baseWarnings {
+			baseWarnings[i].Resource = manifest.BootstrapSourceID
+		}
+	}
 	if err != nil {
-		return nil, err
+		result := &Result{Source: &store.SourceArtifact{Warnings: input.Warnings}}
+		if before != nil {
+			result.BaseInput = &store.SourceArtifact{Warnings: baseWarnings}
+		}
+		return result, err
 	}
 	label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Direct, Key: r.Hash.String()})
 	rel, err := filepath.Rel(root, location.ScanPath)
@@ -87,7 +100,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	input.Metadata = map[string]string{"baseline-selection": r.Source}
 	return &Result{
 		Source:    input,
-		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, FS: before},
+		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, FS: before, Warnings: baseWarnings},
 		ScanPath:  location.ScanPath, BaseScanPath: filepath.Join(label, rel),
 		Changes: selected, SelfURLs: urls,
 	}, nil

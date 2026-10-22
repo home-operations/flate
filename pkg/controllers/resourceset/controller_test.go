@@ -128,6 +128,8 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	defer c.Close()
 	rs := selectorFixture("acl", "blue")
 	s.AddObject(rs)
+	dynamic := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: rs.Namespace, Type: fluxopv1.InputProviderGitHubBranch, Labels: map[string]string{"color": "blue"}}
+	s.AddObject(dynamic)
 	if !c.WantsDrainRerun(rs.Named()) || len(c.collectDeps(rs)) != 0 {
 		t.Fatal("selector-only input must request a rerun without an ID gate")
 	}
@@ -159,6 +161,9 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 		info, _ := s.GetStatus(rs.Named())
 		if !blocked.Empty() || tasks.Failures() != 0 || info.Status != store.StatusReady || hasRenderedDoc(art, "ConfigMap", "rsip") != matches {
 			t.Fatalf("membership=%v: blocked=%v status=%+v artifact=%+v", matches, blocked, info, art)
+		}
+		if warnings := s.Warnings(); len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Count != 1 || warnings[0].Resource != rs.Named() {
+			t.Fatalf("selector rerun warnings = %+v", warnings)
 		}
 		if rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue" {
 			t.Fatal("selector mutation changed the authored spec")
@@ -284,9 +289,21 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 				rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: provider.Name}}
 				s.AddObject(provider)
 			}
+			if fault == "template" {
+				dynamic := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: rs.Namespace, Type: fluxopv1.InputProviderGitHubBranch}
+				rs.InputsFrom = []fluxopv1.InputProviderReference{{Name: dynamic.Name}}
+				rs.Inputs = []fluxopv1.ResourceSetInput{{"name": {Raw: []byte(`"inline"`)}}}
+				s.AddObject(dynamic)
+				s.UpdateStatus(dynamic.Named(), store.StatusReady, "", "")
+			}
 			s.AddObject(rs)
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("initial render: %+v", info)
+			}
+			if fault == "template" {
+				if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+					t.Fatalf("replay: %+v", info)
+				}
 			}
 			artifact := s.GetArtifact(rs.Named()).(*store.Emission)
 			if artifact.Fingerprint == "" {
@@ -308,6 +325,12 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 			}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 				t.Fatalf("status = %+v, want Failed", info)
+			}
+			if fault == "template" {
+				warnings := s.Warnings()
+				if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Count != 1 {
+					t.Fatalf("error/replay warnings = %+v", warnings)
+				}
 			}
 		})
 	}
@@ -519,5 +542,41 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	}
 	if rs.InputsFrom[0].Kind != "Unsupported" {
 		t.Fatal("authored input kind mutated")
+	}
+}
+
+func TestReconcile_WarningsBeforeExit(t *testing.T) {
+	t.Parallel()
+	for _, hit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hit=%t", hit), func(t *testing.T) {
+			t.Parallel()
+			c, s := newController(t)
+			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
+			rs := &manifest.ResourceSet{Name: "reader", Namespace: "apps",
+				Inputs: []fluxopv1.ResourceSetInput{{"name": {Raw: []byte(`"inline"`)}}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: provider.Name}},
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n"}
+			if !hit {
+				rs.ResourcesTemplate = "<< invalid template"
+			}
+			s.AddObjects([]manifest.BaseManifest{rs, provider})
+			s.UpdateStatus(provider.Named(), store.StatusReady, "", "")
+			if hit {
+				_, _, err := resourceset.Render(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {
+					s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true})
+					return true, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode})
+			if (info.Status == store.StatusReady) != hit {
+				t.Fatalf("reconcile status = %+v, hit=%t", info, hit)
+			}
+			warnings := s.Warnings()
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Resource != rs.Named() || warnings[0].Count != 1 {
+				t.Fatalf("early return lost warnings: %+v", warnings)
+			}
+		})
 	}
 }

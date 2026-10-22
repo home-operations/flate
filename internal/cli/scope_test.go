@@ -605,7 +605,7 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 	}
 }
 
-func TestRun_NamedScope_TestWarningFooter(t *testing.T) {
+func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 	preservePersistenceNoticeState(t)
 	renderPersistenceDisabledReason = persistenceReason
 	for _, fatal := range []bool{false, true} {
@@ -619,16 +619,17 @@ func TestRun_NamedScope_TestWarningFooter(t *testing.T) {
 			out, stderr, code := runCLI(t, "test", "hr", "selected", "--path", filepath.Join(root, "cluster"),
 				"--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, wantCode)
-			assert.Equal(t, strings.Count(out, "warnings (1)"), 1)
-			assert.Equal(t, strings.Count(out, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 1)
-			assert.Equal(t, strings.Contains(out, "outside"), true)
+			assert.Equal(t, strings.Contains(out, "warnings") || strings.Contains(out, "unrelated") || strings.Contains(out, "outside"), false)
+			assert.Equal(t, strings.Count(strings.TrimPrefix(stderr, persistenceNotice), "warnings (1)"), 1)
+			assert.Equal(t, strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 1)
+			assert.Equal(t, strings.Contains(stderr, "outside"), true)
 			if fatal {
 				assert.Equal(t, strings.Count(stderr, "apps/fatal-dependency"), 1)
-				assert.Equal(t, strings.Contains(stderr, "unrelated"), false)
-				assert.Equal(t, strings.Contains(stderr, "warnings"), false)
+				assert.Equal(t, strings.Contains(stderr, "unrelated"), true)
+				assert.Equal(t, strings.Contains(stderr, "warnings"), true)
 				assert.Equal(t, strings.Count(stderr, "flate error:"), 0)
 			} else {
-				assert.Equal(t, stderr, persistenceNotice)
+				assert.Equal(t, strings.HasPrefix(stderr, persistenceNotice), true)
 			}
 		})
 	}
@@ -881,7 +882,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			}
 			writeErr := errors.New("report write failed")
 			got = finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: failingWriter{err: writeErr}}, &selectedInvocation{sides: selection, err: selectedErr, remainder: remainder}, selectedPayload{})
-			assert.Equal(t, errors.Is(got, writeErr), named)
+			assert.Equal(t, errors.Is(got, writeErr), true)
 		})
 	}
 }

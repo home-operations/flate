@@ -22,7 +22,7 @@ func cm(name, ns, key, value string) Doc {
 
 func unified(t *testing.T, left, right []Doc) string {
 	t.Helper()
-	out, err := RenderDocs(left, right, Options{Format: FormatDiff})
+	out, _, err := RenderDocs(left, right, Options{Format: FormatDiff})
 	if err != nil {
 		t.Fatalf("RenderDocs(diff): %v", err)
 	}

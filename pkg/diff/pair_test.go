@@ -1,8 +1,6 @@
 package diff
 
 import (
-	"bytes"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -36,15 +34,16 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 			right := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 			right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", tt.apiVersion
 			l, r := []Doc{left}, []Doc{right}
-			if got, _, _ := pair(l, r, Options{}); len(got) != tt.pairs {
+			if got, _, _, _ := pair(l, r, Options{}); len(got) != tt.pairs {
 				t.Fatalf("pairs = %+v, want %d", got, tt.pairs)
 			}
-			changes := Changes(l, r, Options{})
+			changes, _ := Changes(l, r, Options{})
 			if len(changes) != tt.pairs {
 				t.Fatalf("changes = %+v, want %d", changes, tt.pairs)
 			}
 			count := 0
-			for c, err := range changedPairs(l, r, Options{}) {
+			paired, _, _, _ := pair(l, r, Options{})
+			for c, err := range changedPairs(paired) {
 				count++
 				if err != nil {
 					t.Fatal(err)
@@ -97,22 +96,22 @@ func TestPair_PathIsPresentation(t *testing.T) {
 			rightParent.Path = tt.path
 			left := []Doc{cmDoc(leftParent, manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
 			right := []Doc{cmDoc(rightParent, manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
-			if got := Changes(left, right, Options{}); len(got) != 0 {
+			if got, _ := Changes(left, right, Options{}); len(got) != 0 {
 				t.Fatalf("path-only move produced changes: %+v", got)
 			}
 			for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
-				out, err := RenderDocs(left, right, Options{Format: format})
+				out, _, err := RenderDocs(left, right, Options{Format: format})
 				if err != nil || len(out) != 0 {
 					t.Fatalf("%s path-only move produced output %q: %v", format, out, err)
 				}
 			}
 			right[0].Manifest["data"] = map[string]any{"k": "new"}
-			changes := Changes(left, right, Options{})
+			changes, _ := Changes(left, right, Options{})
 			if len(changes) != 1 || changes[0].Status != StatusChanged || changes[0].Parent != rightParent {
 				t.Fatalf("content change must use current parent: %+v", changes)
 			}
 			for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
-				out, err := RenderDocs(left, right, Options{Format: format})
+				out, _, err := RenderDocs(left, right, Options{Format: format})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -132,7 +131,7 @@ func TestPair_PathIsPresentation(t *testing.T) {
 					t.Errorf("HTML parent heading missing %q", want)
 				}
 			}
-			removed := Changes(left, nil, Options{})
+			removed, _ := Changes(left, nil, Options{})
 			if len(removed) != 1 || removed[0].Parent != leftParent {
 				t.Errorf("removal must use original parent: %+v", removed)
 			}
@@ -145,13 +144,11 @@ func TestPair_PathIsPresentation(t *testing.T) {
 }
 
 func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
+	t.Parallel()
 	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "./apps"}
 	for _, side := range []string{"left", "right"} {
 		t.Run(side, func(t *testing.T) {
-			var logs bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(previous) })
+			t.Parallel()
 
 			first := cmDoc(parent, manifest.NamedResource{Name: "first", Namespace: "ns"}, "shadowed", "first-1")
 			last := cmDoc(parent, manifest.NamedResource{Name: "last", Namespace: "ns"}, "retained", "last-2")
@@ -164,9 +161,14 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 			if side == "right" {
 				left, right = right, left
 			}
-			pairs, _, _ := pair(left, right, Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
+			pairs, warnings, _, _ := pair(left, right, Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
 				meta := m["metadata"].(map[string]any)
 				meta["name"], meta["namespace"] = "normalized", "normalized-ns"
+				apiVersion := "v3"
+				if group := manifest.DocIdentity(m).Group; group != "" {
+					apiVersion = group + "/" + apiVersion
+				}
+				m["apiVersion"] = apiVersion
 			}})
 			if len(pairs) != 2 {
 				t.Fatalf("expected two paired resources, got %d", len(pairs))
@@ -187,28 +189,56 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 				t.Fatalf("expected last document paired with other side, got %+v", pairs[0])
 			}
 			retainedChart, counterpartChart := pairs[0].aChart, pairs[0].bChart
-			wantParent, wantVersion := other.Parent, "v1"
+			wantParent := other.Parent
 			if side == "right" {
 				retainedChart, counterpartChart = counterpartChart, retainedChart
-				wantParent, wantVersion = last.Parent, "v2"
+				wantParent = last.Parent
 			}
 			assert.Equal(t, retainedChart, "last-2")
 			assert.Equal(t, counterpartChart, "other-3")
 			assert.Equal(t, pairs[0].parent, wantParent)
-			assert.Equal(t, pairs[0].apiVersion, wantVersion)
+			assert.Equal(t, pairs[0].apiVersion, "v3")
 			assert.Equal(t, pairs[0].resource.Name, "normalized")
 			assert.Equal(t, chartLabel(retained), "")
 			assert.Equal(t, chartLabel(counterpart), "")
-			if strings.Count(logs.String(), "level=WARN") != 1 {
-				t.Fatalf("expected one duplicate warning, got %q", logs.String())
+			warningSide := SideOrig
+			if side == "right" {
+				warningSide = SideCurrent
 			}
-			for _, field := range []string{"diff: duplicate document", "side=" + side, "parentGroup=kustomize.toolkit.fluxcd.io", "parentKind=Kustomization", "parentNamespace=flux-system", "parentName=apps", "parentPath=new/apps", "apiVersion=v2", `group=""`, "kind=ConfigMap", "namespace=normalized-ns", "name=normalized"} {
-				if !strings.Contains(logs.String(), field) {
-					t.Errorf("warning missing %q: %s", field, logs.String())
-				}
-			}
+			assert.Diff(t, warnings, []manifest.Warning{{
+				Resource: manifest.NamedResource{Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"},
+				Category: manifest.WarnDuplicateDocument, Message: "duplicate document shadows an earlier document",
+				Detail: []string{"side: " + string(warningSide), "parent: " + parent.String(), "parent path: new/apps", "apiVersion: v2"},
+			}})
 		})
 	}
+}
+
+func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
+	t.Parallel()
+	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "./apps"}
+	z := manifest.NamedResource{Kind: "ConfigMap", Namespace: "apps", Name: "z"}
+	a := z
+	a.Name = "a"
+	left := []Doc{
+		cmDoc(parent, z, "old", ""), cmDoc(parent, z, "new", ""),
+		cmDoc(parent, a, "old", ""), cmDoc(parent, a, "new", ""),
+	}
+	var want []manifest.Warning
+	for _, id := range []manifest.NamedResource{a, z} {
+		want = append(want, manifest.Warning{
+			Resource: id, Category: manifest.WarnDuplicateDocument,
+			Message: "duplicate document shadows an earlier document",
+			Detail:  []string{"side: orig", "parent: " + parent.String(), "parent path: ./apps", "apiVersion: v1"},
+		})
+	}
+	first, warnings, err := RenderDocs(left, nil, Options{Format: FormatGitHub})
+	assert.NoError(t, err)
+	assert.Diff(t, warnings, want)
+	second, warnings, err := RenderDocs(left, nil, Options{Format: FormatGitHub})
+	assert.NoError(t, err)
+	assert.Diff(t, warnings, want)
+	assert.Equal(t, string(first), string(second))
 }
 
 func TestChangedPairs_NormalizeOncePerIteration(t *testing.T) {
@@ -219,11 +249,13 @@ func TestChangedPairs_NormalizeOncePerIteration(t *testing.T) {
 		before[i].Manifest = manifest.DeepCopyMap(before[i].Manifest)
 	}
 	calls := 0
-	seq := changedPairs(left, right, Options{Normalize: func(m map[string]any) {
+	paired, warnings, _, _ := pair(left, right, Options{Normalize: func(m map[string]any) {
 		calls++
 		meta := m["metadata"].(map[string]any)
 		meta["name"] = meta["name"].(string) + "-normalized"
 	}})
+	assert.Equal(t, len(warnings), 0)
+	seq := changedPairs(paired)
 	var first []output.LineChange
 	for c, err := range seq {
 		assert.NoError(t, err)
@@ -240,7 +272,61 @@ func TestChangedPairs_NormalizeOncePerIteration(t *testing.T) {
 		assert.NoError(t, err)
 		second = append(second, c)
 	}
-	assert.Equal(t, calls, 2)
+	assert.Equal(t, calls, 0)
 	assert.Diff(t, second, first)
 	assert.Diff(t, []Doc{left[0], right[0]}, before)
+	bad := cm("z", "ns", "owner", "unencodable")
+	bad.Manifest["bad"] = make(chan int)
+	lazyPairs, _, _, _ := pair(append(left, bad), nil, Options{})
+	consumed := 0
+	for _, err := range changedPairs(lazyPairs) {
+		assert.NoError(t, err)
+		consumed++
+		break
+	}
+	assert.Equal(t, consumed, 1)
+}
+
+func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
+	t.Parallel()
+	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
+	left := []Doc{cmDoc(parent, manifest.NamedResource{Name: "shadow-orig"}, "shadowed", ""), cmDoc(parent, manifest.NamedResource{Name: "last-orig"}, "old", "")}
+	right := []Doc{cmDoc(parent, manifest.NamedResource{Name: "shadow-current"}, "shadowed", ""), cmDoc(parent, manifest.NamedResource{Name: "last-current"}, "new", "")}
+	for _, format := range []Format{FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea, FormatDiff, FormatHTML, FormatJSON, ""} {
+		t.Run(string(format), func(t *testing.T) {
+			t.Parallel()
+			var first []byte
+			var firstWarnings []manifest.Warning
+			for run := range 2 {
+				calls := make(map[string]int)
+				out, warnings, err := RenderDocs(left, right, Options{Format: format, Normalize: func(m map[string]any) {
+					meta := m["metadata"].(map[string]any)
+					calls[meta["name"].(string)]++
+					meta["name"] = "normalized"
+				}})
+				assert.NoError(t, err)
+				assert.Diff(t, calls, map[string]int{"shadow-orig": 1, "last-orig": 1, "shadow-current": 1, "last-current": 1})
+				if len(warnings) != 2 {
+					t.Fatalf("want two snapshot warnings, got %+v", warnings)
+				}
+				sides := map[string]bool{}
+				for _, warning := range warnings {
+					assert.Equal(t, warning.Category, manifest.WarnDuplicateDocument)
+					assert.Equal(t, warning.Resource, manifest.NamedResource{Kind: "ConfigMap", Name: "normalized"})
+					assert.Diff(t, warning.Detail[1:], []string{"parent: " + parent.String(), "parent path: apps", "apiVersion: v1"})
+					sides[warning.Detail[0]] = true
+				}
+				assert.Diff(t, sides, map[string]bool{"side: orig": true, "side: current": true})
+				if len(out) == 0 || strings.Contains(string(out), "shadowed") || strings.Contains(string(out), "shadows an earlier") {
+					t.Fatalf("unexpected winning product: %s", out)
+				}
+				if run == 0 {
+					first, firstWarnings = out, warnings
+				} else {
+					assert.Diff(t, out, first)
+					assert.Diff(t, warnings, firstWarnings)
+				}
+			}
+		})
+	}
 }

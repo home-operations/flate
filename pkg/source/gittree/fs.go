@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"os"
 	"path"
@@ -63,6 +62,8 @@ type ViewOptions struct {
 
 // FS is an admitted filesystem. Its representation is selected once by New.
 type FS struct {
+	// Warnings is immutable admission evidence, nil when no advisory was observed.
+	Warnings []manifest.Warning
 	view
 	location *gitrepo.Location
 	policy   *sourceignore.Matcher
@@ -108,6 +109,7 @@ func (g *FS) OperationView() *FS {
 	if local, ok := g.view.(*localView); ok {
 		input := newLocal(local.root, true, g.snapshot)
 		input.location = g.location
+		input.Warnings = g.Warnings
 		return input
 	}
 	return g
@@ -170,9 +172,11 @@ func (i gitInfo) Sys() any           { return nil }
 
 // New validates Git metadata and creates views without reading regular blob bodies.
 // Mutable views refresh before reuse or construction; committed identities stay pinned.
+// An error may return warning evidence without a usable filesystem.
 func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		current, _ := opts.Current.(*FS)
+		return warningOnly(current), "", err
 	}
 	direct, source := opts.Mode == Direct, opts.Mode == Source
 	reuse := direct && commit == plumbing.ZeroHash
@@ -191,7 +195,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			if v.refresh != nil {
 				refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
 				if err != nil {
-					return nil, "", err
+					return warningOnly(refreshed), "", err
 				}
 				current, v = refreshed, refreshed.view.(*gitView)
 			}
@@ -208,7 +212,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			var err error
 			matcher, err = current.SourcePolicy(ctx)
 			if err != nil {
-				return nil, "", err
+				return warningOnly(current), "", err
 			}
 			if opts.Ignore != "" {
 				matcher = matcher.WithExtra(opts.Ignore)
@@ -242,9 +246,9 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	input, err := newTree(ctx, backing, commit, opts)
 	if err != nil {
 		if source && errors.Is(err, fs.ErrPermission) {
-			return nil, "", fmt.Errorf("sourceignore load: %w", err)
+			return warningOnly(input), "", fmt.Errorf("sourceignore load: %w", err)
 		}
-		return nil, "", err
+		return warningOnly(input), "", err
 	}
 	input.policy = matcher
 	g := input.view.(*gitView)
@@ -260,13 +264,20 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			Ignore          string
 		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
 		if g.identity == "" {
-			return nil, "", fmt.Errorf("%w: git view content cannot be fingerprinted", manifest.ErrInput)
+			return warningOnly(input), "", fmt.Errorf("%w: git view content cannot be fingerprinted", manifest.ErrInput)
 		}
 	}
 	if err := g.shape(ctx, opts, input); err != nil {
-		return nil, "", err
+		return warningOnly(input), "", err
 	}
 	return input, g.identity, nil
+}
+
+func warningOnly(input *FS) *FS {
+	if input == nil || len(input.Warnings) == 0 {
+		return nil
+	}
+	return &FS{Warnings: input.Warnings}
 }
 
 func currentTree(input fs.FS) *gitView {
@@ -301,7 +312,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 		return storer.EncodedObjectStorer(upper)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return warningOnly(&combined.FS), err
 	}
 	if opts.Current != nil {
 		input.changes = make(map[string]bool, len(opts.Changes))
@@ -317,7 +328,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 		}
 		if !native || current.backing == nil && current.worktree == nil {
 			if err := input.walkWorktree(ctx, "."); err != nil {
-				return nil, err
+				return warningOnly(&combined.FS), err
 			}
 		} else {
 			input.denied = current.denied
@@ -325,8 +336,12 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 				input.nodes[name] = &gitNode{name: node.name, hash: node.hash, mode: node.mode, children: node.children}
 			}
 		}
-	} else if err := input.walk(ctx, commit); err != nil {
-		return nil, err
+	} else {
+		warnings, err := input.walk(ctx, commit)
+		combined.Warnings = warnings
+		if err != nil {
+			return warningOnly(&combined.FS), err
+		}
 	}
 	return &combined.FS, nil
 }
@@ -439,38 +454,40 @@ func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
 	return links, nil
 }
 
-func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) error {
+func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Warning, error) {
 	if g.worktree != nil && g.current == nil {
-		return g.walkWorktree(ctx, ".")
+		return nil, g.walkWorktree(ctx, ".")
 	}
 	storer := g.storers.Get().(storer.EncodedObjectStorer)
 	defer g.storers.Put(storer)
 	c, err := object.GetCommit(storer, commit)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return g.walkCommit(ctx, storer, c.TreeHash, ".")
 }
 
-func (g *gitView) walkCommit(ctx context.Context, storer storer.EncodedObjectStorer, hash plumbing.Hash, prefix string) error {
+func (g *gitView) walkCommit(ctx context.Context, storer storer.EncodedObjectStorer, hash plumbing.Hash, prefix string) ([]manifest.Warning, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	t, err := object.GetTree(storer, hash)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var warnings []manifest.Warning
 	for _, entry := range t.Entries {
 		if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.ContainsAny(entry.Name, "/\x00") {
-			return fmt.Errorf("malformed tree entry name %q", entry.Name)
+			return warnings, fmt.Errorf("malformed tree entry name %q", entry.Name)
 		}
 		name := path.Join(prefix, entry.Name)
 		mode, err := entry.Mode.ToOSFileMode()
 		if err != nil {
-			return err
+			return warnings, err
 		}
 		if entry.Mode == filemode.Submodule {
-			slog.Warn("gittree: skipping submodule", "path", name)
+			warnings = append(warnings, manifest.Warning{Category: manifest.WarnSkippedSubmodule,
+				Message: "skipping submodule", Count: 1, Detail: []string{name, g.commit.String()}})
 			continue
 		}
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
@@ -479,13 +496,15 @@ func (g *gitView) walkCommit(ctx context.Context, storer storer.EncodedObjectSto
 		g.nodes[name] = &gitNode{name: entry.Name, hash: entry.Hash, mode: mode}
 		g.nodes[prefix].children = append(g.nodes[prefix].children, gitEntry{g, name})
 		if mode.IsDir() {
-			if err := g.walkCommit(ctx, storer, entry.Hash, name); err != nil {
-				return err
+			nested, err := g.walkCommit(ctx, storer, entry.Hash, name)
+			warnings = append(warnings, nested...)
+			if err != nil {
+				return warnings, err
 			}
 		}
 	}
 	slices.SortFunc(g.nodes[prefix].children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
-	return nil
+	return warnings, nil
 }
 
 func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {

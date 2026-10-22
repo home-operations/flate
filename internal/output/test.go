@@ -57,13 +57,11 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 	}
 }
 
-// Test writes the roster, advisories, deferred notes and one verdict.
-func (e Encoder) Test(report TestReport, warnings []manifest.Warning, notes []Note, elapsed time.Duration) error {
+// Test writes the roster and verdict.
+func (e Encoder) Test(report TestReport, elapsed time.Duration) error {
 	color := e.Color
 	doc := Document(
 		report.rosterBlock(color),
-		WarningsBlock(warnings, color),
-		NotesBlock(notes, color),
 		report.verdict(color, elapsed),
 	)
 	_, err := io.WriteString(e.Writer, doc)

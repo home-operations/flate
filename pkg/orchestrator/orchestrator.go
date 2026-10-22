@@ -550,7 +550,13 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
 	}
 	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		return gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
+		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
+		if artifact != nil {
+			for _, warning := range artifact.Warnings {
+				o.store.AddWarning(manifest.NamedResource{}, warning)
+			}
+		}
+		return artifact, err
 	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
 	chartFetcher := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{

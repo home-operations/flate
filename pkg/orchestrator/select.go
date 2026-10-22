@@ -19,9 +19,10 @@ type selectionSide struct {
 	roots      []manifest.NamedResource
 }
 
-// Select projects one completed render, or two ordered orig/current renders,
+// Select projects one render, or two ordered orig/current renders,
 // onto requested kinds with a common namespace and name. Labels filter output
 // objects, while Counts and fatal scope retain the roots matched before labels.
+// Incomplete inputs yield only warnings and their original errors.
 // Borrowed objects, graphs and document batches MUST remain immutable in use.
 // The second return retains selected failures and non-resource errors; the
 // third contains only non-resource errors for diagnostics outside failure rows.
@@ -30,30 +31,44 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 		err := errors.Join(fmt.Errorf("%w: selection requires one or two runs", manifest.ErrInput), runErr)
 		return nil, err, nonResourceErrors(err)
 	}
-	for _, run := range runs {
-		if run.Result == nil || run.Orchestrator == nil {
-			if runErr != nil {
-				return nil, runErr, nonResourceErrors(runErr)
-			}
-			if run.Err != nil {
-				return nil, run.Err, nonResourceErrors(run.Err)
-			}
-			err := fmt.Errorf("%w: selection requires completed runs", manifest.ErrInput)
-			return nil, err, err
-		}
-	}
 	kinds, err := validateRoots(roots)
 	if err != nil {
 		err = errors.Join(err, runErr)
 		return nil, err, nonResourceErrors(err)
 	}
+	complete := true
+	for _, run := range runs {
+		complete = complete && run.Result != nil && run.Orchestrator != nil
+	}
+	if !complete {
+		for _, run := range runs {
+			if run.Err != nil && !errors.Is(runErr, run.Err) {
+				runErr = errors.Join(runErr, run.Err)
+			}
+		}
+		if runErr == nil {
+			runErr = fmt.Errorf("%w: selection requires completed runs", manifest.ErrInput)
+		}
+	}
 	sides := make([]selectionSide, len(runs))
 	selected := make([]*selection.Selection, len(runs))
 	for i, run := range runs {
 		sides[i].run = run
-		sides[i].collect(roots, labels, len(runs) == 2)
+		if namespace := roots[0].Namespace; namespace != "" {
+			sides[i].namespaces = map[string]struct{}{namespace: {}}
+		} else if run.Orchestrator != nil && run.filter.Enabled() {
+			sides[i].namespaces = run.filter.KeepNamespaces()
+		}
+		if complete {
+			sides[i].collect(roots, labels, len(runs) == 2)
+		} else {
+			sides[i].result = &selection.Selection{}
+		}
 		sides[i].collectWarnings(roots[0], kinds, len(runs) == 2)
 		selected[i] = sides[i].result
+	}
+	if !complete {
+		return selected, runErr, runErr
 	}
 	candidates := selectionCandidates(sides)
 	for i := range sides {
@@ -87,11 +102,6 @@ func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]b
 }
 
 func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[string]string, comparison bool) {
-	if namespace := roots[0].Namespace; namespace != "" {
-		s.namespaces = map[string]struct{}{namespace: {}}
-	} else if s.run.filter.Enabled() {
-		s.namespaces = s.run.filter.KeepNamespaces()
-	}
 	s.result = &selection.Selection{Counts: make(map[string]int, len(roots))}
 	for _, root := range roots {
 		for _, obj := range s.run.store.ListObjects(root.Group, root.Kind) {
@@ -160,10 +170,13 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 }
 
 func (s *selectionSide) collectWarnings(root manifest.NamedResource, kinds map[manifest.NamedResource]bool, comparison bool) {
+	if s.run.Result == nil {
+		return
+	}
 	for _, warning := range s.run.Result.Warnings {
 		if warning.Category == manifest.WarnIncompleteInputCoverage {
 			id := warning.Resource
-			if !s.run.filter.Enabled() || !kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] || root.Name != "" && id.Name != root.Name || root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
+			if (s.run.Orchestrator == nil || !s.run.filter.Enabled()) || !kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] || root.Name != "" && id.Name != root.Name || root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
 				continue
 			}
 		} else if warning.Resource != (manifest.NamedResource{}) && !s.includes(warning.Resource.Namespace) {
@@ -217,7 +230,7 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, ks *manifes
 		return
 	}
 	src := ks.SourceID()
-	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Message: "external source " + src.String() + " is outside the local tree; not rendered"})
+	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Category: manifest.WarnExternalSource, Message: "external source " + src.String() + " is outside the local tree; not rendered"})
 }
 
 func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []manifest.NamedResource) {

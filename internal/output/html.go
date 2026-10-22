@@ -32,7 +32,6 @@ const (
 type htmlData struct {
 	Changed, Added, Removed int
 	ChromaCSS               template.CSS // light + dark token stylesheets (chroma)
-	Suppressed              []string     // unavailable producer disclosures
 	Tree                    []treeParent // sidebar navigation
 	Resources               []htmlResource
 }
@@ -98,16 +97,13 @@ type sRow struct {
 	Left, Right cell
 }
 
-func (e Encoder) html(changes iter.Seq2[LineChange, error], notes iter.Seq[string]) error {
+func (e Encoder) html(changes iter.Seq2[LineChange, error]) error {
 	hl, css, err := newHighlighter()
 	if err != nil {
 		return err
 	}
 
 	data := htmlData{ChromaCSS: template.CSS(css)} //nolint:gosec // chroma-generated stylesheet, not user input
-	for note := range notes {
-		data.Suppressed = append(data.Suppressed, note)
-	}
 	for p, err := range changes {
 		if err != nil {
 			return err
@@ -124,7 +120,7 @@ func (e Encoder) html(changes iter.Seq2[LineChange, error], notes iter.Seq[strin
 			data.Changed++
 		}
 	}
-	if len(data.Resources) == 0 && len(data.Suppressed) == 0 {
+	if len(data.Resources) == 0 {
 		return nil
 	}
 	data.Tree = buildTree(data.Resources)

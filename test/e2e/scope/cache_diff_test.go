@@ -109,7 +109,7 @@ data:
 										t.Errorf("expected greeting removal and addition:\n%s\nstderr:\n%s", out, stderr)
 									}
 									if side, suspended := strings.CutPrefix(state, "suspended_"); suspended {
-										if !strings.Contains(out, "suspended on "+side) || !strings.Contains(out, "diff suppressed") || stderr != "" || strings.Contains(out, "greeting:") || strings.Contains(out, "name: hello") {
+										if !strings.Contains(stderr, "suspended on "+side) || !strings.Contains(stderr, "diff suppressed") || out != "" {
 											t.Fatalf("suspension must disclose withheld output without pruning: stdout=%q stderr=%q", out, stderr)
 										}
 									}

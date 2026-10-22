@@ -54,21 +54,28 @@ type ProviderResolver func(ref fluxopv1.InputProviderReference, id manifest.Name
 // Referenced providers with no combined inputs produce no resources.
 // admit receives borrowed canonical content before matrix/template work; true skips rendering.
 // resolve is optional and supplies providers referenced by spec.inputsFrom.
-func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) (bool, error)) ([]map[string]any, error) {
+func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) (bool, error)) ([]map[string]any, []manifest.Warning, error) {
 	if rs == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if len(rs.Steps) > 0 && (len(rs.Resources) > 0 || rs.ResourcesTemplate != "") {
-		return nil, fmt.Errorf("%w: spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate", manifest.ErrInput)
+		return nil, nil, fmt.Errorf("%w: spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate", manifest.ErrInput)
 	}
 	for _, step := range rs.Steps {
 		if len(step.Resources) == 0 && step.ResourcesTemplate == "" {
-			return nil, fmt.Errorf("%w: step %q: at least one of resources or resourcesTemplate must be set", manifest.ErrInput, step.Name)
+			return nil, nil, fmt.Errorf("%w: step %q: at least one of resources or resourcesTemplate must be set", manifest.ErrInput, step.Name)
 		}
 	}
 	providers, err := collectProviderInputs(rs, resolve)
 	if err != nil {
-		return nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+		return nil, nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+	}
+	var warnings []manifest.Warning
+	for _, provider := range providers {
+		if provider.Inputs == nil && provider.Type != "" && provider.Type != fluxopv1.InputProviderStatic {
+			warnings = append(warnings, manifest.Warning{Resource: rs.Named(), Category: manifest.WarnOfflineInputProvider,
+				Message: "dynamic input provider contributes no inputs offline", Detail: []string{provider.ID.String(), provider.Type}})
+		}
 	}
 	if admit != nil {
 		handled, err := admit(struct {
@@ -78,15 +85,15 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 			Providers []providerContent
 		}{rs.Name, rs.Namespace, &rs.ResourceSetSpec, providers})
 		if handled || err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 	}
 	inputs, err := buildInputSets(rs, providers)
 	if err != nil {
-		return nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+		return nil, warnings, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
 	}
 	if len(rs.InputsFrom) > 0 && len(inputs) == 0 {
-		return nil, nil
+		return nil, warnings, nil
 	}
 
 	steps := rs.Steps
@@ -101,13 +108,13 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 			if len(rs.Steps) > 0 {
 				err = fmt.Errorf("step %q: %w", step.Name, err)
 			}
-			return nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+			return nil, warnings, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
 		}
 		if len(rs.Steps) > 0 {
 			for _, doc := range rendered {
 				key := DedupKey(doc)
 				if prev, found := stepOfObject[key]; found && prev != step.Name {
-					return nil, fmt.Errorf("%w: duplicate resource %s in step %q, already defined in step %q", manifest.ErrInput, key, step.Name, prev)
+					return nil, warnings, fmt.Errorf("%w: duplicate resource %s in step %q, already defined in step %q", manifest.ErrInput, key, step.Name, prev)
 				}
 				stepOfObject[key] = step.Name
 			}
@@ -122,7 +129,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 		applyOwnerLabels(doc, rs)
 		applyCommonMetadata(doc, rs.CommonMetadata)
 	}
-	return docs, nil
+	return docs, warnings, nil
 }
 
 func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]map[string]any, error) {

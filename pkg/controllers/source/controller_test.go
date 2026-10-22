@@ -33,10 +33,7 @@ type fakeFetcher struct {
 func (f *fakeFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.calls++
 	f.retry = policy
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.artifact, nil
+	return f.artifact, f.err
 }
 
 func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, *store.Store) {
@@ -107,7 +104,8 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 
 func TestController_FetchErrorMarksFailed(t *testing.T) {
 	t.Parallel()
-	f := &fakeFetcher{err: errors.New("boom")}
+	warning := manifest.Warning{Resource: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "r"}, Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"module"}}
+	f := &fakeFetcher{err: errors.New("boom"), artifact: &store.SourceArtifact{Warnings: []manifest.Warning{warning}}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 
 	repo := &manifest.GitRepository{
@@ -122,6 +120,9 @@ func TestController_FetchErrorMarksFailed(t *testing.T) {
 	}
 	if info.Message != "boom" {
 		t.Errorf("Failed reason = %q, want %q", info.Message, "boom")
+	}
+	if got := st.Warnings(); len(got) != 1 || got[0].Category != warning.Category || got[0].Resource != repo.Named() || got[0].Count != 1 || st.GetArtifact(repo.Named()) != nil {
+		t.Fatalf("failed acquisition warnings/content = %+v / %+v", got, st.GetArtifact(repo.Named()))
 	}
 }
 
@@ -163,6 +164,24 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("admitted evidence", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeFetcher{}
+		c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
+		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
+		st.AddObject(repo)
+		st.SetArtifact(repo.Named(), &store.SourceArtifact{FS: fstest.MapFS{}, Warnings: []manifest.Warning{{Resource: repo.Named(), Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule"}}})
+		for range 2 {
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+			if info.Status != store.StatusReady || f.calls != 0 {
+				t.Fatalf("admitted source = %+v, calls %d", info, f.calls)
+			}
+			if got := st.Warnings(); len(got) != 1 || got[0].Count != 1 || got[0].Resource != repo.Named() {
+				t.Fatalf("admitted warnings = %+v", got)
+			}
+		}
+	})
 
 	t.Run("unchanged", func(t *testing.T) {
 		t.Parallel()

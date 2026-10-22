@@ -27,6 +27,7 @@ type RemoteBaseRequest struct {
 }
 
 // FetchRemoteBase returns an immutable lazy view of the whole public repository.
+// An error may retain warnings without usable content.
 func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	if f.Cache == nil {
 		return nil, fmt.Errorf("%w: remote git base requires cache", manifest.ErrInput)
@@ -77,7 +78,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		return hash, nil
 	})
 	if err != nil {
-		return nil, err
+		return gitWarningArtifact(input, manifest.NamedResource{}, request.URL, request.Ref), err
 	}
 	if input == nil {
 		input, _, err = gittree.New(ctx, generation.Backing, generation.Commit, gittree.ViewOptions{
@@ -85,8 +86,8 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		})
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
+		return gitWarningArtifact(input, manifest.NamedResource{}, request.URL, request.Ref), fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: id, FS: input}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: id, FS: input, Warnings: gitWarnings(input, manifest.NamedResource{}, request.URL, request.Ref)}, nil
 }

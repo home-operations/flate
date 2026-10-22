@@ -20,7 +20,7 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 	if !strings.Contains(bOut, "app-cm") || !strings.Contains(bOut, "opaque-cm") {
 		t.Errorf("rendered HR output missing:\n%s", bOut)
 	}
-	for _, want := range []string{"warnings", "apps/app", "oldUnusedKey"} {
+	for _, want := range []string{"[StaleValues]", "apps/app", "oldUnusedKey"} {
 		if !strings.Contains(bErr, want) {
 			t.Errorf("build stderr missing %q:\n%s", want, bErr)
 		}
@@ -33,12 +33,12 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("stale-value detection must remain advisory; exit=%d stdout=%s stderr=%s", code, tOut, tErr)
 	}
-	for _, want := range []string{"warnings", "apps/app", "oldUnusedKey"} {
-		if !strings.Contains(tOut, want) {
-			t.Errorf("test stdout missing %q:\n%s\nstderr:\n%s", want, tOut, tErr)
+	for _, want := range []string{"[StaleValues]", "apps/app", "oldUnusedKey"} {
+		if !strings.Contains(tErr, want) {
+			t.Errorf("test stderr missing %q:\n%s\nstderr:\n%s", want, tOut, tErr)
 		}
 	}
-	if strings.Contains(tErr, "values not used by the chart") || strings.Count(tOut, "values not used by the chart") != 1 {
+	if strings.Contains(tOut, "values not used by the chart") || strings.Count(tErr, "values not used by the chart") != 1 {
 		t.Errorf("test warning destination/count: stdout=%s stderr=%s", tOut, tErr)
 	}
 }

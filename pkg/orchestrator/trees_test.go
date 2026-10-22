@@ -171,7 +171,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 
 			selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
-			body, err := diff.Compare(
+			body, _, _, err := diff.Compare(
 				diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 				diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 				selectedErr, diff.Options{Format: diff.FormatJSON})
@@ -274,7 +274,7 @@ spec:
 	}
 	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
-	body, err := diff.Compare(
+	body, _, _, err := diff.Compare(
 		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
@@ -343,7 +343,7 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	}
 	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
-	body, err := diff.Compare(
+	body, _, _, err := diff.Compare(
 		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 
@@ -42,7 +43,8 @@ type Fetcher struct {
 	fallback     sync.Map
 }
 
-// Fetch publishes an immutable source view only after acquisition succeeds.
+// Fetch returns an immutable source view after acquisition succeeds.
+// An error may retain warnings without usable content.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GitProviderGeneric,
@@ -168,7 +170,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		return hash, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
+		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
 	}
 
 	viewOptions.Worktree = generation.Worktree
@@ -176,10 +178,41 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		input, _, err = gittree.New(ctx, generation.Backing, generation.Commit, viewOptions)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
+		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%w: %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Warnings: gitWarnings(input, repo.Named(), repo.URL, refLabel)}, nil
+}
+
+func gitWarningArtifact(input *gittree.FS, id manifest.NamedResource, repository, ref string) *store.SourceArtifact {
+	warnings := gitWarnings(input, id, repository, ref)
+	if len(warnings) == 0 {
+		return nil
+	}
+	return &store.SourceArtifact{Warnings: warnings}
+}
+
+func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref string) []manifest.Warning {
+	if input == nil || len(input.Warnings) == 0 {
+		return nil
+	}
+	var coordinates []string
+	if endpoint, err := transport.NewEndpoint(repository); err == nil {
+		endpoint.User, endpoint.Password = "", ""
+		if address, err := url.Parse(endpoint.String()); err == nil {
+			address.RawQuery, address.Fragment = "", ""
+			coordinates = append(coordinates, address.String())
+		}
+	}
+	if ref != "" {
+		coordinates = append(coordinates, ref)
+	}
+	warnings := slices.Clone(input.Warnings)
+	for i := range warnings {
+		warnings[i].Resource = id
+		warnings[i].Detail = append(slices.Clone(warnings[i].Detail), coordinates...)
+	}
+	return warnings
 }
 
 type gitAcquisition struct {

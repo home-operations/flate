@@ -57,9 +57,8 @@ type Options struct {
 	// zero value renders the human default.
 	Format Format
 	// Suppressed lists additional producer disclosures. Compare appends its
-	// selected suppression notes without modifying this slice. Text and HTML
-	// formats disclose them in a leading note block; JSON includes them in its
-	// suppressed array.
+	// selected suppressions without modifying this slice and returns them as data.
+	// JSON also includes them in its suppressed array.
 	Suppressed []Suppression
 }
 
@@ -67,21 +66,26 @@ type Options struct {
 // and returns the formatted diff for opts.Format. Parent.Path is display metadata.
 // Native formats use dyff for content comparison and Kubernetes resource labels;
 // unified, HTML and JSON formats present the same canonical pairs.
-func RenderDocs(left, right []Doc, opts Options) ([]byte, error) {
+// Discovered warnings are returned even when formatting fails.
+func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, error) {
+	paired, warnings, leftCopied, rightCopied := pair(left, right, opts)
 	opts.Format = cmp.Or(opts.Format, FormatHuman)
+	var out []byte
+	var err error
 	switch opts.Format {
 	case FormatDiff, FormatHTML:
 		var buf bytes.Buffer
 		encoder := output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}
-		if err := encoder.Lines(changedPairs(left, right, opts), suppressionNotes(opts.Suppressed)); err != nil {
-			return nil, err
+		err = encoder.Lines(changedPairs(paired))
+		if err == nil {
+			out = buf.Bytes()
 		}
-		return buf.Bytes(), nil
 	case FormatJSON:
-		return renderJSON(left, right, opts)
+		out, err = renderJSON(changes(paired, leftCopied, rightCopied), opts.Suppressed)
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
-		return renderNative(left, right, opts)
+		out, err = renderNative(paired, opts.Format)
 	default:
-		return nil, fmt.Errorf("unsupported diff format %q", opts.Format)
+		err = fmt.Errorf("unsupported diff format %q", opts.Format)
 	}
+	return out, warnings, err
 }

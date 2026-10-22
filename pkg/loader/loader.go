@@ -243,7 +243,9 @@ func (w *walker) walkKustomize(ctx context.Context, dir, kpath string) (int, err
 	if kpath != "" && !w.ignoreMatches(kpath, false) {
 		n, err := w.loader.loadFile(kpath)
 		if err != nil {
-			slog.Warn("loader: kustomization file failed to parse", "path", kpath, "err", err)
+			w.loader.Store.AddWarning(manifest.NamedResource{}, manifest.Warning{
+				Category: manifest.WarnInputParseFailed, Message: "kustomization file failed to parse", Detail: []string{kpath, err.Error()},
+			})
 		}
 		count += n
 	}
@@ -314,7 +316,9 @@ func (w *walker) scanBootstrapFluxKS(dir, kpath string) int {
 	input, name := w.loader.documents.input(dir)
 	entries, err := fs.ReadDir(input, name)
 	if err != nil {
-		slog.Warn("loader: bootstrap-sibling readdir failed", "dir", dir, "err", err)
+		w.loader.Store.AddWarning(manifest.NamedResource{}, manifest.Warning{
+			Category: manifest.WarnInputReadFailed, Message: "bootstrap-sibling readdir failed", Detail: []string{dir, err.Error()},
+		})
 		return 0
 	}
 	count := 0
@@ -333,7 +337,9 @@ func (w *walker) scanBootstrapFluxKS(dir, kpath string) int {
 		reader.regular = e.Type().IsRegular()
 		objs, err := reader.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets, DefaultNamespace: ""})
 		if err != nil {
-			slog.Warn("loader: bootstrap-sibling parse failed", "path", abs, "err", err)
+			w.loader.Store.AddWarning(manifest.NamedResource{}, manifest.Warning{
+				Category: manifest.WarnInputParseFailed, Message: "bootstrap-sibling parse failed", Detail: []string{abs, err.Error()},
+			})
 			continue
 		}
 		for _, obj := range objs {
@@ -434,7 +440,9 @@ func (w *walker) walkComponentData(ctx context.Context, dir string) (int, error)
 				continue
 			}
 			if err := w.loader.recordDataFile(abs); err != nil {
-				slog.Warn("loader: component data file failed to parse", "path", abs, "err", err)
+				w.loader.Store.AddWarning(manifest.NamedResource{}, manifest.Warning{
+					Category: manifest.WarnInputParseFailed, Message: "component data file failed to parse", Detail: []string{abs, err.Error()},
+				})
 			}
 		}
 	}

@@ -33,7 +33,8 @@
 //
 // [Compare] consumes two [Snapshot] values from completed runs selected by
 // orchestrator.Select, withholds unavailable producer batches, and returns
-// formatted bytes without discarding selected render errors. Render two trees,
+// formatted bytes, duplicate warnings and structured suppressions without discarding
+// selected render errors. Render two trees,
 // select the requested producer kinds, then compare them:
 //
 //	base, head, runErr := orchestrator.RenderTrees(ctx,
@@ -44,7 +45,7 @@
 //	if len(selected) == 0 {
 //		return selectedErr
 //	}
-//	out, err := diff.Compare(
+//	out, warnings, suppressed, err := diff.Compare(
 //		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
 //		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 //		selectedErr,
@@ -53,9 +54,11 @@
 //			Normalize: redact, // optional extra per-manifest scrub
 //		},
 //	)
+//	// Deliver out to the product writer; present warnings and suppressed through
+//	// the diagnostic writer, including when err is non-nil.
 //
 // [CompareImages] uses the same selected producer availability and returns a
-// sorted image list plus suppression notes. [Changes] and [RenderDocs] retain
+// sorted image list plus structured suppressions. [Changes] and [RenderDocs] retain
 // their low-level document APIs for callers that already have attributed
 // [Doc] values. [Options].Normalize runs after the built-in strips on copied
 // manifests. See the package Example for structured changes with chart metadata.

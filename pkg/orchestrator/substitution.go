@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"cmp"
 	"fmt"
-	"log/slog"
 	"maps"
 	"slices"
 
@@ -60,8 +59,8 @@ func (o *Orchestrator) freezeSubstitutions() {
 			break
 		}
 		if o.store.GetObject(id) != nil || indexed || produced {
-			slog.Warn("orchestrator: repository substitution source takes precedence",
-				"file", cmp.Or(source.Path, "SDK input"), "id", id.String())
+			o.store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnSubstitutionPrecedence,
+				Message: "repository substitution source takes precedence", Detail: []string{cmp.Or(source.Path, "SDK input")}})
 			continue
 		}
 		if o.substitutionSources == nil {

@@ -233,7 +233,7 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 		}
 		if _, ok := unrelated[id]; ok {
 			covered[id] = true
-			warnings = append(warnings, manifest.Warning{Resource: id, Message: info.Message, Detail: children(byRoot[id])})
+			warnings = append(warnings, manifest.Warning{Resource: id, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: children(byRoot[id])})
 		}
 	}
 	for root, victims := range byRoot {
@@ -244,7 +244,7 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 			continue
 		}
 		if detail := children(victims); len(detail) > 0 {
-			warnings = append(warnings, manifest.Warning{Resource: root, Message: "not found; required by", Detail: detail})
+			warnings = append(warnings, manifest.Warning{Resource: root, Category: manifest.WarnUnrelatedFailure, Message: "not found; required by", Detail: detail})
 		}
 	}
 	for id, info := range unrelated {
@@ -257,7 +257,7 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 		for _, dep := range slices.Compact(deps) {
 			detail = append(detail, "blocked by "+dep.String())
 		}
-		warnings = append(warnings, manifest.Warning{Resource: id, Message: info.Message, Detail: detail})
+		warnings = append(warnings, manifest.Warning{Resource: id, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
 	}
 	slices.SortFunc(warnings, func(a, b manifest.Warning) int { return a.Resource.Compare(b.Resource) })
 	return warnings

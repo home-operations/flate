@@ -248,7 +248,7 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 	s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: previous})
 	c := base.New(s, nil, "test")
 	var fp string
-	docs, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
+	docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 		var hit bool
 		var err error
 		fp, hit, err = c.FingerprintDedup(rs.Named(), content)

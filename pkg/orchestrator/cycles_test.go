@@ -3,9 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -169,18 +168,10 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	}
 }
 
-// TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle stresses the
-// incremental hot path: feed the graph 10k acyclic edges via the
-// per-event listener API, assert no false positive, then add a single
-// cycle-introducing edge and assert it's flagged. Mirrors the post-
-// Bootstrap listener: every store add hits updateDependencyGraphFor
-// with exactly one id, no batched DFS.
 func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
-	t.Parallel()
 	const N = 10000
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
-	// Chain: ks-0 → ks-1 → ks-2 → ... → ks-(N-1). Pure DAG.
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
 		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("ks-%05d", i))
@@ -202,10 +193,17 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 		}
 	}
 
-	// Close the chain: ks-(N-1) → ks-0 creates one huge cycle.
+	if got := testing.AllocsPerRun(10, func() { o.syncPreflightFailures() }); got != 0 {
+		t.Fatalf("acyclic warning collection allocates %g times", got)
+	}
+
 	o.store.AddObject(makeKS(ids[N-1].Name, ids[N-1].Namespace, ids[0]))
 	o.updateDependencyGraphFor(ids[N-1])
 
+	warnings := o.store.Warnings()
+	if len(warnings) != 1 || warnings[0].Category != manifest.WarnDependencyCycle || warnings[0].Count != 1 || len(warnings[0].Detail) != 1 {
+		t.Fatalf("large cycle warning = %+v", warnings)
+	}
 	failures := o.depGraph.Failures()
 	if len(failures) != N {
 		t.Fatalf("cycle-closing edge should flag every chain member; got %d / %d", len(failures), N)
@@ -298,32 +296,27 @@ func TestSameKindDepTargets_CallerBuffer(t *testing.T) {
 	}
 }
 
-func TestLogNewCycleMessages_Deterministic(t *testing.T) {
-	var got []string
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			if a.Key == "message" {
-				got = append(got, a.Value.String())
-			}
-			return a
-		},
-	})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	next := make(map[manifest.NamedResource]string)
-	for i, msg := range []string{"cycle-d", "cycle-c", "cycle-b", "cycle-a"} {
-		for _, member := range []string{"a", "b"} {
-			id := testutil.KustomizationID("ns", fmt.Sprintf("%d-%s", i, member))
-			next[id] = msg
+func TestDependencyCycles_WarningsDeduplicate(t *testing.T) {
+	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
+	const members = 32
+	var wg sync.WaitGroup
+	for i := range members {
+		from := testutil.KustomizationID("ns", fmt.Sprintf("ks-%02d", i))
+		to := testutil.KustomizationID("ns", fmt.Sprintf("ks-%02d", (i+1)%members))
+		wg.Go(func() {
+			o.depGraph.ReplaceEdges(from, []manifest.NamedResource{to})
+			o.syncPreflightFailures()
+		})
+	}
+	wg.Wait()
+	for range 2 {
+		o.syncPreflightFailures()
+		warnings := o.store.Warnings()
+		if len(warnings) != 1 || warnings[0].Category != manifest.WarnDependencyCycle || warnings[0].Count != 1 || len(o.preflightFailures) != members {
+			t.Fatalf("cycle warning/failure state = %+v / %+v", warnings, o.preflightFailures)
 		}
 	}
-	prev := map[manifest.NamedResource]string{
-		testutil.KustomizationID("ns", "1-a"): "cycle-c",
-	}
-	for range 2 {
-		got = nil
-		logNewCycleMessages(prev, next)
-		assert.Diff(t, got, []string{"cycle-d", "cycle-b", "cycle-a"})
+	if got := testing.AllocsPerRun(10, o.syncPreflightFailures); got > members {
+		t.Fatalf("cycle warning publication allocates %g times for %d members", got, members)
 	}
 }

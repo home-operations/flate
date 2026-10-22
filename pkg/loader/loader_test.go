@@ -1147,3 +1147,62 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		})
 	}
 }
+
+type unreadableListingFS struct{ fs.FS }
+
+type unreadableInputFS struct{ fs.FS }
+
+func (f unreadableInputFS) Open(name string) (fs.File, error) {
+	if name == "kustomization.yaml" {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
+	}
+	return f.FS.Open(name)
+}
+
+func (unreadableListingFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrPermission}
+}
+
+func TestLoader_WarningConditions(t *testing.T) {
+	t.Parallel()
+	for _, site := range []string{"kustomization", "sibling", "component", "readdir"} {
+		t.Run(site, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+			bad := "apiVersion: v1\nkind: ConfigMap\nbroken: [ unclosed\n"
+			switch site {
+			case "sibling":
+				testutil.WriteFile(t, root, "bad.yaml", bad)
+			case "component":
+				testutil.WriteFile(t, root, "kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [bad.yaml]\n")
+				testutil.WriteFile(t, root, "bad.yaml", bad)
+			}
+			st := store.New()
+			l := New(st)
+			l.documents = readerForTest(root)
+			if site == "kustomization" {
+				l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root)}
+			}
+			if site == "readdir" {
+				l.documents.views[root] = unreadableListingFS{FS: os.DirFS(root)}
+			}
+			w := &walker{loader: l, scanRoot: root}
+			var err error
+			if site == "component" {
+				_, err = w.walkComponentData(t.Context(), root)
+			} else {
+				_, err = w.walkKustomize(t.Context(), root, filepath.Join(root, "kustomization.yaml"))
+			}
+			assert.NoError(t, err)
+			warnings := st.Warnings()
+			category := manifest.WarnInputParseFailed
+			if site == "readdir" {
+				category = manifest.WarnInputReadFailed
+			}
+			if len(warnings) != 1 || warnings[0].Category != category || warnings[0].Count != 1 || warnings[0].Resource != (manifest.NamedResource{}) || !strings.HasPrefix(warnings[0].Detail[0], root) || len(warnings[0].Detail) != 2 {
+				t.Fatalf("%s warning = %+v", site, warnings)
+			}
+		})
+	}
+}

@@ -230,7 +230,7 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			request := RemoteBaseRequest{URL: "file://" + src}
 			policy := sourcecache.Policy{MaxAge: time.Hour}
 			artifact, err := f.FetchRemoteBase(t.Context(), request, policy)
-			if artifact != nil || !errors.Is(err, manifest.ErrInput) {
+			if !errors.Is(err, manifest.ErrInput) || artifact == nil || artifact.FS != nil || len(artifact.Warnings) != 1 || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule || artifact.Warnings[0].Resource != (manifest.NamedResource{}) {
 				t.Fatalf("cold invalid view = %v, %v", artifact, err)
 			}
 			if err := os.RemoveAll(src); err != nil {

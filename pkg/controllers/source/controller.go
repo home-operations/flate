@@ -113,6 +113,9 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 	// reacquire normally and publish a Ready transition to wake content consumers.
 	if art, ok := c.Store.GetArtifact(id).(*store.SourceArtifact); ok {
 		if art.FS != nil {
+			for _, warning := range art.Warnings {
+				c.Store.AddWarning(id, warning)
+			}
 			return nil
 		}
 		c.Store.UpdateStatus(id, store.StatusPending, "", "acquiring source content")
@@ -127,6 +130,11 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 	c.Tasks.YieldSlot(func() {
 		artifact, fetchErr = fetcher.Fetch(ctx, obj, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
 	})
+	if artifact != nil {
+		for _, warning := range artifact.Warnings {
+			c.Store.AddWarning(id, warning)
+		}
+	}
 	// A Kustomization may still emit or patch this Secret. Wait for the
 	// rendered contents; only fall back, fail or skip for a missing Secret
 	// once the scheduler reaches a fixpoint. The wait MUST precede the
@@ -141,6 +149,11 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 		c.Tasks.YieldSlot(func() {
 			artifact, fetchErr = missing.RetryWithRegistryConfig(ctx, missing.RegistryConfig)
 		})
+		if artifact != nil {
+			for _, warning := range artifact.Warnings {
+				c.Store.AddWarning(id, warning)
+			}
+		}
 		// An optional registry retry MUST preserve --allow-missing-secrets skips.
 		if fetchErr != nil && c.allowMissingSecrets {
 			fetchErr = missing

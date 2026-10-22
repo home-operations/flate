@@ -23,6 +23,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +43,7 @@ func New(version string) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
+	root.PersistentFlags().String("log-level", "error", "log level (debug, info, warn, error)")
 	root.PersistentFlags().Bool("no-progress", false, "disable the live per-resource progress lines on stderr")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if err := applyEnvVars(cmd); err != nil {
@@ -58,17 +60,16 @@ func New(version string) *cobra.Command {
 			logSink = barSink
 		}
 		lvl, _ := cmd.Flags().GetString("log-level")
-		// Changed reports whether --log-level (or its FLATE_LOG_LEVEL env
-		// binding) was set explicitly. If so the user asked for logs: stream
-		// them live to stderr on every command. Left at the default, chatter is
-		// deferred into the notes buffer that only `flate test` renders.
-		if err := setLogLevel(lvl, cmd.Flags().Changed("log-level"), logSink); err != nil {
+		if err := setLogLevel(lvl, logSink); err != nil {
 			return err
 		}
 		if cmd.Flags().Lookup("path") != nil && renderPersistenceDisabledReason != "" {
 			dir, _ := cmd.Flags().GetString("cache-dir")
-			if dir != "" && slog.Default().Enabled(cmd.Context(), slog.LevelWarn) {
-				_, _ = fmt.Fprintf(logSink, "flate warning: render persistence is disabled: %s; source caching remains available\n", renderPersistenceDisabledReason)
+			if dir != "" {
+				return (output.Encoder{Writer: logSink, Color: output.ColorEnabled(logSink)}).Report(output.Model{Warnings: []manifest.Warning{{
+					Category: manifest.WarnRenderPersistenceDisabled,
+					Message:  "render persistence is disabled: " + renderPersistenceDisabledReason + "; source caching remains available",
+				}}})
 			}
 		}
 		return nil
@@ -138,11 +139,7 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// setLogLevel validates lvl against the published enum and installs
-// the slog default. Unknown values are rejected up-front so
-// `--log-level bogus` fails clearly instead of silently degrading to
-// info.
-func setLogLevel(lvl string, explicit bool, w io.Writer) error {
+func setLogLevel(lvl string, w io.Writer) error {
 	var l slog.Level
 	switch lvl {
 	case "debug":
@@ -156,29 +153,8 @@ func setLogLevel(lvl string, explicit bool, w io.Writer) error {
 	default:
 		return fmt.Errorf("invalid --log-level %q: must be one of debug, info, warn, error", lvl)
 	}
-	// Wrap the text handler in a deferring sink so the Warn/Info chatter a
-	// failing run emits (chiefly "resource orphaned") is held back rather than
-	// interleaving with output; Error records still pass straight through. Only
-	// `flate test` drains and renders the held-back notes — a data-producing
-	// verb (build/get/diff) leaves them buffered, so its output stays clean.
-	//
-	// But an explicitly chosen --log-level is the user asking for logs: turn the
-	// buffering OFF so records stream live to stderr on every command, the
-	// behavior a normal logger would give. Without this, raising the log level
-	// on a build/get/diff would be silently swallowed (the footer is test-only).
-	logBuffer = newDeferSink(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l}), !explicit)
-	slog.SetDefault(slog.New(logBuffer))
-	// slog.SetDefault also reroutes the standard library `log` package through
-	// this handler. A dependency's log.Printf — chiefly Helm's values-coalesce
-	// "destination … is a table" warnings (chart/common/util/coalesce.go uses
-	// log.Printf, not slog) — would then land in the notes footer, but ONLY on a
-	// render-cache miss: a cache hit never re-runs the code that logs it, so the
-	// footer differs between otherwise-identical runs depending on cache state
-	// (looks like a race). flate's own diagnostics all use slog, never the
-	// stdlib logger, so detach `log` from the footer: discard it by default
-	// (notes stay deterministic and free of dependency render-noise), or pass it
-	// straight to the sink under --log-level debug, where determinism isn't
-	// promised and the dependency chatter aids troubleshooting.
+	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: l})))
+	// Dependency log.Printf records vary with render-cache hits.
 	if l <= slog.LevelDebug {
 		log.SetOutput(w)
 	} else {

@@ -2,7 +2,6 @@ package diff
 
 import (
 	"fmt"
-	"iter"
 	"slices"
 	"strings"
 
@@ -31,7 +30,7 @@ type Suppression struct {
 	Reason string `json:"reason"` // the render failure, skip, or suspension reason
 }
 
-// String renders the suppression as the one-line note the formats emit.
+// String renders the suppression as a human-readable sentence.
 func (s Suppression) String() string {
 	noun := "objects"
 	if s.Count == 1 {
@@ -149,14 +148,4 @@ func suppress(orig, current Snapshot) ([]manifest.BaseManifest, []manifest.BaseM
 		return a.Parent.Compare(b.Parent.NamedResource)
 	})
 	return l, r, suppressed
-}
-
-func suppressionNotes(suppressed []Suppression) iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for _, note := range suppressed {
-			if !yield(note.String()) {
-				return
-			}
-		}
-	}
 }

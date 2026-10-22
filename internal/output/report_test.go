@@ -17,7 +17,8 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 	hr := testutil.HelmReleaseID("default", "app")
 	warns := []manifest.Warning{
 		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
-		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"}, // global
+		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"},
+		{Message: "SDK warning"},
 	}
 	m := Model{Warnings: warns}
 	if m.Empty() {
@@ -28,10 +29,13 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := b.String()
-	for _, want := range []string{"warnings (2)", "HelmRelease.helm.toolkit.fluxcd.io default/app: values not defined", "image.tagg, oldKey", "no Flux objects found"} {
+	for _, want := range []string{"warnings (3)", "HelmRelease.helm.toolkit.fluxcd.io default/app: values not defined", "image.tagg, oldKey", "[StaleValues]", "[EmptyScan]", "no Flux objects found", "    SDK warning\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("warnings section missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "[]") {
+		t.Fatalf("empty category emitted brackets: %s", out)
 	}
 	if strings.Contains(out, "failed") {
 		t.Errorf("a warnings-only run must not render a failure verdict:\n%s", out)

@@ -15,21 +15,20 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func renderNative(left, right []Doc, opts Options) ([]byte, error) {
-	report, err := nativeReport(left, right, opts)
+func renderNative(paired []pairedResource, format Format) ([]byte, error) {
+	report, err := nativeReport(paired)
 	if err != nil {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	e := output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}
-	if err := e.Native(report, suppressionNotes(opts.Suppressed)); err != nil {
+	e := output.Encoder{Writer: &buf, Format: output.Format(format)}
+	if err := e.Native(report); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func nativeReport(left, right []Doc, opts Options) (dyff.Report, error) {
-	paired, _, _ := pair(left, right, opts)
+func nativeReport(paired []pairedResource) (dyff.Report, error) {
 	from, err := nativeInput("from", paired)
 	if err != nil {
 		return dyff.Report{}, err

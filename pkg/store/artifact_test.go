@@ -70,6 +70,32 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	}
 	assert.Equal(t, s.GetArtifact(foreign).(*SourceArtifact).Key, "pin")
 	assert.Diff(t, ids, []manifest.NamedResource{id, foreign, id, id, id, id, id, id})
+	for _, tc := range []struct {
+		name string
+		fs   fs.FS
+	}{
+		{name: "readable", fs: &hookFS{}},
+		{name: "unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			events := 0
+			st.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { events++ }, false)
+			first := &SourceArtifact{Key: "same", FS: tc.fs}
+			st.SetArtifact(id, first)
+			next := *first
+			next.Warnings = []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Detail: []string{"module"}}}
+			if next.FS != nil {
+				next.FS = &hookFS{}
+			}
+			st.SetArtifact(id, &next)
+			st.SetArtifact(id, first)
+			if events != 1 {
+				t.Fatalf("diagnostic metadata fired %d artifact events", events)
+			}
+		})
+	}
 }
 
 func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {

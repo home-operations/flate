@@ -47,6 +47,8 @@ type SourceArtifact struct {
 	// FS supplies acquired content; LocalPath and LocalRoot are coordinates only.
 	// Nil FS is unavailable or existence-only, regardless of Key or LocalPath.
 	FS fs.FS
+	// Warnings is immutable acquisition evidence, excluded from content identity.
+	Warnings []manifest.Warning
 }
 
 func (*SourceArtifact) artifact() {}
@@ -102,14 +104,15 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 func sameArtifact(prev, next Artifact) bool {
 	a, aok := prev.(*SourceArtifact)
 	b, bok := next.(*SourceArtifact)
-	if !aok || !bok || (a.FS == nil && b.FS == nil) {
+	if !aok || !bok {
 		return reflect.DeepEqual(prev, next)
 	}
-	if (a.FS == nil) != (b.FS == nil) || a.Key == "" || b.Key == "" {
+	if (a.FS != nil || b.FS != nil) && ((a.FS == nil) != (b.FS == nil) || a.Key == "" || b.Key == "") {
 		return false
 	}
 	ac, bc := *a, *b
 	ac.FS, bc.FS = nil, nil
+	ac.Warnings, bc.Warnings = nil, nil
 	return reflect.DeepEqual(ac, bc)
 }
 

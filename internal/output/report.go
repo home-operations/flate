@@ -1,7 +1,6 @@
 package output
 
 import (
-	"cmp"
 	"fmt"
 	"io"
 	"strings"
@@ -29,13 +28,6 @@ type Primary struct {
 type Missing struct {
 	ID         manifest.NamedResource
 	RequiredBy []manifest.NamedResource
-}
-
-// Note is one deferred log line for the footer, collapsed by identical text with
-// a repeat count.
-type Note struct {
-	Text  string
-	Count int
 }
 
 // Model is the partitioned, deterministic view the renderer consumes.
@@ -70,7 +62,7 @@ func (e Encoder) Report(m Model) error {
 	color := e.Color
 	doc := Document(
 		m.failuresBlock(color),
-		WarningsBlock(m.Warnings, color),
+		warningsBlock(m.Warnings, color),
 		m.verdictBlock(color),
 	)
 	if doc == "" {
@@ -102,16 +94,15 @@ func (m Model) failuresBlock(color bool) string {
 	return strings.Join(rows, "\n")
 }
 
-// WarningsBlock renders the advisory section: a header counting the warnings,
-// then one attributed line each (with an indented detail line when present), or
-// "" when there are none. Exported so the build/diff report and the `flate test`
-// roster surface advisories identically.
-func WarningsBlock(warnings []manifest.Warning, color bool) string {
+func warningsBlock(warnings []manifest.Warning, color bool) string {
 	items := make([]string, 0, len(warnings))
 	for _, wn := range warnings {
 		head := wn.Message
 		if wn.Resource != (manifest.NamedResource{}) {
 			head = wn.Resource.KindLabel() + " " + wn.Resource.NamespacedName() + ": " + wn.Message
+		}
+		if wn.Category != "" {
+			head = "[" + wn.Category + "] " + head
 		}
 		if wn.Count > 1 {
 			head = fmt.Sprintf("%s (×%d)", head, wn.Count)
@@ -123,23 +114,6 @@ func WarningsBlock(warnings []manifest.Warning, color bool) string {
 		items = append(items, item)
 	}
 	return section(Warn(fmt.Sprintf("%s warnings (%d)", GlyphWarn, len(warnings)), color), items)
-}
-
-// NotesBlock renders the operational-log section: a header counting the notes,
-// then one dim line each (collapsed identical lines carry a ×N suffix), or ""
-// when there are none. Shared by every footer-bearing surface.
-func NotesBlock(notes []Note, color bool) string {
-	items := make([]string, 0, len(notes))
-	var total int
-	for _, n := range notes {
-		total += cmp.Or(n.Count, 1)
-		line := n.Text
-		if n.Count > 1 {
-			line = fmt.Sprintf("%s (×%d)", line, n.Count)
-		}
-		items = append(items, Dim(line, color))
-	}
-	return section(Dim(fmt.Sprintf("notes (%d)", total), color), items)
 }
 
 // verdictBlock renders the "✗ N failed · M blocked" line, or "" when

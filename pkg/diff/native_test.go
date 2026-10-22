@@ -4,6 +4,9 @@ import (
 	"cmp"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // ncm builds a fully-formed (apiVersion-bearing) ConfigMap so dyff's
@@ -41,7 +44,7 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 		name := cmp.Or(string(tc.format), "default")
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			out, err := RenderDocs(left, right, Options{Format: tc.format})
+			out, _, err := RenderDocs(left, right, Options{Format: tc.format})
 			if err != nil {
 				t.Fatalf("RenderDocs: %v", err)
 			}
@@ -61,7 +64,7 @@ func TestRenderDocs_NativeLabels(t *testing.T) {
 func TestRenderDocs_NoChange(t *testing.T) {
 	t.Parallel()
 	d := ncm("hello", "k", "v")
-	out, err := RenderDocs([]Doc{d}, []Doc{d}, Options{Format: FormatGitHub})
+	out, _, err := RenderDocs([]Doc{d}, []Doc{d}, Options{Format: FormatGitHub})
 	if err != nil {
 		t.Fatalf("RenderDocs: %v", err)
 	}
@@ -73,7 +76,7 @@ func TestRenderDocs_NoChange(t *testing.T) {
 func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 	t.Parallel()
 	d := ncm("hello", "k", "v")
-	out, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"})
+	out, _, err := RenderDocs([]Doc{d}, nil, Options{Format: "bogus"})
 	if err == nil || err.Error() != `unsupported diff format "bogus"` || out != nil {
 		t.Errorf("RenderDocs = %q, %v; want nil bytes and exact unsupported-format error", out, err)
 	}
@@ -82,14 +85,28 @@ func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 		format Format
 		prefix string
 	}{
+		{FormatHuman, "marshal from: "},
 		{FormatGitHub, "marshal from: "},
+		{FormatBrief, "marshal from: "},
+		{FormatGitLab, "marshal from: "},
+		{FormatGitea, "marshal from: "},
 		{FormatDiff, "marshal: "},
 		{FormatHTML, "marshal: "},
+		{FormatJSON, ""},
+		{Format("bogus"), "unsupported diff format"},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
 			t.Parallel()
-			out, err := RenderDocs([]Doc{d}, nil, Options{Format: tc.format,
+			out, warnings, err := RenderDocs([]Doc{d, d}, nil, Options{Format: tc.format,
 				Suppressed: []Suppression{{Parent: hrParent, Side: SideCurrent, Reason: "chart not ready"}}})
+			if len(warnings) != 1 {
+				t.Fatalf("formatter error lost discovered warnings: %+v", warnings)
+			}
+			categories := map[string]bool{}
+			for _, warning := range warnings {
+				categories[warning.Category] = true
+			}
+			assert.Diff(t, categories, map[string]bool{manifest.WarnDuplicateDocument: true})
 			if err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil {
 				t.Fatalf("RenderDocs = %q, %v; want nil bytes and %s error", out, err, tc.prefix)
 			}
@@ -121,7 +138,7 @@ func ndeploy(order ...string) []Doc {
 // per-line value churn like a text diff would.
 func TestRenderDocs_ContainerReorder(t *testing.T) {
 	t.Parallel()
-	out, err := RenderDocs(ndeploy("nginx", "sidecar", "init"), ndeploy("init", "nginx", "sidecar"),
+	out, _, err := RenderDocs(ndeploy("nginx", "sidecar", "init"), ndeploy("init", "nginx", "sidecar"),
 		Options{Format: FormatGitHub})
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +170,7 @@ func TestRenderDocs_ContainerByNameImageChange(t *testing.T) {
 			}}}},
 		}}}
 	}
-	out, err := RenderDocs(mk("nginx:1.20"), mk("nginx:1.21"), Options{Format: FormatGitHub})
+	out, _, err := RenderDocs(mk("nginx:1.20"), mk("nginx:1.21"), Options{Format: FormatGitHub})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +197,7 @@ func TestRenderDocs_RenameNoFileLevelOrderChange(t *testing.T) {
 	left := []Doc{ncm("aaa", "k", "v"), ncm("plex", "k", "v"), ncm("zzz", "k", "v")}
 	right := []Doc{ncm("aaa", "k", "v"), ncm("plex2", "k", "v"), ncm("zzz", "k", "v")}
 	for _, style := range []Format{FormatHuman, FormatGitHub} {
-		out, err := RenderDocs(left, right, Options{Format: style})
+		out, _, err := RenderDocs(left, right, Options{Format: style})
 		if err != nil {
 			t.Fatalf("%s: %v", style, err)
 		}

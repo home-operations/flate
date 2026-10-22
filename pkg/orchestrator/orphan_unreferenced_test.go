@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -35,7 +36,7 @@ func TestOrchestrator_UnreferencedBaseKSOrphaned(t *testing.T) {
 	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/base/app-b/ks.yaml", testutil.KustomizationYAML("app-b", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-b\n  dependsOn:\n    - name: app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
+	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -51,6 +52,17 @@ func TestOrchestrator_UnreferencedBaseKSOrphaned(t *testing.T) {
 		}
 		if _, orphaned := res.Orphans[id]; !orphaned {
 			t.Errorf("%s not orphaned; want it demoted (unreferenced base manifest)", name)
+		}
+		found := false
+		for _, warning := range res.Warnings {
+			if warning.Resource == id && warning.Category == manifest.WarnOrphanedResource {
+				found = true
+				assert.Equal(t, warning.Count, 1)
+				assert.Diff(t, warning.Detail, []string{o.fileOf(id), res.Orphans[id]})
+			}
+		}
+		if !found {
+			t.Errorf("missing orphan warning for %s: %+v", id, res.Warnings)
 		}
 	}
 	// The referenced workload ConfigMap is still applied.

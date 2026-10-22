@@ -3,7 +3,6 @@ package output
 import (
 	"bytes"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 
@@ -27,7 +26,7 @@ func TestEncoderLines_ReturnsErrors(t *testing.T) {
 				}
 			}
 			var buf bytes.Buffer
-			err := (Encoder{Writer: &buf, Format: format}).Lines(changes, slices.Values([]string(nil)))
+			err := (Encoder{Writer: &buf, Format: format}).Lines(changes)
 			if !errors.Is(err, prepareErr) || starts != 1 || consumed != 1 {
 				t.Fatalf("Lines = %v, starts %d, consumed %d; want preparation error after one value", err, starts, consumed)
 			}
@@ -45,22 +44,9 @@ func TestEncoderLines_ReturnsErrors(t *testing.T) {
 				}
 			}
 		}
-		err := (Encoder{Writer: errorWriter{writeErr}, Format: FormatDiff}).Lines(changes, slices.Values([]string(nil)))
+		err := (Encoder{Writer: errorWriter{writeErr}, Format: FormatDiff}).Lines(changes)
 		if !errors.Is(err, writeErr) || consumed != 1 {
 			t.Fatalf("Lines = %v, consumed %d changes; want writer error after one change", err, consumed)
-		}
-		consumed, noteCount := 0, 0
-		notes := func(yield func(string) bool) {
-			for range 2 {
-				noteCount++
-				if !yield("note") {
-					return
-				}
-			}
-		}
-		err = (Encoder{Writer: errorWriter{writeErr}, Format: FormatDiff}).Lines(changes, notes)
-		if !errors.Is(err, writeErr) || consumed != 0 || noteCount != 1 {
-			t.Fatalf("Lines = %v, consumed %d changes, %d notes; want writer error after one note", err, consumed, noteCount)
 		}
 	})
 }
@@ -68,26 +54,10 @@ func TestEncoderLines_ReturnsErrors(t *testing.T) {
 func TestEncoderNative_ReturnsWriterError(t *testing.T) {
 	t.Parallel()
 	writeErr := errors.New("write failed")
-	t.Run("notes stop", func(t *testing.T) {
-		t.Parallel()
-		consumed := 0
-		notes := func(yield func(string) bool) {
-			for _, note := range []string{"first", "second"} {
-				consumed++
-				if !yield(note) {
-					return
-				}
-			}
-		}
-		err := (Encoder{Writer: errorWriter{writeErr}, Format: FormatHuman}).Native(dyff.Report{}, notes)
-		if !errors.Is(err, writeErr) || consumed != 1 {
-			t.Fatalf("Native = %v, consumed %d notes; want writer error and one note", err, consumed)
-		}
-	})
 	t.Run("body", func(t *testing.T) {
 		t.Parallel()
 		report := dyff.Report{Diffs: []dyff.Diff{{}}}
-		err := (Encoder{Writer: errorWriter{writeErr}, Format: FormatBrief}).Native(report, slices.Values([]string(nil)))
+		err := (Encoder{Writer: errorWriter{writeErr}, Format: FormatBrief}).Native(report)
 		if !errors.Is(err, writeErr) || !strings.HasPrefix(err.Error(), "dyff render: ") {
 			t.Fatalf("Native = %v; want wrapped dyff render writer error", err)
 		}

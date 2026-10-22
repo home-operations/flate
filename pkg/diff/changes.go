@@ -55,9 +55,14 @@ type Change struct {
 // binaryData, then applies opts.Normalize. Original chart labels are retained
 // as provenance. The result is sorted by parent then resource identity.
 // Returned manifests are independent of the input documents.
+// Warnings identify shadowed documents.
 // opts.Format is ignored.
-func Changes(left, right []Doc, opts Options) []Change {
-	paired, leftCopied, rightCopied := pair(left, right, opts)
+func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
+	paired, warnings, leftCopied, rightCopied := pair(left, right, opts)
+	return changes(paired, leftCopied, rightCopied), warnings
+}
+
+func changes(paired []pairedResource, leftCopied, rightCopied bool) []Change {
 	out := make([]Change, 0, len(paired))
 	for _, p := range paired {
 		status, differs := classify(p.a, p.b)
@@ -122,11 +127,11 @@ func chartLabel(m map[string]any) string {
 	return s
 }
 
-func renderJSON(left, right []Doc, opts Options) ([]byte, error) {
+func renderJSON(changes []Change, suppressed []Suppression) ([]byte, error) {
 	var buf bytes.Buffer
 	err := (output.Encoder{Writer: &buf}).JSON(struct {
 		Changes    []Change      `json:"changes"`
 		Suppressed []Suppression `json:"suppressed"`
-	}{Changes(left, right, opts), append([]Suppression{}, opts.Suppressed...)})
+	}{changes, append([]Suppression{}, suppressed...)})
 	return buf.Bytes(), err
 }

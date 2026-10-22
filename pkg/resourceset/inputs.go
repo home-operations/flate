@@ -3,7 +3,6 @@ package resourceset
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"slices"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -41,12 +40,6 @@ func buildInputSets(rs *manifest.ResourceSet, providers []providerContent) ([]ma
 	groups = append(groups, providerInputs{name: rs.Name, inputs: inline})
 	for _, p := range providers {
 		exported := p.Inputs
-		if exported == nil && p.Type != "" && p.Type != fluxopv1.InputProviderStatic {
-			slog.Warn("resourceset: dynamic input provider contributes no inputs offline",
-				"resource_set", rs.Named().NamespacedName(),
-				"provider", p.ID.NamespacedName(),
-				"type", p.Type)
-		}
 		provBlock := providerBlock(p.ID.Kind, p.ID.Name, p.ID.Namespace)
 		for _, set := range exported {
 			set["provider"] = provBlock

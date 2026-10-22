@@ -286,7 +286,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 		})
 		for _, command := range [][]string{{"build", "all"}, {"test", "all"}} {
 			out, stderr, code := harness.RunCLIBuffers(append(command, flags...)...)
-			if code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) || strings.Contains(out, "name: demo-chart") || strings.Contains(out+stderr, "warning") {
+			if code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) || strings.Contains(out, "name: demo-chart") || strings.Contains(out+stderr, "[OrphanedResource]") {
 				t.Fatalf("terminal replay became success or warning: exit=%d stdout=%s stderr=%s", code, out, stderr)
 			}
 		}

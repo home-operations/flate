@@ -160,7 +160,7 @@ func BenchmarkSelect_CompletedScope(b *testing.B) {
 								orig := diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable}
 								current := diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable}
 								if command == "documents" {
-									_, _ = diff.Compare(orig, current, selectedErr, opts)
+									_, _, _, _ = diff.Compare(orig, current, selectedErr, opts)
 								} else {
 									_, _, _ = diff.CompareImages(orig, current, selectedErr, false)
 								}

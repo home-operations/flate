@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -381,7 +382,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 		t.Fatalf("shared/cyclic projection lost: %+v %v", results[0], err)
 	}
 	for _, warning := range results[0].Unrelated {
-		if warning.Resource == root || warning.Category != "" || strings.Contains(warning.Message, "dependency cycle") {
+		if warning.Resource == root || warning.Category != manifest.WarnUnrelatedFailure || strings.Contains(warning.Message, "dependency cycle") {
 			t.Fatalf("fatal/advisory policies conflated: %+v", warning)
 		}
 	}
@@ -392,7 +393,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{selected: {Status: store.StatusFailed, Message: "selected blocked"}, other: {Status: store.StatusFailed, Message: "other blocked"}}
 	results, _, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
 	assert.Diff(t, results[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}})
-	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
+	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Category: manifest.WarnUnrelatedFailure, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
 	selected.Name = "healthy"
 	run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
 	c := testutil.KustomizationID("flux-system", "c")
@@ -768,7 +769,7 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 		}
 	}
 	initErr := errors.New("initialization failed")
-	if selected, err, _ := Select([]Rendered{{Err: initErr}}, initErr, valid, nil); len(selected) != 0 || !errors.Is(err, initErr) {
+	if selected, err, _ := Select([]Rendered{{Err: initErr}}, initErr, valid, nil); len(selected) != 1 || !errors.Is(err, initErr) {
 		t.Fatalf("initialization error changed: %+v %v", selected, err)
 	}
 	if _, err, _ := Select([]Rendered{{}}, nil, valid, nil); !errors.Is(err, manifest.ErrInput) {
@@ -948,7 +949,7 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, res := range selected {
-				if (len(res.External) == 1) != tc.want {
+				if (len(res.External) == 1) != tc.want || tc.want && res.External[0].Category != manifest.WarnExternalSource {
 					t.Fatalf("typed external disclosure = %+v, want=%t", res.External, tc.want)
 				}
 			}
@@ -1029,4 +1030,103 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestSelect_DiagnosticOnlyRuns(t *testing.T) {
+	t.Parallel()
+	failure, teardown := errors.New("bootstrap failed"), errors.New("shared teardown")
+	warning := manifest.Warning{Category: manifest.WarnInputParseFailed, Message: "before failure", Count: 1}
+	coverage := manifest.Warning{Resource: testutil.KustomizationID("ns", "partial"), Category: manifest.WarnIncompleteInputCoverage, Message: "coverage before failure", Count: 1}
+	for _, scenario := range []string{"single", "orig", "current"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			failed := Rendered{Result: &Result{Warnings: []manifest.Warning{warning, coverage}, Manifests: map[manifest.NamedResource][]map[string]any{testutil.KustomizationID("ns", "partial"): {{"kind": "ConfigMap"}}}}, Err: failure}
+			complete := selectedRun(&Result{Warnings: []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Message: "complete", Count: 1}}})
+			complete.store.AddObject(&manifest.Kustomization{Name: "completed", Namespace: "ns"})
+			runs := []Rendered{failed}
+			runErr := teardown
+			if scenario == "orig" {
+				runs = []Rendered{failed, complete}
+				runErr = errors.Join(joinTreeErrors(failure, nil), teardown)
+			}
+			if scenario == "current" {
+				runs = []Rendered{complete, failed}
+				runErr = errors.Join(joinTreeErrors(nil, failure), teardown)
+			}
+			selected, err, diagnostic := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("ns", "named")}, nil)
+			if !errors.Is(err, failure) || !errors.Is(err, teardown) || !errors.Is(diagnostic, failure) || !errors.Is(diagnostic, teardown) || len(selected) != len(runs) {
+				t.Fatalf("lost failed inputs: %+v, %v, %v", selected, err, diagnostic)
+			}
+			for i, side := range selected {
+				want := []manifest.Warning{warning}
+				if runs[i].Result == complete.Result {
+					want = complete.Result.Warnings
+				}
+				assert.Diff(t, side.Warnings, want)
+				if len(side.Objects)+len(side.Counts)+len(side.Statuses)+len(side.Manifests)+len(side.Failed)+len(side.Unavailable) != 0 {
+					t.Fatalf("partial inventory escaped: %+v", side)
+				}
+			}
+		})
+	}
+}
+
+func TestSelect_SourceWarningAttribution(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		testutil.WriteFile(t, root, name+".yaml", testutil.KustomizationYAML(name, "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: "+name+"}\n"))
+	}
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
+	original, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	assert.NoError(t, err)
+	current, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+	assert.NoError(t, err)
+	status := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "Git status unavailable", Detail: []string{"status failure"}}
+	raw := manifest.Warning{Resource: manifest.BootstrapSourceID, Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
+	current.Warnings = []manifest.Warning{status, raw}
+	for range 2 {
+		orig, head, err := RenderTrees(t.Context(), Tree{RepoRoot: root}, Tree{RepoRoot: root}, Config{BaseInput: original, Input: current, Concurrency: 2})
+		assert.NoError(t, err)
+		for _, name := range []string{"one", "two"} {
+			artifact := head.store.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}).(*store.SourceArtifact)
+			assert.Diff(t, artifact.Warnings, []manifest.Warning(nil))
+		}
+		selected, err, diagnostic := Select([]Rendered{orig, head}, err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+		assert.NoError(t, err)
+		assert.NoError(t, diagnostic)
+		for _, warning := range selected[0].Warnings {
+			if warning.Category == status.Category || warning.Category == raw.Category {
+				t.Fatalf("current evidence escaped to orig: %+v", warning)
+			}
+		}
+		statusCount, modules := 0, 0
+		for _, warning := range selected[1].Warnings {
+			if warning.Category == status.Category {
+				statusCount++
+				assert.Equal(t, warning.Count, 1)
+				assert.Equal(t, warning.Resource, manifest.NamedResource{})
+			}
+			if warning.Category == raw.Category {
+				modules++
+				want := raw
+				want.Count = 1
+				assert.Diff(t, warning, want)
+			}
+		}
+		assert.Equal(t, statusCount, 1)
+		assert.Equal(t, modules, 1)
+	}
+	assert.Diff(t, current.Warnings, []manifest.Warning{status, raw})
+}
+
+func TestRenderOne_BootstrapWarningOnly(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
+	o, result, err := renderOne(t.Context(), Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2})
+	if o != nil || result == nil || !errors.Is(err, manifest.ErrInput) || len(result.Manifests)+len(result.Failed) != 0 {
+		t.Fatalf("failed bootstrap exposed content: %v, %+v, %v", o, result, err)
+	}
+	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
 }

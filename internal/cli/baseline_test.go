@@ -104,7 +104,7 @@ func TestRun_BaseFailureIsolation(t *testing.T) {
 	assert.NoError(t, os.Rename(filepath.Join(root, "apps"), filepath.Join(root, "apps_real")))
 	assert.NoError(t, os.Symlink("apps_real", filepath.Join(root, "apps")))
 	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", filepath.Join(root, "flux"), "--base", pin.String(), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
-	if code != 1 || !strings.Contains(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps") || !strings.Contains(stdout, "diff suppressed") ||
+	if code != 1 || !strings.Contains(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps") || !strings.Contains(stderr, "diff suppressed") || strings.Contains(stdout, "diff suppressed") ||
 		strings.Contains(stdout, "greeting:") || strings.Contains(stdout, "name: hello") ||
 		!strings.Contains(stdout, "-  value: before") || !strings.Contains(stdout, "+  value: after") {
 		t.Fatalf("failed producer lost isolation: exit=%d stdout=%s stderr=%s", code, stdout, stderr)

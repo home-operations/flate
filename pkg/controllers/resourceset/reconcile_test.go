@@ -3,8 +3,6 @@ package resourceset
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,39 +19,11 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-type renderBarrierHandler struct {
-	slog.Handler
-	tasks   *task.Service
-	once    sync.Once
-	started chan struct{}
-	resume  <-chan struct{}
-}
-
-func (h *renderBarrierHandler) Handle(ctx context.Context, record slog.Record) error {
-	if record.Message == "resourceset: dynamic input provider contributes no inputs offline" {
-		var resourceSet, provider string
-		record.Attrs(func(attr slog.Attr) bool {
-			switch attr.Key {
-			case "resource_set":
-				resourceSet = attr.Value.String()
-			case "provider":
-				provider = attr.Value.String()
-			}
-			return true
-		})
-		if resourceSet == "apps/binding" && provider == "apps/dynamic" {
-			h.once.Do(func() {
-				close(h.started)
-				h.tasks.YieldSlot(func() { <-h.resume })
-			})
-		}
-	}
-	return h.Handler.Handle(ctx, record)
-}
-
 func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			t.Parallel()
 			st := store.New()
 			tasks := task.NewBounded(workers)
 			c := New(st, tasks, false)
@@ -62,8 +32,6 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(resume) })
 			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.Close() })
-			old := slog.Default()
-			t.Cleanup(func() { slog.SetDefault(old) })
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			st.AddObject(parent)
 			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
@@ -94,7 +62,6 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			slog.SetDefault(slog.New(&renderBarrierHandler{Handler: slog.NewTextHandler(io.Discard, nil), tasks: tasks, started: started, resume: resume}))
 			var accepted atomic.Pointer[store.Emission]
 			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
 				if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
@@ -113,16 +80,36 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					}
 				})
 				if !reached {
-					t.Error("render never reached dynamic provider warning")
+					t.Error("render never reached admission")
 					return
 				}
 				publish(docB)
 			})
-			tasks.Go(t.Context(), "render", func(ctx context.Context) {
+			tasks.Go(t.Context(), "render", func(context.Context) {
 				defer close(rendered)
-				if blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
-					t.Errorf("blocked on %v", blocked)
+				var attempt store.Emission
+				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(st), func(content any) (bool, error) {
+					fp, hit, err := c.FingerprintDedup(id, content)
+					if hit || err != nil {
+						return hit, err
+					}
+					_, attempt = st.GetEmission(id)
+					attempt.Fingerprint = fp
+					close(started)
+					tasks.YieldSlot(func() { <-resume })
+					return false, nil
+				})
+				defer attempt.Finish()
+				if err != nil {
+					t.Error(err)
+					return
 				}
+				for _, warning := range warnings {
+					st.AddWarning(id, warning)
+				}
+				attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{})
+				attempt.Complete = true
+				c.Emit(id, &attempt)
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 {

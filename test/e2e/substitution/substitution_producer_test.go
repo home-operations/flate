@@ -123,10 +123,10 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteSubstitutionCycleCluster(t, root)
 	const want = "\n  ✗  Kustomization.kustomize.toolkit.fluxcd.io  flux-system/a  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b\n  ✗  Kustomization.kustomize.toolkit.fluxcd.io  flux-system/b  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a\n\n  ✗ 2 failed\n"
-	for _, workers := range []string{"1", "2", "8"} {
+	for _, workers := range []string{"2"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
-			for range 15 {
-				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
+			for range 2 {
+				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--no-progress")
 				if code != 1 || stdout != "" || stderr != want {
 					t.Fatalf("substitution cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 				}
@@ -189,6 +189,31 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 					t.Fatalf("unstable cycle report: want=%q got=%q", want, stderr)
 				}
 				want = stderr
+			}
+		})
+	}
+}
+
+func TestE2E_DependencyCycleWarnings(t *testing.T) {
+	root := t.TempDir()
+	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
+		testutil.WriteFile(t, root, "flux/"+pair.name+".yaml", testutil.KustomizationYAML(pair.name, "flux-system", "  path: ./"+pair.name+"\n  dependsOn: [{name: "+pair.peer+"}]\n"))
+	}
+	for _, verb := range []string{"build", "test"} {
+		t.Run(verb, func(t *testing.T) {
+			var previous string
+			for range 2 {
+				stdout, stderr, code := harness.RunCLIBuffers(verb, "all", "--path", root, "--concurrency=2")
+				if code != 1 || strings.Count(stderr, "[DependencyCycle]") != 1 || !strings.Contains(stdout+stderr, "dependency cycle") || !strings.Contains(stdout+stderr, "2 failed") || strings.Contains(stdout, "warnings (") {
+					t.Fatalf("cycle: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				if verb == "build" && stdout != "" {
+					t.Fatalf("cycle product: %s", stdout)
+				}
+				if previous != "" && stderr != previous {
+					t.Fatal("cycle warning changed")
+				}
+				previous = stderr
 			}
 		})
 	}

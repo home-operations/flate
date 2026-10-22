@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
@@ -1491,7 +1492,10 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 }
 
 func TestNew_UnreadableIndexRebuilds(t *testing.T) {
-	t.Parallel()
+	saved := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(saved) })
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
 	key := ArchiveKey{Content: "source-index-recovery"}
@@ -1509,6 +1513,9 @@ func TestNew_UnreadableIndexRebuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	c = cachetest.New(t, root, New)
+	if got := logs.String(); strings.Count(got, "level=DEBUG msg=\"cache: rebuilding unreadable store index\"") != 1 || strings.Contains(got, "level=WARN") {
+		t.Fatalf("index recovery log: %s", got)
+	}
 	calls := 0
 	input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 		calls++

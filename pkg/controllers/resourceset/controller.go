@@ -82,7 +82,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 		}
 	}()
 	handled := false
-	docs, err := resourceset.Render(rs, resourceset.StoreResolver(c.Store), func(content any) (bool, error) {
+	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(c.Store), func(content any) (bool, error) {
 		fp, hit, err := c.FingerprintDedup(id, content)
 		handled = hit
 		if hit || err != nil {
@@ -93,6 +93,9 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 		attempt.Fingerprint = fp
 		return false, nil
 	})
+	for _, warning := range warnings {
+		c.Store.AddWarning(id, warning)
+	}
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, "", err.Error())
 		return err

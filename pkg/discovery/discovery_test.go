@@ -1,13 +1,10 @@
 package discovery_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -633,10 +630,6 @@ spec:
 				slices.Reverse(objects)
 			}
 			st.AddObjects(objects)
-			var logs bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(previous) })
 			if _, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true}); err != nil {
 				t.Fatal(err)
 			}
@@ -652,25 +645,9 @@ spec:
 				t.Fatalf("committed source artifact = %+v", artifact)
 			}
 			slices.Sort(want)
-			warnings := 0
-			for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
-				var entry struct {
-					Message string   `json:"msg"`
-					Count   int      `json:"count"`
-					IDs     []string `json:"ids"`
-				}
-				if err := json.Unmarshal([]byte(line), &entry); err != nil {
-					t.Fatal(err)
-				}
-				if strings.Contains(entry.Message, "aliased multiple bootstrap sources") {
-					warnings++
-					if entry.Count != len(want) || !slices.Equal(entry.IDs, want) {
-						t.Fatalf("combined aliases = %v (%d), want %v", entry.IDs, entry.Count, want)
-					}
-				}
-			}
-			if warnings != 1 {
-				t.Fatalf("combined warning count = %d, logs=%s", warnings, logs.String())
+			warnings := st.Warnings()
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnBootstrapAliases || warnings[0].Count != 1 || !slices.Equal(warnings[0].Detail, append(want, dir)) {
+				t.Fatalf("combined alias warning = %+v, want %v", warnings, want)
 			}
 		})
 	}

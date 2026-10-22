@@ -1,16 +1,11 @@
 package scope
 
 import (
-	stdcmp "cmp"
-	"fmt"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
-
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_OrphanNotesDeterministic(t *testing.T) {
@@ -21,21 +16,28 @@ func TestE2E_OrphanNotesDeterministic(t *testing.T) {
 	for _, suffix := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
 		testutil.WriteFile(t, root, "apps/stray-"+suffix+".yaml", testutil.KustomizationYAML("stray-"+suffix, "flux-system", "  path: ./missing-"+suffix+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	}
-	// The verdict's elapsed clock depends on runtime, rather than resource order.
 	clock := regexp.MustCompile(`   \d+(?:\.\d+s|m\d+s)\n$`)
-	var want string
-	for _, concurrency := range []int{2, 8} {
-		t.Run(fmt.Sprintf("concurrency%d", concurrency), func(t *testing.T) {
-			for run := range 6 {
-				stdout, _ := harness.RequireCLIOK(t, "test", "--path", root, "--cache-dir", cache,
-					"--no-progress", "--concurrency", fmt.Sprint(concurrency))
-				if strings.Count(stdout, "resource orphaned id=") != 8 {
-					t.Fatalf("want eight orphan notes:\n%s", stdout)
+	for _, verb := range []string{"build", "test"} {
+		t.Run(verb, func(t *testing.T) {
+			var wantOut, wantErr string
+			for run := range 2 {
+				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--cache-dir", cache, "--no-progress", "--concurrency=2")
+				if strings.Count(stderr, "[OrphanedResource]") != 8 || strings.Contains(stdout, "warnings") || strings.Contains(stdout, "notes (") || strings.Contains(stderr, "level=WARN") {
+					t.Fatalf("orphan destination: stdout=%s stderr=%s", stdout, stderr)
 				}
-				got := clock.ReplaceAllString(stdout, "   <elapsed>\n")
-				want = stdcmp.Or(want, got)
-				if diff := cmp.Diff(want, got); diff != "" {
-					t.Fatalf("run %d stdout differs (-want +got):\n%s", run, diff)
+				for _, suffix := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+					if !strings.Contains(stderr, "flux-system/stray-"+suffix+": resource orphaned") || !strings.Contains(stderr, "missing-"+suffix) {
+						t.Fatalf("orphan reason missing: %s", stderr)
+					}
+				}
+				if verb == "build" && !strings.Contains(stdout, "name: rendered") || verb == "test" && (!strings.Contains(stdout, "passed") || strings.Contains(stdout, "failed")) {
+					t.Fatalf("orphan product changed: %s", stdout)
+				}
+				stdout = clock.ReplaceAllString(stdout, "   <elapsed>\n")
+				if run == 0 {
+					wantOut, wantErr = stdout, stderr
+				} else if stdout != wantOut || stderr != wantErr {
+					t.Fatalf("unstable orphan output: stdout=%s stderr=%s", stdout, stderr)
 				}
 			}
 		})

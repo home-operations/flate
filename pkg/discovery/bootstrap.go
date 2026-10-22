@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"net/url"
 	"path"
@@ -57,6 +56,11 @@ func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArti
 	if len(urls) == 0 {
 		if input, ok := admitted.FS.(*gittree.FS); ok && input.Location() != nil {
 			urls = input.Location().URLs
+		}
+	}
+	if admitted != nil {
+		for _, warning := range admitted.Warnings {
+			d.cfg.Store.AddWarning(manifest.BootstrapSourceID, warning)
 		}
 	}
 	if admitted.FS == nil || admitted.LocalPath == "" {
@@ -181,6 +185,11 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		location = input.Location()
 	}
 	artifacts, err := git.ResolveLocal(ctx, location, pinned, bootstrap.Revision)
+	for id, artifact := range artifacts {
+		for _, warning := range artifact.Warnings {
+			d.cfg.Store.AddWarning(id, warning)
+		}
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -194,9 +203,9 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			artifact = artifacts[id]
 			if artifact == nil {
 				d.resolvedSources[id] = candidate
-				slog.Warn("discovery: declared source ref cannot be satisfied locally; using normal source fetch",
-					"id", id.String(), "ref", (*manifest.GitRepositoryRef)(candidate.git.Reference).String(),
-					"reason", "ref unavailable in this tree's repository or checkout options require fetching")
+				d.cfg.Store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnSourceRefUnavailable,
+					Message: "declared source ref cannot be satisfied locally; using normal source fetch",
+					Detail:  []string{(*manifest.GitRepositoryRef)(candidate.git.Reference).String(), "ref unavailable in this tree's repository or checkout options require fetching"}})
 				continue
 			}
 			if artifact.LocalPath == lookupRoot {
@@ -278,19 +287,18 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 		Sparse                                       []string `json:",omitempty"`
 		Recurse                                      bool
 	}{repoRoot, subtree, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Revision, bootstrap.Digest, ignore, sparse, recurse}})
-	input := d.aliasViews[viewKey]
+	var input *gittree.FS
 	var err error
-	if input != nil {
-		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
+	if cached := d.aliasViews[viewKey]; cached != nil {
+		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: cached})
 	} else {
 		current := bootstrap.FS
 		if subtree != "." {
 			current, err = fs.Sub(current, subtree)
-			if err != nil {
-				return nil, err
-			}
 		}
-		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: current, Ignore: ignore, Sparse: sparse})
+		if err == nil {
+			input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: current, Ignore: ignore, Sparse: sparse})
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -303,6 +311,7 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 	artifact := *bootstrap
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+filepath.Join(repoRoot, subtree), input
 	artifact.InputAlias, artifact.Key = true, ""
+	artifact.Warnings = nil
 	artifact.LocalPath = label
 	artifact.LocalRoot = filepath.Join(repoRoot, subtree)
 	return &artifact, nil
@@ -331,8 +340,9 @@ func (d *discoverer) warnBootstrapAliases(repoRoot string) {
 		return
 	}
 	slices.Sort(names)
-	slog.Warn("discovery: aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
-		"count", len(names), "ids", names, "localPath", repoRoot)
+	d.cfg.Store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnBootstrapAliases,
+		Message: "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
+		Detail:  append(names, repoRoot)})
 }
 
 func normalizeGitURL(raw string) string {

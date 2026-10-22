@@ -216,6 +216,9 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 		return noop, err
 	}
 	res, err := baseline.AutoResolve(ctx, c.path, c.base, owner)
+	if res != nil {
+		c.input, c.baseInput = res.Source, res.BaseInput
+	}
 	if err != nil {
 		return noop, errors.Join(err, owner.Close())
 	}
@@ -281,7 +284,11 @@ func runOrchestrator(ctx context.Context, c commonFlags) orchestrator.Rendered {
 	}
 	cleanup, err := resolveBaseline(ctx, &c, false)
 	if err != nil {
-		return orchestrator.Rendered{Err: err}
+		var warnings []manifest.Warning
+		if c.input != nil {
+			warnings = c.input.Warnings
+		}
+		return orchestrator.Rendered{Result: &orchestrator.Result{Warnings: warnings}, Err: err}
 	}
 	run := runOrchestratorCfg(ctx, buildOrchCfg(c))
 	run.Err = errors.Join(run.Err, cleanup())
@@ -318,23 +325,9 @@ func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) orchestrat
 	res, err := o.Render(ctx)
 	// Bootstrap failures MUST NOT expose a partially populated Store.
 	if res == nil {
-		return orchestrator.Rendered{Err: err}
+		return orchestrator.Rendered{Result: &orchestrator.Result{Warnings: o.Store().Warnings()}, Err: err}
 	}
 	return orchestrator.Rendered{Orchestrator: o, Result: res, Err: err}
-}
-
-// logBuffer is the process-wide deferred-log sink installed by setLogLevel; the
-// noisy Warn/Info chatter a failing run emits is held here and rendered in the
-// report footer instead of interleaving with output. nil only in tests that
-// bypass root setup.
-var logBuffer *deferSink
-
-// drainLogNotes returns and clears the buffered log lines (nil when unset).
-func drainLogNotes() []output.Note {
-	if logBuffer == nil {
-		return nil
-	}
-	return logBuffer.drain()
 }
 
 // reportedError retains a fatal cause already presented to the user.
@@ -417,6 +410,11 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		return inv.err
 	}
 	var result selectedPayload
+	for _, run := range runs {
+		if run.Orchestrator == nil || run.Result == nil {
+			return finishSelected(req, &inv, result)
+		}
+	}
 	root := req.roots[0]
 	count := 0
 	for _, side := range inv.sides {
@@ -440,18 +438,16 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 	final := errors.Join(payload.err, inv.err)
 	named := req.roots[0].Name != ""
 	encoder := output.Encoder{Writer: req.stderr, Color: output.ColorEnabled(req.stderr)}
-	if req.presentation == presentTest {
-		if payload.roster == nil {
-			return final
-		}
+	if req.presentation == presentTest && payload.roster != nil {
 		out := output.Encoder{Writer: req.stdout, Color: output.ColorEnabled(req.stdout)}
-		if err := out.Test(*payload.roster, selectedWarnings(inv.sides[0]), drainLogNotes(), inv.elapsed); err != nil {
-			return errors.Join(err, final)
-		}
+		err := out.Test(*payload.roster, inv.elapsed)
+		payload.err = errors.Join(payload.err, err)
+		final = errors.Join(final, err)
 		if payload.roster.AnyFailed() && (!named || inv.err == nil) {
 			final = errors.Join(errors.New("test failures detected"), final)
 		}
 	}
+	var writeErr error
 	reported := req.presentation == presentTest
 	failures := req.presentation == presentBuild || req.presentation == presentTest && named && inv.err != nil
 	for i, side := range inv.sides {
@@ -459,40 +455,32 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 		if failures {
 			model = failureModel(side)
 		}
-		if req.presentation != presentTest {
-			model.Warnings = selectedWarnings(side)
-		}
+		model.Warnings = selectedWarnings(side)
 		if model.Empty() {
 			continue
 		}
 		if req.pair {
-			if _, err := io.WriteString(req.stderr, []string{"orig", "current"}[i]+" snapshot:"); err != nil {
-				return errors.Join(err, final)
-			}
+			_, err := io.WriteString(req.stderr, []string{"orig", "current"}[i]+" snapshot:")
+			writeErr = errors.Join(writeErr, err)
 		}
-		if err := encoder.Report(model); err != nil && (named || req.presentation != presentBuild) {
-			return errors.Join(err, final)
-		}
+		writeErr = errors.Join(writeErr, encoder.Report(model))
 		reported = reported || failures
 	}
 	if len(payload.warnings) > 0 {
-		if err := encoder.Report(output.Model{Warnings: payload.warnings}); err != nil {
-			return errors.Join(err, final)
-		}
+		writeErr = errors.Join(writeErr, encoder.Report(output.Model{Warnings: payload.warnings}))
 	}
 	diagnostic := errors.Join(payload.err, inv.remainder)
 	if req.presentation == presentDiff {
 		reported, diagnostic = final != nil, final
 	}
 	if reported {
-		if err := encoder.Errors(diagnostic); err != nil && (req.presentation != presentDiff || named) {
-			return errors.Join(err, final)
-		}
+		writeErr = errors.Join(writeErr, encoder.Errors(diagnostic))
+		final = errors.Join(final, writeErr)
 		if final != nil {
 			return reportedError{final}
 		}
 	}
-	return final
+	return errors.Join(final, writeErr)
 }
 
 func selectedWarnings(side *selection.Selection) []manifest.Warning {

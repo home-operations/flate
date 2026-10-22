@@ -34,17 +34,11 @@ type LineChange struct {
 }
 
 // Lines consumes prepared resource differences once in unified or HTML format.
-func (e Encoder) Lines(changes iter.Seq2[LineChange, error], notes iter.Seq[string]) error {
+func (e Encoder) Lines(changes iter.Seq2[LineChange, error]) error {
 	if e.Format == FormatHTML {
-		return e.html(changes, notes)
+		return e.html(changes)
 	}
 	separate := false
-	for note := range notes {
-		if _, err := fmt.Fprintf(e.Writer, "# %s\n", note); err != nil {
-			return err
-		}
-		separate = true
-	}
 	for p, err := range changes {
 		if err != nil {
 			return err
@@ -73,47 +67,30 @@ func (e Encoder) Lines(changes iter.Seq2[LineChange, error], notes iter.Seq[stri
 	return nil
 }
 
-// Prefixes mirror dyff's CLI and keep suppression notes in the same syntax.
-var nativeStyles = map[Format]struct {
-	note   string
-	writer func(dyff.Report) dyff.ReportWriter
-}{
-	FormatGitHub: {note: "! ", writer: diffSyntax("@@", "#", "!")},
-	FormatGitLab: {note: "# ", writer: diffSyntax("=", "=", "#")},
-	FormatGitea:  {note: "! ", writer: diffSyntax("@@", "=", "!")},
-	FormatHuman: {note: "⚠ ", writer: func(report dyff.Report) dyff.ReportWriter {
+var nativeStyles = map[Format]func(dyff.Report) dyff.ReportWriter{
+	FormatGitHub: diffSyntax("@@", "#", "!"),
+	FormatGitLab: diffSyntax("=", "=", "#"),
+	FormatGitea:  diffSyntax("@@", "=", "!"),
+	FormatHuman: func(report dyff.Report) dyff.ReportWriter {
 		return &dyff.HumanReport{
 			Report: report, Indent: 2, UseIndentLines: true, OmitHeader: true,
 			MultilineContextLines: dyffContextLines, MinorChangeThreshold: dyffMinorChangeThreshold,
 		}
-	}},
-	FormatBrief: {note: "⚠ ", writer: func(report dyff.Report) dyff.ReportWriter {
+	},
+	FormatBrief: func(report dyff.Report) dyff.ReportWriter {
 		return &dyff.BriefReport{Report: report}
-	}},
+	},
 }
 
-// Native writes a prepared dyff report with format-specific disclosure notes.
-func (e Encoder) Native(report dyff.Report, notes iter.Seq[string]) error {
-	style := nativeStyles[e.Format]
-	hasNotes := false
-	for note := range notes {
-		if _, err := fmt.Fprintf(e.Writer, "%s%s\n", style.note, note); err != nil {
-			return err
-		}
-		hasNotes = true
-	}
+// Native writes a prepared dyff report.
+func (e Encoder) Native(report dyff.Report) error {
 	// dyff emits a stray newline for an empty report.
 	if len(report.Diffs) == 0 {
 		return nil
 	}
-	if hasNotes {
-		if _, err := io.WriteString(e.Writer, "\n"); err != nil {
-			return err
-		}
-	}
 	// dyff reuses this buffer but ignores its final Flush error.
 	writer := bufio.NewWriter(e.Writer)
-	err := style.writer(report).WriteReport(writer)
+	err := nativeStyles[e.Format](report).WriteReport(writer)
 	if err == nil {
 		err = writer.Flush()
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,8 +21,9 @@ import (
 
 type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool)
 
-func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel) (Outcome, []NodeID, bool) {
-	return f(ctx, id, drain)
+func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+	out, deps, rerun := f(ctx, id, attempt.Drain)
+	return out, manifest.ReconcileWait{Deps: deps}, rerun
 }
 
 func TestEdgeIdx_AddAndDelete(t *testing.T) {
@@ -134,7 +136,7 @@ func TestScheduler_WakeOrder(t *testing.T) {
 							n.state = stateRunning
 							s.inFlight++
 							s.mu.Unlock()
-							s.complete(nid, OutcomeTerminal, nil, false)
+							s.complete(s.nodes[nid], OutcomeTerminal, &manifest.ReconcileWait{Deps: nil}, false)
 						}
 					}
 					assert.Equal(t, len(s.parkedIdx), 0)
@@ -414,7 +416,7 @@ func TestScheduler_FailedBlockerSets(t *testing.T) {
 			s := New(task.NewBounded(2), nil)
 			n := &node{id: testutil.KustomizationID("ns", "consumer"), state: stateRunning}
 			s.nodes[n.id], s.inFlight = n, 1
-			s.complete(n.id, OutcomeDependencyFailed, []NodeID{a, b, c}, false)
+			s.complete(n, OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{a, b, c}}, false)
 			var got bool
 			allocs := testing.AllocsPerRun(100, func() {
 				got = s.sameFailedLocked(n, tc.blocked)
@@ -446,10 +448,10 @@ func TestScheduler_FailedReplacementPreservesOtherConsumers(t *testing.T) {
 					blocked[i] = previous[i]
 					s.failedIdx[previous[i]] = map[NodeID]struct{}{other: {}}
 				}
-				s.complete(n.id, OutcomeDependencyFailed, previous, false)
+				s.complete(n, OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: previous}, false)
 				blocked[position] = testutil.KustomizationID("ns", "replacement")
 				n.state, s.inFlight = stateRunning, 1
-				s.complete(n.id, OutcomeDependencyFailed, blocked, false)
+				s.complete(n, OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: blocked}, false)
 				assert.Diff(t, n.failedOn, blocked)
 				for i, dep := range previous {
 					_, retained := s.failedIdx[dep][n.id]
@@ -473,7 +475,7 @@ func TestScheduler_FailedBlockerWidthChanges(t *testing.T) {
 	complete := func(out Outcome, blocked, want []NodeID) {
 		t.Helper()
 		n.state, s.inFlight = stateRunning, 1
-		s.complete(n.id, out, blocked, false)
+		s.complete(n, out, &manifest.ReconcileWait{Deps: blocked}, false)
 		assert.Diff(t, n.failedOn, want)
 		assert.Equal(t, len(s.failedIdx), len(want))
 		for _, dep := range want {
@@ -638,7 +640,8 @@ func newFake(graph map[NodeID][]NodeID) *fakeDisp {
 	}
 }
 
-func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.DrainLevel) (Outcome, []NodeID, bool) {
+func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+	drainLevel := attempt.Drain
 	f.mu.Lock()
 	g := f.gate[nid]
 	f.mu.Unlock()
@@ -680,13 +683,13 @@ func (f *fakeDisp) Dispatch(_ context.Context, nid NodeID, drainLevel manifest.D
 	case len(failed) > 0:
 		f.termAny[nid] = true
 		f.termReady[nid] = false
-		return OutcomeDependencyFailed, failed, f.drainRerun[nid]
+		return OutcomeDependencyFailed, manifest.ReconcileWait{Deps: failed}, f.drainRerun[nid]
 	case len(blocked) > 0:
-		return OutcomeBlocked, blocked, f.drainRerun[nid]
+		return OutcomeBlocked, manifest.ReconcileWait{Deps: blocked}, f.drainRerun[nid]
 	default:
 		f.termAny[nid] = true
 		f.termReady[nid] = true
-		return OutcomeTerminal, nil, f.drainRerun[nid]
+		return OutcomeTerminal, manifest.ReconcileWait{}, f.drainRerun[nid]
 	}
 }
 
@@ -853,32 +856,38 @@ func waitUntil(t *testing.T, cond func() bool) {
 
 func TestLostWakeupRecheck(t *testing.T) {
 	t.Parallel()
-	// Force the race: a's Dispatch returns OutcomeBlocked on b only AFTER b has
-	// already terminalized. complete(a)'s scheduler-state re-check must see b
-	// terminal and re-queue a (not park it on an already-fired wake). a must
-	// resolve Ready WITHOUT entering draining — proving the re-check, not the
-	// draining backstop, recovered it.
-	f := newFake(map[NodeID][]NodeID{
-		testutil.KustomizationID("ns", "a"): {testutil.KustomizationID("ns", "b")},
-		testutil.KustomizationID("ns", "b"): nil,
-	})
-	gate := make(chan struct{})
-	f.gate[testutil.KustomizationID("ns", "a")] = gate
-	// Release a's Dispatch once b is terminal.
-	go func() {
-		for {
-			if term, _ := f.state(testutil.KustomizationID("ns", "b")); term {
-				close(gate)
-				return
+	synctest.Test(t, func(t *testing.T) {
+		reader, supplier := testutil.KustomizationID("ns", "reader"), testutil.KustomizationID("ns", "supplier")
+		release := make(chan struct{})
+		runs := 0
+		d := opportunityDispatcher(func(_ context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+			if id == supplier {
+				return OutcomeTerminal, manifest.ReconcileWait{}, false
 			}
-		}
-	}()
-	run(t, f, 8)
-	assertReady(t, f, "a")
-	assertReady(t, f, "b")
-	if f.maxDrainLevel() != manifest.DrainNone {
-		t.Fatalf("lost-wakeup re-check should recover at manifest.DrainNone, not via draining; maxDrain=%d", f.maxDrainLevel())
-	}
+			runs++
+			assert.Equal(t, attempt.Drain, manifest.DrainNone)
+			if runs == 1 {
+				<-release
+				return OutcomeBlocked, manifest.ReconcileWait{Deps: []NodeID{supplier}}, false
+			}
+			return OutcomeTerminal, manifest.ReconcileWait{}, false
+		})
+		tasks := task.NewBounded(2)
+		sched := New(tasks, d)
+		sched.Seed([]NodeID{reader, supplier})
+		done := make(chan error, 1)
+		go func() { done <- sched.Run(t.Context()) }()
+		synctest.Wait()
+		sched.mu.Lock()
+		assert.Equal(t, sched.nodes[supplier].state, stateTerminal)
+		sched.mu.Unlock()
+		close(release)
+		assert.NoError(t, <-done)
+		assert.Equal(t, runs, 2)
+		assert.Equal(t, tasks.Failures(), int64(0))
+		assert.Equal(t, sched.nodes[reader].state, stateTerminal)
+		assert.Equal(t, len(sched.parkedIdx), 0)
+	})
 }
 
 func TestTransitiveBlockCompareOrderCascades(t *testing.T) {
@@ -909,6 +918,37 @@ func TestCrossKindCycleForceDrains(t *testing.T) {
 	assertFailed(t, f, "b")
 	if f.maxDrainLevel() != manifest.DrainForce {
 		t.Fatalf("a cycle must escalate to manifest.DrainForce; maxDrain=%d", f.maxDrainLevel())
+	}
+}
+
+func TestScheduler_PermanentlyBlockedTerminates(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	id := testutil.KustomizationID("ns", "reader")
+	absent := testutil.KustomizationID("ns", "absent")
+	maxDrain := manifest.DrainNone
+	forceDispatches := 0
+	d := opportunityDispatcher(func(_ context.Context, _ NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+		maxDrain = max(maxDrain, attempt.Drain)
+		if attempt.Drain == manifest.DrainForce {
+			forceDispatches++
+			if forceDispatches > 1 {
+				cancel()
+			}
+		}
+		return OutcomeBlocked, manifest.ReconcileWait{Deps: []NodeID{absent}}, false
+	})
+	s := New(task.NewBounded(2), d)
+	s.Seed([]NodeID{id})
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("permanently blocked node did not reach a fixpoint: %v", err)
+	}
+	if s.nodes[id].state != stateTerminal {
+		t.Fatalf("seeded node state = %v, want terminal", s.nodes[id].state)
+	}
+	if maxDrain != manifest.DrainForce {
+		t.Fatalf("max drain = %v, want DrainForce", maxDrain)
 	}
 }
 
@@ -1035,4 +1075,280 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 			})
 		}
 	}
+}
+
+type opportunityDispatcher func(context.Context, NodeID, manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool)
+
+func (d opportunityDispatcher) Dispatch(ctx context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+	return d(ctx, id, attempt)
+}
+
+func TestOpportunity_UnscheduledAdmission(t *testing.T) {
+	t.Parallel()
+	for _, viaSeed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("seed=%t", viaSeed), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				reader, supplier := testutil.KustomizationID("ns", "reader"), testutil.KustomizationID("ns", "supplier")
+				target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "values"}
+				declaration := &manifest.Kustomization{Name: reader.Name, Namespace: reader.Namespace}
+				bound := make(chan manifest.Opportunity, 1)
+				releaseReader, releaseSupplier := make(chan struct{}), make(chan struct{})
+				var supplied atomic.Int64
+				first := true
+				d := opportunityDispatcher(func(_ context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+					if id == supplier {
+						supplied.Add(1)
+						<-releaseSupplier
+						return OutcomeTerminal, manifest.ReconcileWait{}, false
+					}
+					o := manifest.Opportunity{NamedResource: supplier}
+					if attempt.Content != nil && len(attempt.Content.Suppliers) > 0 {
+						o = attempt.Content.Suppliers[0]
+						if first {
+							first = false
+							bound <- o
+							<-releaseReader
+						}
+						o.Observed = o.Word.Load()
+						if o.Observed&1 == 0 {
+							return OutcomeTerminal, manifest.ReconcileWait{}, false
+						}
+					}
+					return OutcomeBlocked, manifest.ReconcileWait{Content: &manifest.ContentWait{Targets: []NodeID{target}, Suppliers: []manifest.Opportunity{o}, Declaration: declaration}}, false
+				})
+				sched := New(task.NewBounded(2), d)
+				sched.Seed([]NodeID{reader})
+				done := make(chan error, 1)
+				go func() { done <- sched.Run(t.Context()) }()
+				cell := <-bound
+				assert.Equal(t, cell.Word.Load(), uint64(0))
+				sched.OnArrival(supplier, false)
+				synctest.Wait()
+				assert.Equal(t, supplied.Load(), int64(0))
+				assert.Equal(t, cell.Word.Load(), uint64(0))
+				if viaSeed {
+					sched.Seed([]NodeID{supplier})
+				} else {
+					sched.OnArrival(supplier, true)
+				}
+				synctest.Wait()
+				wantDispatches := int64(1)
+				if viaSeed {
+					wantDispatches = 0
+				}
+				assert.Equal(t, supplied.Load(), wantDispatches)
+				if cell.Word.Load()&1 == 0 {
+					t.Error("admission did not open the bound cell")
+				}
+				sched.mu.Lock()
+				if cell.Word != sched.nodes[supplier].opportunity {
+					t.Error("admission replaced the stable cell")
+				}
+				sched.mu.Unlock()
+				close(releaseReader)
+				synctest.Wait()
+				close(releaseSupplier)
+				assert.NoError(t, <-done)
+				assert.Equal(t, cell.Word.Load()&1, uint64(0))
+			})
+		})
+	}
+}
+
+func TestOpportunity_OpenBeforeEnqueue(t *testing.T) {
+	t.Parallel()
+	sched := New(task.NewBounded(2), opportunityDispatcher(func(context.Context, NodeID, manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+		return OutcomeTerminal, manifest.ReconcileWait{}, false
+	}))
+	seed, arrival := testutil.KustomizationID("ns", "seed"), testutil.KustomizationID("ns", "arrival")
+	sched.nodes[seed] = &node{id: seed, state: stateUnscheduled, opportunity: new(atomic.Uint64)}
+	sched.nodes[arrival] = &node{id: arrival, state: stateUnscheduled, opportunity: new(atomic.Uint64)}
+	sched.Seed([]NodeID{seed})
+	assert.Equal(t, sched.nodes[seed].opportunity.Load()&1, uint64(1))
+	assert.Equal(t, slices.Contains(sched.runq, seed), true)
+	sched.OnArrival(arrival, true)
+	assert.Equal(t, sched.nodes[arrival].opportunity.Load()&1, uint64(1))
+	assert.Equal(t, slices.Contains(sched.runq, arrival), true)
+	word := sched.nodes[arrival].opportunity.Load()
+	sched.OnArrival(arrival, true)
+	assert.Equal(t, sched.nodes[arrival].opportunity.Load(), word+2)
+}
+
+func TestOpportunity_UnobservedNode(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		outcome Outcome
+	}{
+		{"terminal", OutcomeTerminal}, {"noop", OutcomeTerminalNoop}, {"dependency failed", OutcomeDependencyFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			id := testutil.KustomizationID("ns", "unobserved")
+			var sched *Scheduler
+			tasks := task.NewBounded(2)
+			runs := 0
+			sched = New(tasks, opportunityDispatcher(func(_ context.Context, _ NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+				runs++
+				assert.Equal(t, attempt.Content == nil, true)
+				sched.mu.Lock()
+				assert.Equal(t, len(sched.nodes[id].blockedOn), 0)
+				assert.Equal(t, sched.nodes[id].opportunity == nil, true)
+				sched.mu.Unlock()
+				if runs == 1 {
+					sched.OnArrival(id, true)
+				}
+				wait := manifest.ReconcileWait{}
+				if tc.outcome == OutcomeDependencyFailed {
+					wait.Deps = []NodeID{testutil.KustomizationID("ns", "missing")}
+				}
+				return tc.outcome, wait, false
+			}))
+			sched.Seed([]NodeID{id})
+			assert.Equal(t, sched.nodes[id].opportunity == nil, true)
+			assert.NoError(t, sched.Run(t.Context()))
+			assert.Equal(t, tasks.Failures(), int64(0))
+			assert.Equal(t, runs, 2)
+			assert.Equal(t, sched.nodes[id].opportunity == nil, true)
+			assert.Equal(t, sched.nodes[id].content == nil, true)
+			assert.Equal(t, len(sched.nodes[id].blockedOn), 0)
+		})
+	}
+}
+
+func TestOpportunity_InvocationSnapshot(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		outcome Outcome
+	}{
+		{"terminal", OutcomeTerminal}, {"noop", OutcomeTerminalNoop}, {"dependency failed", OutcomeDependencyFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				reader, supplier, unobserved := testutil.KustomizationID("ns", "reader"), testutil.KustomizationID("ns", "supplier"), testutil.KustomizationID("ns", "unobserved")
+				declarations := map[NodeID]*manifest.Kustomization{
+					reader:   {Name: reader.Name, Namespace: reader.Namespace},
+					supplier: {Name: supplier.Name, Namespace: supplier.Namespace},
+				}
+				captured := make(chan manifest.ReconcileAttempt, 1)
+				release := make(chan struct{})
+				var first atomic.Pointer[manifest.ContentWait]
+				var cutSeen atomic.Bool
+				var successors atomic.Int64
+				var readerDispatches atomic.Int64
+				var sched *Scheduler
+				d := opportunityDispatcher(func(_ context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+					if id == reader {
+						readerDispatches.Add(1)
+					}
+					if id == unobserved {
+						wait := manifest.ReconcileWait{}
+						if tc.outcome == OutcomeDependencyFailed {
+							wait.Deps = []NodeID{testutil.KustomizationID("ns", "missing")}
+						}
+						return tc.outcome, wait, false
+					}
+					if id == reader && cutSeen.Load() {
+						successors.Add(1)
+						if attempt.Content == nil || attempt.Content.Declaration != nil || len(attempt.Content.Suppliers) != 1 || !slices.Equal(attempt.Content.Targets, []NodeID{supplier}) {
+							t.Errorf("successor lost retained bindings: %+v", attempt)
+						}
+						return OutcomeTerminal, manifest.ReconcileWait{}, false
+					}
+					other := reader
+					if id == reader {
+						other = supplier
+					}
+					o := manifest.Opportunity{NamedResource: other}
+					if attempt.Content != nil && len(attempt.Content.Suppliers) != 0 {
+						o = attempt.Content.Suppliers[0]
+						if attempt.Drain == manifest.DrainForce && o.Cut != 0 {
+							if id == reader {
+								cutSeen.Store(true)
+								captured <- attempt
+							}
+							<-release
+							return OutcomeTerminal, manifest.ReconcileWait{}, false
+						}
+						o.Observed = o.Word.Load()
+					}
+					content := &manifest.ContentWait{Targets: []NodeID{other}, Suppliers: []manifest.Opportunity{o}, Declaration: declarations[id]}
+					if id == reader {
+						first.CompareAndSwap(nil, content)
+					}
+					return OutcomeBlocked, manifest.ReconcileWait{Content: content}, false
+				})
+				sched = New(task.NewBounded(2), d)
+				sched.Seed([]NodeID{reader, supplier})
+				sched.OnArrival(unobserved, true)
+				done := make(chan error, 1)
+				go func() { done <- sched.Run(t.Context()) }()
+				invocation := <-captured
+				before := slices.Clone(invocation.Content.Suppliers)
+				sched.OnArrival(reader, true)
+				assert.Equal(t, invocation.Content.Declaration, manifest.BaseManifest(declarations[reader]))
+				assert.Equal(t, slices.Equal(invocation.Content.Suppliers, before), true)
+				assert.Equal(t, first.Load().Suppliers[0].Word == nil, true)
+				sched.mu.Lock()
+				assert.Equal(t, sched.nodes[reader].content != invocation.Content, true)
+				successor := sched.nodes[reader].content
+				assert.Equal(t, slices.Equal(successor.Targets, invocation.Content.Targets), true)
+				assert.Equal(t, slices.Equal(successor.Suppliers, invocation.Content.Suppliers), true)
+				assert.Equal(t, sched.nodes[unobserved].opportunity == nil, true)
+				assert.Equal(t, sched.nodes[unobserved].content == nil, true)
+				sched.mu.Unlock()
+				sched.OnArrival(reader, true)
+				sched.mu.Lock()
+				assert.Equal(t, sched.nodes[reader].content == successor, true)
+				sched.mu.Unlock()
+				close(release)
+				assert.NoError(t, <-done)
+				assert.Equal(t, successors.Load(), int64(1))
+				assert.Equal(t, readerDispatches.Load(), int64(5))
+				t.Logf("reader dispatches=%d, successor dispatches=%d", readerDispatches.Load(), successors.Load())
+				for _, n := range sched.nodes {
+					assert.Equal(t, len(n.blockedOn), 0)
+					assert.Equal(t, n.content == nil, true)
+				}
+			})
+		})
+	}
+}
+
+func TestOpportunity_TerminalBinding(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		reader, supplier := testutil.KustomizationID("ns", "reader"), testutil.KustomizationID("ns", "supplier")
+		release := make(chan struct{})
+		runs := 0
+		d := opportunityDispatcher(func(_ context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait, bool) {
+			if id == supplier {
+				return OutcomeTerminal, manifest.ReconcileWait{}, false
+			}
+			runs++
+			<-release
+			if attempt.Content == nil {
+				return OutcomeBlocked, manifest.ReconcileWait{Content: &manifest.ContentWait{Suppliers: []manifest.Opportunity{{NamedResource: supplier}}}}, false
+			}
+			o := attempt.Content.Suppliers[0]
+			assert.Equal(t, o.Observed, uint64(0))
+			assert.Equal(t, o.Word.Load(), uint64(0))
+			return OutcomeTerminal, manifest.ReconcileWait{}, false
+		})
+		sched := New(task.NewBounded(2), d)
+		sched.Seed([]NodeID{reader, supplier})
+		done := make(chan error, 1)
+		go func() { done <- sched.Run(t.Context()) }()
+		synctest.Wait()
+		sched.mu.Lock()
+		assert.Equal(t, sched.nodes[supplier].state, stateTerminal)
+		assert.Equal(t, sched.nodes[supplier].opportunity == nil, true)
+		sched.mu.Unlock()
+		close(release)
+		assert.NoError(t, <-done)
+		assert.Equal(t, runs, 2)
+	})
 }

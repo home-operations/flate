@@ -48,18 +48,18 @@ data: {key: value}
 	unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 	t.Cleanup(unsub)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	out, blocked, _ := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-	if out != schedule.OutcomeTerminal || len(blocked) != 0 || arrivals.Load() != 1 {
+	out, blocked, _ := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	if out != schedule.OutcomeTerminal || !blocked.Empty() || arrivals.Load() != 1 {
 		t.Fatalf("fresh result=%v blocked=%v arrivals=%d", out, blocked, arrivals.Load())
 	}
 	before := s.GetArtifact(rs.Named())
-	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-	if out != schedule.OutcomeTerminalNoop || len(blocked) != 0 || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
+	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	if out != schedule.OutcomeTerminalNoop || !blocked.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
 		t.Fatalf("dedup result=%v blocked=%v arrivals=%d artifact changed=%v", out, blocked, arrivals.Load(), s.GetArtifact(rs.Named()) != before)
 	}
 	s.UpdateStatus(rs.Named(), store.StatusReady, store.ReasonSkipped, "")
-	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-	if out != schedule.OutcomeTerminal || len(blocked) != 0 || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
+	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	if out != schedule.OutcomeTerminal || !blocked.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
 		t.Fatalf("typed skip became a dedup no-op: outcome=%v blocked=%v arrivals=%d", out, blocked, arrivals.Load())
 	}
 }
@@ -85,7 +85,7 @@ data: {key: fixed}
 				}
 				s.AddObject(rs)
 				d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-				if out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone); rerun != selector || out != schedule.OutcomeTerminal || len(blocked) != 0 {
+				if out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); rerun != selector || out != schedule.OutcomeTerminal || !blocked.Empty() {
 					t.Fatalf("fresh setup failed: %v %v", out, blocked)
 				}
 				before := s.GetArtifact(rs.Named()).(*store.Emission)
@@ -164,8 +164,8 @@ data: {key: fixed}
 					}
 				}, false)
 				t.Cleanup(unsub)
-				out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
-				if rerun != (selector && name != "vanished" && name != "suspended" && name != "refresh suspended") || out != want || (len(blocked) > 0) != (want == schedule.OutcomeBlocked) {
+				out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+				if rerun != (selector && name != "vanished" && name != "suspended" && name != "refresh suspended") || out != want || (!blocked.Empty()) != (want == schedule.OutcomeBlocked) {
 					t.Fatalf("outcome=%v blocked=%v; want %v", out, blocked, want)
 				}
 				if want == schedule.OutcomeTerminalNoop && arrivals.Load() != 0 {
@@ -214,7 +214,7 @@ data: {key: initial}
 `}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 	s.UpdateStatus(rs.Named(), store.StatusPending, "", "queued")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -235,7 +235,7 @@ data: {key: initial}
 	s.AddObject(&fresh)
 	done := make(chan schedule.Outcome, 1)
 	tasks.Go(ctx, "dispatch", func(ctx context.Context) {
-		out, _, rerun := d.Dispatch(ctx, rs.Named(), manifest.DrainNone)
+		out, _, rerun := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 		if !rerun {
 			t.Error("post-reconcile intent ignored the updated selector")
 		}
@@ -257,10 +257,10 @@ data: {key: initial}
 		t.Fatalf("concurrent fresh render classified as %v", out)
 	}
 	tasks.BlockTillDone()
-	if out, _, _ := d.Dispatch(ctx, rs.Named(), manifest.DrainNone); out != schedule.OutcomeTerminal {
+	if out, _, _ := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); out != schedule.OutcomeTerminal {
 		t.Fatalf("newest content must render conservatively: %v", out)
 	}
-	if out, _, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone); !rerun || out != schedule.OutcomeTerminalNoop {
+	if out, _, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !rerun || out != schedule.OutcomeTerminalNoop {
 		t.Fatalf("settled newest content must dedup: %v", out)
 	}
 	cm, ok := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})
@@ -269,10 +269,10 @@ data: {key: initial}
 	}
 }
 
-type withdrawalDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
+type withdrawalDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool)
 
-func (d withdrawalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-	return d(ctx, id, level)
+func (d withdrawalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	return d(ctx, id, attempt)
 }
 
 func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
@@ -296,17 +296,17 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					publishLate := func() {
 						s.RecordEmitted(k, &late)
 					}
-					dispatch := withdrawalDispatcher(func(_ context.Context, id schedule.NodeID, _ manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+					dispatch := withdrawalDispatcher(func(_ context.Context, id schedule.NodeID, _ manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
 						if id == consumer {
 							if calls.Add(1) == 1 {
 								close(consumerStarted)
-								return schedule.OutcomeBlocked, []schedule.NodeID{k}, false
+								return schedule.OutcomeBlocked, manifest.ReconcileWait{Deps: []schedule.NodeID{k}}, false
 							}
 							if s.GetObject(k) != nil {
 								t.Error("withdrawal wake observed child still live")
 							}
 							close(woken)
-							return schedule.OutcomeTerminal, nil, false
+							return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
 						}
 						tasks.YieldSlot(func() { <-publishRelease })
 						if lateFirst {
@@ -316,7 +316,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 						if !lateFirst {
 							publishLate()
 						}
-						return schedule.OutcomeTerminal, nil, false
+						return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
 					})
 					scheduler := schedule.New(tasks, dispatch)
 					o := &Orchestrator{store: s}
@@ -407,8 +407,8 @@ data: {value: rendered}
 			})
 			tasks.Go(t.Context(), "dispatch-withdrawn", func(ctx context.Context) {
 				tasks.YieldSlot(func() { <-withdrawn })
-				out, blocked, _ := d.Dispatch(ctx, l.Named(), manifest.DrainNone)
-				if out != schedule.OutcomeTerminal || len(blocked) != 0 {
+				out, blocked, _ := d.Dispatch(ctx, l.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+				if out != schedule.OutcomeTerminal || !blocked.Empty() {
 					t.Errorf("withdrawn dispatch = %v, blocked = %v", out, blocked)
 				}
 			})
@@ -419,7 +419,7 @@ data: {value: rendered}
 			}
 			s.AddObject(l)
 			tasks.Go(t.Context(), "dispatch-restored", func(ctx context.Context) {
-				d.Dispatch(ctx, l.Named(), manifest.DrainNone)
+				d.Dispatch(ctx, l.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 || bodies.Load() == 0 || publications.Load() == 0 || s.GetObject(output) == nil {
@@ -504,7 +504,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 				}, false)
 				defer unsub()
 				d := dagDispatcher{o}
-				dispatch := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+				dispatch := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
 					if id != p {
 						if id.Kind == manifest.KindHelmRelease && scenario != "unchanged" {
 							o.tasks.YieldSlot(func() {
@@ -557,7 +557,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					next.Finish()
 					s.UpdateStatus(p, store.StatusReady, "", "")
 					close(published)
-					return schedule.OutcomeTerminal, nil, false
+					return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
 				})
 				sched := schedule.New(o.tasks, dispatch)
 				unwatch := o.watchDAG(sched)

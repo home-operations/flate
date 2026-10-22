@@ -5,77 +5,72 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ClassKind is the non-blocking resolution of one dependency for the dag engine.
-type ClassKind int
+// classKind is the non-blocking resolution of one dependency for the dag engine.
+type classKind int
 
 const (
-	// ClassReady means the dependency is satisfied; the consumer may proceed.
-	ClassReady ClassKind = iota
-	// ClassFailed means the dependency is terminally unsatisfiable; Message
+	// classReady means the dependency is satisfied; the consumer may proceed.
+	classReady classKind = iota
+	// classFailed means the dependency is terminally unsatisfiable; Message
 	// carries the canonical terminal reason for the failure.
-	ClassFailed
-	// ClassBlocked means the dependency is not yet satisfied but possibly
+	classFailed
+	// classBlocked means the dependency is not yet satisfied but possibly
 	// producible; the scheduler parks the consumer keyed on it.
-	ClassBlocked
+	classBlocked
 )
 
-// Classification is the result of Classify.
-type Classification struct {
-	Kind    ClassKind
-	Message string // populated only for ClassFailed
+// classification describes one ordinary readiness decision.
+type classification struct {
+	Kind    classKind
+	Message string // populated only for classFailed
 }
 
-// Classify resolves readiness gates without blocking; level escalates at the fixpoint.
-// CEL compile errors precede missing-dependency, failed-status and drain classification.
-// MUST run on a worker, never under the scheduler mutex.
-func (w *Waiter) Classify(dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
+func (w *Waiter) classify(dep manifest.DependencyRef, level manifest.DrainLevel, existence ExistenceLookup) classification {
 	id := dep.NamedResource
-
-	state := w.readyNow(dep)
-	if state == depReady {
-		return Classification{Kind: ClassReady}
-	}
-
-	// Compile errors are permanent; missing projected attributes may become available.
-	if dep.ReadyExpr != "" {
-		if _, failMsg := w.tryReadyExpr(dep.ReadyExpr, id); failMsg != "" {
-			return Classification{Kind: ClassFailed, Message: failMsg}
+	for {
+		obj := w.Store.GetObject(id)
+		present := obj != nil
+		if !present {
+			_, present = w.Store.GetStatus(id)
 		}
-	}
-
-	if state == depAbsent {
-		if w.Existence != nil && w.Existence.Promote(id) {
-			state = w.readyNow(dep)
-			if state == depReady {
-				return Classification{Kind: ClassReady}
+		if obj != nil && !manifest.KindOf(obj).Status || obj == nil && present && !id.KindInfo().Status {
+			return classification{Kind: classReady}
+		}
+		if dep.ReadyExpr != "" {
+			ready, failMsg := w.tryReadyExpr(dep.ReadyExpr, id)
+			if failMsg != "" {
+				return classification{Kind: classFailed, Message: failMsg}
+			}
+			if present && ready {
+				return classification{Kind: classReady}
 			}
 		}
-		if state == depAbsent {
-			if level >= manifest.DrainCascade {
-				if w.AllowMissingCRDs && id.IsCRD() {
-					return Classification{Kind: ClassReady}
-				}
-				return Classification{Kind: ClassFailed, Message: "dependency not found"}
+		if !present {
+			if existence != nil && existence.Promote(id) {
+				existence = nil
+				continue
 			}
-			return Classification{Kind: ClassBlocked}
+			if level < manifest.DrainCascade {
+				return classification{Kind: classBlocked}
+			}
+			if w.AllowMissingCRDs && id.IsCRD() {
+				return classification{Kind: classReady}
+			}
+			return classification{Kind: classFailed, Message: "dependency not found"}
 		}
-	}
-
-	if info, ok := w.Store.GetStatus(id); ok && info.Status == store.StatusFailed {
-		return Classification{Kind: ClassFailed, Message: info.Message}
-	}
-
-	if dep.ReadyExpr != "" {
-		// CEL replaces built-in readiness; false expressions fail at the fixpoint.
-		if level >= manifest.DrainCascade {
-			return Classification{Kind: ClassFailed, Message: "readyExpr timeout: context deadline exceeded"}
+		info, _ := w.Store.GetStatus(id)
+		if dep.ReadyExpr == "" && info.Status == store.StatusReady {
+			return classification{Kind: classReady}
 		}
-		return Classification{Kind: ClassBlocked}
+		if info.Status == store.StatusFailed {
+			return classification{Kind: classFailed, Message: info.Message}
+		}
+		if dep.ReadyExpr != "" && level >= manifest.DrainCascade {
+			return classification{Kind: classFailed, Message: "readyExpr timeout: context deadline exceeded"}
+		}
+		if dep.ReadyExpr == "" && level >= manifest.DrainForce {
+			return classification{Kind: classFailed, Message: "not ready"}
+		}
+		return classification{Kind: classBlocked}
 	}
-
-	// Pending status fails only at DrainForce, which breaks cross-kind cycles.
-	if level >= manifest.DrainForce {
-		return Classification{Kind: ClassFailed, Message: "not ready"}
-	}
-	return Classification{Kind: ClassBlocked}
 }

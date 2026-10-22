@@ -178,7 +178,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		st.AddObject(repo)
 		c.StartLifecycle()
 		tasks.Go(t.Context(), repo.Named().String(), func(ctx context.Context) {
-			if deps := c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone); len(deps) != 0 {
+			if deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
 				t.Errorf("blocked source %s: %v", repo.Named(), deps)
 			}
 		})

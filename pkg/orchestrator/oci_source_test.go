@@ -85,7 +85,7 @@ spec:
 			}
 			id := testutil.KustomizationID("flux-system", "consumer")
 			if tc.fetchErr != nil {
-				o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
+				o.ksc.ReconcileNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainCascade})
 			}
 			status, _ := o.Store().GetStatus(id)
 			if tc.fetchErr != nil {

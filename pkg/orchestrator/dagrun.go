@@ -29,45 +29,45 @@ func (d dagDispatcher) BlockTillDone() {
 	d.o.tasks.BlockTillDone()
 }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-	out, blocked := d.reconcile(ctx, id, drainLevel)
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	out, blocked := d.reconcile(ctx, id, attempt)
 	return out, blocked, id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet && d.o.rsc.WantsDrainRerun(id)
 }
 
-func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, drainLevel manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID) {
+func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	o := d.o
-	var blocked []manifest.NamedResource
+	var blocked manifest.ReconcileWait
 	switch {
 	case id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization:
-		blocked = o.ksc.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.ksc.ReconcileNode(ctx, id, attempt)
 	case id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease:
-		blocked = o.hrc.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.hrc.ReconcileNode(ctx, id, attempt)
 	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
 		before, _ := o.store.GetArtifact(id).(*store.Emission)
-		blocked = o.rsc.ReconcileNode(ctx, id, drainLevel)
-		if len(blocked) == 0 && before != nil && before.Fingerprint != "" && o.store.GetArtifact(id) == before {
+		blocked = o.rsc.ReconcileNode(ctx, id, attempt)
+		if blocked.Empty() && before != nil && before.Fingerprint != "" && o.store.GetArtifact(id) == before {
 			info, ok := o.store.GetStatus(id)
 			// A fresh fingerprint replaces the artifact even for identical docs.
 			// Nil dependencies alone do not prove success: gates and skips
 			// may preserve an artifact and an informative Ready status.
 			// deleteLocked removes conditions with the object; Ready implies prior presence on this path.
 			if ok && info.Outcome() == store.OutcomePassed && info.Message == "" {
-				return schedule.OutcomeTerminalNoop, nil
+				return schedule.OutcomeTerminalNoop, manifest.ReconcileWait{}
 			}
 		}
 	case o.src.Owns(id):
-		blocked = o.src.ReconcileNode(ctx, id, drainLevel)
+		blocked = o.src.ReconcileNode(ctx, id, attempt)
 	default:
 		// Not a schedulable kind (should never be dispatched) — terminal no-op.
-		return schedule.OutcomeTerminal, nil
+		return schedule.OutcomeTerminal, manifest.ReconcileWait{}
 	}
-	if len(blocked) > 0 {
+	if !blocked.Empty() {
 		return schedule.OutcomeBlocked, blocked
 	}
 	if info, _ := o.store.GetStatus(id); info.IsDependencyFailure() {
-		return schedule.OutcomeDependencyFailed, info.BlockedBy()
+		return schedule.OutcomeDependencyFailed, manifest.ReconcileWait{Deps: info.BlockedBy()}
 	}
-	return schedule.OutcomeTerminal, nil
+	return schedule.OutcomeTerminal, manifest.ReconcileWait{}
 }
 
 // seedNodes returns every file-loaded reconcilable + ResourceSet + source

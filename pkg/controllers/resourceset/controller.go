@@ -37,15 +37,13 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	}
 }
 
-// ReconcileNode runs id's reconcile under the dag engine, returning the
-// blocked dependency set (nil = terminalized).
-// The orchestrator's scheduler Dispatcher calls this for ResourceSet
-// nodes. Reconciliation-disabled ResourceSets use the shared suspension gate.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, c.reconcile)
+// ReconcileNode runs one ResourceSet invocation and returns any remaining typed wait.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
-func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {
+func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, invocation manifest.ReconcileAttempt) error {
+	level := invocation.Drain
 	id := rs.Named()
 	if err := c.PreflightError(id); err != nil {
 		return err

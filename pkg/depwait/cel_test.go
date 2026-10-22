@@ -63,28 +63,32 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	ref := manifest.DependencyRef{NamedResource: dep,
 		ReadyExpr: `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}
-	if got := w.Classify(ref, manifest.DrainNone); got.Kind != ClassReady {
+	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != classReady {
 		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want ClassReady", got)
 	}
 }
 
-// TestReadyExpr_CompileError: malformed CEL is a terminal compile error —
-// Classify fails it immediately (any drain level) with a "readyExpr:"-prefixed
-// message, and evaluateReadyExpr wraps it as *celCompileErr.
 func TestReadyExpr_CompileError(t *testing.T) {
 	t.Parallel()
-	s := store.New()
-	dep := testutil.KustomizationID("ns", "x")
-	s.UpdateStatus(dep, store.StatusReady, "", "ok")
+	for _, present := range []bool{false, true} {
+		t.Run(fmt.Sprint(present), func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			dep := testutil.KustomizationID("ns", "x")
+			if present {
+				s.UpdateStatus(dep, store.StatusReady, "", "ok")
+			}
 
-	if _, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep); err == nil {
-		t.Fatal("expected compile error")
-	}
-	w := &Waiter{Store: s}
-	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
-	got := w.Classify(ref, manifest.DrainNone)
-	if got.Kind != ClassFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
-		t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
+			if _, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep); err == nil {
+				t.Fatal("expected compile error")
+			}
+			w := &Waiter{Store: s}
+			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
+			got := w.classify(ref, manifest.DrainNone, w.Existence)
+			if got.Kind != classFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
+				t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
+			}
+		})
 	}
 }
 
@@ -121,7 +125,7 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
-	if got := w.Classify(ref, manifest.DrainNone); got.Kind != ClassBlocked {
+	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != classBlocked {
 		t.Errorf("transient eval error@none: got %+v, want ClassBlocked (re-runnable, not failed)", got)
 	}
 }

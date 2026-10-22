@@ -44,24 +44,42 @@ type storeProvider struct {
 }
 
 func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
-	data, _ := p.s.GetObject(id).(manifest.Data)
-	if data != nil {
-		return data
+	facts := p.s.ReferenceFacts(id, nil)
+	if facts.Data != nil || !p.wipeSecrets {
+		return facts.Data
 	}
-	if !p.wipeSecrets {
-		return nil
-	}
-	productions := p.s.Productions(id, nil)
-	for _, production := range productions {
+	for _, production := range facts.Productions {
 		if production.Declaration == (manifest.NamedResource{}) && (production.Owner != (manifest.NamedResource{}) || production.Path != "") {
 			return nil
 		}
 	}
-	for _, production := range productions {
-		if production.Declaration == (manifest.NamedResource{}) {
+	return DeclaredData(p.s, id, facts.Productions)
+}
+
+// ResolvedInput retains one immutable data selection, including explicit absence.
+type ResolvedInput struct {
+	manifest.NamedResource
+	Value manifest.Data
+}
+
+// ResolvedInputs is an invocation-local provider without live fallback.
+type ResolvedInputs []ResolvedInput
+
+// Data returns the selected value or its frozen absence.
+func (p ResolvedInputs) Data(id manifest.NamedResource) manifest.Data {
+	if i := slices.IndexFunc(p, func(input ResolvedInput) bool { return input.NamedResource == id }); i >= 0 {
+		return p[i].Value
+	}
+	return nil
+}
+
+// DeclaredData interprets declared keys after the caller has settled offline supply.
+func DeclaredData(s *store.Store, id manifest.NamedResource, productions []manifest.Production) manifest.Data {
+	for _, p := range productions {
+		if p.Declaration == (manifest.NamedResource{}) {
 			continue
 		}
-		declaration := p.s.GetObject(production.Declaration)
+		declaration := s.GetObject(p.Declaration)
 		if declaration == nil {
 			continue
 		}
@@ -69,11 +87,11 @@ func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
 			if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
 				continue
 			}
-			values := make(map[string]any, len(target.DeclaredKeys))
+			data := make(map[string]any, len(target.DeclaredKeys))
 			for _, key := range target.DeclaredKeys {
-				values[key] = fmt.Sprintf(manifest.ValuePlaceholderTemplate, key)
+				data[key] = strings.ReplaceAll(manifest.ValuePlaceholderTemplate, "%s", key)
 			}
-			return &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: values}
+			return &manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: data}
 		}
 	}
 	return nil

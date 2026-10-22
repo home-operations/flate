@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -60,17 +61,15 @@ const (
 // Dispatcher runs a node's reconcile body. The orchestrator supplies the
 // concrete implementation, closing over the store and the three controllers;
 // the scheduler never sees a store or controller type.
-// The returned blocked slice MUST NOT be mutated by the dispatcher after return;
-// the scheduler retains it until the node's next completion with a different
-// blocker set.
+// Returned wait slices MUST remain immutable while retained by the scheduler.
 type Dispatcher interface {
 	// Dispatch invokes id's reconcile body synchronously on the calling
 	// goroutine (a task.Service worker) and reports back:
 	//   - out: OutcomeTerminal, OutcomeTerminalNoop, OutcomeBlocked, or OutcomeDependencyFailed.
-	//   - blocked: unsatisfied or failed dependency ids for the latter two outcomes.
+	//   - blocked: ordinary dependencies and immutable content wait for the latter two outcomes.
 	//   - rerun: re-evaluate this node at the structural fixpoint.
-	// drainLevel is one of manifest.DrainNone/manifest.DrainCascade/manifest.DrainForce.
-	Dispatch(ctx context.Context, id NodeID, drainLevel manifest.DrainLevel) (out Outcome, blocked []NodeID, rerun bool)
+	// attempt carries the drain level and immutable supplier observations.
+	Dispatch(ctx context.Context, id NodeID, attempt manifest.ReconcileAttempt) (out Outcome, blocked manifest.ReconcileWait, rerun bool)
 }
 
 type taskService interface {
@@ -85,6 +84,7 @@ const (
 	stateRunning
 	stateParked
 	stateTerminal
+	stateUnscheduled
 )
 
 // Bound content-driven feedback per node while leaving dependency retries free
@@ -116,6 +116,9 @@ type failedMark struct {
 }
 
 type node struct {
+	opportunity  *atomic.Uint64
+	content      *manifest.ContentWait
+	drain        manifest.DrainLevel
 	id           NodeID
 	state        nodeState
 	blockedOn    []NodeID // deps recorded at the last OutcomeBlocked
@@ -197,10 +200,16 @@ func (s *Scheduler) Seed(ids []NodeID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range ordered {
-		if _, ok := s.nodes[id]; ok {
+		n := s.nodes[id]
+		if n != nil && n.state != stateUnscheduled {
 			continue
 		}
-		s.nodes[id] = &node{id: id, state: stateRunnable}
+		if n == nil {
+			n = &node{id: id}
+			s.nodes[id] = n
+		}
+		n.state = stateRunnable
+		n.open()
 		s.runq = append(s.runq, id)
 	}
 }
@@ -241,16 +250,17 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			n.queuedCharged = false
 			n.blockedOn = nil
 			s.inFlight++
-			level := s.draining
+			attempt := manifest.ReconcileAttempt{Drain: s.draining, Content: n.content}
+			n.drain = attempt.Drain
 			s.mu.Unlock()
 			s.tasks.Go(runCtx, "schedule/"+id.String(), func(ctx context.Context) {
 				out := OutcomeTerminal
-				var blocked []NodeID
+				var blocked manifest.ReconcileWait
 				var rerun bool
 				defer func() {
-					s.complete(id, out, blocked, rerun)
+					s.complete(n, out, &blocked, rerun)
 				}()
-				out, blocked, rerun = s.disp.Dispatch(ctx, id, level)
+				out, blocked, rerun = s.disp.Dispatch(ctx, n.id, attempt)
 			})
 			s.mu.Lock()
 		}
@@ -284,11 +294,12 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			// cycle (same-kind cycles fail earlier at preflight). manifest.DrainForce
 			// fails present-Pending deps, breaking the cycle the way the event
 			// engine's quiescence does; finalSweep is the last-resort backstop.
-			if s.draining >= manifest.DrainForce {
+			if s.draining < manifest.DrainForce {
+				s.draining++
+			}
+			if !s.requeueAllParkedLocked() {
 				break
 			}
-			s.draining++
-			s.requeueAllParkedLocked()
 			continue
 		}
 		// 3. Work in flight, frontier empty: wait for a completion or arrival.
@@ -311,7 +322,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 // complete records the result of one Dispatch. Runs on the worker goroutine;
 // acquires mu. Touches ONLY scheduler state — never the store or the pool.
-func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun bool) {
+func (s *Scheduler) complete(n *node, out Outcome, wait *manifest.ReconcileWait, rerun bool) {
 	s.mu.Lock()
 	// Broadcast on EVERY path (terminalize, park, re-queue) so the Run loop
 	// re-evaluates inFlight/runq after any transition — a terminalize that
@@ -319,9 +330,9 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	// after Unlock so (LIFO) it runs first, still under mu.
 	defer s.mu.Unlock()
 	defer s.cond.Broadcast()
-	n := s.nodes[id]
+	id := n.id
 	s.inFlight--
-	sameFailed := out == OutcomeDependencyFailed && s.sameFailedLocked(n, blocked)
+	sameFailed := out == OutcomeDependencyFailed && s.sameFailedLocked(n, wait.Deps)
 	if !sameFailed {
 		n.conservativeUsed = false
 		if out != OutcomeDependencyFailed {
@@ -331,6 +342,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	if s.err != nil {
 		s.clearFailedLocked(n)
 		n.state = stateTerminal
+		n.exhaust()
 		n.conservativeUsed = false
 		return
 	}
@@ -338,10 +350,10 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	if out == OutcomeDependencyFailed {
 		if !sameFailed {
 			previous := n.failedOn
-			n.failedOn = blocked
-			if len(previous) <= 2 && len(blocked) <= 2 {
-				if len(blocked) > 1 && blocked[0] == blocked[1] {
-					n.failedOn = slices.Clone(blocked[:1])
+			n.failedOn = wait.Deps
+			if len(previous) <= 2 && len(wait.Deps) <= 2 {
+				if len(wait.Deps) > 1 && wait.Deps[0] == wait.Deps[1] {
+					n.failedOn = slices.Clone(wait.Deps[:1])
 				}
 				for _, dep := range n.failedOn {
 					if len(previous) > 0 && (dep == previous[0] || len(previous) == 2 && dep == previous[1]) {
@@ -358,8 +370,8 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 				n.failedSeen, n.failedFree = nil, nil
 			} else {
 				if n.failedSeen == nil {
-					n.failedSeen = make(map[NodeID]*failedMark, max(len(previous), len(blocked)))
-					marks := make([]failedMark, max(len(previous), len(blocked))+1)
+					n.failedSeen = make(map[NodeID]*failedMark, max(len(previous), len(wait.Deps)))
+					marks := make([]failedMark, max(len(previous), len(wait.Deps))+1)
 					for i := range marks {
 						marks[i].next = n.failedFree
 						n.failedFree = &marks[i]
@@ -371,13 +383,13 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 				}
 				n.failedCheck++
 				duplicate := false
-				for i, dep := range blocked {
+				for i, dep := range wait.Deps {
 					mark := n.failedSeen[dep]
 					if mark != nil && mark.check == n.failedCheck {
 						if !duplicate {
 							// Dispatcher slices may be shared; only a private copy is compacted.
-							n.failedOn = make([]NodeID, i, len(blocked))
-							copy(n.failedOn, blocked[:i])
+							n.failedOn = make([]NodeID, i, len(wait.Deps))
+							copy(n.failedOn, wait.Deps[:i])
 							duplicate = true
 						}
 						continue
@@ -410,10 +422,11 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 		}
 		// Only progress after dispatch start can race failed-edge registration.
 		if s.generation > n.startedAt {
-			for _, dep := range blocked {
+			for _, dep := range wait.Deps {
 				d := s.nodes[dep]
 				if (d != nil && d.readyAt > n.startedAt) || (dep == s.untracked && s.untrackedAt > n.startedAt) {
 					n.productive = true
+					n.open()
 					n.rerunRequested = true
 					break
 				}
@@ -421,6 +434,7 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 		}
 		if !n.rerunRequested && !n.conservativeUsed && s.generation > n.startedAt {
 			n.conservativeUsed = true
+			n.open()
 			n.rerunRequested = true
 		}
 	}
@@ -440,30 +454,59 @@ func (s *Scheduler) complete(id NodeID, out Outcome, blocked []NodeID, rerun boo
 	switch out {
 	case OutcomeTerminal, OutcomeTerminalNoop, OutcomeDependencyFailed:
 		n.state = stateTerminal
-		n.blockedOn = nil
+		n.exhaust()
 		s.wakeWaitersLocked(id)
 	case OutcomeBlocked:
-		// Lost-wakeup re-check using ONLY scheduler state (never the store —
-		// reading the store under mu would invert lock order against an
-		// emitting worker that wants mu via OnArrival). If ANY blocked dep is
-		// already terminal in our node map it will deliver no further
-		// terminalize-wake, so parking risks hanging until draining; re-run now
-		// instead (the re-run re-classifies: a terminal-Ready dep is satisfied,
-		// a terminal-Failed dep cascades).
-		for _, dep := range blocked {
-			if d := s.nodes[dep]; d != nil && d.state == stateTerminal {
-				s.redispatchLocked(n)
-				return
+		s.parkLocked(n, wait)
+	}
+}
+
+// Caller holds mu; binding and registration must share the same recheck boundary.
+func (s *Scheduler) parkLocked(n *node, wait *manifest.ReconcileWait) {
+	retry := false
+	if wait.Content != nil {
+		content := *wait.Content
+		content.Suppliers = slices.Clone(content.Suppliers)
+		for i := range content.Suppliers {
+			o := &content.Suppliers[i]
+			d := s.nodes[o.NamedResource]
+			if d == nil {
+				d = &node{id: o.NamedResource, state: stateUnscheduled}
+				s.nodes[o.NamedResource] = d
+			}
+			if d.opportunity == nil {
+				d.opportunity = new(atomic.Uint64)
+				if d.state != stateTerminal && d.state != stateUnscheduled {
+					d.open()
+				}
+			}
+			word := d.opportunity.Load()
+			retry = retry || o.Word == nil || o.Observed != word
+			o.Word, o.Observed = d.opportunity, word
+		}
+		n.content = &content
+	}
+	for _, dep := range wait.Deps {
+		if d := s.nodes[dep]; d != nil && d.state == stateTerminal {
+			retry = true
+		}
+	}
+	if retry {
+		s.redispatchLocked(n)
+		return
+	}
+	n.state = stateParked
+	n.blockedOn = wait.Deps
+	if wait.Content != nil {
+		n.blockedOn = append(slices.Clone(wait.Deps), wait.Content.Targets...)
+		for _, o := range n.content.Suppliers {
+			if o.Observed&1 != 0 {
+				n.blockedOn = append(n.blockedOn, o.NamedResource)
 			}
 		}
-		// Park: every blocked dep is live (a non-terminal node that will
-		// terminalize and wake us) or has no scheduler node (an absent dep,
-		// woken by a future OnArrival or terminalized by the draining sweep).
-		n.state = stateParked
-		n.blockedOn = blocked
-		for _, dep := range blocked {
-			s.parkedIdx.add(dep, id)
-		}
+	}
+	for _, dep := range n.blockedOn {
+		s.parkedIdx.add(dep, n.id)
 	}
 }
 
@@ -484,6 +527,7 @@ func (s *Scheduler) wakeWaitersLocked(depID NodeID) {
 		case stateParked:
 			s.unparkLocked(n)
 		case stateRunning:
+			n.open()
 			n.rerunRequested = true
 		}
 	}
@@ -505,6 +549,7 @@ func (s *Scheduler) sortedWaiters(set map[NodeID]struct{}) []NodeID {
 // unparkLocked moves a parked node to runnable and removes it from every
 // parkedIdx set it was registered in. Caller holds mu.
 func (s *Scheduler) unparkLocked(n *node) {
+	n.open()
 	s.unparkSelfLocked(n)
 	s.redispatchLocked(n)
 }
@@ -592,6 +637,7 @@ func (s *Scheduler) recordProgressLocked(id NodeID) {
 			}
 		case stateRunning:
 			n.productive = true
+			n.open()
 			n.rerunRequested = true
 		}
 	}
@@ -625,7 +671,8 @@ func (s *Scheduler) OnArrival(id NodeID, schedulable bool) {
 		}
 		// Non-schedulable unknown id (ConfigMap/Secret): fall through to wake
 		// nodes parked on it, but do not register it.
-	} else {
+	} else if n.state != stateUnscheduled || schedulable {
+		n.open()
 		n.contentRequested = true
 		if n.state == stateRunning {
 			n.rerunRequested = true
@@ -686,7 +733,7 @@ func (s *Scheduler) hasParkedLocked() bool {
 
 // requeueAllParkedLocked moves every parked node back to runnable, in id
 // order, so the draining sweep re-runs them leaf-first. Caller holds mu.
-func (s *Scheduler) requeueAllParkedLocked() {
+func (s *Scheduler) requeueAllParkedLocked() bool {
 	var parked []*node
 	for _, n := range s.nodes {
 		if n.state == stateParked {
@@ -694,9 +741,24 @@ func (s *Scheduler) requeueAllParkedLocked() {
 		}
 	}
 	slices.SortFunc(parked, func(a, b *node) int { return a.id.Compare(b.id) })
+	queued := false
 	for _, n := range parked {
-		s.unparkLocked(n)
+		grant := n.drain < s.draining
+		if n.content != nil && len(n.content.Suppliers) > 0 && s.draining == manifest.DrainForce {
+			for i := range n.content.Suppliers {
+				o := &n.content.Suppliers[i]
+				word := o.Word.Load()
+				grant = grant || o.Cut != word
+				o.Cut = word
+			}
+		}
+		if grant {
+			s.unparkSelfLocked(n)
+			s.redispatchLocked(n)
+			queued = true
+		}
 	}
+	return queued
 }
 
 // requeueRerunLocked re-queues every terminal rerun node, in id order, so each
@@ -741,6 +803,9 @@ func (s *Scheduler) redispatchLocked(n *node) bool {
 	n.contentRequested = false
 	n.productive = false
 	n.rerunRequested = false
+	if n.opportunity != nil && n.opportunity.Load()&1 == 0 {
+		n.open()
+	}
 	if n.state != stateRunnable {
 		n.state = stateRunnable
 		n.blockedOn = nil
@@ -760,4 +825,20 @@ func (s *Scheduler) finalSweepLocked() {
 			s.unparkSelfLocked(n)
 		}
 	}
+}
+
+func (n *node) open() {
+	if n.opportunity != nil {
+		n.opportunity.Store((n.opportunity.Load() + 2) | 1)
+	}
+	if n.content != nil && n.content.Declaration != nil {
+		n.content = &manifest.ContentWait{Targets: n.content.Targets, Suppliers: n.content.Suppliers}
+	}
+}
+
+func (n *node) exhaust() {
+	if n.opportunity != nil {
+		n.opportunity.Store((n.opportunity.Load() + 2) &^ 1)
+	}
+	n.content = nil
 }

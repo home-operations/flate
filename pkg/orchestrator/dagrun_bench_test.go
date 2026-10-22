@@ -21,14 +21,14 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 			rs := &manifest.ResourceSet{Name: "bench", Namespace: "ns"}
 			s.AddObject(rs)
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-			d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
+			d.Dispatch(b.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 			b.ReportAllocs()
 			for b.Loop() {
 				switch mode {
 				case "controller":
-					c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
+					c.ReconcileNode(b.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 				case "dispatcher":
-					d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
+					d.Dispatch(b.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 				case "observation_reads":
 					before, _ := s.GetArtifact(rs.Named()).(*store.Emission)
 					if s.GetArtifact(rs.Named()) != before {

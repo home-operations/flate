@@ -9,28 +9,29 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
 
-func TestRunWithStatusOutcome_Success(t *testing.T) {
+func TestDispatchNode_Success(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-		func(_ context.Context, obj *manifest.HelmRelease) error {
-			if obj.Name != "app" {
-				t.Errorf("re-read got %q, want app", obj.Name)
-			}
-			return nil
-		},
+	base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(_ context.Context, obj *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+		if obj.Name != "app" {
+			t.Errorf("re-read got %q, want app", obj.Name)
+		}
+		return nil
+	},
 	)
 	got, _ := s.GetStatus(id)
 	if got.Status != store.StatusReady {
@@ -38,17 +39,16 @@ func TestRunWithStatusOutcome_Success(t *testing.T) {
 	}
 }
 
-func TestRunWithStatusOutcome_Failure(t *testing.T) {
+func TestDispatchNode_Failure(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-		func(_ context.Context, _ *manifest.HelmRelease) error {
-			return errors.New("render failed")
-		},
+	base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+		return errors.New("render failed")
+	},
 	)
 	got, _ := s.GetStatus(id)
 	if got.Status != store.StatusFailed {
@@ -59,7 +59,7 @@ func TestRunWithStatusOutcome_Failure(t *testing.T) {
 	}
 }
 
-func TestRunWithStatusOutcome_Panic(t *testing.T) {
+func TestDispatchNode_Panic(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
@@ -73,10 +73,9 @@ func TestRunWithStatusOutcome_Panic(t *testing.T) {
 	var rec any
 	func() {
 		defer func() { rec = recover() }()
-		base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-			func(_ context.Context, _ *manifest.HelmRelease) error {
-				panic("kaboom")
-			},
+		base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+			panic("kaboom")
+		},
 		)
 	}()
 	if rec == nil {
@@ -91,16 +90,15 @@ func TestRunWithStatusOutcome_Panic(t *testing.T) {
 	}
 }
 
-func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
+func TestDispatchNode_MissingObject(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	id := testutil.HelmReleaseID("ns", "ghost")
 	called := false
-	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-		func(_ context.Context, _ *manifest.HelmRelease) error {
-			called = true
-			return nil
-		},
+	base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+		called = true
+		return nil
+	},
 	)
 	if called {
 		t.Error("fn ran for a missing object; expected silent no-op")
@@ -109,15 +107,17 @@ func TestRunWithStatusOutcome_MissingObject(t *testing.T) {
 		t.Error("missing object should not get a status entry")
 	}
 	s.UpdateStatus(id, store.StatusPending, store.ReasonRefetching, "re-fetching")
-	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-		func(context.Context, *manifest.HelmRelease) error { t.Error("missing object reconciled"); return nil })
+	base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(context.Context, *manifest.HelmRelease, manifest.ReconcileAttempt) error {
+		t.Error("missing object reconciled")
+		return nil
+	})
 	got, _ := s.GetStatus(id)
 	if got.Outcome() != store.OutcomeSkipped || got.Message != "object not in store at reconcile time" {
 		t.Fatalf("missing-object status = %+v", got)
 	}
 }
 
-func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
+func TestDispatchNode_PreservesInformativeReadyMessage(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
@@ -138,8 +138,7 @@ func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusReady, tc.reason, tc.message)
 			before, _ := s.GetStatus(id)
-			base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-				func(context.Context, *manifest.HelmRelease) error { return nil })
+			base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(context.Context, *manifest.HelmRelease, manifest.ReconcileAttempt) error { return nil })
 			got, _ := s.GetStatus(id)
 			if got != before {
 				t.Fatalf("Ready snapshot changed: %+v, want %+v", got, before)
@@ -165,8 +164,9 @@ func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 			src := &manifest.OCIRepository{Name: "source", Namespace: "ns"}
 			s.AddObject(src)
 			s.UpdateStatus(src.Named(), store.StatusReady, tc.reason, tc.message)
-			base.RunWithStatusOutcome(t.Context(), c, hr.Named(),
-				func(context.Context, *manifest.HelmRelease) error { return c.SourceSkipped(src.Named(), "source") })
+			c.DispatchNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{}, func(context.Context, *manifest.HelmRelease, manifest.ReconcileAttempt) error {
+				return c.SourceSkipped(src.Named(), "source")
+			})
 			got, _ := s.GetStatus(hr.Named())
 			want := store.OutcomePassed
 			if tc.reason == store.ReasonSkipped {
@@ -183,10 +183,9 @@ func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 			s := store.New()
 			hr := &manifest.HelmRelease{Name: "app"}
 			s.AddObject(hr)
-			base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "test"), hr.Named(),
-				func(context.Context, *manifest.HelmRelease) error {
-					return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, message)
-				})
+			base.New(s, nil, "test").DispatchNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{}, func(context.Context, *manifest.HelmRelease, manifest.ReconcileAttempt) error {
+				return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, message)
+			})
 			got, _ := s.GetStatus(hr.Named())
 			if got.Outcome() != store.OutcomeSkipped || got.Message != strings.TrimSpace(message) {
 				t.Fatalf("direct skip = %+v", got)
@@ -195,18 +194,17 @@ func TestRunWithStatusOutcome_PreservesInformativeReadyMessage(t *testing.T) {
 	}
 }
 
-func TestRunWithStatusOutcome_PreservesExternalFailure(t *testing.T) {
+func TestDispatchNode_PreservesExternalFailure(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
-	base.RunWithStatusOutcome(t.Context(), base.New(s, nil, "helmrelease"), id,
-		func(_ context.Context, _ *manifest.HelmRelease) error {
-			s.UpdateStatus(id, store.StatusFailed, "", "dependency cycle detected")
-			return nil
-		},
+	base.New(s, nil, "helmrelease").DispatchNode(t.Context(), id, manifest.ReconcileAttempt{}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+		s.UpdateStatus(id, store.StatusFailed, "", "dependency cycle detected")
+		return nil
+	},
 	)
 	got, _ := s.GetStatus(id)
 	if got.Status != store.StatusFailed {
@@ -359,9 +357,12 @@ func TestDispatchNode(t *testing.T) {
 	t.Cleanup(func() { c.Close(); ts.BlockTillDone() })
 
 	var ran atomic.Int64
-	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error { ran.Add(1); return nil }
+	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+		ran.Add(1)
+		return nil
+	}
 	dispatch := func(id manifest.NamedResource) {
-		c.DispatchNode(t.Context(), id, manifest.DrainNone, reconcile)
+		c.DispatchNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, reconcile)
 	}
 
 	// Suspended → preGate bails to Ready/"suspended", no reconcile.
@@ -433,7 +434,7 @@ func TestDispatchNode(t *testing.T) {
 			}
 			c.StartLifecycle()
 			ran := false
-			c.DispatchNode(t.Context(), id, manifest.DrainNone, func(_ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+			c.DispatchNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, func(_ context.Context, _ manifest.BaseManifest, _ manifest.ReconcileAttempt) error {
 				ran = true
 				return nil
 			})
@@ -508,4 +509,72 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	if !handled || err == nil {
 		t.Errorf("preflight error: handled=%v err=%v; want true, non-nil", handled, err)
 	}
+}
+
+func TestReconcile_TypedWait(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindHelmRelease, Group: manifest.HelmReleaseDomain, Name: "reader", Namespace: "apps"}
+	for _, obj := range []manifest.BaseManifest{
+		&manifest.Kustomization{Name: "reader", Namespace: "apps"},
+		&manifest.HelmRelease{Name: "reader", Namespace: "apps"},
+		&manifest.ResourceSet{Name: "reader", Namespace: "apps"},
+		&manifest.GitRepository{Name: "reader", Namespace: "apps"},
+	} {
+		for _, tc := range []struct {
+			name string
+			wait manifest.ReconcileWait
+		}{
+			{"nil", manifest.ReconcileWait{}},
+			{"empty content", manifest.ReconcileWait{Content: &manifest.ContentWait{}}},
+			{"deps", manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}},
+			{"targets", manifest.ReconcileWait{Content: &manifest.ContentWait{Targets: []manifest.NamedResource{id}}}},
+			{"suppliers", manifest.ReconcileWait{Content: &manifest.ContentWait{Suppliers: []manifest.Opportunity{{NamedResource: id}}}}},
+			{"declaration", manifest.ReconcileWait{Content: &manifest.ContentWait{Declaration: &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}}}},
+		} {
+			t.Run(obj.Named().Kind+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				id := obj.Named()
+				st := store.New()
+				st.AddObject(obj)
+				st.UpdateStatus(id, store.StatusPending, "", "waiting")
+				c := base.New(st, task.NewBounded(2), "test")
+				invocation := manifest.ReconcileAttempt{Drain: manifest.DrainForce, Content: &manifest.ContentWait{Declaration: obj}}
+				wait := c.DispatchNode(t.Context(), id, invocation, func(_ context.Context, _ manifest.BaseManifest, got manifest.ReconcileAttempt) error {
+					assert.Equal(t, got.Drain, invocation.Drain)
+					assert.Equal(t, got.Content.Declaration, invocation.Content.Declaration)
+					return &depwait.ErrBlocked{ReconcileWait: tc.wait}
+				})
+				assert.Diff(t, wait, tc.wait)
+				assert.Equal(t, wait.Empty(), tc.name == "nil" || tc.name == "empty content")
+				info, _ := st.GetStatus(id)
+				assert.Equal(t, info.Status, store.StatusPending)
+			})
+		}
+	}
+}
+
+func TestDispatchNode_GateReplacement(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	hr := &manifest.HelmRelease{Name: "reader", Namespace: "apps"}
+	hr.Chart.Name = "before"
+	s.AddObject(hr)
+	s.UpdateFailure(hr.Named(), &manifest.DependencyFailedError{Failed: []manifest.NamedResource{testutil.KustomizationID("apps", "dependency")}})
+	fresh := hr.Clone()
+	fresh.Chart.Name = "after"
+	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id == hr.Named() && payload.(store.StatusInfo).Status == store.StatusPending {
+			s.AddObject(fresh)
+		}
+	}, false)
+	t.Cleanup(unsub)
+	c := base.New(s, task.NewBounded(2), "test")
+	called := false
+	wait := c.DispatchNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{}, func(_ context.Context, obj *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+		called = true
+		assert.Equal(t, obj.Chart.Name, "after")
+		return nil
+	})
+	assert.Equal(t, called, true)
+	assert.Equal(t, wait.Empty(), true)
 }

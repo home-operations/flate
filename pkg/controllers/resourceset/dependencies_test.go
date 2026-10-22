@@ -1,6 +1,7 @@
 package resourceset
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -88,7 +89,11 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			assert.Diff(t, deps, want)
 			w := &depwait.Waiter{Store: c.Store}
 			assert.Equal(t, rs.DependsOn[0].Ready, false)
-			assert.Equal(t, w.Classify(deps[0], manifest.DrainNone).Kind, depwait.ClassBlocked)
+			w.Dependencies = deps[:1]
+			var result depwait.Resolution
+			w.Classify(manifest.ReconcileAttempt{}, &result)
+			_, blocked := errors.AsType[*depwait.ErrBlocked](result.Err())
+			assert.Equal(t, blocked, true)
 		})
 	}
 }

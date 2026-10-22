@@ -6,6 +6,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -16,10 +17,10 @@ func BenchmarkDispatchNodeReady(b *testing.B) {
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusReady, "", "")
 	c := base.New(st, nil, "benchmark")
-	reconcile := func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil }
+	reconcile := func(context.Context, *manifest.HelmRelease, manifest.ReconcileAttempt) error { return nil }
 	b.ReportAllocs()
 	for b.Loop() {
-		c.DispatchNode(b.Context(), obj.Named(), manifest.DrainNone, reconcile)
+		c.DispatchNode(b.Context(), obj.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}, reconcile)
 	}
 }
 
@@ -35,7 +36,8 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 			id := testutil.HelmReleaseID("apps", "consumer")
 			b.ReportAllocs()
 			for b.Loop() {
-				_ = c.Require(b.Context(), id, deps, manifest.DrainNone)
+				var result depwait.Resolution
+				_ = c.Require(&depwait.Waiter{Parent: id, Dependencies: deps}, manifest.ReconcileAttempt{}, &result)
 			}
 		})
 	}

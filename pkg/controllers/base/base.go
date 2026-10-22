@@ -9,7 +9,7 @@
 // Suspend/Filter pre-gate — lives here exactly once.
 //
 // The package also owns the panic-recovery + status-transition harness
-// (RunWithStatusOutcome) that surrounds individual reconcile bodies.
+// (DispatchNode) that surrounds individual reconcile bodies.
 package base
 
 import (
@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -308,42 +307,11 @@ func (c *Controller) filterActive() bool {
 	return c.filter != nil && c.filter.Enabled()
 }
 
-// Require requests readiness for each compact prerequisite; statusless targets
-// need only existence. Blocked gates take precedence over failures so a producible
-// reference cannot be discarded. Callers own their progress status writes.
-func (c *Controller) Require(
-	_ context.Context,
-	id manifest.NamedResource,
-	deps []manifest.DependencyRef,
-	level manifest.DrainLevel,
-) error {
-	w := depwait.Waiter{
-		Store: c.Store, Parent: id,
-		Existence: c.existence, AllowMissingCRDs: c.allowMissingCRDs,
-	}
-	var blocked []manifest.NamedResource
-	var failed *manifest.DependencyFailedError
-	for _, dep := range deps {
-		switch cl := w.Classify(dep, level); cl.Kind {
-		case depwait.ClassReady:
-		case depwait.ClassFailed:
-			if failed == nil {
-				failed = &manifest.DependencyFailedError{Parent: id, Reasons: make(map[manifest.NamedResource]string)}
-			}
-			failed.Failed = append(failed.Failed, dep.NamedResource)
-			failed.Reasons[dep.NamedResource] = cl.Message
-		case depwait.ClassBlocked:
-			blocked = append(blocked, dep.NamedResource)
-		}
-	}
-	if len(blocked) > 0 {
-		return &depwait.ErrBlocked{Deps: blocked}
-	}
-	if failed != nil {
-		slices.SortFunc(failed.Failed, manifest.NamedResource.Compare)
-		return failed
-	}
-	return nil
+// Require classifies one invocation into a zero-valued caller-owned resolution.
+func (c *Controller) Require(w *depwait.Waiter, attempt manifest.ReconcileAttempt, result *depwait.Resolution) error {
+	w.Store, w.Existence, w.AllowMissingCRDs = c.Store, c.existence, c.allowMissingCRDs
+	w.Classify(attempt, result)
+	return result.Err()
 }
 
 var errSuspended = errors.New("reconcile suspended")
@@ -353,15 +321,16 @@ var errSuspended = errors.New("reconcile suspended")
 // retain their snapshot when absent. A structural parent may have re-emitted a
 // changed spec while this object was parked. A suspended canonical object is
 // marked Ready/suspended and returns an internal stop error consumed by
-// RunWithStatusOutcome; callers MUST propagate that error before rendering or
+// DispatchNode; callers MUST propagate that error before rendering or
 // emitting children.
 func (c *Controller) RequireRefresh[T manifest.BaseManifest](
-	ctx context.Context,
+	_ context.Context,
 	id manifest.NamedResource,
 	deps []manifest.DependencyRef,
 	level manifest.DrainLevel,
 ) (T, bool, error) {
-	if err := c.Require(ctx, id, deps, level); err != nil {
+	var result depwait.Resolution
+	if err := c.Require(&depwait.Waiter{Parent: id, Dependencies: deps}, manifest.ReconcileAttempt{Drain: level}, &result); err != nil {
 		var zero T
 		return zero, false, err
 	}
@@ -372,114 +341,68 @@ func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 	return obj, ok, nil
 }
 
-// recoverPanic catches a panic from the current goroutine and marks id
-// StatusFailed with a "panic: <r>" message so the orchestrator
-// surfaces it. log is the controller's pre-bound logger (Logger()); the
-// panic is recorded under its controller=<name> attribute.
-//
-// After recording status, re-raises the panic so the enclosing
-// task.Service.Go increments its failures counter — a panicked
-// reconcile MUST count against the orchestrator's failure gate, not
-// silently masquerade as success when Service.Failures() is consulted
-// for the final exit-code decision.
-func recoverPanic(s *store.Store, id manifest.NamedResource, log *slog.Logger) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	log.Error("panic during reconcile", "id", id.String(), "panic", r)
-	s.UpdateStatus(id, store.StatusFailed, "", fmt.Sprintf("panic: %v", r))
-	panic(r)
-}
-
-// RunWithStatusOutcome re-reads the stored object, runs its reconcile body,
-// and records a terminal status under panic recovery. Informative Ready
-// messages and externally recorded failures MUST survive a no-op reconcile.
-// A missing object is skipped. A blocked dependency set is returned without
-// marking Failed so the scheduler can park and re-run the node.
-func RunWithStatusOutcome[T manifest.BaseManifest](
+// DispatchNode gates and reconciles one invocation, retaining any typed wait.
+func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	ctx context.Context,
-	c *Controller,
 	id manifest.NamedResource,
-	fn func(context.Context, T) error,
-) []manifest.NamedResource {
+	attempt manifest.ReconcileAttempt,
+	fn func(context.Context, T, manifest.ReconcileAttempt) error,
+) manifest.ReconcileWait {
 	s := c.Store
-	defer recoverPanic(s, id, c.log)
+	prior, _ := s.GetStatus(id)
+	if obj, ok := s.Get[T](id); ok {
+		if c.preGate(obj) {
+			return manifest.ReconcileWait{}
+		}
+		if c.filterActive() && !c.filter.ShouldReconcile(id) {
+			s.UpdateStatus(id, store.StatusReady, store.ReasonUnchanged, "unchanged")
+			return manifest.ReconcileWait{}
+		}
+		if msg, failed := c.PreflightFailure(id); failed {
+			s.UpdateStatus(id, store.StatusFailed, "", msg)
+			return manifest.ReconcileWait{}
+		}
+		if prior.IsDependencyFailure() {
+			s.UpdateStatus(id, store.StatusPending, "", "")
+		}
+	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		c.log.Error("panic during reconcile", "id", id.String(), "panic", r)
+		s.UpdateStatus(id, store.StatusFailed, "", fmt.Sprintf("panic: %v", r))
+		// Re-panic so task.Service records the failed callback.
+		panic(r)
+	}()
+	// Gate status listeners may replace the object; the body must re-read it.
 	obj, ok := s.Get[T](id)
 	if !ok {
-		// Object deleted (or wrong type) between discovery/enqueue and run.
-		// Write a terminal Ready with a brief reason so dependents unblock and
-		// the testrunner reports cleanly — a vanished resource is the same
-		// outcome real Flux sees when the CR is deleted.
 		if info, has := s.GetStatus(id); has && info.Status != store.StatusReady {
 			s.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "object not in store at reconcile time")
 		}
-		return nil
+		return manifest.ReconcileWait{}
 	}
-	if err := fn(ctx, obj); err != nil {
-		if errors.Is(err, errSuspended) {
-			return nil
-		}
-		// A dependency gate is unsatisfied. Surface the blocked deps WITHOUT
-		// writing Failed — the node keeps the Pending status the body wrote and
-		// stays parkable + re-runnable.
+	err := fn(ctx, obj, attempt)
+	switch {
+	case errors.Is(err, errSuspended):
+	case err != nil:
 		if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
-			return blocked.Deps
+			return blocked.ReconcileWait
 		}
 		if errors.Is(err, manifest.ErrSourceSkipped) {
 			s.UpdateStatus(id, store.StatusReady, store.ReasonSkipped,
 				strings.TrimSpace(manifest.TrimSentinelPrefix(err.Error())))
-			return nil
+		} else {
+			s.UpdateFailure(id, err)
 		}
-		s.UpdateFailure(id, err)
-		return nil
-	}
-	if existing, ok := s.GetStatus(id); ok {
-		if existing.Status == store.StatusFailed {
-			return nil
+	default:
+		if existing, ok := s.GetStatus(id); ok && (existing.Status == store.StatusFailed ||
+			existing.Status == store.StatusReady && (existing.Message != "" || existing.Outcome() != store.OutcomePassed)) {
+			return manifest.ReconcileWait{}
 		}
-		if existing.Status == store.StatusReady &&
-			(existing.Message != "" || existing.Outcome() != store.OutcomePassed) {
-			return nil
-		}
+		s.UpdateStatus(id, store.StatusReady, "", "")
 	}
-	s.UpdateStatus(id, store.StatusReady, "", "")
-	return nil
-}
-
-// DispatchNode runs id's reconcile body under the dag engine and reports the
-// blocked dependency set (nil = terminalized). It checks suspension, the
-// unchanged filter, and preflight before RunWithStatusOutcome. level threads the
-// scheduler's fixpoint level into Require. The orchestrator's Dispatcher
-// calls this, routing by Kind, so no per-kind match check is needed here.
-func (c *Controller) DispatchNode[T manifest.BaseManifest](
-	ctx context.Context,
-	id manifest.NamedResource,
-	level manifest.DrainLevel,
-	fn func(context.Context, T, manifest.DrainLevel) error,
-) []manifest.NamedResource {
-	prior, _ := c.Store.GetStatus(id)
-	reconcile := func(ctx context.Context, obj T) error {
-		return fn(ctx, obj, level)
-	}
-	obj, ok := c.Store.Get[T](id)
-	if !ok {
-		// Vanished — RunWithStatusOutcome's vanished branch records a terminal status.
-		return RunWithStatusOutcome[T](ctx, c, id, reconcile)
-	}
-	if c.preGate(obj) {
-		return nil
-	}
-	if c.filterActive() && !c.filter.ShouldReconcile(id) {
-		c.Store.UpdateStatus(id, store.StatusReady, store.ReasonUnchanged, "unchanged")
-		return nil
-	}
-	if msg, failed := c.PreflightFailure(id); failed {
-		c.Store.UpdateStatus(id, store.StatusFailed, "", msg)
-		return nil
-	}
-	if prior.IsDependencyFailure() {
-		c.Store.UpdateStatus(id, store.StatusPending, "", "")
-	}
-	return RunWithStatusOutcome[T](ctx, c, id, reconcile)
+	return manifest.ReconcileWait{}
 }

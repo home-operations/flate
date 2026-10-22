@@ -9,6 +9,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -42,12 +43,30 @@ func BenchmarkSubstitutionProvider_Lookup(b *testing.B) {
 				st.AddObject(cm)
 			}
 			c.Configure(opts, sourcecache.RetryConfig{})
+			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: cm.Name}}}}
+			var resolved depwait.Resolution
+			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks, Supplied: c.substitutionSources}, manifest.ReconcileAttempt{}, &resolved)
+			if err != nil {
+				b.Fatal(err)
+			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if c.substitutionProvider.Data(cm.Named()) != cm {
+				if resolved.Inputs.Data(cm.Named()) != cm {
 					b.Fatal("lookup failed")
 				}
 			}
 		})
+	}
+}
+
+func TestCollectDeps_Allocations(t *testing.T) {
+	id := testutil.KustomizationID("apps", "target")
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
+	st := store.New()
+	c := New(st, nil, nil, false)
+	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)}, sourcecache.RetryConfig{})
+	allocs := testing.AllocsPerRun(100, func() { c.collectDeps(ks) })
+	if allocs > 3 {
+		t.Fatalf("dependency collection allocated %g times, want at most 3", allocs)
 	}
 }

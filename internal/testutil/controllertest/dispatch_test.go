@@ -49,11 +49,11 @@ func TestReconcile_TaskFailures(t *testing.T) {
 			d := Dispatch{
 				Tasks: tasks,
 				ID:    testutil.HelmReleaseID("media", "sonarr"),
-				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel) []manifest.NamedResource {
+				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait {
 					if tc.panics {
 						panic("reconcile failure")
 					}
-					return tc.dependencies
+					return manifest.ReconcileWait{Deps: tc.dependencies}
 				},
 			}
 			before := tasks.Failures()
@@ -76,7 +76,7 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 		Tasks: tasks,
 		Store: st,
 		ID:    id,
-		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel) []manifest.NamedResource {
+		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait {
 			panic("reconcile failure")
 		},
 	}
@@ -85,4 +85,28 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 	assert.Equal(t, info.Status, store.StatusReady)
 	assert.Equal(t, tasks.Failures() > before, true)
 	assert.Equal(t, len(recorder.errors) > 0, true)
+}
+
+func TestReconcile_TypedWait(t *testing.T) {
+	t.Parallel()
+	id := testutil.HelmReleaseID("apps", "reader")
+	for _, tc := range []struct {
+		name string
+		wait manifest.ReconcileWait
+	}{
+		{"nil", manifest.ReconcileWait{}},
+		{"empty content", manifest.ReconcileWait{Content: &manifest.ContentWait{}}},
+		{"dependencies", manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}},
+		{"targets", manifest.ReconcileWait{Content: &manifest.ContentWait{Targets: []manifest.NamedResource{id}}}},
+		{"suppliers", manifest.ReconcileWait{Content: &manifest.ContentWait{Suppliers: []manifest.Opportunity{{NamedResource: id}}}}},
+		{"declaration", manifest.ReconcileWait{Content: &manifest.ContentWait{Declaration: &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dispatch{Tasks: task.NewBounded(2), ID: id, ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait {
+				return tc.wait
+			}}
+			assert.Equal(t, Reconcile(t.Context(), t, d, manifest.DrainForce), tc.name == "nil" || tc.name == "empty content")
+		})
+	}
 }

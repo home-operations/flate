@@ -1,6 +1,9 @@
 package helmrelease
 
 import (
+	"context"
+	"github.com/home-operations/flate/pkg/schedule"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -35,4 +38,53 @@ func publishRawFixture(t *testing.T, c *Controller, obj manifest.BaseManifest) {
 		c.Store.AddObject(root)
 	}
 	c.Emit(root.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}})
+}
+
+func runValuesFixture(t *testing.T, c *Controller, hr *manifest.HelmRelease) store.StatusInfo {
+	t.Helper()
+	dispatch := valuesFixtureDispatcher{c: c, reader: hr.Named()}
+	sched := schedule.New(c.Tasks, dispatch)
+	arrivals := c.Store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		sched.OnArrival(id, id == hr.Named())
+	}, false)
+	defer arrivals()
+	statuses := c.Store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		info := payload.(store.StatusInfo)
+		sched.OnStatusWake(id, info.Status == store.StatusReady, info.Status == store.StatusFailed)
+	}, false)
+	defer statuses()
+	ids := []manifest.NamedResource{hr.Named()}
+	for ref := range manifest.References(hr) {
+		if ref.Use != "valuesFrom" {
+			continue
+		}
+		for _, p := range c.Store.Productions(ref.NamedResource, nil) {
+			if p.Owner != (manifest.NamedResource{}) && p.Owner != hr.Named() && !slices.Contains(ids, p.Owner) {
+				ids = append(ids, p.Owner)
+			}
+		}
+	}
+	sched.Seed(ids)
+	if err := sched.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := c.Store.GetStatus(hr.Named())
+	return info
+}
+
+type valuesFixtureDispatcher struct {
+	c      *Controller
+	reader manifest.NamedResource
+}
+
+func (d valuesFixtureDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	if id != d.reader {
+		d.c.Store.UpdateStatus(id, store.StatusReady, "", "")
+		return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+	}
+	wait := d.c.ReconcileNode(ctx, id, attempt)
+	if !wait.Empty() {
+		return schedule.OutcomeBlocked, wait, false
+	}
+	return schedule.OutcomeTerminal, wait, false
 }

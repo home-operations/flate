@@ -992,3 +992,29 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 		})
 	}
 }
+
+func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	id := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input", Namespace: "apps"}
+	raw := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": "visible"}}
+	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "owner", Namespace: "apps"}
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{{Owner: owner}}}}})
+	st.AddObject(raw)
+	facts := st.ReferenceFacts(id, nil)
+	if facts.Data != raw || facts.Accepted {
+		t.Fatalf("covered facts=%+v", facts)
+	}
+	if NewStoreProvider(st, true).Data(id) != raw {
+		t.Fatal("data-only provider rejected visible prediction")
+	}
+	first, second := facts.Productions, facts.Productions
+	assert.Diff(t, second, first)
+	assert.Diff(t, st.Productions(id, nil), first)
+	visits := 0
+	for range facts.Productions {
+		visits++
+		break
+	}
+	assert.Equal(t, visits, 1)
+}

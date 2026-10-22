@@ -49,7 +49,7 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					o.tasks.Go(ctx, "producer", func(ctx context.Context) {
 						select {
 						case <-release:
-							d.Dispatch(ctx, producer, manifest.DrainNone)
+							d.Dispatch(ctx, producer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 						case <-ctx.Done():
 						}
 					})
@@ -59,8 +59,8 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					}
 					attempt := make(chan []manifest.NamedResource, 1)
 					o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-						_, blocked, _ := d.Dispatch(ctx, consumer, manifest.DrainNone)
-						attempt <- blocked
+						_, blocked, _ := d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+						attempt <- blocked.Deps
 					})
 					var blocked []manifest.NamedResource
 					select {
@@ -75,7 +75,9 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					if slices.Contains(blocked, producer) == producerFirst {
 						t.Fatalf("consumer blockers = %v, producer first = %t", blocked, producerFirst)
 					}
-					o.tasks.Go(ctx, "consumer", func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) })
+					o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
+						d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+					})
 					o.tasks.BlockTillDone()
 					output, _ := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "output"})
 					if output == nil || output.Data["version"] != "4.6.2" {
@@ -147,7 +149,9 @@ spec:
 					o.configureControllers()
 					d := dagDispatcher{o}
 					parent := testutil.KustomizationID("apps", "parent")
-					o.tasks.Go(t.Context(), "parent", func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone) })
+					o.tasks.Go(t.Context(), "parent", func(ctx context.Context) {
+						d.Dispatch(ctx, parent, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+					})
 					o.tasks.BlockTillDone()
 					owners := []manifest.NamedResource{
 						{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "a"},
@@ -159,13 +163,13 @@ spec:
 					}
 					release, done := make(chan struct{}), make(chan struct{})
 					o.tasks.Go(t.Context(), "first", func(ctx context.Context) {
-						d.Dispatch(ctx, order[0], manifest.DrainNone)
+						d.Dispatch(ctx, order[0], manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 						close(release)
 					})
 					o.tasks.Go(t.Context(), "second", func(ctx context.Context) {
 						select {
 						case <-release:
-							d.Dispatch(ctx, order[1], manifest.DrainNone)
+							d.Dispatch(ctx, order[1], manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 						case <-ctx.Done():
 						}
 						close(done)
@@ -173,7 +177,9 @@ spec:
 					<-done
 					o.tasks.BlockTillDone()
 					consumer := testutil.KustomizationID("apps", "consumer")
-					o.tasks.Go(t.Context(), "consumer", func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) })
+					o.tasks.Go(t.Context(), "consumer", func(ctx context.Context) {
+						d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+					})
 					o.tasks.BlockTillDone()
 					if failures := o.store.FailedResources(); len(failures) != 0 {
 						t.Fatalf("render failed: %v", failures)

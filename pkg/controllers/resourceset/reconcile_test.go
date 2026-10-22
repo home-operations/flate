@@ -120,7 +120,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			})
 			tasks.Go(t.Context(), "render", func(ctx context.Context) {
 				defer close(rendered)
-				if blocked := c.ReconcileNode(ctx, id, manifest.DrainNone); len(blocked) != 0 {
+				if blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 					t.Errorf("blocked on %v", blocked)
 				}
 			})

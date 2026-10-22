@@ -330,7 +330,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 			}
 			s.AddObject(rs)
-			if blocked := c.ReconcileNode(t.Context(), rs.Named(), 1); len(blocked) != 0 {
+			if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: 1}); !blocked.Empty() {
 				t.Fatalf("initial render blocked: %v", blocked)
 			}
 			before := s.GetArtifact(rs.Named())
@@ -359,7 +359,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				c.StartLifecycle()
 				t.Cleanup(c.Close)
 			}
-			if blocked := c.ReconcileNode(t.Context(), rs.Named(), 1); len(blocked) != 0 {
+			if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: 1}); !blocked.Empty() {
 				t.Fatalf("final render blocked: %v", blocked)
 			}
 			info, _ := s.GetStatus(rs.Named())

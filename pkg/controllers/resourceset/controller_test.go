@@ -93,13 +93,13 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 
 	// First dispatch (no RSIP yet): the named dep is absent, so the node
 	// blocks rather than terminalizing.
-	blocked := c.ReconcileNode(context.Background(), rs.Named(), 0)
-	if len(blocked) != 1 {
+	blocked := c.ReconcileNode(context.Background(), rs.Named(), manifest.ReconcileAttempt{Drain: 0})
+	if len(blocked.Deps) != 1 {
 		t.Fatalf("first dispatch blocked = %v, want [rsip] (parked on the named RSIP)", blocked)
 	}
 	want := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
-	if blocked[0] != want {
-		t.Fatalf("blocked on %v, want %v", blocked[0], want)
+	if blocked.Deps[0] != want {
+		t.Fatalf("blocked on %v, want %v", blocked.Deps[0], want)
 	}
 
 	// RSIP arrives → re-dispatch renders the Widget from its inputs.
@@ -139,7 +139,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	}
 	for _, matches := range []bool{true, false} {
 		started, written := make(chan struct{}), make(chan struct{})
-		var blocked []manifest.NamedResource
+		var blocked manifest.ReconcileWait
 		tasks.Go(t.Context(), "membership", func(context.Context) {
 			tasks.YieldSlot(func() { <-started })
 			color := "red"
@@ -152,12 +152,12 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 		tasks.Go(t.Context(), "selector", func(ctx context.Context) {
 			close(started)
 			tasks.YieldSlot(func() { <-written })
-			blocked = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
+			blocked = c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 		})
 		tasks.BlockTillDone()
 		art, _ := s.GetArtifact(rs.Named()).(*store.Emission)
 		info, _ := s.GetStatus(rs.Named())
-		if len(blocked) != 0 || tasks.Failures() != 0 || info.Status != store.StatusReady || hasRenderedDoc(art, "ConfigMap", "rsip") != matches {
+		if !blocked.Empty() || tasks.Failures() != 0 || info.Status != store.StatusReady || hasRenderedDoc(art, "ConfigMap", "rsip") != matches {
 			t.Fatalf("membership=%v: blocked=%v status=%+v artifact=%+v", matches, blocked, info, art)
 		}
 		if rs.InputsFrom[0].Selector.MatchLabels["color"] != "blue" {
@@ -352,7 +352,7 @@ metadata: {name: output}`}
 		}
 	}, false)
 	t.Cleanup(unsub)
-	c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 	if info, _ := s.GetStatus(rs.Named()); info.Status != store.StatusReady {
 		t.Errorf("final status = %+v, want Ready", info)
 	}
@@ -377,8 +377,8 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.AddObject(obj)
-			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.DrainNone)
-			if len(blocked) != 0 {
+			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+			if !blocked.Empty() {
 				t.Fatalf("disabled ResourceSet blocked on %v", blocked)
 			}
 			info, _ := s.GetStatus(obj.Named())
@@ -449,7 +449,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			}, false)
 			t.Cleanup(unsub)
 			tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-				if blocked := c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+				if blocked := c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 					t.Errorf("blocked on %v", blocked)
 				}
 			})
@@ -508,7 +508,7 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	if len(deps) != 1 || deps[0].NamedResource != want {
 		t.Fatalf("input dependencies = %+v, want edge to %s", deps, want)
 	}
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 1 || blocked[0] != want {
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); len(blocked.Deps) != 1 || blocked.Deps[0] != want {
 		t.Fatalf("blocked = %v, want [%s]", blocked, want)
 	}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {

@@ -39,7 +39,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
 			}
 			ran := false
-			blocked := c.DispatchNode(t.Context(), id, manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			blocked := c.DispatchNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
 				ran = true
 				info, _ := st.GetStatus(id)
 				if got := info.BlockedBy(); len(got) != 0 {
@@ -81,10 +81,10 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			if got := info.BlockedBy(); !slices.Equal(got, wantBlockers) {
 				t.Fatalf("blockers=%v, want %v", got, wantBlockers)
 			}
-			if mode == "blocked" && !slices.Equal(blocked, []manifest.NamedResource{fresh}) {
+			if mode == "blocked" && !slices.Equal(blocked.Deps, []manifest.NamedResource{fresh}) {
 				t.Fatalf("parked dependencies=%v", blocked)
 			}
-			if mode != "blocked" && len(blocked) != 0 {
+			if mode != "blocked" && !blocked.Empty() {
 				t.Fatalf("terminal result had parked dependencies: %v", blocked)
 			}
 			if wantStatus == store.StatusReady {

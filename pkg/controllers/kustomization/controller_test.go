@@ -77,12 +77,6 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 				want = append(want, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "true"})
 			}
 			want = append(want, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"})
-			if !tc.noData {
-				want = append(want, manifest.DependencyRef{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"})
-				for _, producer := range producers {
-					want = append(want, manifest.DependencyRef{NamedResource: producer})
-				}
-			}
 			assert.Diff(t, deps, want)
 			if len(filter.KeepNames()) != size || len(consumer.DependsOn) != 2 {
 				t.Error("ordering collection must preserve keep and input edges")

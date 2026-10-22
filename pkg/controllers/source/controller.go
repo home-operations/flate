@@ -89,20 +89,19 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 	return obj == nil && id.Group == manifest.SourceDomain || manifest.KindOf(obj).Runnable
 }
 
-// ReconcileNode runs id's source fetch under the dag engine, returning the
-// blocked Secret dependencies, or nil when the fetch terminalizes. The
-// orchestrator's scheduler Dispatcher calls this for source-kind nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, c.reconcile)
+// ReconcileNode runs one source invocation and returns any remaining typed wait.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
 // reconcile fetches the source artifact via the registered Fetcher and
-// writes the result through base.RunWithStatusOutcome so panic recovery,
+// writes the result through base.DispatchNode so panic recovery,
 // final status writes, and ErrSourceSkipped routing match the
 // KS/HR controllers' shape. Returning ErrSourceSkipped yields a
 // Ready/ReasonSkipped status; ErrBlocked parks the fetch for a dependency
 // retry; any other error yields Failed.
-func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
+func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, invocation manifest.ReconcileAttempt) error {
+	level := invocation.Drain
 	id := obj.Named()
 	facts := obj.(sourceFacts)
 	if facts.ExistenceOnly() {

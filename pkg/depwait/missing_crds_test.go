@@ -37,13 +37,13 @@ func TestClassify_MissingCRDs(t *testing.T) {
 					t.Parallel()
 					s := store.New()
 					ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
-					want := ClassBlocked
+					want := classBlocked
 					msg := ""
 					if drain >= manifest.DrainCascade {
-						want = ClassFailed
+						want = classFailed
 						msg = "dependency not found"
 						if enabled {
-							want = ClassReady
+							want = classReady
 							msg = ""
 						}
 					}
@@ -55,7 +55,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						ref.Namespace = "explicit"
 					case "object", "present invalid expression":
 						s.AddObject(&manifest.RawObject{APIVersion: ref.Group + "/v1", Kind: ref.Kind, Name: ref.Name})
-						want = ClassReady
+						want = classReady
 						msg = ""
 						if state == "present invalid expression" {
 							ref.ReadyExpr = "dep.(("
@@ -69,32 +69,32 @@ func TestClassify_MissingCRDs(t *testing.T) {
 							status = store.StatusFailed
 						}
 						s.UpdateStatus(ref.NamedResource, status, "", "state")
-						want = ClassReady
+						want = classReady
 						msg = ""
 					case "promoted", "promotion miss":
 						e = &crdPromotion{store: s, materialize: state == "promoted"}
 						if e.materialize {
-							want = ClassReady
+							want = classReady
 							msg = ""
 						}
 					case "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList":
 						ref.Kind = state
 						ref.Namespace = "apps"
-						want = ClassBlocked
+						want = classBlocked
 						msg = ""
 						if drain >= manifest.DrainCascade {
-							want = ClassFailed
+							want = classFailed
 							msg = "dependency not found"
 						}
 					case "invalid expression":
 						ref.ReadyExpr = "dep.(("
-						want = ClassFailed
+						want = classFailed
 					}
 					w := &Waiter{Store: s, AllowMissingCRDs: enabled}
 					if e != nil {
 						w.Existence = e
 					}
-					got := w.Classify(ref, drain)
+					got := w.classify(ref, drain, w.Existence)
 					assert.Equal(t, got.Kind, want)
 					if state == "invalid expression" {
 						if !strings.HasPrefix(got.Message, "readyExpr:") {
@@ -124,7 +124,7 @@ func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 	for _, enabled := range []bool{false, true} {
 		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
-		if got := testing.AllocsPerRun(100, func() { w.Classify(ref, manifest.DrainCascade) }); got != 0 {
+		if got := testing.AllocsPerRun(100, func() { w.classify(ref, manifest.DrainCascade, w.Existence) }); got != 0 {
 			t.Fatalf("enabled=%t allocations=%v", enabled, got)
 		}
 	}

@@ -23,10 +23,10 @@ func (emptySourceFetcher) Fetch(context.Context, manifest.BaseManifest, sourceca
 	return nil, nil
 }
 
-type arrivalDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
+type arrivalDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool)
 
-func (d arrivalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-	return d(ctx, id, level)
+func (d arrivalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	return d(ctx, id, attempt)
 }
 
 func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
@@ -57,7 +57,7 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 			attempted := make(chan struct{})
 			var dispatched atomic.Int64
 			var completed atomic.Bool
-			d := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+			d := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
 				switch id {
 				case producer:
 					o.tasks.YieldSlot(func() { <-attempted })
@@ -65,14 +65,14 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 				case consumer:
 					if o.store.GetObject(obj.Named()) == nil {
 						close(attempted)
-						return schedule.OutcomeBlocked, []schedule.NodeID{obj.Named()}, false
+						return schedule.OutcomeBlocked, manifest.ReconcileWait{Deps: []schedule.NodeID{obj.Named()}}, false
 					}
 					completed.Store(true)
 				case obj.Named():
 					dispatched.Add(1)
 					return dagDispatcher{o}.Dispatch(ctx, id, level)
 				}
-				return schedule.OutcomeTerminal, nil, false
+				return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
 			})
 			sched := schedule.New(o.tasks, d)
 			unsubscribe := o.watchDAG(sched)
@@ -102,15 +102,15 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	o.configureControllers()
 	d := dagDispatcher{o}
 	victim, ghost := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "ghost")
-	out, deps, rerun := d.Dispatch(t.Context(), victim, manifest.DrainCascade)
-	if rerun || out != schedule.OutcomeDependencyFailed || !slices.Equal(deps, []manifest.NamedResource{ghost}) {
+	out, deps, rerun := d.Dispatch(t.Context(), victim, manifest.ReconcileAttempt{Drain: manifest.DrainCascade})
+	if rerun || out != schedule.OutcomeDependencyFailed || !slices.Equal(deps.Deps, []manifest.NamedResource{ghost}) {
 		t.Fatalf("derived failure = %v/%v, want ghost blocker", out, deps)
 	}
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
 	o.store.UpdateStatus(ghost, store.StatusReady, "", "")
-	out, deps, rerun = d.Dispatch(t.Context(), victim, manifest.DrainNone)
+	out, deps, rerun = d.Dispatch(t.Context(), victim, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 	info, _ := o.store.GetStatus(victim)
-	if rerun || out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
+	if rerun || out != schedule.OutcomeTerminal || !deps.Empty() || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
 		t.Fatalf("recovery = %v/%v status=%+v blockers=%v failures=%v", out, deps, info, info.BlockedBy(), o.store.FailedResources())
 	}
 	ks, _ := o.store.Get[*manifest.Kustomization](victim)
@@ -118,9 +118,9 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	ks.Path = "./missing-directory"
 	o.store.AddObject(ks)
 	o.store.UpdateFailure(victim, &manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{ghost}})
-	out, deps, rerun = d.Dispatch(t.Context(), victim, manifest.DrainNone)
+	out, deps, rerun = d.Dispatch(t.Context(), victim, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 	info, _ = o.store.GetStatus(victim)
-	if rerun || out != schedule.OutcomeTerminal || len(deps) != 0 || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
+	if rerun || out != schedule.OutcomeTerminal || !deps.Empty() || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
 		t.Fatalf("primary failure misclassified = %v/%v status=%+v blockers=%v", out, deps, info, info.BlockedBy())
 	}
 	t.Run("released pin recovery", func(t *testing.T) {
@@ -144,8 +144,8 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
 		o.store.UpdateStatus(repo.Named(), store.StatusReady, "", "")
 		attempted, acquired := make(chan struct{}), make(chan struct{})
-		dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-			assert.Equal(t, level, manifest.DrainNone)
+		dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+			assert.Equal(t, level.Drain, manifest.DrainNone)
 			if id == repo.Named() {
 				o.tasks.YieldSlot(func() {
 					select {
@@ -162,7 +162,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 			}
 			out, deps, rerun := d.Dispatch(ctx, id, level)
 			if out == schedule.OutcomeBlocked {
-				assert.Diff(t, deps, []schedule.NodeID{repo.Named()})
+				assert.Diff(t, deps, manifest.ReconcileWait{Deps: []schedule.NodeID{repo.Named()}})
 				close(attempted)
 				// Ready must precede the consumer's first blocked-edge registration.
 				o.tasks.YieldSlot(func() {

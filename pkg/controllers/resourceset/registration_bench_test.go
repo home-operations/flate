@@ -55,7 +55,7 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 						}
 						versions[i] = &fresh
 					}
-					c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
+					c.ReconcileNode(b.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 					var renders atomic.Int64
 					unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
 						if id == rs.Named() {
@@ -74,7 +74,7 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 									defer start()
 									start()
 									tasks.YieldSlot(func() { <-written })
-									c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
+									c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 								} else {
 									s.GetObject(pivot.Named())
 								}
@@ -165,7 +165,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							publishResourceSetDocuments(b, c, sets[i].Named(), []map[string]any{manifest.DeepCopyMap(artifacts[i].Manifests[0])})
 							tasks.Go(b.Context(), "equal", func(ctx context.Context) {
 								dispatches.Add(1)
-								c.ReconcileNode(ctx, sets[i].Named(), manifest.DrainNone)
+								c.ReconcileNode(ctx, sets[i].Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 							})
 						}
 						tasks.BlockTillDone()
@@ -206,11 +206,11 @@ func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 		t.Fatal(blocked)
 	}
 	initial := s.GetArtifact(rs.Named())
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 		t.Fatal(blocked)
 	}
 	if updates.Load() != 1 || s.GetArtifact(rs.Named()) != initial {
@@ -219,7 +219,7 @@ func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 	fresh := *rs
 	fresh.ResourcesTemplate += "\n"
 	s.AddObject(&fresh)
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone); len(blocked) != 0 {
+	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 		t.Fatal(blocked)
 	}
 	if updates.Load() != 2 || s.GetArtifact(rs.Named()) == initial {

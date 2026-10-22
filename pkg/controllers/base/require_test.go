@@ -108,3 +108,21 @@ func TestRequireRefresh_CanonicalManifest(t *testing.T) {
 		})
 	}
 }
+
+func TestRequire_ReadyAllocations(t *testing.T) {
+	st := store.New()
+	obj := &manifest.Kustomization{Name: "dep", Namespace: "apps"}
+	st.AddObject(obj)
+	st.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+	c := base.New(st, nil, "test")
+	deps := []manifest.DependencyRef{{NamedResource: obj.Named()}}
+	allocs := testing.AllocsPerRun(100, func() {
+		var result depwait.Resolution
+		if err := c.Require(&depwait.Waiter{Dependencies: deps}, manifest.ReconcileAttempt{}, &result); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ready admission allocated %g times, want zero", allocs)
+	}
+}

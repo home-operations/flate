@@ -192,7 +192,9 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			}
 			hr := testutil.HelmReleaseID("apps", "selected")
 			producer := testutil.KustomizationID("flux-system", "producer")
-			if len(res.Manifests[hr]) == 0 || len(res.Blocked[hr]) != 0 {
+			requiredFailure := tc.broken && !tc.optional && !tc.absent
+			_, readerFailed := res.Failed[hr]
+			if (len(res.Manifests[hr]) == 0) != requiredFailure || readerFailed != requiredFailure || len(res.Blocked[hr]) != 0 {
 				t.Fatalf("consumer did not render independently: failed=%v blocked=%v", res.Failed, res.Blocked)
 			}
 			if _, failed := res.Failed[producer]; failed != tc.broken {
@@ -217,12 +219,17 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 				}
 			}
 
-			if (code == 1) != tc.broken || !strings.Contains(stdout, "selected-rendered") {
+			if (code == 1) != tc.broken || strings.Contains(stdout, "selected-rendered") == requiredFailure {
 				t.Fatalf("authored owner policy violated: %d %s\n%s", code, stdout, stderr)
 			}
-			selectedYAML = cmp.Or(selectedYAML, stdout)
-			if stdout != selectedYAML {
-				t.Fatalf("producer health changed selected YAML: want %s, got %s", selectedYAML, stdout)
+			if !requiredFailure {
+				selectedYAML = cmp.Or(selectedYAML, stdout)
+				if stdout != selectedYAML {
+					t.Fatalf("producer health changed selected YAML: want %s, got %s", selectedYAML, stdout)
+				}
+			}
+			if requiredFailure && !strings.Contains(stderr, "values") {
+				t.Fatalf("required input failure missing: %s", stderr)
 			}
 			if tc.chain && (!strings.Contains(stderr, "producer-chain") || !strings.Contains(stderr, "missing-producer-root")) {
 				t.Fatalf("producer's transitive root missing: %s", stderr)

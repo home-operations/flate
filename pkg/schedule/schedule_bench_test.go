@@ -194,13 +194,13 @@ func BenchmarkComplete_Failed(b *testing.B) {
 					s.failedIdx[dep] = map[NodeID]struct{}{testutil.KustomizationID("ns", "other"): {}}
 				}
 				s.inFlight = 1
-				s.complete(nid, OutcomeDependencyFailed, previous, false)
+				s.complete(n, OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: previous}, false)
 				b.ReportAllocs()
 				for b.Loop() {
 					n.state = stateRunning
 					s.inFlight = 1
-					out, failed, _ := s.disp.Dispatch(b.Context(), nid, manifest.DrainNone)
-					s.complete(nid, out, failed, false)
+					out, failed, _ := s.disp.Dispatch(b.Context(), nid, manifest.ReconcileAttempt{})
+					s.complete(n, out, &failed, false)
 					if mode == "Replaced" {
 						if &next[0] == &blocked[0] {
 							next = previous

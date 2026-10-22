@@ -262,7 +262,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	err := c.awaitChartSource(t.Context(), hr, manifest.DrainForce)
+	err := c.awaitChartSource(hr, manifest.DrainForce)
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("chart gate category = %v", err)
 	}
@@ -276,7 +276,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 }
 
 // TestReconcile_DependsOnFailed cascades a dep failure to a non-rendering
-// HR — DependencyFailedError surfaces via RunWithStatusOutcome → Failed status.
+// HR — DependencyFailedError surfaces via DispatchNode → Failed status.
 func TestReconcile_DependsOnFailed(t *testing.T) {
 	t.Parallel()
 	c, st := newTestController(t, nil)
@@ -310,7 +310,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
-	err := c.reconcile(t.Context(), hr, manifest.DrainForce)
+	err := c.reconcile(t.Context(), hr, manifest.ReconcileAttempt{Drain: manifest.DrainForce})
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("parent gate category = %v", err)
 	}
@@ -377,8 +377,8 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 		{"parent", "waiting for parent KS", true, false},
 		{"dependencies_after_parent", "resolving dependencies", true, false},
 		{"dependencies_without_parent", "resolving dependencies", false, false},
-		{"pre_render", "awaiting pre-render references", false, false},
-		{"pre_render_retained", "awaiting pre-render references", true, true},
+		{"pre_render", "resolving pre-render references", false, false},
+		{"pre_render_retained", "resolving pre-render references", true, true},
 	} {
 		t.Run(site.name, func(t *testing.T) {
 			t.Parallel()
@@ -417,7 +417,7 @@ data: {greeting: hi}
 							"values":    map[string]any{"output": "stale-output"},
 						},
 					}
-					if site.message == "awaiting pre-render references" {
+					if site.message == "resolving pre-render references" {
 						input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "{}"}}
 						st.AddObject(input)
 						doc["spec"].(map[string]any)["valuesFrom"] = []any{map[string]any{"kind": manifest.KindConfigMap, "name": input.Name}}
@@ -471,7 +471,7 @@ data: {greeting: hi}
 					}, false)
 					t.Cleanup(unsub)
 					c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-						if blocked := c.ReconcileNode(ctx, id, manifest.DrainNone); len(blocked) != 0 {
+						if blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 							t.Errorf("blocked on %v", blocked)
 						}
 					})
@@ -639,7 +639,7 @@ data:
 					})
 					tasks.Go(t.Context(), "render", func(ctx context.Context) {
 						defer close(rendered)
-						if blocked := c.ReconcileNode(ctx, id, manifest.DrainNone); len(blocked) != 0 {
+						if blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 							t.Errorf("blocked on %v", blocked)
 						}
 					})

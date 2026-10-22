@@ -31,7 +31,7 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 				st.UpdateStatus(ks.SourceID(), store.StatusFailed, "", "fetch failed")
 			}
 			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
-				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade); len(blocked) != 0 {
+				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainCascade}); !blocked.Empty() {
 					t.Errorf("blocked on %v", blocked)
 				}
 			})

@@ -1099,6 +1099,8 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: renderer, Source: source}}}, bare: {Productions: []manifest.Production{{Owner: fileOwner, Source: other, Authored: authored, Path: "source/input.yaml", File: "input.yaml"}}}}}
 				s.SetDiscoveryIndex(index)
 				result := s.Productions(target, index)
+				facts := s.ReferenceFacts(target, index)
+				assert.Diff(t, facts.Productions, result)
 				want := !differentSource && !explicitNamespace
 				if got := slices.ContainsFunc(result, func(p manifest.Production) bool { return p.Owner == fileOwner && p.Path != "" }); got != want {
 					t.Fatalf("scoped bridge=%t want %t: %v", got, want, result)
@@ -1268,11 +1270,17 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 		s.AddObject(child.Obj)
 		accept(t, s, q, &Emission{Children: []Child{child}, Manifests: []map[string]any{child.Doc}, Complete: true})
 		snapshot := s.Productions(child.Obj.Named(), nil)
+		facts := s.ReferenceFacts(child.Obj.Named(), nil)
+		assert.Diff(t, facts.Data, child.Obj.(manifest.Data))
+		if !facts.Accepted {
+			t.Fatalf("accepted selected facts=%+v", facts)
+		}
 		want := []manifest.Production{proof, {Owner: q}}
 		accept(t, s, q, &Emission{Complete: true})
 		if got := snapshot; !slices.Equal(got, want) {
 			t.Fatalf("frozen/runtime snapshot changed: got %v, want %v", got, want)
 		}
+		assert.Diff(t, facts.Productions, want)
 		if !slices.Equal(backing, original) {
 			t.Fatalf("query mutated borrowed discovery evidence: got %v, want %v", backing, original)
 		}
@@ -1815,7 +1823,9 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 				if predicted != want {
 					t.Fatalf("predicted = %t, want %t", predicted, want)
 				}
-				if s.GetObject(target) != nil || s.GetArtifact(target) != nil {
+				facts := s.ReferenceFacts(target, nil)
+				assert.Diff(t, facts.Productions, s.Productions(target, nil))
+				if facts.Data != nil || facts.Accepted || s.GetObject(target) != nil || s.GetArtifact(target) != nil {
 					t.Fatal("prediction supplied content")
 				}
 			}
@@ -1942,7 +1952,9 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 				t.Error("retry retained superseded prediction")
 			}
 			for _, id := range []manifest.NamedResource{target, replacement} {
-				if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
+				facts := s.ReferenceFacts(id, nil)
+				assert.Diff(t, facts.Productions, s.Productions(id, nil))
+				if facts.Data != nil || facts.Accepted || s.GetObject(id) != nil || s.GetArtifact(id) != nil {
 					t.Error("prediction supplied content")
 				}
 			}
@@ -2003,5 +2015,10 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 		t.Fatal("identical emission replaced the accepted proposal")
 	}
 	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
-	assert.Diff(t, s.Productions(target, nil), []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}})
+	facts := s.ReferenceFacts(target, nil)
+	assert.Diff(t, facts.Productions, s.Productions(target, nil))
+	assert.Diff(t, facts.Productions, []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}})
+	if facts.Data != nil || facts.Accepted {
+		t.Fatalf("prediction supplied authority: %+v", facts)
+	}
 }

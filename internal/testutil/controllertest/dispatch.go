@@ -15,7 +15,7 @@ type Dispatch struct {
 	Tasks         *task.Service
 	Store         *store.Store
 	ID            manifest.NamedResource
-	ReconcileNode func(context.Context, manifest.NamedResource, manifest.DrainLevel) []manifest.NamedResource
+	ReconcileNode func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait
 }
 
 // Reconcile submits one pass and reports whether it has no blocked dependencies.
@@ -24,7 +24,7 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 	var terminal bool
 	failures := d.Tasks.Failures()
 	d.Tasks.Go(ctx, "test/"+d.ID.String(), func(ctx context.Context) {
-		terminal = len(d.ReconcileNode(ctx, d.ID, drain)) == 0
+		terminal = d.ReconcileNode(ctx, d.ID, manifest.ReconcileAttempt{Drain: drain}).Empty()
 	})
 	d.Tasks.BlockTillDone()
 	if added := d.Tasks.Failures() - failures; added > 0 {

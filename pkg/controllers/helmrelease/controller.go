@@ -85,14 +85,13 @@ func (c *Controller) Start(_ context.Context) {
 	c.StartLifecycle()
 }
 
-// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
-// dependency set (nil = terminalized). The
-// orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, c.reconcile)
+// ReconcileNode runs one HelmRelease invocation and returns any remaining typed wait.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
-func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, invocation manifest.ReconcileAttempt) error {
+	level := invocation.Drain
 	id := hr.Named()
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -155,10 +154,19 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 		return err
 	}
 
-	hr, omitted, err := c.resolvePreRenderValuesFrom(ctx, hr, level)
+	c.SetPendingUnlessReady(id, "resolving pre-render references")
+	fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](ctx, id, nil, level)
 	if err != nil {
 		return err
 	}
+	if ok {
+		hr = fresh
+	}
+	var resolved depwait.Resolution
+	if err := c.Require(&depwait.Waiter{Parent: id, Dependencies: preparePrereqs(hr), Declaration: hr, WipeSecrets: c.WipeSecrets, AllowMissingSecrets: c.allowMissingSecrets}, invocation, &resolved); err != nil {
+		return err
+	}
+	hr, omitted := applyValuesFrom(hr, resolved.Omitted)
 	if err := c.PreflightError(id); err != nil {
 		return err
 	}
@@ -172,7 +180,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// chart" below (after the fingerprint dedup) stays unconditional. See
 	// base.SetPendingUnlessReady (#657/#658).
 	c.SetPendingUnlessReady(id, "resolving chart")
-	hr, err = helm.Prepare(hr, c.Helm.Resolver().HelmChart, values.NewStoreProvider(c.Store, c.WipeSecrets), c.Helm.ValuesCache())
+	hr, err = helm.Prepare(hr, c.Helm.Resolver().HelmChart, resolved.Inputs, c.Helm.ValuesCache())
 	if err != nil {
 		return err
 	}
@@ -181,7 +189,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-secrets).
-	if err := c.awaitChartSource(ctx, hr, level); err != nil {
+	if err := c.awaitChartSource(hr, level); err != nil {
 		return err
 	}
 	// A HelmRepository is just a registry/index base — its chart has no
@@ -194,7 +202,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, le
 	// dance.
 	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
-		if err := c.awaitChartSource(ctx, hr, level); err != nil {
+		if err := c.awaitChartSource(hr, level); err != nil {
 			return err
 		}
 	}
@@ -369,7 +377,7 @@ func (c *Controller) collectDeps(hr *manifest.HelmRelease) []manifest.Dependency
 
 // awaitChartSource prefers the resolved source to the authored chart and propagates
 // source soft skips. Require parks on fetch completion before chart lookup.
-func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+func (c *Controller) awaitChartSource(hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 	var deps []manifest.DependencyRef
 	var chart manifest.DependencyRef
 	for ref := range manifest.References(hr) {
@@ -383,7 +391,8 @@ func (c *Controller) awaitChartSource(ctx context.Context, hr *manifest.HelmRele
 	if len(deps) == 0 {
 		deps = append(deps, chart)
 	}
-	if err := c.Require(ctx, hr.Named(), deps, level); err != nil {
+	var result depwait.Resolution
+	if err := c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: deps}, manifest.ReconcileAttempt{Drain: level}, &result); err != nil {
 		return err
 	}
 	for _, dep := range deps {
@@ -452,10 +461,6 @@ func preparePrereqs(hr *manifest.HelmRelease) []manifest.DependencyRef {
 		switch ref.Use {
 		case "chart", "source":
 			if ref.Kind == manifest.KindHelmChart && hr.Chart.Version == "" {
-				out = append(out, ref.DependencyRef)
-			}
-		case "valuesFrom":
-			if !ref.Optional {
 				out = append(out, ref.DependencyRef)
 			}
 		}

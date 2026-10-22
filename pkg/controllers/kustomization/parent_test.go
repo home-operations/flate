@@ -1,6 +1,8 @@
 package kustomization
 
 import (
+	"errors"
+	"github.com/home-operations/flate/pkg/depwait"
 	"slices"
 	"strings"
 	"testing"
@@ -77,7 +79,7 @@ func TestCollectDeps_NoParentNoExtraDep(t *testing.T) {
 	}
 }
 
-func TestCollectDeps_SubstitutionProducers(t *testing.T) {
+func TestResolve_SubstitutionProducers(t *testing.T) {
 	t.Parallel()
 	consumer := testutil.KustomizationID("apps", "consumer")
 	producer := testutil.KustomizationID("apps", "producer")
@@ -105,22 +107,39 @@ func TestCollectDeps_SubstitutionProducers(t *testing.T) {
 			c := New(store.New(), nil, nil, false)
 			c.Configure(Options{Index: index}, sourcecache.RetryConfig{})
 			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}}}
-			var got []manifest.NamedResource
-			for _, dep := range c.collectDeps(ks) {
-				got = append(got, dep.NamedResource)
+
+			var resolved depwait.Resolution
+			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks}, manifest.ReconcileAttempt{}, &resolved)
+			blocked, waiting := errors.AsType[*depwait.ErrBlocked](err)
+			var want []manifest.NamedResource
+			for _, supplier := range append(slices.Clone(tc.producers), tc.owners...) {
+				if supplier != consumer && tc.ref.Name != "" && (tc.ref.Kind == manifest.KindConfigMap || tc.ref.Kind == manifest.KindSecret) {
+					want = append(want, supplier)
+				}
 			}
-			if !slices.Equal(got, tc.want) {
-				t.Fatalf("dependencies = %v, want %v", got, tc.want)
+			if len(want) > 0 {
+				if !waiting {
+					t.Fatalf("supplier was not bound: %v", err)
+				}
+				var got []manifest.NamedResource
+				for _, supplier := range blocked.Content.Suppliers {
+					got = append(got, supplier.NamedResource)
+				}
+				if !slices.Equal(got, want) {
+					t.Fatalf("suppliers=%v want=%v", got, want)
+				}
+			} else if tc.ref.Kind == manifest.KindConfigMap && tc.ref.Name != "" && !tc.ref.Optional && !slices.Contains(tc.producers, consumer) {
+				if !waiting || !slices.Contains(blocked.Deps, cm) {
+					t.Fatalf("required input did not wait: %+v %v", resolved, err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
 			}
+
 		})
 	}
 }
 
-// TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer pins the
-// changed-only producer-KS depwait edge: when the substituteFrom
-// ConfigMap is rendered by another Flux Kustomization, that producer
-// is appended as its own dep so the consumer waits for the producer's
-// reconcile (which materializes the CM) before rendering. See #418.
 func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 	t.Parallel()
 	consumerObj := &manifest.Kustomization{
@@ -146,32 +165,17 @@ func TestCollectDeps_AppendsSubstituteFromConfigMapAndProducer(t *testing.T) {
 
 	c := New(store.New(), nil, nil, false)
 	c.Configure(Options{Filter: f, Index: index}, sourcecache.RetryConfig{})
-	deps := c.collectDeps(consumerObj)
 
-	wantCM := manifest.NamedResource{
-		Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings",
+	var resolved depwait.Resolution
+	err := c.Require(&depwait.Waiter{Parent: consumer, Declaration: consumerObj}, manifest.ReconcileAttempt{}, &resolved)
+	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+	wantCM := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
+	if !ok || blocked.Content == nil || !slices.Contains(blocked.Content.Targets, wantCM) || len(blocked.Content.Suppliers) != 1 || blocked.Content.Suppliers[0].NamedResource != producer {
+		t.Fatalf("changed-only admission=%+v %v", resolved, err)
 	}
-	var sawCM, sawProducer bool
-	for _, d := range deps {
-		if d.NamedResource == wantCM {
-			sawCM = true
-		}
-		if d.NamedResource == producer {
-			sawProducer = true
-		}
-	}
-	if !sawCM {
-		t.Errorf("expected substituteFrom CM dep %+v in deps %+v", wantCM, deps)
-	}
-	if !sawProducer {
-		t.Errorf("expected producer KS dep %+v in deps %+v", producer, deps)
-	}
+
 }
 
-// TestCollectDeps_SkipsSelfProducer pins the bjw-s self-substitute
-// pattern: a KS that produces its own substituteFrom ConfigMap must
-// NOT be appended as a dep on itself (would self-loop in depwait).
-// See #418.
 func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	t.Parallel()
 	selfObj := &manifest.Kustomization{
@@ -193,13 +197,18 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	if owners := c.Store.Productions(cmID, index); len(owners) != 1 || owners[0].Owner != self {
 		t.Fatalf("missing self evidence: %v", owners)
 	}
-	deps := c.collectDeps(selfObj)
 
-	for _, d := range deps {
-		if d.NamedResource == self {
-			t.Errorf("self-producer must not appear as its own dep; got %+v", deps)
-		}
+	err := c.Require(&depwait.Waiter{Parent: self, Declaration: selfObj}, manifest.ReconcileAttempt{}, &depwait.Resolution{})
+	if err != nil {
+		t.Fatalf("self input waited: %v", err)
 	}
+	selfObj = selfObj.Clone()
+	selfObj.DependsOn = []kustomizev1.DependencyReference{{Name: self.Name}}
+	err = c.Require(&depwait.Waiter{Parent: self, Declaration: selfObj, Dependencies: c.collectDeps(selfObj)}, manifest.ReconcileAttempt{Drain: manifest.DrainForce}, &depwait.Resolution{})
+	if err == nil {
+		t.Fatal("explicit self dependsOn was erased by content self exclusion")
+	}
+
 }
 
 func TestCollectDeps_RuntimeDeclarationDependency(t *testing.T) {
@@ -212,10 +221,14 @@ func TestCollectDeps_RuntimeDeclarationDependency(t *testing.T) {
 	declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": "credentials", "template": map[string]any{"data": map[string]any{"X": "remote"}}}}}
 	c.Emit(producer.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true})
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}}}}
-	deps := c.collectDeps(consumer)
-	for _, id := range []manifest.NamedResource{producer.Named(), declaration.Named()} {
-		if !slices.ContainsFunc(deps, func(d manifest.DependencyRef) bool { return d.NamedResource == id }) {
-			t.Fatalf("runtime declaration read lacks dependency %s: %v", id, deps)
-		}
+
+	err := c.Require(&depwait.Waiter{Parent: consumer.Named(), Declaration: consumer, WipeSecrets: true}, manifest.ReconcileAttempt{}, &depwait.Resolution{})
+	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+	if !ok || blocked.Content == nil || len(blocked.Content.Suppliers) != 1 || blocked.Content.Suppliers[0].NamedResource != producer.Named() {
+		t.Fatalf("declaration supplier wait=%v", err)
 	}
+	if slices.Contains(blocked.Deps, declaration.Named()) {
+		t.Fatal("live-only declaration became a readiness dependency")
+	}
+
 }

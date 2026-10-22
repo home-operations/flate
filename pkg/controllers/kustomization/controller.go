@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -38,11 +37,10 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	index                *manifest.DiscoveryIndex
-	substitutionSources  map[manifest.NamedResource]manifest.BaseManifest
-	substitutionProvider values.Provider
-	substitute           map[string]string
-	strictSubstitutions  bool
+	index               *manifest.DiscoveryIndex
+	substitutionSources map[manifest.NamedResource]manifest.BaseManifest
+	substitute          map[string]string
+	strictSubstitutions bool
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
@@ -76,22 +74,15 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.substitutionSources = opts.SubstituteFrom
 	c.substitute = opts.Substitute
 	c.strictSubstitutions = opts.StrictSubstitutions
-	c.substitutionProvider = values.NewStoreProvider(c.Store, c.WipeSecrets)
-	if len(opts.SubstituteFrom) > 0 {
-		c.substitutionProvider = &substitutionProvider{
-			sources: opts.SubstituteFrom, fallback: c.substitutionProvider,
-		}
-	}
 }
 
-// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
-// dependency set (nil = terminalized). The
-// orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) []manifest.NamedResource {
-	return c.DispatchNode(ctx, id, level, c.reconcile)
+// ReconcileNode runs one Kustomization invocation and returns any remaining typed wait.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
-func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, level manifest.DrainLevel) error {
+func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, invocation manifest.ReconcileAttempt) error {
+	level := invocation.Drain
 	id := ks.Named()
 	if err := c.PreflightError(id); err != nil {
 		return err
@@ -112,7 +103,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		// structural parent may have re-emitted us with mutated spec (e.g.
 		// `replacements:` injecting spec.targetNamespace) while we were
 		// waiting. Without the refresh the first render would use the
-		// stale-spec snapshot captured by RunWithStatusOutcome, producing
+		// stale-spec snapshot captured by DispatchNode, producing
 		// duplicate renders that linger in the store with the wrong
 		// namespace. See #102.
 		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](
@@ -135,7 +126,6 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
-	var err error
 	var source *store.SourceArtifact
 	var applyIgnore bool
 	var attempt store.Emission
@@ -164,15 +154,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	defer attempt.Finish()
 
 	c.SetPendingUnlessReady(id, "expanding substitutions")
-	// kustomize.Prepare clones ks and expands postBuild.substituteFrom —
-	// the same pre-render dance an embedder calling RenderFlux directly
-	// would perform. Keeping one canonical implementation here means
-	// changes to the contract only land in one place. Mirrors helm.Prepare.
-	provider := c.substitutionProvider
-	if provider == nil {
-		provider = values.NewStoreProvider(c.Store, c.WipeSecrets)
+	var resolved depwait.Resolution
+	if err := c.Require(&depwait.Waiter{Parent: id, Declaration: ks, Supplied: c.substitutionSources, WipeSecrets: c.WipeSecrets}, invocation, &resolved); err != nil {
+		return err
 	}
-	ks, err = kustomize.Prepare(ks, provider, c.substitute)
+	ks, err := kustomize.Prepare(ks, resolved.Inputs, c.substitute)
 	if err != nil {
 		return err
 	}
@@ -187,7 +173,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	// ns/name): the same logical secret is referenced by the many per-
 	// namespace KSes a cluster-config KS re-emits, so the store collapses
 	// them to one advisory line per secret name.
-	for _, name := range values.UnreadableSubstituteSecrets(ks, provider) {
+	for _, name := range values.UnreadableSubstituteSecrets(ks, resolved.Inputs) {
 		c.Store.AddWarning(id, manifest.Warning{
 			Category: manifest.WarnUnresolvedSubstitution,
 			Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; "+
@@ -252,72 +238,29 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	return nil
 }
 
-// collectDeps preserves dependsOn, parent, source, then data/producer gate order.
-// Secrets have no direct hard gate: SOPS/ExternalSecret data may exist only in-cluster.
+// collectDeps preserves authored ordering, declaration parents and source gates.
 func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
-	var deps []manifest.DependencyRef
-	if len(ks.DependsOn) > 0 {
-		deps = make([]manifest.DependencyRef, 0, len(ks.DependsOn))
-	}
+	deps := make([]manifest.DependencyRef, 0, len(ks.DependsOn))
 	var source manifest.DependencyRef
-	flushed := false
-	flush := func() {
-		record, _ := c.index.Lookup(ks.Named())
-		start := len(deps)
-		for _, p := range c.Store.Productions(ks.Named(), c.index) {
-			if p.Path != "" || p.Owner == (manifest.NamedResource{}) || p.Owner == ks.Named() {
-				continue
-			}
+	for ref := range manifest.References(ks) {
+		if ref.Use == "source" {
+			source = ref.DependencyRef
+		} else if ref.Use == "dependsOn" && c.KeepOrderingDep(ref.NamedResource) {
+			deps = append(deps, ref.DependencyRef)
+		}
+	}
+	record, _ := c.index.Lookup(ks.Named())
+	start := len(deps)
+	for _, p := range c.Store.Productions(ks.Named(), c.index) {
+		if p.Path == "" && p.Owner != (manifest.NamedResource{}) && p.Owner != ks.Named() {
 			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
 		}
-		if len(deps) == start && record.Parent != (manifest.NamedResource{}) && record.Parent != ks.Named() {
-			deps = append(deps, manifest.DependencyRef{NamedResource: record.Parent})
-		}
-		if source.Kind != "" && source.Name != "" {
-			deps = append(deps, source)
-		}
-		flushed = true
 	}
-	manifest.References(ks)(func(ref manifest.Reference) bool {
-		switch ref.Use {
-		case "source":
-			source = ref.DependencyRef
-		case "dependsOn":
-			if c.KeepOrderingDep(ref.NamedResource) {
-				deps = append(deps, ref.DependencyRef)
-			}
-		case "substituteFrom":
-			if !flushed {
-				flush()
-			}
-			if ref.Optional || ref.Name == "" || c.substitutionSources[ref.NamedResource] != nil {
-				return true
-			}
-			var producers []manifest.NamedResource
-			for _, p := range c.Store.Productions(ref.NamedResource, c.index) {
-				if p.Declaration != (manifest.NamedResource{}) && !slices.Contains(producers, p.Declaration) {
-					producers = append(producers, p.Declaration)
-				}
-				if p.Owner != (manifest.NamedResource{}) {
-					if !slices.Contains(producers, p.Owner) {
-						producers = append(producers, p.Owner)
-					}
-				}
-			}
-			if slices.Contains(producers, ks.Named()) {
-				return true
-			}
-			if ref.Kind == manifest.KindConfigMap {
-				deps = append(deps, ref.DependencyRef)
-			}
-			for _, producer := range producers {
-				deps = append(deps, manifest.DependencyRef{NamedResource: producer})
-			}
-		}
-		return true
-	})
-	if !flushed {
-		flush()
+	if len(deps) == start && record.Parent != (manifest.NamedResource{}) && record.Parent != ks.Named() {
+		deps = append(deps, manifest.DependencyRef{NamedResource: record.Parent})
+	}
+	if source.Kind != "" && source.Name != "" {
+		deps = append(deps, source)
 	}
 	return deps
 }

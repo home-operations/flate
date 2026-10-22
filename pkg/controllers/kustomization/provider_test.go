@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -39,9 +40,10 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Group: tc.group, Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
 			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}}
-			deps := c.collectDeps(ks)
-			if (len(deps) == 0) != tc.accepted {
-				t.Fatalf("deps=%v, accepted=%v", deps, tc.accepted)
+			var resolved depwait.Resolution
+			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks, Supplied: c.substitutionSources}, manifest.ReconcileAttempt{Drain: manifest.DrainCascade}, &resolved)
+			if (err == nil) != tc.accepted || (resolved.Inputs.Data(source.Named()) == source) != tc.accepted {
+				t.Fatalf("resolution=%+v err=%v accepted=%v", resolved, err, tc.accepted)
 			}
 		})
 	}
@@ -65,11 +67,14 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}}, sourcecache.RetryConfig{})
 			st.AddObject(tc.late)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
-			if c.substitutionProvider.Data(external.Named()) != external.(manifest.Data) || c.substitutionProvider.Data(other.Named()) != other.(manifest.Data) || c.substitutionProvider.Data(missing) != nil {
-				t.Fatal("provider lost exact frozen precedence or fallback")
-			}
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: external.Named().Kind, Name: "external"}}}}
-			if got := values.UnreadableSubstituteSecrets(ks, c.substitutionProvider); len(got) != 0 {
+			var resolved depwait.Resolution
+			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks, Supplied: c.substitutionSources}, manifest.ReconcileAttempt{}, &resolved)
+			assert.NoError(t, err)
+			if resolved.Inputs.Data(external.Named()) != external.(manifest.Data) || resolved.Inputs.Data(missing) != nil {
+				t.Fatal("lost exact supplied precedence or frozen absence")
+			}
+			if got := values.UnreadableSubstituteSecrets(ks, resolved.Inputs); len(got) != 0 {
 				t.Fatalf("readable supplied source reported unreadable: %v", got)
 			}
 			if got, _, err := values.NewStoreProvider(st, true).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
@@ -110,7 +115,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	}
 	ks := obj.(*manifest.Kustomization)
 	st.AddObject(ks)
-	err = c.reconcile(t.Context(), ks, manifest.DrainNone)
+	err = c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 		t.Fatalf("strict engine failure lost classification: %v", err)
 	}

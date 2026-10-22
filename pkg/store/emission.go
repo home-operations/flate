@@ -140,8 +140,26 @@ func (s *Store) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, E
 	return obj, e
 }
 
+// ReferenceFacts preserves visible data separately from accepted authority and relations.
+type ReferenceFacts struct {
+	Data        manifest.Data
+	Accepted    bool
+	Productions []manifest.Production
+}
+
 // Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
 func (s *Store) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) []manifest.Production {
+	return s.referenceFacts(id, index, nil)
+}
+
+// ReferenceFacts selects visible data and source-qualified production evidence.
+func (s *Store) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
+	var facts ReferenceFacts
+	facts.Productions = s.referenceFacts(id, index, &facts)
+	return facts
+}
+
+func (s *Store) referenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex, facts *ReferenceFacts) []manifest.Production {
 	if index == nil {
 		index = s.index.Load()
 	}
@@ -177,6 +195,11 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 	}
 	sh := s.shardFor(id)
 	sh.mu.RLock()
+	if facts != nil {
+		view, owner := sh.representativeLocked(id)
+		facts.Data, _ = view.Obj.(manifest.Data)
+		facts.Accepted = owner != (manifest.NamedResource{}) || sh.rooted[id]
+	}
 	members := sh.members[id]
 	if len(evidence) == 0 && len(members) == 0 {
 		sh.mu.RUnlock()
@@ -222,13 +245,10 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 		out = nil
 	}
 	sh.mu.RUnlock()
-	if !owned {
-		for i := 1; i < len(out); i++ {
-			if compareProduction(out[i-1], out[i]) >= 0 {
-				out = slices.Clone(out)
-				owned = true
-				break
-			}
+	for i := 1; !owned && i < len(out); i++ {
+		if compareProduction(out[i-1], out[i]) >= 0 {
+			out = slices.Clone(out)
+			owned = true
 		}
 	}
 	if owned {

@@ -1,7 +1,7 @@
 // Package depwait resolves a controller's NamedResource dependencies
 // for the dag scheduler: Classify decides, WITHOUT blocking, whether
 // each dep is Ready, terminally Failed, or still blocked (parkable).
-// The shared readiness predicates (readyNow, the ReadyExpr
+// The shared readiness predicates (ordinary readiness, the ReadyExpr
 // evaluator, discovery-record promotion) live here so the gate semantics
 // are single-sourced.
 package depwait
@@ -15,12 +15,19 @@ import (
 
 // Waiter holds the parameters for one dependency-classification operation.
 type Waiter struct {
-	Store  *store.Store
-	Parent manifest.NamedResource
+	Dependencies []manifest.DependencyRef
+	Declaration  manifest.BaseManifest
+	Supplied     map[manifest.NamedResource]manifest.BaseManifest
+	Store        *store.Store
+	Parent       manifest.NamedResource
 
 	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
 	// because the cluster installs them at runtime.
 	AllowMissingCRDs bool
+	// WipeSecrets permits declared-key placeholder interpretation.
+	WipeSecrets bool
+	// AllowMissingSecrets permits required Helm values omission at the fixpoint.
+	AllowMissingSecrets bool
 
 	// Existence, when non-nil, lets Classify lazy-promote a missing dep
 	// from the loader's discovery records before deciding it is
@@ -49,42 +56,6 @@ type ExistenceLookup interface {
 	// discovery index. Returns true when promotion succeeded
 	// and id is now reachable via store.GetObject.
 	Promote(id manifest.NamedResource) bool
-}
-
-type dependencyState uint8
-
-const (
-	depAbsent dependencyState = iota
-	depPending
-	depReady
-)
-
-func (w *Waiter) readyNow(dep manifest.DependencyRef) dependencyState {
-	id := dep.NamedResource
-	obj := w.Store.GetObject(id)
-	if obj == nil {
-		if _, exists := w.Store.GetStatus(id); !exists {
-			return depAbsent
-		}
-	}
-	facts := manifest.KindOf(obj)
-	if obj == nil {
-		facts = id.KindInfo()
-	}
-	if !facts.Status {
-		return depReady
-	}
-	if dep.ReadyExpr != "" {
-		if ready, _ := w.tryReadyExpr(dep.ReadyExpr, id); ready {
-			return depReady
-		}
-		return depPending
-	}
-	info, ok := w.Store.GetStatus(id)
-	if ok && info.Status == store.StatusReady {
-		return depReady
-	}
-	return depPending
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:

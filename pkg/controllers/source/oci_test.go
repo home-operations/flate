@@ -103,8 +103,8 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 				repo.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				st.AddObject(repo)
 				ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
-					deps := c.ReconcileNode(ctx, repo.Named(), 0)
-					if len(deps) != 1 || deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
+					deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: 0})
+					if len(deps.Deps) != 1 || deps.Deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
 						t.Errorf("blocked dependencies = %v, want Secret ns/creds", deps)
 					}
 				})
@@ -124,7 +124,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			})
 			for _, repo := range repos {
 				ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
-					if deps := c.ReconcileNode(ctx, repo.Named(), 0); len(deps) != 0 {
+					if deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: 0}); !deps.Empty() {
 						t.Errorf("blocked dependencies after Secret render = %v, want none", deps)
 					}
 				})

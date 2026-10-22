@@ -197,8 +197,9 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 
 type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
 
-func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
-	return d(ctx, id, level)
+func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	out, deps, rerun := d(ctx, id, attempt.Drain)
+	return out, manifest.ReconcileWait{Deps: deps}, rerun
 }
 
 func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
@@ -240,7 +241,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					sourceStarted := make(chan struct{})
 					sourceRelease := make(chan struct{})
 					parked := make(chan manifest.NamedResource, len(consumers))
-					dispatch := chartSourceDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+					dispatch := chartSourceDispatcher(func(_ context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
 						if id == source {
 							close(sourceStarted)
 							tasks.YieldSlot(func() { <-sourceRelease })
@@ -256,7 +257,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 						}
 						hr := *st.GetObject(id).(*manifest.HelmRelease)
 						c.materializeHelmChartSource(id, &hr)
-						err := c.awaitChartSource(ctx, &hr, level)
+						err := c.awaitChartSource(&hr, level)
 						if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 							parked <- id
 							return schedule.OutcomeBlocked, blocked.Deps, false
@@ -315,7 +316,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							for iteration := range 2 {
 								var arrivals int
 								stop := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
-								if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone); len(blocked) != 0 {
+								if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 									t.Fatal(blocked)
 								}
 								stop()
@@ -482,7 +483,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			c, st := newTestController(t, filter)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}
 			st.AddObject(hr)
-			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+			info := runValuesFixture(t, c, hr)
 			if info.Status != store.StatusReady || info.Message != tc.name {
 				t.Fatalf("status = %+v, want Ready/%s", info, tc.name)
 			}
@@ -545,7 +546,7 @@ data:
 	}
 	st.AddObject(hr)
 
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+	info := runValuesFixture(t, c, hr)
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
@@ -570,7 +571,7 @@ data:
 	hr = hr.Clone()
 	hr.Labels = map[string]string{"owner": "re-emitted"}
 	st.AddObject(hr)
-	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
+	assert.Equal(t, runValuesFixture(t, c, hr).Status, store.StatusReady)
 	latest, _ := st.GetArtifact(hr.Named()).(*store.Emission)
 	if latest == nil || latest.Fingerprint != art.Fingerprint {
 		t.Fatal("metadata-only update rendered different effective inputs")
@@ -579,7 +580,7 @@ data:
 	hr = hr.Clone()
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
 	st.AddObject(hr)
-	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
+	assert.Equal(t, runValuesFixture(t, c, hr).Status, store.StatusReady)
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render" && w.Count == 1
 	}) {
@@ -600,12 +601,12 @@ func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
 	}
 	st.AddObject(hr)
 	values := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
-	_, _, err := c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainNone)
+	err := c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: preparePrereqs(hr), Declaration: hr, AllowMissingSecrets: true}, manifest.ReconcileAttempt{}, &depwait.Resolution{})
 	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
 	if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{values}) {
 		t.Fatalf("mixed gate = %v, want blocked values reference", err)
 	}
-	_, _, err = c.resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainCascade)
+	err = c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: preparePrereqs(hr), Declaration: hr, AllowMissingSecrets: true}, manifest.ReconcileAttempt{Drain: manifest.DrainCascade}, &depwait.Resolution{})
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
 	if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) || failed.Reasons[chart.Named()] != "chart failed" {
 		t.Fatalf("drained gate = %v, want chart failure after values omission", err)
@@ -665,7 +666,7 @@ data:
 	}
 	st.AddObject(hr)
 
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+	info := runValuesFixture(t, c, hr)
 	if info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 		t.Fatalf("status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)", info)
 	}
@@ -709,7 +710,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	}
 	st.AddObject(hr)
 
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+	info := runValuesFixture(t, c, hr)
 	if info.Status == store.StatusReady {
 		t.Fatalf("status = %+v, want failure (missing no-producer Secret must not be silently omitted)", info)
 	}
@@ -878,7 +879,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+	if info := runValuesFixture(t, c, hr); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -904,7 +905,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	st.AddObject(stamped)
-	c.ReconcileNode(context.Background(), hr.Named(), 0)
+	c.ReconcileNode(context.Background(), hr.Named(), manifest.ReconcileAttempt{Drain: 0})
 
 	mu.Lock()
 	pending := sawPending
@@ -968,7 +969,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 			Chart: manifest.HelmChart{RepoGroup: manifest.SourceDomain, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace},
 		}
 		for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainForce} {
-			if err := c.awaitChartSource(t.Context(), hr, level); err != nil {
+			if err := c.awaitChartSource(hr, level); err != nil {
 				t.Fatalf("repository required content: %v", err)
 			}
 		}
@@ -979,7 +980,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 			}
 			publishRawFixture(t, c, &manifest.RawObject{APIVersion: apiVersion, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace})
 			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{RepoGroup: group, RepoKind: manifest.KindHelmRepository, RepoName: repo.Name, RepoNamespace: repo.Namespace}}
-			if err := c.awaitChartSource(t.Context(), foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+			if err := c.awaitChartSource(foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 				t.Fatalf("foreign repository bypassed content gate: %v", err)
 			}
 		}
@@ -991,25 +992,25 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}
 	st.UpdateStatus(id, store.StatusReady, "", "released")
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(t.Context(), hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
+	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
 		t.Fatalf("released source did not block on acquisition: %v", blocked)
 	}
-	if err := c.awaitChartSource(t.Context(), hr, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+	if err := c.awaitChartSource(hr, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("released source at fixpoint: %v", err)
 	}
 	st.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "missing credentials")
-	assert.Equal(t, errors.Is(c.awaitChartSource(t.Context(), hr, manifest.DrainNone), manifest.ErrSourceSkipped), true)
+	assert.Equal(t, errors.Is(c.awaitChartSource(hr, manifest.DrainNone), manifest.ErrSourceSkipped), true)
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin", FS: fstest.MapFS{}})
 	st.UpdateStatus(id, store.StatusReady, "", "reacquired")
-	assert.Equal(t, c.awaitChartSource(t.Context(), hr, manifest.DrainNone), nil)
+	assert.Equal(t, c.awaitChartSource(hr, manifest.DrainNone), nil)
 	st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, store.StatusPending, "", "fetching")
-	_, blocked := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(t.Context(), hr, manifest.DrainNone))
+	_, blocked := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(hr, manifest.DrainNone))
 	assert.Equal(t, blocked, true)
 	hr.ChartRef.Kind = manifest.KindHelmChart
 	hr.ValuesFrom = []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}, {Kind: manifest.KindSecret, Name: "required"}}
 	for _, version := range []string{"", "1.0.0"} {
 		hr.Chart.Version = version
-		want := []manifest.DependencyRef{{Kind: manifest.KindSecret, Namespace: "apps", Name: "required"}}
+		var want []manifest.DependencyRef
 		if version == "" {
 			want = append([]manifest.DependencyRef{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}, want...)
 		}

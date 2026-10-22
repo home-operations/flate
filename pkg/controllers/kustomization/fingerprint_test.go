@@ -8,6 +8,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -135,10 +136,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				} else {
 					source = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": value}}
 				}
-				provider := &substitutionProvider{
-					sources:  map[manifest.NamedResource]manifest.BaseManifest{source.Named(): source},
-					fallback: values.NewStoreProvider(store.New(), true),
-				}
+				provider := values.ResolvedInputs{{NamedResource: source.Named(), Value: source.(manifest.Data)}}
 				prepared, err := kustomize.Prepare(ks, provider, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -181,7 +179,12 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 			t.Parallel()
 			c := New(st, task.NewBounded(2), nil, false)
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
-			prepared, err := kustomize.Prepare(ks, c.substitutionProvider, c.substitute)
+			var resolved depwait.Resolution
+			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks}, manifest.ReconcileAttempt{}, &resolved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := kustomize.Prepare(ks, resolved.Inputs, c.substitute)
 			if err != nil {
 				t.Fatal(err)
 			}

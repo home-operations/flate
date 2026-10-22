@@ -502,11 +502,11 @@ func TestProgress_BlockerSlicesImmutable(t *testing.T) {
 	consumer := testutil.KustomizationID("ns", "consumer")
 	n := &node{id: consumer, state: stateRunning}
 	s.nodes[consumer], s.inFlight = n, 1
-	s.complete(consumer, OutcomeDependencyFailed, blocked, false)
+	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: blocked}, false)
 	assert.Diff(t, blocked, want)
 	assert.Diff(t, n.failedOn, []NodeID{a, b})
 	n.conservativeUsed, n.state, s.inFlight = true, stateRunning, 1
-	s.complete(consumer, OutcomeDependencyFailed, []NodeID{b, a, b}, false)
+	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{b, a, b}}, false)
 	assert.Equal(t, n.conservativeUsed, true)
 	assert.Diff(t, blocked, want)
 }

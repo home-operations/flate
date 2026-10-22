@@ -93,10 +93,10 @@ func TestRedispatch_QueueCauses(t *testing.T) {
 				switch transition {
 				case "immediate":
 					n.rerunRequested = true
-					s.complete(nid, OutcomeBlocked, []NodeID{dep}, true)
+					s.complete(s.nodes[nid], OutcomeBlocked, &manifest.ReconcileWait{Deps: []NodeID{dep}}, true)
 				case "recheck":
 					s.nodes[dep] = &node{id: dep, state: stateTerminal}
-					s.complete(nid, OutcomeBlocked, []NodeID{dep}, true)
+					s.complete(s.nodes[nid], OutcomeBlocked, &manifest.ReconcileWait{Deps: []NodeID{dep}}, true)
 				case "parked", "cascade", "force":
 					n.state, n.blockedOn = stateParked, []NodeID{dep}
 					s.parkedIdx[dep] = map[NodeID]struct{}{nid: {}}
@@ -127,7 +127,7 @@ func TestRedispatch_QueueCauses(t *testing.T) {
 				}
 				n.state, n.queuedCharged = stateRunning, false
 				s.inFlight = 1
-				s.complete(nid, OutcomeTerminalNoop, nil, true)
+				s.complete(s.nodes[nid], OutcomeTerminalNoop, &manifest.ReconcileWait{Deps: nil}, true)
 				s.runq = nil
 				s.requeueRerunLocked()
 				if n.redispatches != 1 || n.productive || n.queuedCharged {
@@ -429,7 +429,7 @@ func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
 				if state == stateRunning {
 					s.unparkSelfLocked(n)
 					s.inFlight = 1
-					s.complete(nid, OutcomeBlocked, []NodeID{dep}, false)
+					s.complete(s.nodes[nid], OutcomeBlocked, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
 				}
 				if n.state != stateRunnable || n.redispatches != 1 || n.contentRequested || n.rerunRequested || len(s.runq) != 1 {
 					t.Fatalf("content/status causes did not coalesce: node=%+v queue=%v", n, s.runq)
@@ -450,7 +450,7 @@ func TestProgress_RunnableUpgrade(t *testing.T) {
 				n := &node{id: nid, state: stateRunning}
 				s.nodes[nid], s.inFlight = n, 1
 				s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-				s.complete(nid, OutcomeDependencyFailed, []NodeID{dep}, false)
+				s.complete(s.nodes[nid], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
 				assert.Equal(t, n.conservativeUsed, true)
 				assert.Equal(t, n.redispatches, 0)
 				assert.Equal(t, n.state, stateRunnable)
@@ -549,7 +549,7 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 			n := &node{id: consumer, state: stateRunning}
 			s.nodes[consumer], s.inFlight = n, 1
 			s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-			s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
+			s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
 			tasks.Go(ctx, "producer", func(ctx context.Context) {
 				active.Add(1)
 				defer active.Add(-1)
@@ -582,13 +582,13 @@ func TestProgress_ContentPreservesConservativeRetry(t *testing.T) {
 	s.nodes[consumer], s.inFlight = n, 1
 	s.OnArrival(consumer, true)
 	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-	s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
+	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
 	assert.Equal(t, n.conservativeUsed, false)
 	assert.Equal(t, n.redispatches, 1)
 	n.state, n.startedAt, n.queuedCharged = stateRunning, s.generation, false
 	s.inFlight = 1
 	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-	s.complete(consumer, OutcomeDependencyFailed, []NodeID{dep}, false)
+	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
 	assert.Equal(t, n.conservativeUsed, true)
 	assert.Equal(t, n.redispatches, 1)
 }

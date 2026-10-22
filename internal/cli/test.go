@@ -13,10 +13,6 @@ import (
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
-// `test` emits a single human-readable, pytest-style reconcile report and
-// has no output variants, so it binds no -o flag (bindCommon with no
-// formats). When adding json/yaml here later, pass them to bindCommon.
-
 func newTestCmd() *cobra.Command {
 	var kinds []string
 	for info := range manifest.Kinds() {
@@ -53,7 +49,6 @@ func newTestCmd() *cobra.Command {
 
 func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	c := &commonFlags{}
-	h := &helmFlags{}
 	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
 		stopProfile, err := startProfile()
 		if err != nil {
@@ -61,7 +56,7 @@ func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 		}
 		defer stopProfile()
 		start := time.Now()
-		o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+		o, res, runErr := runOrchestrator(cmd.Context(), *c)
 		if o == nil {
 			return runErr
 		}
@@ -103,7 +98,6 @@ func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 		return nil
 	}
 	bindCommon(cmd.Flags(), c)
-	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
 

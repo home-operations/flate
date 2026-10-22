@@ -93,13 +93,12 @@ func newGetHRCmd() *cobra.Command {
 
 func getAllCmd(use, short string) *cobra.Command {
 	c := &commonFlags{}
-	h := &helmFlags{}
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmd.Context(), *c)
 			selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
 			if len(selected) == 0 {
@@ -108,8 +107,8 @@ func getAllCmd(use, short string) *cobra.Command {
 			return errors.Join(printCluster(cmd.OutOrStdout(), selected[0], c.output), runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, output.FormatYAML, output.FormatJSON)
-	bindHelmFlags(cmd.Flags(), h)
+	bindCommon(cmd.Flags(), c)
+	bindOutput(cmd.Flags(), &c.output, output.FormatYAML, output.FormatJSON)
 	return cmd
 }
 
@@ -119,12 +118,11 @@ func getAllCmd(use, short string) *cobra.Command {
 // shape filtered to images that actually changed between paths.
 func newGetImagesCmd() *cobra.Command {
 	c := &commonFlags{}
-	h := &helmFlags{}
 	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "List container images across the cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmd.Context(), *c)
 			selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
 			if len(selected) == 0 {
@@ -134,8 +132,8 @@ func newGetImagesCmd() *cobra.Command {
 			return errors.Join((output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs), runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, output.FormatName, output.FormatYAML, output.FormatJSON)
-	bindHelmFlags(cmd.Flags(), h)
+	bindCommon(cmd.Flags(), c)
+	bindOutput(cmd.Flags(), &c.output, output.FormatName, output.FormatYAML, output.FormatJSON)
 	return cmd
 }
 
@@ -149,12 +147,11 @@ type listView[T manifest.BaseManifest] struct {
 func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 	c := &commonFlags{}
 	l := &listFlags{}
-	h := &helmFlags{}
 	cmd := &cobra.Command{
 		Use: view.use + " [name]", Aliases: view.aliases, Short: view.short,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+			o, res, runErr := runOrchestrator(cmd.Context(), *c)
 			name := firstArg(args)
 			selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr,
 				c.roots(name, view.kind), l.labels)
@@ -167,9 +164,9 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 			return errors.Join(printResources(cmd.OutOrStdout(), selected[0], c.output, view), runErr)
 		},
 	}
-	bindCommon(cmd.Flags(), c, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
+	bindCommon(cmd.Flags(), c)
+	bindOutput(cmd.Flags(), &c.output, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
 	bindSelector(cmd.Flags(), l)
-	bindHelmFlags(cmd.Flags(), h)
 	return cmd
 }
 

@@ -53,7 +53,6 @@ func newBuildCmd() *cobra.Command {
 
 func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	c := &commonFlags{}
-	h := &helmFlags{}
 	b := &buildFlags{}
 	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
 		if !cmd.Flags().Changed("skip-kinds") {
@@ -67,7 +66,7 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 		}
 		defer stopProfile()
 		name := firstArg(argv)
-		o, res, runErr := runOrchestrator(cmdContext(cmd), *c, *h)
+		o, res, runErr := runOrchestrator(cmd.Context(), *c)
 		selected, runErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res, Err: runErr}}, runErr, c.roots(name, kinds...), nil)
 		if len(selected) == 0 {
 			return runErr
@@ -83,8 +82,8 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 			selected: errors.Join(emitErr, runErr), remainder: errors.Join(emitErr, remainder),
 		})
 	}
-	bindCommon(cmd.Flags(), c, output.FormatYAML, output.FormatJSON)
-	bindHelmFlags(cmd.Flags(), h)
+	bindCommon(cmd.Flags(), c)
+	bindOutput(cmd.Flags(), &c.output, output.FormatYAML, output.FormatJSON)
 	bindBuildFlags(cmd.Flags(), b)
 	return cmd
 }

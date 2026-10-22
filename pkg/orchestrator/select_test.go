@@ -727,49 +727,56 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		namespace string
-		changes   []string
+		changes   [2][]string
 		disabled  bool
-		want      []string
+		want      [2][]string
 	}{
-		{name: "explicit", namespace: "media", changes: []string{"networking.yaml"}, want: []string{"cluster", "media"}},
-		{name: "inferred", changes: []string{"media.yaml", "networking.yaml"}, want: []string{"cluster", "media", "networking"}},
-		{name: "disabled", disabled: true, want: []string{"cluster", "default", "media", "networking"}},
-		{name: "empty active", want: []string{"cluster", "default", "media", "networking"}},
+		{name: "explicit", namespace: "media", changes: [2][]string{{"networking.yaml"}, {"default.yaml"}}, want: [2][]string{{"cluster", "media"}, {"cluster", "media"}}},
+		{name: "inferred", changes: [2][]string{{"media.yaml"}, {"networking.yaml"}}, want: [2][]string{{"cluster", "media"}, {"cluster", "networking"}}},
+		{name: "inferred multiple", changes: [2][]string{{"media.yaml", "networking.yaml"}, {"default.yaml"}}, want: [2][]string{{"cluster", "media", "networking"}, {"cluster", "default"}}},
+		{name: "disabled", disabled: true, want: [2][]string{{"cluster", "default", "media", "networking"}, {"cluster", "default", "media", "networking"}}},
+		{name: "empty active", want: [2][]string{{"cluster", "default", "media", "networking"}, {"cluster", "default", "media", "networking"}}},
 	} {
 		for _, count := range []int{1, 2} {
 			t.Run(fmt.Sprintf("%s_%d_side", tc.name, count), func(t *testing.T) {
 				t.Parallel()
-				run := selectedRun(&Result{Warnings: []manifest.Warning{{Message: "global"}}})
-				files := make(map[manifest.NamedResource]string)
-				for _, namespace := range []string{"", "default", "media", "networking"} {
-					name := namespace
-					if name == "" {
-						name = "cluster"
+				runs := make([]Rendered, count)
+				for i := range runs {
+					run := selectedRun(&Result{Warnings: []manifest.Warning{{Message: "global"}}})
+					files := make(map[manifest.NamedResource]string)
+					for _, namespace := range []string{"", "default", "media", "networking"} {
+						name := namespace
+						if name == "" {
+							name = "cluster"
+						}
+						obj := &manifest.Kustomization{Name: name, Namespace: namespace}
+						run.store.AddObject(obj)
+						files[obj.Named()] = namespace + ".yaml"
 					}
-					obj := &manifest.Kustomization{Name: name, Namespace: namespace}
-					run.store.AddObject(obj)
-					files[obj.Named()] = namespace + ".yaml"
+					run.index = indexForTest(files)
+					runs[i] = run
 				}
-				run.index = indexForTest(files)
-				if !tc.disabled {
-					run.filter = change.NewFilter(change.NewSet(tc.changes), run.index, run.store)
-				}
-				runs := []Rendered{run}
-				if count == 2 {
-					runs = append(runs, run)
-				}
-				selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID(tc.namespace, "")}, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, result := range selected {
-					var names []string
-					for _, obj := range result.Objects {
-						names = append(names, obj.Named().Name)
+				for invocation := range 2 {
+					for i, run := range runs {
+						if !tc.disabled {
+							run.filter = change.NewFilter(change.NewSet(tc.changes[(i+invocation)%2]), run.index, run.store)
+						}
+						runs[i] = run
 					}
-					slices.Sort(names)
-					assert.Diff(t, names, tc.want)
-					assert.Equal(t, result.Counts[manifest.KindKustomization], len(tc.want))
+					selected, err, remainder := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID(tc.namespace, "")}, nil)
+					assert.NoError(t, err)
+					assert.NoError(t, remainder)
+					assert.Equal(t, len(selected), count)
+					for i, result := range selected {
+						var names []string
+						for _, obj := range result.Objects {
+							names = append(names, obj.Named().Name)
+						}
+						slices.Sort(names)
+						want := tc.want[(i+invocation)%2]
+						assert.Diff(t, names, want)
+						assert.Equal(t, result.Counts[manifest.KindKustomization], len(want))
+					}
 				}
 			})
 		}

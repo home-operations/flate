@@ -2,20 +2,25 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"sigs.k8s.io/yaml"
 )
@@ -246,6 +251,33 @@ func TestRun_BuildAll_OnlyKinds(t *testing.T) {
 			}
 		})
 	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		env  string
+		want bool
+	}{
+		{name: "default", want: true},
+		{name: "explicit CRD", args: []string{"--skip-kinds=CustomResourceDefinition"}},
+		{name: "explicit empty", args: []string{"--skip-kinds="}, want: true},
+		{name: "environment CRD", env: "CustomResourceDefinition"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FLATE_SKIP_KINDS", tc.env)
+			if tc.env == "" {
+				assert.NoError(t, os.Unsetenv("FLATE_SKIP_KINDS"))
+			}
+			path := writeFixture(t)
+			testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [cm.yaml, crd.yaml]\n")
+			testutil.WriteFile(t, path, "apps/crd.yaml", "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: widgets.example.test}\nspec: {group: example.test, names: {kind: Widget, plural: widgets}, scope: Namespaced, versions: [{name: v1, served: true, storage: true, schema: {openAPIV3Schema: {type: object}}}]}\n")
+			args := append([]string{"build", "all", "--path", path, "--concurrency=2", "--only-kinds=CustomResourceDefinition"}, tc.args...)
+			out, diagnostic, code := runCLI(t, args...)
+			if code != 0 || strings.Contains(out, "kind: CustomResourceDefinition") != tc.want {
+				t.Fatalf("CRD selection: exit=%d want=%t stdout=%s stderr=%s", code, tc.want, out, diagnostic)
+			}
+		})
+	}
+
 }
 
 func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
@@ -602,7 +634,7 @@ data:
 // every common flag binds with a known-good default.
 func TestBindCommon_DefaultValues(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, buildOrchCfg(commonFlags{}, helmFlags{}).SourceRetry, sourcecache.RetryConfig{
+	assert.Equal(t, buildOrchCfg(commonFlags{}).SourceRetry, sourcecache.RetryConfig{
 		Attempts: 3, MinWait: 200 * time.Millisecond, MaxWait: 3 * time.Second, Jitter: 0.1,
 	})
 	cmd := New("test")
@@ -618,16 +650,13 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 	var flags commonFlags
 	bindCommon(pflag.NewFlagSet("test", pflag.ContinueOnError), &flags)
 	assert.Diff(t, flags.skipKinds, []string{"Secret", "CustomResourceDefinition"})
-	opts := flags.helmOptions(helmFlags{})
+	opts := buildOrchCfg(flags).HelmOptions
 	assert.Equal(t, opts.SkipCRDs, true)
 	assert.Equal(t, opts.SkipTests, true)
 	assert.Diff(t, opts.SkipKinds, []string{"Secret"})
 }
 
-// TestBindHelmFlags_OnReconcilingSubcommands guards the reconcile-first
-// contract: even KS-shaped output commands run the full reconcile graph, so
-// helm-template flags must be available consistently.
-func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
+func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 	t.Parallel()
 	cmd := New("test")
 	for _, tc := range []struct {
@@ -684,8 +713,26 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		if err != nil {
 			t.Fatalf("find %v: %v", argv, err)
 		}
-		if sub.Flags().Lookup("kube-version") == nil {
-			t.Errorf("%v: missing helm flag kube-version", argv)
+		for _, binding := range []struct {
+			name, typ, shorthand, def string
+		}{
+			{"kube-version", "string", "", helm.BundledKubeVersion()},
+			{"api-versions", "string", "a", ""},
+			{"is-upgrade", "bool", "", "false"},
+			{"no-hooks", "bool", "", "false"},
+			{"show-only", "stringSlice", "s", "[]"},
+			{"enable-dns", "bool", "", "false"},
+		} {
+			flag := sub.Flags().Lookup(binding.name)
+			if flag == nil {
+				t.Fatalf("%v: missing helm flag %s", argv, binding.name)
+			}
+			assert.Equal(t, flag.Value.Type(), binding.typ)
+			assert.Equal(t, flag.Shorthand, binding.shorthand)
+			assert.Equal(t, flag.DefValue, binding.def)
+			if !strings.Contains(flag.Usage, envKey(binding.name)) {
+				t.Errorf("%v: missing environment usage for %s", argv, binding.name)
+			}
 		}
 		for _, name := range []string{"path", "cache-dir"} {
 			if sub.Flags().Lookup(name) == nil {
@@ -699,6 +746,16 @@ func TestBindHelmFlags_OnReconcilingSubcommands(t *testing.T) {
 		if !strings.Contains(flag.Usage, envKey("disable-chart-digest-tracking")) {
 			t.Errorf("%v: missing environment usage", argv)
 		}
+		assert.NoError(t, sub.ParseFlags([]string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--is-upgrade", "--no-hooks", "-s", "templates/main.yaml", "--enable-dns"}))
+		for name, want := range map[string]string{"kube-version": "1.31.2", "api-versions": "fixture.example/v1", "is-upgrade": "true", "no-hooks": "true", "show-only": "[templates/main.yaml]", "enable-dns": "true"} {
+			assert.Equal(t, sub.Flags().Lookup(name).Value.String(), want)
+		}
+		fresh, _, err := New("test").Find(argv)
+		assert.NoError(t, err)
+		for _, name := range []string{"kube-version", "api-versions", "is-upgrade", "no-hooks", "show-only", "enable-dns"} {
+			assert.Equal(t, fresh.Flags().Lookup(name).Value.String(), fresh.Flags().Lookup(name).DefValue)
+		}
+
 	}
 	maintenance, _, err := cmd.Find([]string{"cache", "gc"})
 	assert.NoError(t, err)
@@ -976,4 +1033,120 @@ func (w *outputFailWriter) Write(p []byte) (int, error) {
 		return n, w.err
 	}
 	return n, nil
+}
+
+func TestRun_CommandContext(t *testing.T) {
+	for _, command := range []string{"build all", "get all", "get hr", "get images", "test all", "diff all", "diff images"} {
+		for _, embedded := range []bool{false, true} {
+			t.Run(command+"/embedded="+strconv.FormatBool(embedded), func(t *testing.T) {
+				root := New("test")
+				args := strings.Fields(command)
+				if embedded {
+					parent := &cobra.Command{Use: "parent", SilenceUsage: true, SilenceErrors: true}
+					parent.AddCommand(root)
+					root = parent
+					args = append([]string{"flate"}, args...)
+				}
+				args = append(args, "--path", writeFixture(t), "--concurrency=2")
+				if strings.HasPrefix(command, "diff") {
+					args = append(args, "--path-orig", writeFixture(t))
+				}
+				root.SetArgs(args)
+				root.SetOut(io.Discard)
+				root.SetErr(io.Discard)
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				if err := root.ExecuteContext(ctx); !errors.Is(err, context.Canceled) {
+					t.Fatalf("handler lost cancellation: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestRun_HelmOptions(t *testing.T) {
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "cluster/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: app, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./charts/app
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values: {tag: after}
+`)
+	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+	testutil.WriteFile(t, root, "charts/app/templates/main.yaml", `{{- if or (ne .Capabilities.KubeVersion.Version "v1.31.2") (not (.Capabilities.APIVersions.Has "fixture.example/v1")) (not .Release.IsUpgrade) }}
+{{ fail "CLI Helm options did not reach rendering" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: main
+  annotations:
+    fixture/kube: {{ .Capabilities.KubeVersion.Version | quote }}
+    fixture/api: {{ .Capabilities.APIVersions.Has "fixture.example/v1" | quote }}
+    fixture/upgrade: {{ .Release.IsUpgrade | quote }}
+spec:
+  selector: {matchLabels: {app: main}}
+  template:
+    metadata: {labels: {app: main}}
+    spec: {containers: [{name: main, image: "fixture/main:{{ .Values.tag }}"}]}
+`)
+	for _, name := range []string{"extra", "hook"} {
+		annotation := ""
+		if name == "hook" {
+			annotation = `, annotations: {helm.sh/hook: pre-install}`
+		}
+		testutil.WriteFile(t, root, "charts/app/templates/"+name+".yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: "+name+annotation+"}\nspec: {selector: {matchLabels: {app: "+name+"}}, template: {metadata: {labels: {app: "+name+"}}, spec: {containers: [{name: "+name+", image: 'fixture/"+name+":{{ .Values.tag }}'}]}}}\n")
+	}
+	original := t.TempDir()
+	testutil.CopyTree(t, root, original)
+	hr, err := os.ReadFile(filepath.Join(original, "cluster/hr.yaml"))
+	assert.NoError(t, err)
+	testutil.WriteFile(t, original, "cluster/hr.yaml", strings.ReplaceAll(string(hr), "tag: after", "tag: before"))
+	flags := []string{"--path", filepath.Join(root, "cluster"), "--concurrency=2", "--kube-version=1.31.2", "-a", "fixture.example/v1", "--is-upgrade"}
+	for _, command := range []string{"build hr", "get all", "get hr", "get images", "test hr", "diff hr", "diff images"} {
+		t.Run(command, func(t *testing.T) {
+			args := append(strings.Fields(command), flags...)
+			args = append(args, "--no-hooks", "-s", "app/templates/main.yaml")
+			if strings.HasPrefix(command, "diff") {
+				args = append(args, "--path-orig", filepath.Join(original, "cluster"))
+			}
+			out, diagnostic, code := runCLI(t, args...)
+			if code != 0 || out == "" {
+				t.Fatalf("Helm options: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
+			}
+			if command == "build hr" {
+				for _, want := range []string{"fixture/kube: v1.31.2", "fixture/api: \"true\"", "fixture/upgrade: \"true\"", "fixture/main:after"} {
+					if !strings.Contains(out, want) {
+						t.Errorf("missing %q in %s", want, out)
+					}
+				}
+			}
+			if strings.HasSuffix(command, "images") && (!strings.Contains(out, "fixture/main") || strings.Contains(out, "fixture/extra") || strings.Contains(out, "fixture/hook")) {
+				t.Fatalf("image filtering lost Helm options: %s", out)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		extra, hook bool
+	}{
+		{name: "hooks included", extra: true, hook: true},
+		{name: "hooks excluded", args: []string{"--no-hooks"}, extra: true},
+		{name: "show only", args: []string{"-s", "app/templates/main.yaml"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"build", "hr"}, flags...)
+			out, diagnostic, code := runCLI(t, append(args, tc.args...)...)
+			if code != 0 || !strings.Contains(out, "name: main") || strings.Contains(out, "name: extra") != tc.extra || strings.Contains(out, "name: hook") != tc.hook {
+				t.Fatalf("template filtering: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
+			}
+		})
+	}
 }

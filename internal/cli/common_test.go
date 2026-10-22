@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -56,7 +58,7 @@ func TestBindCommon_ForceGenericProviderFlag(t *testing.T) {
 		if err := fs.Parse(args); err != nil {
 			t.Fatalf("Parse: %v", err)
 		}
-		return buildOrchCfg(f, helmFlags{})
+		return buildOrchCfg(f)
 	}
 	if cfg := parse(t); cfg.ForceGenericProvider {
 		t.Errorf("default: ForceGenericProvider = true, want false")
@@ -133,7 +135,7 @@ func TestCacheDir_EmptyUsesMemory(t *testing.T) {
 					t.Fatalf("empty root created cache %s: %v", name, err)
 				}
 			}
-			cfg := buildOrchCfg(commonFlags{}, helmFlags{})
+			cfg := buildOrchCfg(commonFlags{})
 			if cfg.CacheDir != "" {
 				t.Fatalf("empty cache setting resolved to %q", cfg.CacheDir)
 			}
@@ -252,7 +254,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 			assert.Diff(t, c.pathOrigSelfURLs, tc.want)
 			assert.Equal(t, c.pathRoot, current)
 			assert.Equal(t, c.pathOrigRoot, orig)
-			cfg := buildOrchCfg(c, helmFlags{})
+			cfg := buildOrchCfg(c)
 			assert.Equal(t, [2]string{cfg.RepoRoot, cfg.PathOrig}, [2]string{current, orig})
 		})
 	}
@@ -372,7 +374,7 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 	}
 }
 
-func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
+func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 	const key = "FLATE_DISABLE_CHART_DIGEST_TRACKING"
 	for _, tc := range []struct {
 		name                           string
@@ -401,15 +403,15 @@ func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
 			root := New("test")
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
-			var h helmFlags
+			var f commonFlags
 			var got orchestrator.Config
 			ran := false
 			cmd := &cobra.Command{Use: "probe", RunE: func(*cobra.Command, []string) error {
 				ran = true
-				got = buildOrchCfg(commonFlags{}, h)
+				got = buildOrchCfg(f)
 				return nil
 			}}
-			bindHelmFlags(cmd.Flags(), &h)
+			bindCommon(cmd.Flags(), &f)
 			root.AddCommand(cmd)
 			root.SetArgs(append([]string{"probe"}, tc.args...))
 			err := root.ExecuteContext(t.Context())
@@ -428,9 +430,9 @@ func TestHelmFlags_ChartDigestTrackingOverride(t *testing.T) {
 			}
 		})
 	}
-	got := buildOrchCfg(commonFlags{}, helmFlags{})
+	got := buildOrchCfg(commonFlags{})
 	assert.Equal(t, got.DisableChartDigestTracking == nil, true)
-	got = buildOrchCfg(commonFlags{}, helmFlags{disableChartDigestTracking: new(true)})
+	got = buildOrchCfg(commonFlags{disableChartDigestTracking: new(true)})
 	assert.Equal(t, *got.DisableChartDigestTracking, true)
 }
 
@@ -448,7 +450,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	cleanup, err := resolveBaseline(t.Context(), &c, false)
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, cleanup()) })
-	cfg := buildOrchCfg(c, helmFlags{})
+	cfg := buildOrchCfg(c)
 	assert.Equal(t, cfg.Input, c.input)
 	assert.Equal(t, cfg.BaseInput, c.baseInput)
 	assert.Equal(t, cfg.Path, currentScan)
@@ -546,4 +548,33 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBindCommon_HelmOptions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want helm.Options
+	}{
+		{name: "defaults", want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret"}}},
+		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--is-upgrade", "--no-hooks", "-s", "templates/main.yaml", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", IsUpgrade: true, NoHooks: true, ShowOnly: []string{"templates/main.yaml"}, EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{}}},
+		{name: "mixed", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret", "ConfigMap"}}},
+		{name: "explicit false and empty", args: []string{"--is-upgrade=false", "--no-hooks=false", "--enable-dns=false", "--show-only=", "--skip-kinds="}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, ShowOnly: []string{}, SkipKinds: []string{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var f commonFlags
+			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			bindCommon(fs, &f)
+			assert.NoError(t, fs.Parse(tc.args))
+			retained, want := f.skipKinds, slices.Clone(f.skipKinds)
+			for range 2 {
+				assert.Diff(t, buildOrchCfg(f).HelmOptions, tc.want)
+				assert.Diff(t, f.skipKinds, want)
+				assert.Diff(t, retained, want)
+			}
+		})
+	}
+	assert.Equal(t, buildOrchCfg(commonFlags{}).HelmOptions.SkipTests, true)
 }

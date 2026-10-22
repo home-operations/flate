@@ -1,16 +1,15 @@
 package cli
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
 )
 
-func TestOutputUsage(t *testing.T) {
+func TestBindOutput_Usage(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name    string
@@ -36,67 +35,84 @@ func TestOutputUsage(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := outputUsage(tc.outputs); got != tc.want {
-				t.Errorf("outputUsage = %q, want %q", got, tc.want)
+			var target string
+			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			bindOutput(fs, &target, tc.outputs...)
+			if target != string(tc.outputs[0]) || fs.Lookup("output").DefValue != target || fs.Lookup("output").Shorthand != "o" {
+				t.Fatalf("incorrect output binding: %s %#v", target, fs.Lookup("output"))
+			}
+			if got := fs.Lookup("output").Usage; got != tc.want {
+				t.Errorf("output usage = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestOutputFlagAdvertisesNameOnlyWhereSupported pins that each
-// subcommand's -o help advertises `name` only where the command honors
-// it (get ks/hr/images and diff images) — and never for build or the
-// diff/get summaries that reject it. Regression guard for the shared help
-// that used to claim `name` everywhere ("--output=name is not a thing").
-func TestOutputFlagAdvertisesNameOnlyWhereSupported(t *testing.T) {
+func TestOutputFlags_CommandFormats(t *testing.T) {
 	t.Parallel()
-	wantName := map[string]bool{
-		"build ks":    false,
-		"build hr":    false,
-		"build all":   false,
-		"diff ks":     false,
-		"diff hr":     false,
-		"diff all":    false,
-		"diff images": true,
-		"get ks":      true,
-		"get hr":      true,
-		"get images":  true,
-		"get all":     false,
-	}
-
-	got := map[string]bool{}
-	for _, root := range []*cobra.Command{newBuildCmd(), newDiffCmd(), newGetCmd()} {
-		for _, sub := range root.Commands() {
-			f := sub.Flags().Lookup("output")
-			if f == nil {
-				continue
+	for _, tc := range []struct {
+		command, formats string
+	}{
+		{"build", "yaml, json"},
+		{"build ks", "yaml, json"},
+		{"build hr", "yaml, json"},
+		{"build all", "yaml, json"},
+		{"get", "yaml, json"},
+		{"get all", "yaml, json"},
+		{"get ks", "table, yaml, json, name"},
+		{"get hr", "table, yaml, json, name"},
+		{"get images", "name, yaml, json"},
+		{"diff", "human, github, diff, html, brief, gitlab, gitea, json"},
+		{"diff ks", "human, github, diff, html, brief, gitlab, gitea, json"},
+		{"diff hr", "human, github, diff, html, brief, gitlab, gitea, json"},
+		{"diff all", "human, github, diff, html, brief, gitlab, gitea, json"},
+		{"diff images", "name, yaml, json"},
+		{"test", ""},
+		{"test ks", ""},
+		{"test hr", ""},
+		{"test all", ""},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			cmd, _, err := New("test").Find(strings.Fields(tc.command))
+			if err != nil {
+				t.Fatal(err)
 			}
-			got[root.Name()+" "+sub.Name()] = slices.Contains(advertisedFormats(f.Usage), "name")
-		}
-	}
-
-	for path, want := range wantName {
-		gotName, ok := got[path]
-		if !ok {
-			t.Errorf("subcommand %q not found (renamed?)", path)
-			continue
-		}
-		if gotName != want {
-			t.Errorf("%q: -o usage advertises name=%v, want %v", path, gotName, want)
-		}
+			flag := cmd.Flags().Lookup("output")
+			if tc.formats == "" {
+				if flag != nil {
+					t.Fatal("test has an output flag")
+				}
+				return
+			}
+			if flag == nil {
+				t.Fatal("missing output binding")
+			}
+			formats := strings.Split(tc.formats, ", ")
+			usage, _, _ := strings.Cut(flag.Usage, " [env: ")
+			if usage != "output format: "+tc.formats || !strings.Contains(flag.Usage, envKey("output")) || flag.DefValue != formats[0] || flag.Shorthand != "o" {
+				t.Fatalf("incorrect output binding: %#v", flag)
+			}
+			for _, format := range formats {
+				if err := cmd.ParseFlags([]string{"-o", format}); err != nil {
+					t.Errorf("rejects advertised format %s: %v", format, err)
+				}
+			}
+			if err := cmd.ParseFlags([]string{"-o", "unsupported"}); err == nil || !strings.Contains(err.Error(), "must be one of: "+tc.formats) {
+				t.Errorf("invalid output accepted: %v", err)
+			}
+		})
 	}
 }
 
-// advertisedFormats parses the comma-separated format list out of an -o
-// flag usage string ("output format: table, yaml, json").
-func advertisedFormats(usage string) []string {
-	_, list, ok := strings.Cut(usage, ": ")
-	if !ok {
-		return nil
+func TestOutputFlags_TestRejectsBeforeRender(t *testing.T) {
+	for _, command := range []string{"test", "test all", "test ks", "test hr"} {
+		t.Run(command, func(t *testing.T) {
+			args := append(strings.Fields(command), "--path", t.TempDir()+"/missing", "-o", "yaml")
+			out, diagnostic, code := runCLI(t, args...)
+			if code != 1 || out != "" || !strings.Contains(diagnostic, "unknown shorthand flag: 'o'") || strings.Contains(diagnostic, "does not exist") {
+				t.Fatalf("output rejection happened after render: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
+			}
+		})
 	}
-	parts := strings.Split(list, ", ")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
 }

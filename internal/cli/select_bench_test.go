@@ -113,6 +113,24 @@ func TestCompletedScopeFixture_SelectionCounts(t *testing.T) {
 	}
 }
 
+func BenchmarkIncludeNamespace_KeepSet(b *testing.B) {
+	for _, count := range []int{100, 5000} {
+		for _, sides := range []int{1, 2} {
+			b.Run(fmt.Sprintf("keep_%d/sides_%d", count, sides), func(b *testing.B) {
+				runs := make([]orchestrator.Rendered, sides)
+				for i := range runs {
+					runs[i] = completedScopeFixture(b, count, false, false)
+				}
+				roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
+				b.ReportAllocs()
+				for b.Loop() {
+					_, _, _ = orchestrator.Select(runs, nil, roots, nil)
+				}
+			})
+		}
+	}
+}
+
 func BenchmarkSelect_CompletedScope(b *testing.B) {
 	for _, count := range []int{100, 5000} {
 		for _, failures := range []bool{false, true} {

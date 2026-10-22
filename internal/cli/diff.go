@@ -42,7 +42,6 @@ func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
 
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	c := &commonFlags{}
-	h := &helmFlags{}
 	d := &diffFlags{}
 	// `diff all` has no name filter — it's the catch-all combined
 	// view, accepts no positional args. Per-kind variants accept an
@@ -58,40 +57,39 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and unavailable producer disclosures.",
 		Args:    positional,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.run(cmd, c, h, c.roots(firstArg(args), kind)[0])
+			return d.run(cmd, c, c.roots(firstArg(args), kind)[0])
 		},
 	}
-	bindCommon(cmd.Flags(), c, output.DiffFormats...)
-	bindHelmFlags(cmd.Flags(), h)
+	bindCommon(cmd.Flags(), c)
+	bindOutput(cmd.Flags(), &c.output, output.DiffFormats...)
 	bindDiffFlags(cmd, d)
 	return cmd
 }
 
 func newDiffImagesCmd() *cobra.Command {
 	c := &commonFlags{}
-	h := &helmFlags{}
 	var includeRemoved bool
 	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "Diff container images between current and baseline",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDiffImages(cmd, c, h, includeRemoved)
+			return runDiffImages(cmd, c, includeRemoved)
 		},
 	}
-	bindCommon(cmd.Flags(), c, output.FormatName, output.FormatYAML, output.FormatJSON)
-	bindHelmFlags(cmd.Flags(), h)
+	bindCommon(cmd.Flags(), c)
+	bindOutput(cmd.Flags(), &c.output, output.FormatName, output.FormatYAML, output.FormatJSON)
 	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
 		"also emit images present only in --path-orig (default: only newly added images)")
 	return cmd
 }
 
-func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
+func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) error {
 	stopProfile, err := startProfile()
 	if err != nil {
 		return err
 	}
 	defer stopProfile()
-	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
+	orig, current, runErr := runDiffOrchestrators(cmd.Context(), c)
 	selected, runErr, _ := orchestrator.Select([]orchestrator.Rendered{orig, current}, runErr,
 		c.roots("", manifest.KindKustomization, manifest.KindHelmRelease), nil)
 	if len(selected) == 0 {
@@ -111,13 +109,13 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 	return errors.Join((output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs), runErr)
 }
 
-func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, h *helmFlags, root manifest.NamedResource) error {
+func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedResource) error {
 	stopProfile, err := startProfile()
 	if err != nil {
 		return err
 	}
 	defer stopProfile()
-	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
+	orig, current, runErr := runDiffOrchestrators(cmd.Context(), c)
 	kinds := []string{root.Kind}
 	if root.Kind == "" {
 		kinds = []string{manifest.KindKustomization, manifest.KindHelmRelease}
@@ -190,7 +188,7 @@ func reportOmittedValues(w io.Writer, warnings []manifest.Warning, label string)
 
 // runDiffOrchestrators resolves the baseline, then hands the
 // two completed runs to selection.
-func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (orchestrator.Rendered, orchestrator.Rendered, error) {
+func runDiffOrchestrators(ctx context.Context, c *commonFlags) (orchestrator.Rendered, orchestrator.Rendered, error) {
 	// Diff requires a baseline. Owner cleanup waits for both sides to join.
 	if err := c.loadSubstitutions(ctx); err != nil {
 		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
@@ -203,6 +201,6 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (or
 	base, head, runErr := orchestrator.RenderTrees(ctx,
 		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
 		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs},
-		buildOrchCfg(*c, *h))
+		buildOrchCfg(*c))
 	return base, head, errors.Join(runErr, cleanup())
 }

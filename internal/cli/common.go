@@ -10,10 +10,8 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
@@ -67,16 +65,12 @@ type commonFlags struct {
 	// orchestrator.Config.GitDepth → git.Fetcher.Depth.
 	gitDepth int
 	cacheDir string
+
+	helm                       helm.Options
+	disableChartDigestTracking *bool
 }
 
-// bindCommon wires the flags every reconcile-running subcommand shares.
-// outputs is the subcommand's accepted -o values in help-display order:
-// the first is the default the flag takes when -o is omitted, and the flag
-// (an outputValue enum) rejects any value outside the set at parse time.
-// Each subcommand passes only the formats it honors — e.g. build doesn't
-// claim `name`, and diff doesn't claim `table`. Passing no formats (test,
-// which emits one fixed report) registers no -o flag at all.
-func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...output.Format) {
+func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVarP(&f.path, "path", "p", ".", "path to the Flux cluster directory")
 	fs.StringVarP(&f.pathOrig, "path-orig", "P", "",
 		"baseline path; when set, every command runs in changed-only mode")
@@ -111,14 +105,6 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...output.Format) {
 			"file:// self-sources. A configured proxy and ssh:// git egress are not covered (operator-owned).")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds",
 		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "kinds to exclude from rendered output (empty includes all kinds)")
-	// Commands with no -o variants (test) register no -o flag at all, so
-	// `-o anything` is an unknown flag rather than a rendered alternative.
-	// Otherwise -o is an enum (outputValue): an unsupported value is
-	// rejected at parse time, so cobra reports it before the command runs.
-	if len(outputs) > 0 {
-		f.output = string(outputs[0]) // default; outputValue.String reports it in --help
-		fs.VarP(&outputValue{target: &f.output, allowed: outputs}, "output", "o", outputUsage(outputs))
-	}
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
 		"opt-in on-disk cache root for source artifacts, helm charts, and render output (default: memory)")
@@ -131,6 +117,23 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...output.Format) {
 	fs.IntVar(&f.gitDepth, "git-depth", 1,
 		"shallow-clone depth for GitRepository sources; 0 = full clone "+
 			"(refs pinned to an explicit commit always full-clone)")
+	fs.StringVar(&f.helm.KubeVersion, "kube-version", helm.BundledKubeVersion(),
+		"Kubernetes version for .Capabilities.KubeVersion (default: version bundled with flate)")
+	fs.StringVarP(&f.helm.APIVersions, "api-versions", "a", "", "comma-separated API versions for .Capabilities.APIVersions")
+	fs.BoolVar(&f.helm.IsUpgrade, "is-upgrade", false, "set .Release.IsUpgrade instead of .Release.IsInstall")
+	fs.BoolVar(&f.helm.NoHooks, "no-hooks", false, "exclude hook-annotated templates")
+	fs.StringSliceVarP(&f.helm.ShowOnly, "show-only", "s", nil, "only show specific template paths (repeatable)")
+	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "enable DNS lookups during helm template")
+	fs.BoolFunc("disable-chart-digest-tracking",
+		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)",
+		func(text string) error {
+			disabled, err := strconv.ParseBool(text)
+			if err != nil {
+				return err
+			}
+			f.disableChartDigestTracking = &disabled
+			return nil
+		})
 }
 
 // listFlags holds flags that are only meaningful for list/get commands.
@@ -183,58 +186,6 @@ func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResour
 	return roots
 }
 
-// helmFlags collect the helm template options. Mirrors flux-local's
-// --kube-version/--api-versions/--no-hooks/etc.
-type helmFlags struct {
-	kubeVersion                string
-	apiVersions                string
-	isUpgrade                  bool
-	noHooks                    bool
-	showOnly                   []string
-	enableDNS                  bool
-	disableChartDigestTracking *bool
-}
-
-func bindHelmFlags(fs *pflag.FlagSet, h *helmFlags) {
-	// Default to the Kubernetes minor version bundled with the k8s.io/api
-	// dependency. Charts gated on KubeVersion (e.g. >=1.33 for ImageVolume)
-	// then render against the latest version flate knows about, which
-	// matches what a freshly-`flux install`'d cluster would see.
-	fs.StringVar(&h.kubeVersion, "kube-version", helm.BundledKubeVersion(),
-		"Kubernetes version for .Capabilities.KubeVersion (default: version bundled with flate)")
-	fs.StringVarP(&h.apiVersions, "api-versions", "a", "", "comma-separated API versions for .Capabilities.APIVersions")
-	fs.BoolVar(&h.isUpgrade, "is-upgrade", false, "set .Release.IsUpgrade instead of .Release.IsInstall")
-	fs.BoolVar(&h.noHooks, "no-hooks", false, "exclude hook-annotated templates")
-	fs.StringSliceVarP(&h.showOnly, "show-only", "s", nil, "only show specific template paths (repeatable)")
-	fs.BoolVar(&h.enableDNS, "enable-dns", false, "enable DNS lookups during helm template")
-	fs.BoolFunc("disable-chart-digest-tracking",
-		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)",
-		func(text string) error {
-			disabled, err := strconv.ParseBool(text)
-			if err != nil {
-				return err
-			}
-			h.disableChartDigestTracking = &disabled
-			return nil
-		})
-}
-
-func (c commonFlags) helmOptions(h helmFlags) helm.Options {
-	return helm.Options{
-		SkipCRDs: slices.Contains(c.skipKinds, manifest.KindCustomResourceDefinition),
-		SkipKinds: slices.DeleteFunc(slices.Clone(c.skipKinds), func(kind string) bool {
-			return kind == manifest.KindCustomResourceDefinition
-		}),
-		KubeVersion: h.kubeVersion,
-		APIVersions: h.apiVersions,
-		IsUpgrade:   h.isUpgrade,
-		NoHooks:     h.noHooks,
-		ShowOnly:    h.showOnly,
-		EnableDNS:   h.enableDNS,
-		SkipTests:   true,
-	}
-}
-
 // resolveBaseline admits --base inputs through the command's cache owner.
 // autoFallback selects automatic baseline resolution for diff commands.
 // Callers MUST run cleanup after both orchestrators' readers have joined.
@@ -278,14 +229,19 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	return owner.Close, nil
 }
 
-func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
+func buildOrchCfg(c commonFlags) orchestrator.Config {
+	c.helm.SkipTests = true
+	c.helm.SkipCRDs = slices.Contains(c.skipKinds, manifest.KindCustomResourceDefinition)
+	c.helm.SkipKinds = slices.DeleteFunc(slices.Clone(c.skipKinds), func(kind string) bool {
+		return kind == manifest.KindCustomResourceDefinition
+	})
 	return orchestrator.Config{
 		Path: c.path, RepoRoot: c.pathRoot,
 		Input: c.input, BaseInput: c.baseInput, ExternalChanges: c.changes, Cache: c.owner,
 		SelfURLs:                   c.selfURLs,
 		PathOrig:                   c.pathOrigRoot,
-		HelmOptions:                c.helmOptions(h),
-		DisableChartDigestTracking: h.disableChartDigestTracking,
+		HelmOptions:                c.helm,
+		DisableChartDigestTracking: c.disableChartDigestTracking,
 		WipeSecrets:                true,
 		RegistryConfig:             c.registryConfig,
 		Concurrency:                c.concurrency,
@@ -307,7 +263,7 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 	}
 }
 
-func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+func runOrchestrator(ctx context.Context, c commonFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
 	if c.path == "" {
 		return nil, nil, errors.New("path is required")
 	}
@@ -326,7 +282,7 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags) (*orchestr
 	if err != nil {
 		return nil, nil, err
 	}
-	o, res, runErr := runOrchestratorCfg(ctx, buildOrchCfg(c, h))
+	o, res, runErr := runOrchestratorCfg(ctx, buildOrchCfg(c))
 	return o, res, errors.Join(runErr, cleanup())
 }
 
@@ -347,43 +303,6 @@ func validatePathFlag(flag, p string) error {
 		return fmt.Errorf("%s %q is not a directory", flag, p)
 	}
 	return nil
-}
-
-// outputUsage renders the -o flag's help text from a subcommand's accepted
-// formats, listed in the order bindCommon received them (the first is the
-// default).
-func outputUsage(outputs []output.Format) string {
-	return "output format: " + joinOutputs(outputs)
-}
-
-// joinOutputs renders accepted -o formats as a comma-separated list, shared
-// by the help text and the parse-time rejection so the two can't drift.
-func joinOutputs(outputs []output.Format) string {
-	names := make([]string, len(outputs))
-	for i, o := range outputs {
-		names[i] = string(o)
-	}
-	return strings.Join(names, ", ")
-}
-
-// outputValue is the pflag.Value backing -o: a string constrained to a
-// subcommand's accepted formats. Set rejects anything else, so pflag/cobra
-// surface the error (with usage) at parse time, before the command runs —
-// no per-command validation call needed.
-type outputValue struct {
-	target  *string
-	allowed []output.Format
-}
-
-func (o *outputValue) String() string { return *o.target }
-func (o *outputValue) Type() string   { return "string" }
-
-func (o *outputValue) Set(v string) error {
-	if slices.Contains(o.allowed, output.Format(v)) {
-		*o.target = v
-		return nil
-	}
-	return fmt.Errorf("must be one of: %s", joinOutputs(o.allowed))
 }
 
 // runOrchestratorCfg routes the CLI through the embed-friendly
@@ -471,11 +390,4 @@ func reportFailures(w io.Writer, m output.Model, named bool, errs reportErrors) 
 		return nil
 	}
 	return reportedError{errs.selected}
-}
-
-func cmdContext(cmd *cobra.Command) context.Context {
-	if ctx := cmd.Context(); ctx != nil {
-		return ctx
-	}
-	return context.Background()
 }

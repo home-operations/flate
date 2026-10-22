@@ -267,7 +267,7 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 					testutil.WriteFile(t, root, "selected/input.yaml", input)
 				}
 			}
-			cfg := buildOrchCfg(commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2}, helmFlags{})
+			cfg := buildOrchCfg(commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2})
 			_, res, _ := runOrchestratorCfg(t.Context(), cfg)
 			id := testutil.KustomizationID("flux-system", "selected")
 			if res == nil || len(res.Manifests[id]) == 0 || len(res.Blocked[id]) != 0 {
@@ -502,7 +502,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 
 func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	o, res, err := runOrchestrator(t.Context(), commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2}, helmFlags{})
+	o, res, err := runOrchestrator(t.Context(), commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2})
 	if err != nil || res == nil {
 		t.Fatalf("fresh fixture failed: %v", err)
 	}

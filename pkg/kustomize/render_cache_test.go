@@ -30,6 +30,7 @@ import (
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -450,6 +451,18 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 							}
 							return &store.SourceArtifact{FS: remote, Key: "family", Revision: fmt.Sprint(v)}, nil
 						})
+						if origin == "generator" {
+							st := store.New()
+							if _, err := discovery.Run(t.Context(), discovery.Config{
+								Path: root, RepoRoot: root, Store: st, RemoteInputs: c.remoteInputs,
+							}); err != nil {
+								t.Fatal(err)
+							}
+							generated, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"})
+							if !ok || generated.Data["chosen"] != fmt.Sprintf("remote-v%d", v) {
+								t.Fatalf("bootstrap generator data: %+v", generated)
+							}
+						}
 						return c
 					}
 					request := func() RenderRequest {
@@ -460,6 +473,7 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 						return RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoSpec}
 					}
 					version.Store(1)
+					initial := len(trace.snapshot())
 					cache := newCache(cacheDir)
 					out1, err := RenderFlux(t.Context(), cache, request(), sourcecache.RetryConfig{})
 					if err != nil || !strings.Contains(string(out1), "remote-v1") {
@@ -478,6 +492,9 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 					if valid, err := recorded.stillValid(t.Context(), cache, view, immutable); err != nil || !valid {
 						t.Fatalf("unchanged remote identity: %t, %v", valid, err)
 					}
+					if origin == "generator" && len(trace.snapshot())-initial != 1 {
+						t.Fatalf("bootstrap, render and validation did not share acquisition: %+v", trace.snapshot()[initial:])
+					}
 					key := renderKey(request(), root, nil)
 					snap, stored, hit := readTestRenderFrame(t, cache, key)
 					if hit != eligible || hit && (!bytes.Equal(stored, out1) || len(snap.Remotes) == 0 || immutable && (len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0)) {
@@ -493,8 +510,8 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 						publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
 					}
 					closeTestTreeCache(t, cache)
-					cache = newCache(cacheDir)
 					before := len(trace.snapshot())
+					cache = newCache(cacheDir)
 					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || !valid {
 						t.Fatalf("reopened unchanged remote identity: %t, %v", valid, err)
 					}
@@ -504,6 +521,9 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 					}
 					if origin != "git" && origin != "nested-mount" {
 						got := trace.snapshot()[before:]
+						if origin == "generator" {
+							t.Logf("bootstrap-primed persistence eligible=%t sentinel_reused=%t requests=%d", eligible, string(out2) == "SENTINEL\n", len(got))
+						}
 						t.Logf("unchanged render: requests=%+v accepted_connections=%d", got, trace.connections.Load())
 						if len(got) != 1 || got[0].Method != http.MethodGet || got[0].ETag == "" || got[0].Modified == "" || got[0].Status != http.StatusNotModified || got[0].Bytes != 0 {
 							t.Errorf("unchanged render must make one conditional GET with zero body bytes: %+v", got)
@@ -511,8 +531,8 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 					}
 					closeTestTreeCache(t, cache)
 					version.Store(2)
-					cache = newCache(cacheDir)
 					before = len(trace.snapshot())
+					cache = newCache(cacheDir)
 					if valid, err := recorded.stillValid(t.Context(), cache, &treeFS{lower: request().Source.FS}, immutable); err != nil || valid {
 						t.Fatalf("changed remote identity: %t, %v", valid, err)
 					}
@@ -537,6 +557,7 @@ func TestRenderFlux_RemoteCacheDependencies(t *testing.T) {
 func closeTestTreeCache(t *testing.T, c *TreeCache) {
 	t.Helper()
 	c.Close()
+	c.remoteInputs.Close()
 	if err := c.owner.Close(); err != nil {
 		t.Fatal(err)
 	}

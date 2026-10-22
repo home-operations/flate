@@ -20,10 +20,8 @@ import (
 )
 
 func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"validation", "miss", "standalone"} {
 		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				tasks := task.NewBounded(2)
 				owner := cachetest.New(t, "", sourcecache.New)
@@ -48,8 +46,8 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 					"app/git.yaml":           "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: git}\n",
 				})
 				newCache := func() *TreeCache {
-					c := NewTreeCache(owner, nil, tasks)
-					c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+					c := newTestTreeCacheWithTasks(t, owner, tasks)
+					stubHTTPTransport(t, remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
 						body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n"
 						if r.URL.Path == "/shared" {
 							body = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n"
@@ -67,7 +65,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 							Reader: strings.NewReader(body),
 							close:  func() error { active.Add(-1); return nil },
 						}}, nil
-					})
+					}))
 					c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 						if exercise.Load() {
 							start("git")
@@ -83,6 +81,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 					releaseFirst()
 					releaseSecond()
 					c.Close()
+					c.remoteInputs.Close()
 					tasks.BlockTillDone()
 				}()
 				descriptors := []remoteInput{
@@ -103,6 +102,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 						snap.Remotes = append(snap.Remotes, entry)
 					}
 					c.Close()
+					c.remoteInputs.Close()
 					c = newCache()
 				}
 				exercise.Store(true)
@@ -175,6 +175,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 					}
 				}
 				c.Close()
+				c.remoteInputs.Close()
 				tasks.BlockTillDone()
 				assert.Equal(t, active.Load(), int32(0))
 				assert.Equal(t, tasks.Failures(), int64(0))
@@ -203,3 +204,10 @@ func TestReadSet_NoRemotesNoAlloc(t *testing.T) {
 		t.Fatalf("zero remote validation allocations=%v, want 0", allocations)
 	}
 }
+
+type remoteBody struct {
+	io.Reader
+	close func() error
+}
+
+func (b remoteBody) Close() error { return b.close() }

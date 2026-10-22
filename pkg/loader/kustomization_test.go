@@ -145,7 +145,9 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			if len(l.Index.Errors) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "selected"}) == nil {
 				t.Fatalf("unlisted input affected selected source: errors=%v", l.Index.Errors)
 			}

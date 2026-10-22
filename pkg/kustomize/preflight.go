@@ -3,11 +3,8 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
 	"path/filepath"
 	"slices"
 
@@ -16,29 +13,13 @@ import (
 
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
-	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-// remoteFetchMaxBytes caps each pre-flight response body. A
-// kustomization resource is almost always under a megabyte of YAML;
-// 64 MiB is several orders of magnitude of headroom that still
-// bounds the OOM blast radius from a malicious or accidentally-huge
-// URL endpoint.
-const remoteFetchMaxBytes = 64 << 20 // 64 MiB
-
 // Remote inputs live only in the private render overlay.
 const remoteResourcePrefix = ".flate-remote-"
-
-const (
-	httpOriginalURLAnnotation  = "flate.http-original-url"
-	httpETagAnnotation         = "flate.http-etag"
-	httpLastModifiedAnnotation = "flate.http-last-modified"
-)
 
 // Plugin inputs resolve against the owning loader, even when the config is a
 // resource of a separately accumulated directory. Resource leaves stay data
@@ -460,62 +441,4 @@ func setPlainScalar(node *yaml.Node, value string) {
 	node.Value = value
 	node.Tag = "!!str"
 	node.Style = 0
-}
-
-func (c *TreeCache) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
-	fetchCtx, cancel := context.WithTimeout(ctx, source.HTTPResource.Timeout())
-	defer cancel()
-	previous, err := w.Previous(fetchCtx)
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	if previous != nil && previous.Annotations[httpOriginalURLAnnotation] == "true" {
-		if etag := previous.Annotations[httpETagAnnotation]; etag != "" {
-			req.Header.Set("If-None-Match", etag)
-		}
-		if modified := previous.Annotations[httpLastModifiedAnnotation]; modified != "" {
-			req.Header.Set("If-Modified-Since", modified)
-		}
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-	if resp.StatusCode == http.StatusNotModified && previous != nil && (resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != "") {
-		result.Descriptor, result.Unchanged = *previous, true
-	} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
-	} else {
-		result.Annotations = make(map[string]string)
-		requestURL, responseURL := *req.URL, *resp.Request.URL
-		if requestURL.User != nil && responseURL.User != nil && *requestURL.User == *responseURL.User {
-			responseURL.User = requestURL.User
-		}
-		if requestURL == responseURL {
-			result.Annotations[httpOriginalURLAnnotation] = "true"
-		}
-	}
-	for _, validator := range [...]struct{ header, annotation string }{{"ETag", httpETagAnnotation}, {"Last-Modified", httpLastModifiedAnnotation}} {
-		if _, supplied := resp.Header[http.CanonicalHeaderKey(validator.header)]; supplied {
-			result.Annotations[validator.annotation] = resp.Header.Get(validator.header)
-		}
-	}
-	if result.Unchanged {
-		return result, nil
-	}
-	// The extra byte detects overflow without buffering an unbounded response.
-	size, err := io.Copy(w, io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	if size > remoteFetchMaxBytes {
-		return cache.ProducerResult{}, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
-	}
-	result.Size = size
-	return result, nil
 }

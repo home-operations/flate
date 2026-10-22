@@ -21,7 +21,7 @@
 // the caller, who closes it only after every borrowing run and reader finishes.
 //
 // Direct renderer callers finish and join RenderFlux calls, close each borrowed
-// TreeCache, close remaining readers, then release their cache.New share and
+// TreeCache, close its source.HTTPInputs, close remaining readers, then release their cache.New share and
 // handle cache.Close's error. TreeCache.Close does not close borrowed backing.
 //
 // Bootstrap loads YAML manifests from the configured path AND

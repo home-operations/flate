@@ -26,6 +26,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -60,7 +61,11 @@ data: {greeting: hi}
 
 	owner := cachetest.New(t, "", sourcecache.New)
 	tasks := task.NewBounded(2)
-	cache := kustomize.NewTreeCache(owner, nil, tasks)
+	network := new(source.Network)
+	t.Cleanup(network.Close)
+	inputs := source.NewHTTPInputs(owner, network, tasks)
+	t.Cleanup(inputs.Close)
+	cache := kustomize.NewTreeCache(owner, &inputs, tasks)
 	t.Cleanup(cache.Close)
 
 	c := New(s, tasks, cache, true)
@@ -752,7 +757,9 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			l.SourceRoot, l.Options.WipeSecrets = root, false
 			_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
 			assert.NoError(t, err)
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
 			exclusive := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "exclusive"}
 			if len(s.Productions(exclusive, l.Index)) == 0 {
@@ -776,7 +783,11 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			assert.NoError(t, err)
 			t.Cleanup(func() { _ = owner.Close() })
 			tasks := task.NewBounded(2)
-			trees := kustomize.NewTreeCache(owner, nil, tasks)
+			network := new(source.Network)
+			t.Cleanup(network.Close)
+			inputs := source.NewHTTPInputs(owner, network, tasks)
+			t.Cleanup(inputs.Close)
+			trees := kustomize.NewTreeCache(owner, &inputs, tasks)
 			t.Cleanup(trees.Close)
 			c := New(s, tasks, trees, false)
 			c.Configure(Options{Index: l.Index}, sourcecache.RetryConfig{})

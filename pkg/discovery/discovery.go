@@ -13,6 +13,8 @@ import (
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -65,6 +67,8 @@ type Config struct {
 	KRMIgnoreFile string
 	Store         *store.Store
 	WipeSecrets   bool
+	RemoteInputs  *source.HTTPInputs
+	RemoteRetry   cache.RetryConfig
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -75,7 +79,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, errors.New("discovery: Store is required")
 	}
 	l := loader.New(cfg.Store)
-	l.Options.WipeSecrets = cfg.WipeSecrets
+	l.Options = loader.Options{WipeSecrets: cfg.WipeSecrets, RemoteInputs: cfg.RemoteInputs, RemoteRetry: cfg.RemoteRetry}
 	// Discovery drivers and sources reach the Store immediately; other resources
 	// retain indexed evidence for render emission and exact promotion.
 	d := &discoverer{cfg: cfg, loader: l, aliasViews: make(map[string]fs.FS)}
@@ -103,7 +107,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		}
 	}
-	l.FinalizeIndex(repoRoot)
+	if err := l.FinalizeIndex(ctx, repoRoot); err != nil {
+		return nil, err
+	}
 	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(standaloneSecrets)
 	return &Result{

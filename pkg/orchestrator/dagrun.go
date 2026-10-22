@@ -25,6 +25,7 @@ func (d dagDispatcher) Go(ctx context.Context, name string, fn func(context.Cont
 // BlockTillDone cancels remote owners before joining the shared task service.
 func (d dagDispatcher) BlockTillDone() {
 	d.o.ksc.Trees.Close()
+	d.o.inputs.Close()
 	d.o.tasks.BlockTillDone()
 }
 

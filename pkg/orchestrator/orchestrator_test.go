@@ -26,7 +26,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -219,6 +218,20 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 				if o.cache == nil || o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache) {
 					t.Fatal("New did not wire both renderers through the selected owner")
 				}
+				entered, completed := make(chan struct{}), make(chan struct{})
+				server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					close(entered)
+					<-r.Context().Done()
+					close(completed)
+				}))
+				t.Cleanup(server.Close)
+				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+				done := make(chan error, 1)
+				go func() {
+					_, err := o.inputs.Acquire(t.Context(), server.URL, sourcecache.RetryConfig{}, nil)
+					done <- err
+				}()
+				<-entered
 				if stage == "input-failure" && !errors.Is(o.Bootstrap(t.Context()), manifest.ErrInput) {
 					t.Fatal("expected Bootstrap input failure")
 				}
@@ -228,6 +241,10 @@ func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
 				if err := o.Stop(); err != nil {
 					t.Fatalf("Stop: %v", err)
 				}
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatalf("Stop did not cancel/join input work: %v", err)
+				}
+				<-completed
 				if injected {
 					if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 						t.Fatalf("Stop allocated independent cache backing: %v", err)
@@ -1277,7 +1294,7 @@ func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
 			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees || o.bootstrapped {
 				t.Fatal("failed Bootstrap reopened its owner or rediscovered input")
 			}
-			if _, err := trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+			if _, err := o.inputs.Acquire(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 				t.Fatalf("failed Bootstrap left TreeCache open: %v", err)
 			}
 			fresh, err := New(t.Context(), cfg)
@@ -1517,7 +1534,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
 			}
 			for _, side := range []Rendered{base, head} {
-				if _, err := side.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.inputs.Acquire(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("partial side left TreeCache open: %v", err)
 				}
 			}
@@ -1568,12 +1585,12 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			cause := terminal.Err
 			failing.Store(false)
 			for i, side := range []Rendered{base, head} {
-				if _, err := side.ksc.Trees.FetchRemote(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.inputs.Acquire(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("returned side %d is not terminal: %v", i, err)
 				}
-				trees := kustomize.NewTreeCache(c, side.cfg.Network, task.NewBounded(2))
+				trees := source.NewHTTPInputs(c, side.cfg.Network, task.NewBounded(2))
 				t.Cleanup(trees.Close)
-				_, err := trees.FetchRemote(t.Context(), fmt.Sprintf("%s/%d", target, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}, nil)
+				_, err := trees.Acquire(t.Context(), fmt.Sprintf("%s/%d", target, i), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}, nil)
 				terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 				if !ok || terminal.Attempted || !errors.Is(err, cause) {
 					t.Fatalf("side %d: %v", i, err)
@@ -1590,13 +1607,13 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 				t.Fatal("Network leaked across invocations sharing Cache")
 			}
 			for _, side := range []Rendered{next, other} {
-				if _, err := side.ksc.Trees.FetchRemote(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := side.inputs.Acquire(t.Context(), target, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("fresh returned side is not terminal: %v", err)
 				}
 			}
-			trees := kustomize.NewTreeCache(c, next.cfg.Network, task.NewBounded(2))
+			trees := source.NewHTTPInputs(c, next.cfg.Network, task.NewBounded(2))
 			t.Cleanup(trees.Close)
-			input, err := trees.FetchRemote(t.Context(), target+"/0", sourcecache.RetryConfig{}, nil)
+			input, err := trees.Acquire(t.Context(), target+"/0", sourcecache.RetryConfig{}, nil)
 			var body []byte
 			if err == nil {
 				body, err = fs.ReadFile(input, "content")
@@ -1606,6 +1623,34 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			}
 		})
 	}
+	t.Run("remote-generators", func(t *testing.T) {
+		var requests, version atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			fmt.Fprintf(w, "VALUE=run-%d\n", version.Load())
+		}))
+		defer server.Close()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf("namespace: apps\nconfigMapGenerator: [{name: remote, envs: [%s]}]\ngeneratorOptions: {disableNameSuffixHash: true}\n", server.URL))
+		cfg := Config{Cache: cachetest.New(t, "", sourcecache.New), Concurrency: 2}
+		for _, v := range []int32{1, 2} {
+			version.Store(v)
+			base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: root}, Tree{RepoRoot: root}, cfg)
+			assert.NoError(t, err)
+			for _, side := range []Rendered{base, head} {
+				obj, ok := side.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "remote"})
+				if !ok {
+					t.Fatal("snapshot lost bootstrap generator data")
+				}
+				assert.Diff(t, obj.Data, map[string]any{"VALUE": fmt.Sprintf("run-%d", v)})
+			}
+			assert.Equal(t, requests.Load(), 2*v)
+			if base.cfg.Network != head.cfg.Network || &base.inputs == &head.inputs {
+				t.Fatal("snapshots must share transport and retain independent input owners")
+			}
+		}
+	})
 }
 
 func TestOrchestrator_StopErrorPropagation(t *testing.T) {
@@ -1697,7 +1742,7 @@ func TestOrchestrator_StopErrorPropagation(t *testing.T) {
 					t.Fatalf("Stop changed cached error: %v", got)
 				}
 			}
-			if _, err := o.ksc.Trees.FetchRemote(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+			if _, err := o.inputs.Acquire(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 				t.Fatalf("TreeCache not terminal: %v", err)
 			}
 			if result != nil && len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) == 0 {
@@ -1739,7 +1784,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 				callers := make(chan error, workers)
 				for range workers {
 					go func() {
-						_, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil)
+						_, err := o.inputs.Acquire(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil)
 						callers <- err
 					}()
 				}
@@ -1755,7 +1800,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 					}
 				}
 				<-completed
-				if _, err := o.ksc.Trees.FetchRemote(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := o.inputs.Acquire(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("run left TreeCache live: %v", err)
 				}
 				if root != "" {
@@ -1977,7 +2022,7 @@ func TestOrchestrator_NetworkOwnership(t *testing.T) {
 				} else {
 					assert.NoError(t, o.Stop())
 				}
-				if _, err := o.ksc.Trees.FetchRemote(ctx, srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
+				if _, err := o.inputs.Acquire(ctx, srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("workers not closed before network cleanup: %v", err)
 				}
 				if injected {

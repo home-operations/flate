@@ -24,10 +24,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // TestRun_SmallTree exercises the discovery phase end-to-end on a
@@ -726,15 +730,12 @@ func TestRun_ComponentGeneratorMaterializesCM(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Flux Kustomization in flux-system pointing at ./cluster
 	testutil.WriteFileAt(t, filepath.Join(dir, "flux", "ks.yaml"), testutil.KustomizationYAML("cluster-config", "flux-system", "  path: ./cluster\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 10m\n"))
-	// cluster/kustomization.yaml references the Component
 	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1
 kind: Kustomization
 components:
   - ../components/cluster-settings
 `)
-	// Component declares the configMapGenerator
 	testutil.WriteFileAt(t, filepath.Join(dir, "components", "cluster-settings", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 configMapGenerator:
@@ -744,9 +745,13 @@ configMapGenerator:
       - TIMEZONE=UTC
 `)
 
+	network := new(source.Network)
+	defer network.Close()
+	inputs := source.NewHTTPInputs(cachetest.New(t, "", cache.New), network, task.NewBounded(2))
+	inputs.Close()
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
-		Path: dir, Store: st, WipeSecrets: true,
+	if _, err := discovery.Run(t.Context(), discovery.Config{
+		Path: dir, Store: st, WipeSecrets: true, RemoteInputs: &inputs,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

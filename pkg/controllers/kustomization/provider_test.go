@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -91,7 +92,11 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner := cachetest.New(t, "", sourcecache.New)
 	tasks := task.NewBounded(2)
-	trees := kustomize.NewTreeCache(owner, nil, tasks)
+	network := new(source.Network)
+	t.Cleanup(network.Close)
+	inputs := source.NewHTTPInputs(owner, network, tasks)
+	t.Cleanup(inputs.Close)
+	trees := kustomize.NewTreeCache(owner, &inputs, tasks)
 	t.Cleanup(trees.Close)
 	c := New(st, tasks, trees, false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})

@@ -258,6 +258,7 @@ func (o *Orchestrator) Stop() error {
 		o.ksc.Close()
 		o.src.Close()
 		o.ksc.Trees.Close()
+		o.inputs.Close()
 		if o.ownNetwork {
 			o.cfg.Network.Close()
 		}

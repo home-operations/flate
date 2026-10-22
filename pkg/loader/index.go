@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -11,7 +12,10 @@ import (
 )
 
 // FinalizeIndex freezes source-qualified graph contributions before reconciliation.
-func (l *Loader) FinalizeIndex(repoRoot string) {
+func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	l.mountSources()
 	if l.scopes == nil || !l.scopes.complete {
 		l.ensureScopes()
@@ -74,7 +78,9 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 		l.Index.Records[id] = r
 	}
 	emittedFiles := map[string][]manifest.NamedResource{}
-	l.buildProductions(repoRoot, emittedFiles)
+	if err := l.buildProductions(ctx, repoRoot, emittedFiles); err != nil {
+		return err
+	}
 	l.finalizeRecords(repoRoot, emittedFiles)
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes = nil
@@ -92,4 +98,5 @@ func (l *Loader) FinalizeIndex(repoRoot string) {
 	for _, ids := range l.Index.Readers {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
+	return nil
 }

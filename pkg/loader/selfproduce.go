@@ -2,6 +2,8 @@ package loader
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -20,9 +22,9 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]manifest.NamedResource) {
+func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedFiles map[string][]manifest.NamedResource) error {
 	if repoRoot == "" {
-		return
+		return nil
 	}
 	b := &selfProduceBuilder{idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
 		secrets: map[manifest.NamedResource]*manifest.Secret{}, emittedFiles: emittedFiles}
@@ -95,10 +97,13 @@ func (l *Loader) buildProductions(repoRoot string, emittedFiles map[string][]man
 			declarations = nil
 		}
 	}
-	l.addGenerated(generators)
+	if err := l.addGenerated(ctx, generators); err != nil {
+		return err
+	}
 	for _, id := range slices.SortedFunc(maps.Keys(b.secrets), manifest.NamedResource.Compare) {
 		l.Store.AddObject(b.secrets[id])
 	}
+	return nil
 }
 
 func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
@@ -124,7 +129,7 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 	return roots
 }
 
-func (l *Loader) addGenerated(generators []generatorRecord) {
+func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord) error {
 	for _, r := range generators {
 		// Generator names are indexed before suffix hashing, including failed inputs.
 		id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: r.namespace, Name: r.args.Name}
@@ -148,8 +153,11 @@ func (l *Loader) addGenerated(generators []generatorRecord) {
 			}
 		}
 		l.Index.Records[id] = record
-		obj, err := r.materialize(l.Options.WipeSecrets)
+		obj, err := r.materialize(ctx, l.Options)
 		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
+				return err
+			}
 			slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
 			continue
 		}
@@ -157,6 +165,7 @@ func (l *Loader) addGenerated(generators []generatorRecord) {
 			l.Store.AddObject(obj)
 		}
 	}
+	return nil
 }
 
 type graphContext struct {

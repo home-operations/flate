@@ -201,7 +201,9 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 				l.ApplyNamespaces(root)
 				check(ns)
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			check(tc.namespaces[len(tc.namespaces)-1])
 			if tc.mounted {
 				st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "removed", LocalRoot: root, LocalPath: local})

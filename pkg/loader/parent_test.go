@@ -81,7 +81,9 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				}
 			}
 			l.SourceRoot = root
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			assert.Equal(t, l.Index.Records[child].Parent, ks.Named())
 			owners, _ := l.Index.OwnersOfFile(prefix + "hr.yaml")
 			assert.Diff(t, owners, []manifest.NamedResource{ks.Named()})
@@ -100,7 +102,9 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 
 func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest.NamedResource]manifest.NamedResource {
 	t.Helper()
-	l.FinalizeIndex(repoRoot)
+	if err := l.FinalizeIndex(t.Context(), repoRoot); err != nil {
+		t.Fatal(err)
+	}
 	out := map[manifest.NamedResource]manifest.NamedResource{}
 	for id, r := range l.Index.Records {
 		if id.Kind == kind && r.Parent != (manifest.NamedResource{}) {

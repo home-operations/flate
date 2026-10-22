@@ -78,7 +78,9 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			admitForTest(st, root)
 			l.mountSources()
 			l.documents.read(filepath.Join(root, "apps/a"))
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			obj := st.GetObject(id)
 			if tc.want == "" {
 				if obj != nil {

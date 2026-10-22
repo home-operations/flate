@@ -82,7 +82,9 @@ spec:
 				return l, input, want
 			}
 			l, input, want := newLoader()
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			id := testutil.HelmReleaseID("apps", "demo")
 			var got []string
 			for file, readers := range l.Index.Readers {
@@ -102,11 +104,15 @@ spec:
 			filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), l.Index, l.Store)
 			assert.Equal(t, filter.ShouldReconcile(id), mode == "working")
 			snapshot := snapshotIndexForTest(l.Index)
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			assert.Diff(t, *l.Index, snapshot)
 			assert.Equal(t, input.opens, 0)
 			fresh, freshInput, _ := newLoader()
-			fresh.FinalizeIndex(root)
+			if err := fresh.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			assert.Diff(t, *fresh.Index, snapshot)
 			assert.Equal(t, freshInput.opens, 0)
 		})

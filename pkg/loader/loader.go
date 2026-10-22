@@ -15,6 +15,8 @@ import (
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -24,7 +26,9 @@ import (
 // Options tunes the Loader.
 type Options struct {
 	// WipeSecrets controls Secret cleartext replacement. Default true.
-	WipeSecrets bool
+	WipeSecrets  bool
+	RemoteInputs *source.HTTPInputs
+	RemoteRetry  cache.RetryConfig
 }
 
 // Loader walks source views and adds Flux objects to a Store. Source membership

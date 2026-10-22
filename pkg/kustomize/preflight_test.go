@@ -2,7 +2,6 @@ package kustomize
 
 import (
 	"context"
-	"errors"
 	"io"
 	"io/fs"
 	"maps"
@@ -15,15 +14,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
-	"time"
-
-	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -271,18 +265,6 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 // TestHttpGetURL_RejectsOversizedBody pins the OOM guard: an endpoint returning
 // more than remoteFetchMaxBytes must fail fast rather than reading the whole
 // body into memory.
-func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
-	t.Parallel()
-	c := newTestTreeCache(t, "")
-	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
-		body := remoteBody{Reader: remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), close: func() error { return nil }}
-		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
-	})
-	_, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", sourcecache.ProducerInput{Writer: io.Discard})
-	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("oversized-body error=%v", err)
-	}
-}
 
 func TestPreflightRemoteResources_PreservesCommentsAndOrder(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -338,18 +320,6 @@ namespace: my-app
 // TestHttpGetURL_AcceptsBodyAtCap is the boundary check: a body exactly at the
 // cap must succeed. Guards against off-by-one in the LimitReader+overflow
 // pattern.
-func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
-	t.Parallel()
-	c := newTestTreeCache(t, "")
-	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
-		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), remoteFetchMaxBytes)
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(reader), Header: make(http.Header)}, nil
-	})
-	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/atcap.yaml", sourcecache.ProducerInput{Writer: io.Discard})
-	if err != nil || desc.Size != remoteFetchMaxBytes {
-		t.Fatalf("body exactly at cap: size=%d, error=%v", desc.Size, err)
-	}
-}
 
 func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 	for _, scheme := range []string{"HTTP", "HtTp", "HTTPS", "hTtPs"} {
@@ -369,12 +339,14 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			url := scheme + srv.URL[strings.Index(srv.URL, ":"):] + "/cm.yaml"
 			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization(url)})
 			cache := newTestTreeCache(t, "")
-			cache.httpClient = srv.Client()
+			original := http.DefaultTransport
+			http.DefaultTransport = srv.Client().Transport
+			t.Cleanup(func() { http.DefaultTransport = original })
 			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil || !strings.Contains(string(out), "name: remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
-			if _, err := cache.FetchRemote(t.Context(), url, sourcecache.RetryConfig{}, nil); err != nil {
+			if _, err := cache.remoteInputs.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil); err != nil {
 				t.Fatal(err)
 			}
 			if got := hits.Load(); got != 1 {
@@ -455,14 +427,10 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var marked, bypass atomic.Int32
+			var marked atomic.Int32
 			var url string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("X-Flate-Preflight-Test") == "yes" {
-					marked.Add(1)
-				} else {
-					bypass.Add(1)
-				}
+				marked.Add(1)
 				body, ok := tc.replies[r.URL.Path]
 				if !ok || body == "404" {
 					http.NotFound(w, r)
@@ -490,13 +458,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				}
 				withFakeGitBase(t, cache, fakeWorktree(t, gitFiles), nil)
 			}
-			client := srv.Client()
-			transport := client.Transport
-			cache.httpClient = &http.Client{Transport: remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
-				r = r.Clone(r.Context())
-				r.Header.Set("X-Flate-Preflight-Test", "yes")
-				return transport.RoundTrip(r)
-			})}
+
 			spec := demoSpec
 			if tc.name == "generated-component" {
 				spec = demoSpec.Clone()
@@ -517,8 +479,14 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 			if strings.Contains(tc.name, "two-owners") && !strings.Contains(string(out), "local.txt: owner-a") {
 				t.Fatalf("first owner's relative operand was lost: %s", out)
 			}
-			if marked.Load() != int32(len(tc.replies)) || bypass.Load() != 0 {
-				t.Fatalf("marked=%d want=%d, bypass=%d", marked.Load(), len(tc.replies), bypass.Load())
+			if marked.Load() != int32(len(tc.replies)) {
+				t.Fatalf("requests=%d want=%d", marked.Load(), len(tc.replies))
+			}
+			for path := range tc.replies {
+				_, _ = cache.remoteInputs.Acquire(t.Context(), url+path, sourcecache.RetryConfig{}, nil)
+			}
+			if marked.Load() != int32(len(tc.replies)) {
+				t.Fatalf("preflight bypassed shared acquisition: requests=%d want=%d", marked.Load(), len(tc.replies))
 			}
 			if tc.name == "git-looking-file" {
 				rec := newReadSet(root)
@@ -531,7 +499,6 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 					t.Fatalf("admitted file operation: %+v, %v", snap, err)
 				}
 				replay := newTestTreeCache(t, "")
-				replay.httpClient = cache.httpClient
 				replay.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 					t.Error("file replay reclassified the admitted HTTP operation")
 					return nil, manifest.ErrInput
@@ -539,8 +506,8 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				if valid, err := snap.stillValid(t.Context(), replay, view, false); err != nil || !valid {
 					t.Fatalf("file frame replay: %t, %v", valid, err)
 				}
-				if marked.Load() != 2 || bypass.Load() != 0 {
-					t.Fatalf("HTTP initial/replay: marked=%d bypass=%d", marked.Load(), bypass.Load())
+				if marked.Load() != 2 {
+					t.Fatalf("HTTP initial/replay: requests=%d", marked.Load())
 				}
 			}
 			if manifest.Fingerprint(spec) != before {
@@ -554,51 +521,6 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 			}
 			if matches, _ := filepath.Glob(filepath.Join(root, remoteResourcePrefix+"*")); len(matches) != 0 {
 				t.Fatalf("overlay escaped to disk: %v", matches)
-			}
-		})
-	}
-}
-
-func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
-	t.Parallel()
-	readErr, closeErr := errors.New("body read"), errors.New("body close")
-	for _, outcome := range []string{"success", "created", "last-success", "status", "read", "limit"} {
-		t.Run(outcome, func(t *testing.T) {
-			t.Parallel()
-			c := newTestTreeCache(t, "")
-			closes := 0
-			c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
-				var reader io.Reader = strings.NewReader("complete")
-				status := http.StatusOK
-				switch outcome {
-				case "created":
-					status = http.StatusCreated
-				case "last-success":
-					status = 299
-				case "status":
-					status = http.StatusNotFound
-				case "read":
-					reader = remoteRead(func([]byte) (int, error) { return 0, readErr })
-				case "limit":
-					reader = remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil })
-				}
-				return &http.Response{StatusCode: status, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error { closes++; return closeErr }}}, nil
-			})
-			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", sourcecache.ProducerInput{Writer: io.Discard})
-			if !errors.Is(err, closeErr) || closes != 1 || strings.Count(err.Error(), closeErr.Error()) != 1 {
-				t.Fatalf("body cleanup: %v closes=%d", err, closes)
-			}
-			if outcome == "read" && !errors.Is(err, readErr) || outcome == "status" && fetcherr.Classes(err)&fetcherr.Client == 0 || outcome == "limit" && !strings.Contains(err.Error(), "exceeds") {
-				t.Fatalf("operation identity: %v", err)
-			}
-			if outcome == "status" {
-				status, ok := errors.AsType[*fetcherr.ResponseError](err)
-				if !ok || status.StatusCode != http.StatusNotFound || status.Op != http.MethodGet {
-					t.Fatalf("response facts=%+v error=%v", status, err)
-				}
-			}
-			if (outcome == "status" || outcome == "read" || outcome == "limit") && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
-				t.Fatalf("operation must precede cleanup: %v", err)
 			}
 		})
 	}
@@ -815,126 +737,4 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestHttpGetURL_RequestLifetime(t *testing.T) {
-	t.Parallel()
-	for _, stage := range []string{"headers", "body", "caller-deadline", "previous", "close"} {
-		t.Run(stage, func(t *testing.T) {
-			t.Parallel()
-			synctest.Test(t, func(t *testing.T) {
-				c := newTestTreeCache(t, "")
-				started := time.Now()
-				ctx := t.Context()
-				bound := 5 * time.Second
-				if stage == "caller-deadline" {
-					var cancel context.CancelFunc
-					bound = time.Second
-					ctx, cancel = context.WithTimeout(ctx, bound)
-					defer cancel()
-				}
-				if stage == "previous" {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithCancel(ctx)
-					cancel()
-				}
-				var requestCtx context.Context
-				closes := 0
-				c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
-					if stage == "previous" {
-						t.Error("request issued after Previous rejected cancellation")
-					}
-					requestCtx = r.Context()
-					deadline, ok := requestCtx.Deadline()
-					if !ok || deadline.Sub(started) != bound {
-						t.Fatalf("request deadline = %v, present = %t, want %v", deadline.Sub(started), ok, bound)
-					}
-					if stage == "headers" {
-						<-requestCtx.Done()
-						return nil, requestCtx.Err()
-					}
-					var reader io.Reader = remoteRead(func([]byte) (int, error) {
-						<-requestCtx.Done()
-						return 0, requestCtx.Err()
-					})
-					if stage == "close" {
-						reader = strings.NewReader("complete")
-					}
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error {
-						closes++
-						if stage == "close" && requestCtx.Err() != nil {
-							t.Errorf("request context canceled before body close: %v", requestCtx.Err())
-						}
-						return nil
-					}}}, nil
-				})
-				_, err := c.httpGetURL(ctx, "https://example.invalid/resource", sourcecache.ProducerInput{Writer: io.Discard})
-				switch stage {
-				case "close":
-					if err != nil || closes != 1 || !errors.Is(requestCtx.Err(), context.Canceled) {
-						t.Fatalf("completed lifetime: err=%v closes=%d context=%v", err, closes, requestCtx.Err())
-					}
-				case "previous":
-					if !errors.Is(err, context.Canceled) || requestCtx != nil {
-						t.Fatalf("Previous cancellation: err=%v request=%v", err, requestCtx)
-					}
-				default:
-					if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) != bound {
-						t.Fatalf("request lifetime: err=%v elapsed=%v want=%v", err, time.Since(started), bound)
-					}
-					if stage != "headers" && closes != 1 {
-						t.Fatalf("expired body closes=%d", closes)
-					}
-				}
-			})
-		})
-	}
-	t.Run("network-body-cancellation", func(t *testing.T) {
-		t.Parallel()
-		entered, canceled := make(chan struct{}), make(chan struct{})
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/healthy" {
-				_, _ = io.WriteString(w, "healthy")
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			w.(http.Flusher).Flush()
-			<-r.Context().Done()
-			close(canceled)
-		}))
-		defer srv.Close()
-		var network source.Network
-		defer network.Close()
-		c := newTestTreeCache(t, "")
-		c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
-			resp, err := network.RoundTrip(r)
-			if err != nil || r.URL.Path == "/healthy" {
-				return resp, err
-			}
-			body := resp.Body
-			enteredBody := sync.OnceFunc(func() { close(entered) })
-			resp.Body = remoteBody{Reader: remoteRead(func(p []byte) (int, error) {
-				enteredBody()
-				return body.Read(p)
-			}), close: body.Close}
-			return resp, nil
-		})
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			_, err := c.httpGetURL(ctx, srv.URL+"/stalled", sourcecache.ProducerInput{Writer: io.Discard})
-			done <- err
-		}()
-		<-entered
-		cancel()
-		if err := <-done; !errors.Is(err, context.Canceled) {
-			t.Fatalf("wrapped Network body cancellation: %v", err)
-		}
-		<-canceled
-		var body strings.Builder
-		if _, err := c.httpGetURL(t.Context(), srv.URL+"/healthy", sourcecache.ProducerInput{Writer: &body}); err != nil || body.String() != "healthy" {
-			t.Fatalf("Network after caller cancellation: %q %v", body.String(), err)
-		}
-	})
 }

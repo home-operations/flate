@@ -172,6 +172,7 @@ type Orchestrator struct {
 	rsc    *resourcesetctrl.Controller
 	filter *change.Filter
 	cache  *sourcecache.Cache
+	inputs source.HTTPInputs
 	// Accepted identities are immutable after bootstrap, including for late consumers.
 	substitutionSources     map[manifest.NamedResource]manifest.BaseManifest
 	dependencySubstitutions values.DependencySubstitutions
@@ -291,23 +292,24 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	ownNetwork := cfg.Network == nil
 	if ownNetwork {
 		cfg.Network = new(source.Network)
-		defer func() {
-			if err != nil {
+	}
+	var owner *sourcecache.Cache
+	defer func() {
+		if err != nil {
+			if ownNetwork {
 				cfg.Network.Close()
 			}
-		}()
-	}
-	owner := cfg.Cache
+			if cfg.Cache == nil && owner != nil {
+				err = errors.Join(err, owner.Close())
+			}
+		}
+	}()
+	owner = cfg.Cache
 	if owner == nil {
 		owner, err = sourcecache.New(ctx, cfg.CacheDir)
 		if err != nil {
 			return nil, err
 		}
-		defer func() {
-			if err != nil {
-				err = errors.Join(err, owner.Close())
-			}
-		}()
 	}
 	if err := snapshotSubstitutions(&cfg); err != nil {
 		return nil, err
@@ -324,10 +326,12 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	}
 	client.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	ts := task.NewBounded(cfg.Concurrency)
-	trees := kustomize.NewTreeCache(owner, cfg.Network, ts)
+	o := &Orchestrator{inputs: source.NewHTTPInputs(owner, cfg.Network, ts)}
+	trees := kustomize.NewTreeCache(owner, &o.inputs, ts)
 	defer func() {
 		if err != nil {
 			trees.Close()
+			o.inputs.Close()
 		}
 	}()
 	srcCtrl := sourcectrl.New(st, ts)
@@ -345,18 +349,16 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	srcCtrl.Fetchers[manifest.KindHelmRepository] = nil
 	srcCtrl.Fetchers[manifest.KindOCIRepository] = nil
 	srcCtrl.Fetchers[manifest.KindHelmChart] = nil
-	o := &Orchestrator{
-		cfg:        cfg,
-		ownNetwork: ownNetwork,
-		cache:      owner,
-		store:      st,
-		tasks:      ts,
-		src:        srcCtrl,
-		ksc:        kustomization.New(st, ts, trees, cfg.WipeSecrets),
-		hrc:        helmrelease.New(base.New(st, ts, "helmrelease"), client, cfg.HelmOptions, cfg.WipeSecrets),
-		rsc:        resourcesetctrl.New(st, ts, cfg.WipeSecrets),
-		depGraph:   newDependencyGraph(),
-	}
+	o.cfg = cfg
+	o.ownNetwork = ownNetwork
+	o.cache = owner
+	o.store = st
+	o.tasks = ts
+	o.src = srcCtrl
+	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
+	o.hrc = helmrelease.New(base.New(st, ts, "helmrelease"), client, cfg.HelmOptions, cfg.WipeSecrets)
+	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
+	o.depGraph = newDependencyGraph()
 	if cfg.DisableChartDigestTracking != nil {
 		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
 	}
@@ -507,6 +509,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
+		RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 	})
 	if err != nil {
 		return err

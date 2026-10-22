@@ -112,7 +112,9 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 			if _, err := l.Load(t.Context(), filepath.Join(dir, "kubernetes/apps/bare")); err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(dir)
+			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+				t.Fatal(err)
+			}
 			idx := l.Index
 			for _, id := range []manifest.NamedResource{
 				{Kind: manifest.KindConfigMap, Name: "foreign-config"},
@@ -375,8 +377,12 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 				assert.NoError(t, err)
 				input.opens = 0
 			}
-			l.FinalizeIndex(dir)
-			l.FinalizeIndex(dir)
+			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+				t.Fatal(err)
+			}
 			for _, owner := range []manifest.NamedResource{ks.Named(), other.Named()} {
 				if got := ownersForTest(l.Index, input.missing); !slices.Contains(got, owner) {
 					t.Errorf("OwnersOfFile(cluster.yaml) = %v, want %v", got, owner)
@@ -400,7 +406,9 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 				t.Fatalf("kustomization probes beneath a resource=%d, want %d", input.probes, wantProbes)
 			}
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir, LocalRoot: dir, FS: input})
-			l.FinalizeIndex(dir)
+			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+				t.Fatal(err)
+			}
 			if input.stats != wantStats+1 {
 				t.Fatalf("resource stats after source replacement=%d, want %d", input.stats, wantStats+1)
 			}
@@ -517,7 +525,9 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			l := newLoader()
 			_, exists := l.Index.Lookup(id)
 			assert.Equal(t, exists, !tc.graphAdded)
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			want := manifest.DiscoveryRecord{Authored: id, Path: path, File: file, Parent: tc.wantParent}
 			for _, owner := range tc.emitters {
 				want.Productions = append(want.Productions, manifest.Production{Owner: owner, Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID})
@@ -538,14 +548,18 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			assert.Diff(t, owners, wantOwners)
 			assert.Equal(t, len(ancestors), 0)
 			snapshot := snapshotIndexForTest(l.Index)
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			assert.Diff(t, l.Index.Records, snapshot.Records)
 			assert.Diff(t, l.Index.Readers, snapshot.Readers)
 			owners, ancestors = l.Index.OwnersOfFile(file)
 			assert.Diff(t, owners, wantOwners)
 			assert.Equal(t, len(ancestors), 0)
 			fresh := newLoader()
-			fresh.FinalizeIndex(root)
+			if err := fresh.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			assert.Diff(t, *fresh.Index, snapshot)
 		})
 	}
@@ -909,7 +923,9 @@ data: {value: fixture}
 					t.Fatal(err)
 				}
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			idx := l.Index
 			owner := testutil.KustomizationID("flux-system", "owner")
 			child := testutil.KustomizationID("apps", "child")
@@ -1054,7 +1070,9 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 			if _, err := l.Load(t.Context(), filepath.Join(root, tc.scan)); err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			idx := l.Index
 			filter := change.NewFilter(change.NewSet([]string{generatorFile}), idx, s)
 			assert.Diff(t, idx.Readers[generatorFile], []manifest.NamedResource{testutil.KustomizationID("flux-system", "apps"), testutil.KustomizationID("flux-system", "staging")})
@@ -1106,7 +1124,9 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	l.FinalizeIndex(root)
+	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
 	idx := l.Index
 	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
 	for _, name := range []string{"first", "second"} {
@@ -1186,7 +1206,9 @@ func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {
 			if _, err := l.Load(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
 			got := slices.ContainsFunc(s.Productions(target, l.Index), func(p manifest.Production) bool { return p.Owner == owner.Named() })
 			if got != tc.want {

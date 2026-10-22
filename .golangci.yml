@@ -199,7 +199,7 @@ linters:
           - forbidigo
       # Documented shared work that outlives one caller's cancellation (AGENTS.md "Context"): the remote
       # fetch workers and the cache-lifetime source-root admission.
-      - path: pkg/kustomize/(remotefetch|flux)\.go
+      - path: pkg/(source/httpinput|kustomize/flux)\.go
         text: context.Background
         linters:
           - forbidigo

@@ -47,7 +47,9 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 				t.Fatal(err)
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			if overlay != "entry" {
 				assert.Diff(t, l.Index.Readers["entry/sibling.json"], []manifest.NamedResource{owner.Named()})
 				if len(l.Index.Readers["entry/README.md"]) != 0 {
@@ -92,7 +94,9 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 	admitForTest(s, root)
 	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
 	assert.NoError(t, err)
-	l.FinalizeIndex(root)
+	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
 		assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
 		if !slices.Contains(ownersForTest(l.Index, file), owner.Named()) {
@@ -184,7 +188,9 @@ func TestFinalizeIndex_ConfigurationBoundaries(t *testing.T) {
 				s.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(parent, "foreign"), FS: fstest.MapFS{"plugin.yaml": input["foreign/plugin.yaml"]}})
 			}
 			l := New(s)
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			warnings := s.Warnings()
 			if len(warnings) != 1 || warnings[0].Resource != owner.Named() || warnings[0].Category != manifest.WarnIncompleteInputCoverage || !slices.ContainsFunc(warnings[0].Detail, func(detail string) bool {
 				return strings.Contains(detail, "configuration reference cannot be inspected locally")
@@ -297,7 +303,9 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 	if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
 		t.Fatal(err)
 	}
-	l.FinalizeIndex(root)
+	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
 	if s.GetObject(testutil.KustomizationID("projected", "dual")) == nil {
 		t.Fatal("generator data role suppressed the declared resource")
 	}
@@ -414,7 +422,9 @@ func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 			}) {
 				t.Fatalf("missing unknown-plugin uncertainty: %+v", first)
 			}
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			assert.Diff(t, s.Warnings(), first)
 		})
 	}
@@ -568,7 +578,9 @@ func TestFinalizeIndex_InputSourceViews(t *testing.T) {
 			admitForTest(s, root)
 			_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
 			assert.NoError(t, err)
-			l.FinalizeIndex(root)
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
 			prefix := ".artifacts/" + mode + "/"
 			assert.Diff(t, l.Index.Readers[prefix+"inputs/patch"], []manifest.NamedResource{owner.Named()})
 			if len(l.Index.Readers[prefix+"inputs/host-only"]) != 0 {

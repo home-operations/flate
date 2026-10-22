@@ -135,7 +135,9 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID))
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
-	l.FinalizeIndex(dir)
+	if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+		t.Fatal(err)
+	}
 	self := ks.Named()
 	st.DeleteObject(self)
 	child := testutil.HelmReleaseID("apps", "child")
@@ -206,7 +208,9 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)
 				}
-				l.FinalizeIndex(dir)
+				if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if scenario == "failed" {
 				if err := os.Remove(filepath.Join(dir, "bundle.yaml")); err != nil {

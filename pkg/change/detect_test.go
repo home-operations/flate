@@ -921,3 +921,38 @@ func TestDetect_SelectedFileEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestDetect_SparseDirectoryBodies(t *testing.T) {
+	t.Parallel()
+	before, after := fstest.MapFS{}, fstest.MapFS{}
+	for n := range 24 {
+		name := fmt.Sprintf("disjoint/file-%02d.yaml", n)
+		body := []byte(fmt.Sprintf("unchanged-%02d", n))
+		before[name], after[name] = &fstest.MapFile{Data: body}, &fstest.MapFile{Data: body}
+	}
+	before["app/input.yaml"] = &fstest.MapFile{Data: []byte("before")}
+	after["app/input.yaml"] = &fstest.MapFile{Data: []byte("after!")}
+	left, right := &directoryBodyFS{FS: before}, &directoryBodyFS{FS: after}
+	changes, err := Detect(t.Context(), &store.SourceArtifact{FS: left}, &store.SourceArtifact{FS: right})
+	assert.NoError(t, err)
+	assert.Diff(t, changes.Paths(), []string{"app/input.yaml"})
+	assert.Equal(t, left.opens.Load(), int64(25))
+	assert.Equal(t, right.opens.Load(), int64(25))
+	t.Logf("directory control: before/after regular body opens=%d/%d; metadata equality supplies no Git identity proof", left.opens.Load(), right.opens.Load())
+}
+
+type directoryBodyFS struct {
+	fs.FS
+	opens atomic.Int64
+}
+
+func (f *directoryBodyFS) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err == nil {
+		info, statErr := file.Stat()
+		if statErr == nil && info.Mode().IsRegular() {
+			f.opens.Add(1)
+		}
+	}
+	return file, err
+}

@@ -991,59 +991,47 @@ func TestStore_AddListener_FlushNoDoubleFire(t *testing.T) {
 	}
 }
 
-// TestStore_AddListenerNoFlush_NoMissedConcurrentWrites pins that a
-// listener registered with flush=false against a hot writer doesn't
-// miss the next live event. Pre-fix, the non-flush branch took
-// set.mu but not the store lock, so a writer could:
-//  1. Lock its shard, mutate.
-//  2. Capture set.snapshot() under set.mu (independent of the shard).
-//  3. Release the shard.
-//  4. Dispatch to the pre-add snapshot.
-//
-// while the registrar slid set.add(fn) between steps 2 and 4. fn
-// silently misses the live event. Holding every shard's RLock
-// around set.add closes the window (writers fire under their own
-// shard's write lock, exclusive with the registrar's RLock). Test
-// races N writers against AddListener and asserts the listener
-// observes every AddObject made after its own goroutine acquired
-// the lock.
 func TestStore_AddListenerNoFlush_NoMissedConcurrentWrites(t *testing.T) {
 	t.Parallel()
-	s := New()
-	const writers = 64
-	var (
-		writerWG      sync.WaitGroup
-		registerReady = make(chan struct{})
-		registered    = make(chan struct{})
-		seen          atomic.Int64
-	)
-	// Pre-populate so AddObject takes the "update existing" path
-	// uniformly — keeps test deterministic.
-	for i := range writers {
-		s.AddObject(newCM("init"+strings.Repeat("x", i), "ns"))
-	}
-	writerWG.Go(func() {
-		<-registerReady
-		// Spin writes while the registrar runs. Some will land before
-		// AddListener returns; some after.
-		for i := range writers {
-			s.AddObject(newCM("post"+strings.Repeat("x", i), "ns"))
-		}
-		<-registered // Make sure registrar is fully attached.
-		// One more guaranteed-post-registration write that the
-		// listener MUST observe.
-		s.AddObject(newCM("definite-post", "ns"))
-	})
-	close(registerReady)
-	s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		if id.Name == "definite-post" {
-			seen.Add(1)
-		}
-	}, false)
-	close(registered)
-	writerWG.Wait()
-	if got := seen.Load(); got != 1 {
-		t.Errorf("listener missed the post-registration definite-post event (saw %d, want 1) — non-flush race regression", got)
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			before, racing, registered := make(chan struct{}, workers), make(chan struct{}), make(chan struct{})
+			var writers sync.WaitGroup
+			var seen sync.Map
+			for i := range workers {
+				writers.Go(func() {
+					s.AddObject(newCM(fmt.Sprintf("before-%d", i), "ns"))
+					before <- struct{}{}
+					<-racing
+					s.AddObject(newCM(fmt.Sprintf("racing-%d", i), "ns"))
+					<-registered
+					s.AddObject(newCM(fmt.Sprintf("after-%d", i), "ns"))
+				})
+			}
+			for range workers {
+				<-before
+			}
+			close(racing)
+			unsubscribe := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+				count, _ := seen.LoadOrStore(id, new(atomic.Int64))
+				count.(*atomic.Int64).Add(1)
+			}, false)
+			defer unsubscribe()
+			close(registered)
+			writers.Wait()
+			for i := range workers {
+				id := newCM(fmt.Sprintf("after-%d", i), "ns").Named()
+				count, ok := seen.Load(id)
+				if !ok || count.(*atomic.Int64).Load() != 1 {
+					t.Errorf("post-registration delivery %s = %v, present=%t", id, count, ok)
+				}
+				if _, ok := seen.Load(newCM(fmt.Sprintf("before-%d", i), "ns").Named()); ok {
+					t.Errorf("no-flush listener replayed pre-registration object %d", i)
+				}
+			}
+		})
 	}
 }
 
@@ -1090,38 +1078,24 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 	t.Run("mutation during captured dispatch", func(t *testing.T) {
 		t.Parallel()
 		s := New()
-		paused := make(chan struct{})
-		resume := make(chan struct{})
 		var seen []int
-		var first, fifth Unsubscribe
-		first = s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-			close(paused)
-			<-resume
-			seen = append(seen, 1)
-			first()
-			fifth = s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-				seen = append(seen, 5)
-			}, false)
-		}, false)
-		second := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-			seen = append(seen, 2)
-		}, false)
-		third := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-			seen = append(seen, 3)
-		}, false)
-
-		var wg sync.WaitGroup
-		wg.Go(func() { s.AddObject(newCM("captured", "ns")) })
-		<-paused
+		first := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 1) }, false)
+		second := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 2) }, false)
+		third := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 3) }, false)
+		obj := newCM("captured", "ns")
+		shard := s.shardFor(obj.Named())
+		shard.mu.Lock()
+		captured := fireUnderLock(s, EventObjectAdded, obj.Named())
+		shard.mu.Unlock()
+		captured.payload = obj
+		first()
 		second()
 		second()
-		fourth := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-			seen = append(seen, 4)
-		}, false)
-		close(resume)
-		wg.Wait()
+		fourth := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 4) }, false)
+		fifth := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 5) }, false)
+		captured.run()
 		assert.Diff(t, seen, []int{1, 2, 3})
-
+		assert.Equal(t, len(captured.listeners.entries), 3)
 		seen = nil
 		s.AddObject(newCM("future", "ns"))
 		assert.Diff(t, seen, []int{3, 4, 5})

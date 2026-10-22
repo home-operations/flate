@@ -33,6 +33,61 @@ func emissionChild(name, value string) Child {
 	}
 	return Child{Obj: obj, Doc: authoritative}
 }
+
+func TestRecordEmitted_ParkedSnapshotReplay(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			s, tasks := New(), task.NewBounded(workers)
+			parent := ownerID("parent")
+			s.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
+			old := emissionChild("settings", "old")
+			s.RecordEmitted(parent, &Emission{Children: []Child{old}, Complete: true}, nil)
+			s.UpdateStatus(old.Obj.Named(), StatusInfo{Status: StatusReady})
+			captured, release := make(chan struct{}, workers), make(chan struct{})
+			results := make(chan error, workers)
+			for range workers {
+				tasks.Go(t.Context(), "snapshot-consumer", func(context.Context) {
+					obj, observation := s.Snapshot(old.Obj.Named(), true)
+					captured <- struct{}{}
+					<-release
+					if obj != old.Obj || obj.(*manifest.ConfigMap).Data["value"] != "old" || len(observation.Conditions) != 1 || observation.Conditions[0].Status != "True" {
+						results <- fmt.Errorf("retained snapshot changed: object=%v observation=%+v", obj, observation)
+						return
+					}
+					results <- nil
+				})
+			}
+			for range workers {
+				<-captured
+			}
+			fresh := emissionChild("settings", "new")
+			s.RecordEmitted(parent, &Emission{Children: []Child{fresh}, Complete: true}, nil)
+			assert.Equal(t, s.GetObject(fresh.Obj.Named()), fresh.Obj)
+			var replay []string
+			unsubscribe := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, payload any) {
+				if id == fresh.Obj.Named() && payload != nil {
+					replay = append(replay, payload.(*manifest.ConfigMap).Data["value"].(string))
+				}
+			}, true)
+			assert.Diff(t, replay, []string{"new"})
+			unsubscribe()
+			s.RecordEmitted(parent, &Emission{Complete: true}, nil)
+			assert.Equal(t, s.GetObject(fresh.Obj.Named()), nil)
+			close(release)
+			tasks.BlockTillDone()
+			for range workers {
+				assert.NoError(t, <-results)
+			}
+			assert.Equal(t, tasks.Failures(), int64(0))
+			assert.Equal(t, len(s.ListObjects("", manifest.KindConfigMap)), 0)
+			_, _, emitted := s.GetEmission(parent)
+			defer emitted.Finish()
+			assert.Equal(t, len(emitted.Children), 0)
+		})
+	}
+}
 func accept(t *testing.T, s *Store, owner manifest.NamedResource, next *Emission) {
 	t.Helper()
 	s.RecordEmitted(owner, next, nil)

@@ -141,7 +141,7 @@ func TestScheduler_WakeOrder(t *testing.T) {
 
 func TestScheduler_RunDispatchPanic(t *testing.T) {
 	t.Parallel()
-	for _, workers := range []int{2, 4} {
+	for _, workers := range []int{2, 16} {
 		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
@@ -153,6 +153,11 @@ func TestScheduler_RunDispatchPanic(t *testing.T) {
 				assert.NoError(t, s.Run(t.Context()))
 				assert.Equal(t, tasks.Failures(), int64(1))
 				assert.Equal(t, len(s.Results()), 0)
+				assert.Equal(t, len(s.nodes), 1)
+				assert.Equal(t, s.inFlight, 0)
+				assert.Equal(t, len(s.runq), 0)
+				assert.Equal(t, s.nodes[testutil.KustomizationID("ns", "panic")].state, stateTerminal)
+				assert.Equal(t, t.Context().Err(), nil)
 			})
 		})
 	}

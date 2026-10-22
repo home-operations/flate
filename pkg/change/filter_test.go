@@ -1,8 +1,8 @@
 package change
 
 import (
-	"github.com/home-operations/flate/internal/filtertest"
-	"github.com/home-operations/flate/pkg/loader"
+	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -14,9 +14,12 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func (f *Filter) addUngated(id manifest.NamedResource) {
@@ -552,20 +555,37 @@ func TestFilter_DependsOnNotFollowed(t *testing.T) {
 // KS via replacements).
 func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 	t.Parallel()
-	parent := testutil.KustomizationID("flux-system", "database")
-	child := testutil.KustomizationID("database", "leaf-app")
-
-	f := NewFilter(NewSet([]string{"apps/database/parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"}, root: "", objects: filtertest.EmptyLister()}.index(), filtertest.EmptyLister(), "")
-	if !f.ShouldReconcile(parent) {
-		t.Fatalf("parent must be in keep set from file change; keep=%v", f.KeepNames())
-	}
-	if f.ShouldReconcile(child) {
-		t.Fatalf("precondition: child must NOT be in keep set before Add; keep=%v", f.KeepNames())
-	}
-
-	f.addUngated(child)
-	if !f.ShouldReconcile(child) {
-		t.Errorf("Add(child) should extend keep set; ShouldReconcile(child)=false; keep=%v", f.KeepNames())
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			parent := testutil.KustomizationID("flux-system", "database")
+			child := &manifest.Kustomization{Name: "leaf-app", Namespace: "database"}
+			sibling := testutil.KustomizationID("database", "sibling")
+			foreign := testutil.KustomizationID("other", child.Name)
+			f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml", sibling: "sibling.yaml"}, objects: filtertest.EmptyLister()}.index(), filtertest.EmptyLister(), "")
+			assert.Equal(t, f.ShouldReconcile(parent), true)
+			tasks := task.NewBounded(workers)
+			captured, published := make(chan bool, workers), make(chan struct{})
+			observations := make(chan bool, workers)
+			for range workers {
+				tasks.Go(t.Context(), "selection-reader", func(context.Context) {
+					captured <- f.ShouldReconcile(child.Named())
+					<-published
+					observations <- f.ShouldReconcile(child.Named()) && !f.ShouldReconcile(sibling) && !f.ShouldReconcile(foreign)
+				})
+			}
+			for range workers {
+				assert.Equal(t, <-captured, false)
+			}
+			added := f.AddEmitted(parent, store.Child{Obj: child}, f.objs)
+			assert.Diff(t, added, []manifest.NamedResource{child.Named()})
+			close(published)
+			tasks.BlockTillDone()
+			for range workers {
+				assert.Equal(t, <-observations, true)
+			}
+			assert.Equal(t, tasks.Failures(), int64(0))
+		})
 	}
 }
 

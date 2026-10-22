@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -202,5 +204,31 @@ func TestLogResourceFailures_Deterministic(t *testing.T) {
 		}
 		assert.Diff(t, got, want)
 		assert.Equal(t, failed[a].String(), fmt.Errorf("%w: invalid input", manifest.ErrInput).Error())
+	}
+}
+
+func TestFinalize_DispatchPanic(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			st, tasks := store.New(), task.NewBounded(workers)
+			id := testutil.KustomizationID("apps", "panic")
+			st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+			s := schedule.New(tasks, fixtureDispatcher{store: st, dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+				panic("dispatch panic")
+			}})
+			s.Seed([]schedule.NodeID{id})
+			assert.NoError(t, s.Run(t.Context()))
+			tasks.BlockTillDone()
+			assert.Equal(t, tasks.Failures(), int64(1))
+			assert.Equal(t, len(s.Results()), 0)
+			assert.Equal(t, t.Context().Err(), nil)
+			o := &Orchestrator{store: st, tasks: tasks}
+			err := o.finalize()
+			if err == nil || !strings.Contains(err.Error(), "1 task(s) panicked without per-resource attribution") {
+				t.Fatalf("poisoned task service finalized successfully: %v", err)
+			}
+		})
 	}
 }

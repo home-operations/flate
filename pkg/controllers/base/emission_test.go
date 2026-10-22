@@ -70,48 +70,65 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 
 func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 	t.Parallel()
-
-	s := store.New()
-	c := New(s, nil)
-	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-	s.AddObject(parent)
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
-	c.Configure(Options{Filter: filter, Index: index})
-	docs := []map[string]any{
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}, "data": map[string]any{"VALUE": "value"}},
-		{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child"}, "spec": map[string]any{"path": "./app"}},
-	}
-	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{DefaultNamespace: "apps"})
-	arrivals := 0
-	s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
-		if payload == nil {
-			return
-		}
-		arrivals++
-		for _, child := range children {
-			if s.GetObject(child.Obj.Named()) == nil {
-				t.Error("sibling invisible during synchronous notification")
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			s, tasks := store.New(), task.NewBounded(workers)
+			c := New(s, tasks)
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", TargetNamespace: "tenant"}
+			sibling := &manifest.Kustomization{Name: "sibling", Namespace: "tenant"}
+			s.AddObjects([]manifest.BaseManifest{parent, sibling})
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}, sibling.Named(): {File: "sibling.yaml"}}}
+			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
+			c.Configure(Options{Filter: filter, Index: index})
+			docs := []map[string]any{
+				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}, "data": map[string]any{"VALUE": "value"}},
+				{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child"}, "spec": map[string]any{"path": "./app"}},
 			}
-			if !filter.ShouldReconcile(child.Obj.Named()) {
-				t.Error("selection follows visibility")
+			children, retained := c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
+			type observation struct {
+				id                       manifest.NamedResource
+				selected, visible, owned bool
 			}
-		}
-		if len(s.Productions(id, index)) == 0 {
-			t.Error("provenance follows visibility")
-		}
-	}, false)
-	execution := newExecution(c, parent.Named())
-	defer execution.Close()
-	_, _, next := execution.Reads.GetEmission(parent.Named())
-	defer next.Finish()
-	next.Children, next.Manifests, next.Complete = children, retained, true
-	execution.Emit(parent.Named(), &next, nil)
-	if arrivals != 2 {
-		t.Fatalf("arrivals=%d", arrivals)
-	}
-	if !execution.Reads.Valid() {
-		t.Fatal("selection registered prospective children as inputs to their own publication")
+			arrivals := make(chan observation, len(children))
+			unsubscribe := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+				if payload == nil {
+					return
+				}
+				visible, selected := true, true
+				for _, child := range children {
+					visible = visible && s.GetObject(child.Obj.Named()) != nil
+					selected = selected && filter.ShouldReconcile(child.Obj.Named())
+				}
+				arrivals <- observation{id, selected, visible, len(s.Productions(id, index)) > 0}
+			}, false)
+			defer unsubscribe()
+			tasks.Go(t.Context(), "publisher", func(context.Context) {
+				execution := newExecution(c, parent.Named())
+				defer execution.Close()
+				_, _, next := execution.Reads.GetEmission(parent.Named())
+				defer next.Finish()
+				next.Children, next.Manifests, next.Complete = children, retained, true
+				if err := execution.Emit(parent.Named(), &next, nil); err != nil {
+					t.Error(err)
+				}
+				if !execution.Reads.Valid() {
+					t.Error("publication captured its own children as inputs")
+				}
+			})
+			tasks.BlockTillDone()
+			assert.Equal(t, tasks.Failures(), int64(0))
+			assert.Equal(t, len(arrivals), 2)
+			for range len(arrivals) {
+				got := <-arrivals
+				assert.Equal(t, got.id.Namespace, "tenant")
+				assert.Equal(t, got.selected, true)
+				assert.Equal(t, got.visible, true)
+				assert.Equal(t, got.owned, true)
+			}
+			assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+			assert.Equal(t, s.GetObject(testutil.KustomizationID("", "child")), nil)
+		})
 	}
 }
 

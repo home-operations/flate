@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -15,13 +17,256 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
+
+func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			st, tasks := store.New(), task.NewBounded(workers)
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", TargetNamespace: "tenant"}
+			provider := &manifest.Kustomization{Name: "provider", Namespace: "tenant"}
+			sibling := &manifest.Kustomization{Name: "sibling", Namespace: "tenant"}
+			child := testutil.KustomizationID("tenant", "child")
+			data := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "tenant"}
+			st.AddObjects([]manifest.BaseManifest{parent, provider, sibling})
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				parent.Named(): {File: "parent.yaml"}, provider.Named(): {File: "provider.yaml"}, sibling.Named(): {File: "sibling.yaml"},
+				data: {Productions: []manifest.Production{{Owner: provider.Named(), Authored: data, File: "settings.yaml", Source: manifest.BootstrapSourceID}}},
+			}}
+			st.SetDiscoveryIndex(index)
+			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, st, "")
+			c := base.New(st, tasks)
+			c.Configure(base.Options{Filter: filter, Index: index})
+			c.StartLifecycle()
+			childDocs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": child.Name}, "spec": map[string]any{"path": "./child", "postBuild": map[string]any{"substituteFrom": []any{map[string]any{"kind": manifest.KindConfigMap, "name": data.Name}}}}}}
+			children, retained := c.ParseChildren(parent, childDocs, manifest.ParseDocOptions{})
+			assert.Equal(t, len(children), 1)
+			assert.Equal(t, children[0].Obj.Named(), child)
+			blocked, release := make(chan []manifest.NamedResource, 1), make(chan struct{})
+			var childRuns, siblingRuns atomic.Int64
+			arrivals := make(chan bool, 2)
+			unsubArrival := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+				if payload != nil && (id == child || id == data) {
+					arrivals <- filter.ShouldReconcile(id)
+				}
+			}, false)
+			defer unsubArrival()
+			d := fixtureDispatcher{store: st, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				if id == provider.Named() {
+					tasks.YieldSlot(func() { <-release })
+				}
+				e := controllertest.NewExecution(c, id)
+				e.Dispatch(ctx, level, e, func(e *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+					_, _, next := e.Reads.GetEmission(id)
+					defer next.Finish()
+					switch id {
+					case parent.Named():
+						next.Children, next.Manifests = children, retained
+					case provider.Named():
+						next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "ready"}}}}
+					case child:
+						childRuns.Add(1)
+						obj := e.Reads.GetObject(data)
+						if obj == nil {
+							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{data}}
+						}
+						next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "output", Namespace: data.Namespace, Data: map[string]any{"VALUE": obj.(*manifest.ConfigMap).Data["VALUE"]}}}}
+					case sibling.Named():
+						siblingRuns.Add(1)
+					}
+					next.Complete = true
+					return e.Emit(id, &next, nil)
+				})
+				if id == child && e.Outcome() == schedule.Blocked {
+					blocked <- slices.Clone(e.Blocked)
+				}
+				return schedule.Result{Assessment: e}
+			}}
+			o := &Orchestrator{store: st}
+			s := schedule.New(tasks, d)
+			unsubscribe := o.watchDAG(s)
+			defer unsubscribe()
+			s.Seed([]schedule.NodeID{parent.Named(), provider.Named(), sibling.Named()})
+			done := make(chan error, 1)
+			go func() { done <- s.Run(t.Context()) }()
+			assert.Diff(t, <-blocked, []manifest.NamedResource{data})
+			assert.Equal(t, st.GetObject(data), nil)
+			assert.Equal(t, filter.ShouldReconcile(child), true)
+			assert.Equal(t, filter.ShouldReconcile(provider.Named()), true)
+			assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+			close(release)
+			assert.NoError(t, <-done)
+			tasks.BlockTillDone()
+			assert.Equal(t, tasks.Failures(), int64(0))
+			assert.Equal(t, t.Context().Err(), nil)
+			assert.Equal(t, childRuns.Load(), int64(2))
+			assert.Equal(t, siblingRuns.Load(), int64(0))
+			assert.Equal(t, len(arrivals), 2)
+			for range len(arrivals) {
+				assert.Equal(t, <-arrivals, true)
+			}
+			assert.Equal(t, len(s.Results()), 4)
+			for _, id := range []manifest.NamedResource{parent.Named(), provider.Named(), child, sibling.Named()} {
+				status, ok := st.GetStatus(id)
+				assert.Equal(t, ok, true)
+				assert.Equal(t, status.Status, store.StatusReady)
+				assert.Equal(t, len(status.BlockedBy()), 0)
+			}
+			assert.Equal(t, len(st.FailedResources()), 0)
+			assert.Equal(t, st.GetObject(testutil.KustomizationID("", "child")), nil)
+			assert.Equal(t, st.GetObject(testutil.KustomizationID("flux-system", "child")), nil)
+			output := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "output", Namespace: "tenant"}).(*manifest.ConfigMap)
+			assert.Diff(t, output.Data, map[string]any{"VALUE": "ready"})
+		})
+	}
+}
+
+func TestDAG_BoundedPublications(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			first := renderScalePublications(t, workers, 160)
+			second := renderScalePublications(t, workers, 160)
+			assert.Equal(t, bytes.Equal(first, second), true)
+		})
+	}
+}
+
+func TestDAG_ScalePublications(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("FLATE_E8_SLOW") != "1" {
+		t.Skip("set FLATE_E8_SLOW=1 for 1000 producers and 10000 publications")
+	}
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			first := renderScalePublications(t, workers, 1000)
+			second := renderScalePublications(t, workers, 1000)
+			assert.Equal(t, bytes.Equal(first, second), true)
+		})
+	}
+}
+
+func renderScalePublications(t *testing.T, workers, producers int) []byte {
+	t.Helper()
+	root := t.TempDir()
+	var resources strings.Builder
+	for n := range 10 {
+		name := fmt.Sprintf("object-%02d", n)
+		fmt.Fprintf(&resources, "- %s.yaml\n", name)
+		testutil.WriteFile(t, root, "shared/"+name+".yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: shared}\n")
+	}
+	testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources:\n"+resources.String())
+	ids := make([]manifest.NamedResource, producers)
+	roots := make(map[manifest.NamedResource]bool, producers-128)
+	for n := range producers {
+		name := fmt.Sprintf("producer-%04d", n)
+		ids[n] = testutil.KustomizationID("flux-system", name)
+		var deps strings.Builder
+		switch {
+		case n > 0 && n < 64:
+			fmt.Fprintf(&deps, "  dependsOn: [{name: producer-%04d}]\n", n-1)
+		case n >= 64 && n < 128:
+			deps.WriteString("  dependsOn: [{name: producer-0000}]\n")
+		case n == 128:
+			deps.WriteString("  dependsOn:\n")
+			for dep := 64; dep < 128; dep++ {
+				fmt.Fprintf(&deps, "    - name: producer-%04d\n", dep)
+			}
+		default:
+			roots[ids[n]] = true
+		}
+		testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [../../shared]\nnamePrefix: "+name+"-\n")
+		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: ./apps/"+name+"\n"+deps.String()+"  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+	}
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: workers})
+	assert.NoError(t, err)
+	defer o.stop()
+	assert.NoError(t, o.bootstrap(t.Context()))
+	o.configureControllers()
+	o.src.StartLifecycle()
+	o.ksc.StartLifecycle()
+	firstWave := min(workers, len(roots))
+	started, release := make(chan struct{}, firstWave), make(chan struct{})
+	var active, overBound, rootStarts, publications atomic.Int64
+	d := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		// Input acquisition yields its slot; only admission holds it continuously.
+		func() {
+			current := active.Add(1)
+			defer active.Add(-1)
+			if current > int64(workers) {
+				overBound.Add(1)
+			}
+			if roots[id] && rootStarts.Add(1) <= int64(firstWave) {
+				started <- struct{}{}
+				<-release
+			}
+		}()
+		return (dagDispatcher{o}).Dispatch(ctx, id, level)
+	}}
+	s := schedule.New(o.tasks, d)
+	unsubscribe := o.watchDAG(s)
+	defer unsubscribe()
+	unsubPublications := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		if id.Kind == manifest.KindConfigMap && payload != nil {
+			publications.Add(1)
+		}
+	}, false)
+	defer unsubPublications()
+	seeds := o.seedNodes()
+	s.Seed(seeds)
+	done := make(chan error, 1)
+	go func() { done <- s.Run(t.Context()) }()
+	for range firstWave {
+		<-started
+	}
+	assert.Equal(t, active.Load(), int64(firstWave))
+	close(release)
+	assert.NoError(t, <-done)
+	o.tasks.BlockTillDone()
+	assert.NoError(t, o.finalize())
+	assert.Equal(t, t.Context().Err(), nil)
+	assert.Equal(t, active.Load(), int64(0))
+	assert.Equal(t, overBound.Load(), int64(0))
+	assert.Equal(t, o.tasks.Failures(), int64(0))
+	results := s.Results()
+	assert.Equal(t, len(results), len(seeds))
+	for _, id := range seeds {
+		result, ok := results[id]
+		assert.Equal(t, ok, true)
+		if ok {
+			assert.Equal(t, result.Assessment.Outcome(), schedule.Terminal)
+		}
+	}
+	for _, id := range ids {
+		status, ok := o.store.GetStatus(id)
+		assert.Equal(t, ok, true)
+		assert.Equal(t, status.Status, store.StatusReady)
+		for n := range 10 {
+			child := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: fmt.Sprintf("%s-object-%02d", id.Name, n), Namespace: "apps"}
+			assert.Equal(t, o.store.GetObject(child) != nil, true)
+		}
+	}
+	assert.Equal(t, publications.Load(), int64(producers*10))
+	assert.Equal(t, len(o.store.ListObjects("", manifest.KindConfigMap)), producers*10)
+	assert.Equal(t, len(o.store.FailedResources()), 0)
+	output, err := json.Marshal(o.collectManifests())
+	assert.NoError(t, err)
+	return output
+}
 
 func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 	for _, changedOnly := range []bool{false, true} {

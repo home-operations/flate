@@ -229,11 +229,17 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 		for _, child := range attempt.Children {
 			if child.Doc != nil {
 				target := child.Obj.Named()
-				selected[resourceset.DedupKey(child.Doc)] = !parentAttributed || !manifest.KindOf(child.Obj).Render && o.store.EmissionOwner(target) == id
+				selected[target] = !parentAttributed || !manifest.KindOf(child.Obj).Render && o.store.EmissionOwner(target) == id
 			}
 		}
 		for _, doc := range manifest.DropKinds(attempt.Manifests, skip) {
-			if chosen, known := selected[resourceset.DedupKey(doc)]; chosen || !known {
+			target := resourceset.DedupKey(doc)
+			apiVersion := manifest.DocAPIVersion(doc)
+			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" && target.Group != manifest.KustomizeDomain
+			if parentAttributed && identifiable && target.Namespace == "" && manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
+				target.Namespace = id.Namespace
+			}
+			if !parentAttributed || !identifiable || selected[target] {
 				out[parent] = append(out[parent], doc)
 			}
 		}

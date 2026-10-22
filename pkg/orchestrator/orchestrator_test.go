@@ -1789,6 +1789,22 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 	version := mkDoc("version-loses")
 	version["apiVersion"] = "example.com/v2"
 
+	omitted := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "foo"}, "data": map[string]any{"value": "a-omitted"}}
+	explicit := manifest.DeepCopyMap(omitted)
+	explicit["metadata"].(map[string]any)["namespace"] = "flux-system"
+	explicit["data"].(map[string]any)["value"] = "a-explicit"
+	winningCM := manifest.DeepCopyMap(explicit)
+	winningCM["data"].(map[string]any)["value"] = "b-wins"
+	namespaceA := map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "shared"}, "spec": map[string]any{"owner": "a-loses"}}
+	namespaceB := manifest.DeepCopyMap(namespaceA)
+	namespaceB["spec"].(map[string]any)["owner"] = "b-wins"
+	incomplete := []map[string]any{
+		{"apiVersion": "example.com/v1", "kind": "Widget"},
+		{"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "kindless"}},
+		{"kind": "Widget", "metadata": map[string]any{"name": "versionless"}},
+	}
+	malformed := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "invalid", "namespace": "flux-system"}, "spec": map[string]any{"path": []any{"invalid"}}}
+
 	for _, reverse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
 			t.Parallel()
@@ -1802,24 +1818,44 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				slices.Reverse(ids)
 			}
 			for _, id := range ids {
-				input := []map[string]any{docB, other}
+				input := []map[string]any{docB, other, winningCM, namespaceB}
 				if id == ownerA {
-					input = []map[string]any{docA, version, {"apiVersion": "example.com/v1", "kind": "Widget"}, {"apiVersion": "example.com/v1", "metadata": map[string]any{"name": "incomplete"}}}
+					input = append([]map[string]any{docA, version, omitted, explicit, namespaceA, malformed}, incomplete...)
 				}
 				children, authoritative := base.ParseChildren(id, input, manifest.ParseDocOptions{})
+				assert.Diff(t, authoritative, input)
+				mixedChildren := 0
+				for i, child := range children {
+					if child.Obj.Named().Namespace == "" && manifest.KindOf(child.Obj).Namespaced() {
+						children[i].Obj = child.Obj.WithNamespace(id.Namespace)
+					}
+					if children[i].Obj.Named() == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "foo"}) {
+						mixedChildren++
+					}
+					if child.Obj.Named().Name == "invalid" {
+						t.Fatal("malformed typed document admitted")
+					}
+				}
+				if id == ownerA {
+					assert.Equal(t, mixedChildren, 2)
+				}
 				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true})
+				_, admitted := s.GetEmission(id)
+				admitted.Finish()
+				mixedChildren = 0
+				for _, child := range admitted.Children {
+					if child.Obj.Named().Kind == manifest.KindConfigMap {
+						mixedChildren++
+					}
+					if child.Obj.Named().Kind == "Namespace" {
+						assert.Equal(t, child.Obj.Named().Namespace, "")
+					}
+				}
+				assert.Equal(t, mixedChildren, 1)
 			}
-			docs := o.collectManifests()[parent]
-			if len(docs) != 4 {
-				t.Fatalf("out[apps] = %d docs, want 2 tracked winners and 2 incomplete documents", len(docs))
-			}
-			if manifest.DocAPIVersion(docs[3]) != "other.example/v1" {
-				t.Fatalf("foreign group lost: %v", docs)
-			}
-			spec, _ := docs[2]["spec"].(map[string]any)
-			if got := spec["owner"]; got != "b-wins" {
-				t.Fatalf("collision winner owner = %v, want b-wins", got)
-			}
+			assert.Equal(t, s.GetObject(testutil.KustomizationID("flux-system", "invalid")), manifest.BaseManifest(nil))
+			want := append(slices.Clone(incomplete), docB, other, winningCM, namespaceB)
+			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: want})
 		})
 	}
 }
@@ -2019,6 +2055,111 @@ func TestRenderTrees_NetworkOwnership(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("outer owner retained idle transport")
 				}
+			}
+		})
+	}
+}
+
+func TestOrchestrator_Render_ResourceSetEffectiveOwnership(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		competitor bool
+	}{
+		{name: "both-producers", competitor: true},
+		{name: "sole-producer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks.yaml]\n")
+			testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system",
+				"  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [rs.yaml]\n")
+			resources := `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: aaa, namespace: flux-system}
+spec:
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: foo}
+      data: {marker: aaa-omitted}
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: foo, namespace: flux-system}
+      data: {marker: aaa-explicit}
+`
+			if tc.competitor {
+				resources += `---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: zzz, namespace: flux-system}
+spec:
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: foo, namespace: flux-system}
+      data: {marker: zzz-winner}
+`
+			}
+			testutil.WriteFile(t, root, "apps/rs.yaml", resources)
+			want, err := manifest.DecodeDocs(strings.NewReader(`apiVersion: v1
+kind: ConfigMap
+metadata: {name: foo}
+data: {marker: aaa-omitted}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: foo, namespace: flux-system}
+data: {marker: aaa-explicit}
+`))
+			assert.NoError(t, err)
+			if tc.competitor {
+				want = []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "foo", "namespace": "flux-system"}, "data": map[string]any{"marker": "zzz-winner"}}}
+			}
+			owner := "aaa"
+			if tc.competitor {
+				owner = "zzz"
+			}
+			for _, doc := range want {
+				doc["metadata"].(map[string]any)["labels"] = map[string]any{
+					"resourceset.fluxcd.controlplane.io/name":      owner,
+					"resourceset.fluxcd.controlplane.io/namespace": "flux-system",
+				}
+			}
+			var previous map[manifest.NamedResource][]map[string]any
+			for range 2 {
+				o, err := New(t.Context(), Config{Path: root, Concurrency: 2})
+				assert.NoError(t, err)
+				result, err := o.Render(t.Context())
+				assert.NoError(t, err)
+				assert.Equal(t, len(result.Failed), 0)
+				var got []map[string]any
+				for parent, docs := range result.Manifests {
+					for _, doc := range docs {
+						if manifest.DocKind(doc) == manifest.KindConfigMap {
+							assert.Equal(t, parent, testutil.KustomizationID("flux-system", "apps"))
+							got = append(got, doc)
+						}
+						if tc.competitor && manifest.DocKind(doc) == manifest.KindConfigMap {
+							encoded, err := json.Marshal(doc)
+							assert.NoError(t, err)
+							if strings.Contains(string(encoded), "aaa-omitted") || strings.Contains(string(encoded), "aaa-explicit") {
+								t.Errorf("losing marker in output: %s", encoded)
+							}
+						}
+					}
+				}
+				assert.Diff(t, got, want)
+				if !tc.competitor && len(got) == 2 {
+					_, present := got[0]["metadata"].(map[string]any)["namespace"]
+					assert.Equal(t, present, false)
+				}
+				if previous != nil {
+					assert.Diff(t, result.Manifests, previous)
+				}
+				previous = result.Manifests
 			}
 		})
 	}

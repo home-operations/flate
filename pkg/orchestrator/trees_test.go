@@ -208,7 +208,7 @@ spec:
   resources:
     - apiVersion: v1
       kind: ConfigMap
-      metadata: {name: cm-<< inputs.name >>, namespace: default}
+      metadata: {name: cm-<< inputs.name >>, namespace: flux-system}
       data: {key: v%d}
     - apiVersion: v1
       kind: Secret
@@ -223,8 +223,12 @@ spec:
   resources:
     - apiVersion: v1
       kind: ConfigMap
-      metadata: {name: cm-<< inputs.name >>, namespace: default}
-      data: {key: losing}
+      metadata: {name: cm-<< inputs.name >>, namespace: flux-system}
+      data: {key: losing-explicit}
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: cm-<< inputs.name >>}
+      data: {key: losing-omitted}
 `, i+1))
 	}
 	base, head, err := orchestrator.RenderTrees(t.Context(),
@@ -240,7 +244,7 @@ spec:
 		if len(side.Result.Manifests[testutil.KustomizationID("flux-system", "app-b")]) != 0 || configMapNames(side.Result)["cfg-b"] {
 			t.Fatalf("side %d rendered unchanged app-b: %v", i, side.Result.Manifests)
 		}
-		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "cm-one"}
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cm-one"}
 		cm, ok := side.Store().Get[*manifest.ConfigMap](id)
 		if !ok {
 			t.Fatal("missing shared ConfigMap")
@@ -264,7 +268,7 @@ spec:
 			}
 		}
 		slices.Sort(identities)
-		assert.Diff(t, identities, []string{"ConfigMap/default/cm-one", "ResourceSet/flux-system/a", "ResourceSet/flux-system/z", "Secret/default/secret-one"})
+		assert.Diff(t, identities, []string{"ConfigMap/flux-system/cm-one", "ResourceSet/flux-system/a", "ResourceSet/flux-system/z", "Secret/default/secret-one"})
 	}
 	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
@@ -282,7 +286,7 @@ spec:
 		if c.Name == "cfg-b" || c.Name == "secret-one" {
 			t.Fatalf("unchanged document in diff: %+v", c)
 		}
-		if c.Kind == manifest.KindConfigMap && c.Namespace == "default" && c.Name == "cm-one" {
+		if c.Kind == manifest.KindConfigMap && c.Namespace == "flux-system" && c.Name == "cm-one" {
 			generatedChanges++
 			assert.Equal(t, c.Parent.Name, parent.Name)
 			assert.Equal(t, c.Parent.Namespace, parent.Namespace)

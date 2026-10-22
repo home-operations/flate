@@ -192,9 +192,10 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			}
 			hr := testutil.HelmReleaseID("apps", "selected")
 			producer := testutil.KustomizationID("flux-system", "producer")
+			wantFailure := tc.broken && !tc.optional
 			requiredFailure := tc.broken && !tc.optional && !tc.absent
 			_, readerFailed := res.Failed[hr]
-			if (len(res.Manifests[hr]) == 0) != requiredFailure || readerFailed != requiredFailure || len(res.Blocked[hr]) != 0 {
+			if (len(res.Manifests[hr]) == 0) != requiredFailure || readerFailed != requiredFailure || (len(res.Blocked[hr]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: failed=%v blocked=%v", res.Failed, res.Blocked)
 			}
 			if _, failed := res.Failed[producer]; failed != tc.broken {
@@ -210,16 +211,16 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			if len(selection) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
-			if _, failed := selection[0].Failed[producer]; failed != tc.broken || (selectedErr != nil) != tc.broken {
+			if _, failed := selection[0].Failed[producer]; failed != wantFailure || (selectedErr != nil) != wantFailure {
 				t.Fatalf("required owner failure projection violated: failed=%v unrelated=%v error=%v", selection[0].Failed, selection[0].Unrelated, selectedErr)
 			}
 			for _, warning := range selection[0].Unrelated {
-				if warning.Resource == producer {
+				if wantFailure && warning.Resource == producer {
 					t.Fatalf("required owner became unrelated: %+v", warning)
 				}
 			}
 
-			if (code == 1) != tc.broken || strings.Contains(stdout, "selected-rendered") == requiredFailure {
+			if (code == 1) != wantFailure || strings.Contains(stdout, "selected-rendered") == requiredFailure {
 				t.Fatalf("authored owner policy violated: %d %s\n%s", code, stdout, stderr)
 			}
 			if !requiredFailure {
@@ -243,11 +244,12 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 
 func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 	for _, tc := range []struct {
-		name                         string
-		secret, self, broken, absent bool
+		name                                   string
+		secret, self, broken, absent, required bool
 	}{
 		{name: "secret-producer", secret: true, broken: true},
 		{name: "optional-configmap", broken: true},
+		{name: "required-configmap", broken: true, required: true},
 		{name: "self-produced", self: true, broken: true},
 		{name: "healthy-self-produced", self: true},
 		{name: "absent-no-owner", absent: true},
@@ -258,7 +260,7 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 			if tc.secret {
 				kind = "Secret"
 			}
-			appendScopeSpec(t, root, "cluster/ks.yaml", fmt.Sprintf("  postBuild:\n    substituteFrom: [{kind: %s, name: scope-input, optional: %t}]\n", kind, !tc.self))
+			appendScopeSpec(t, root, "cluster/ks.yaml", fmt.Sprintf("  postBuild:\n    substituteFrom: [{kind: %s, name: scope-input, optional: %t}]\n", kind, !tc.self && !tc.required))
 			if !tc.absent {
 				testutil.WriteFile(t, root, "cluster/producer.yaml", testutil.KustomizationYAML("producer", "flux-system", "  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 				resources := "resources: [input.yaml"
@@ -280,11 +282,12 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 			run := runOrchestratorCfg(t.Context(), cfg)
 			res := run.Result
 			id := testutil.KustomizationID("flux-system", "selected")
-			if res == nil || len(res.Manifests[id]) == 0 || len(res.Blocked[id]) != 0 {
+			requiredFailure := tc.broken && tc.required
+			if res == nil || (len(res.Manifests[id]) == 0) != requiredFailure || (len(res.Blocked[id]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: %+v", res)
 			}
 			out, stderr, code := runCLI(t, "build", "ks", "selected", "--path", cfg.Path, "--cache-dir", t.TempDir(), "--concurrency", "2")
-			if (code == 1) != tc.broken || !strings.Contains(out, "name: selected") {
+			if (code == 1) != requiredFailure || strings.Contains(out, "name: selected") == requiredFailure {
 				t.Fatalf("substitution owner policy: code=%d output=%s diagnostics=%s", code, out, stderr)
 			}
 			if tc.broken && !strings.Contains(stderr, "producer") {
@@ -486,6 +489,15 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		return testutil.KustomizationID("apps", name)
 	}
 	a, b, other := id("a"), id("b"), id("other")
+	for _, pair := range [][2]manifest.NamedResource{{a, b}, {b, a}} {
+		o.Store().AddObject(&manifest.Kustomization{Name: pair[0].Name, Namespace: pair[0].Namespace})
+		reads := new(store.ReadSet)
+		reads.Init(o.Store(), pair[0], nil)
+		reads.GetObject(pair[0])
+		reads.RequireData(pair[1])
+		reads.Accept()
+		t.Cleanup(reads.Retire)
+	}
 	res := &orchestrator.Result{
 		Failed: map[manifest.NamedResource]store.StatusInfo{
 			a:     {Status: store.StatusFailed, Message: "cycle a"},
@@ -524,10 +536,16 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		t.Fatal("fresh render has no artifact")
 	}
 	clone := hr.Clone()
-	clone.ValuesFrom = []helmv2.ValuesReference{{Kind: "Secret", Name: "current", Optional: true}}
+	clone.ValuesFrom = []helmv2.ValuesReference{{Kind: "Secret", Name: "current"}}
 	o.Store().AddObject(clone)
 	current := manifest.NamedResource{Kind: "Secret", Namespace: "apps", Name: "current"}
 	old := manifest.NamedResource{Kind: "Secret", Namespace: "apps", Name: "old"}
+	var currentReads store.ReadSet
+	currentReads.Init(o.Store(), id, nil)
+	currentReads.GetObject(id)
+	currentReads.RequireData(current)
+	currentReads.Accept()
+	t.Cleanup(currentReads.Retire)
 	res = &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
 		id:      {Status: store.StatusFailed, Message: "selected failed after rendering"},
 		current: {Status: store.StatusFailed, Message: "current input failure"},
@@ -547,7 +565,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	}
 	_, accepted := o.Store().GetEmission(id)
 	defer accepted.Finish()
-	assert.Diff(t, artifact.(*store.Emission).Manifests, accepted.Manifests)
+	assert.Equal(t, len(accepted.Manifests), 0)
 }
 
 func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {

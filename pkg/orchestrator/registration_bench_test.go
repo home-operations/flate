@@ -34,7 +34,7 @@ spec:
       chart: charts/app
       sourceRef: {kind: GitRepository, name: flux-system}
   values: {VALUE: early}
-  valuesFrom: [{kind: ConfigMap, name: late-settings, optional: true}]
+  valuesFrom: [{kind: ConfigMap, name: late-settings, valuesKey: HELM_VALUES, optional: true}]
 `)
 	testutil.WriteFile(b, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
 	testutil.WriteFile(b, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hr-output, namespace: flux-system}\ndata: {value: {{ .Values.VALUE | quote }}}\n")
@@ -52,7 +52,7 @@ spec:
     metadata: {name: '<< inputs.name >>', namespace: flux-system}
     data:
       VALUE: '<< inputs.VALUE >>'
-      values.yaml: 'VALUE: << inputs.VALUE >>'
+      HELM_VALUES: 'VALUE: << inputs.VALUE >>'
     << end >>
 ---
 apiVersion: fluxcd.controlplane.io/v1

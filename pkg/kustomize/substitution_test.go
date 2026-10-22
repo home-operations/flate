@@ -77,7 +77,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	} {
 		st.AddObject(cm)
 	}
-	provider := values.NewStoreProvider(st, true)
+	provider := values.NewStoreProvider(st, true, nil)
 	prepared, err := Prepare(projected, provider, overlay)
 	if err != nil {
 		t.Fatal(err)

@@ -123,10 +123,10 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteSubstitutionCycleCluster(t, root)
 	const want = "\n  ✗  Kustomization.kustomize.toolkit.fluxcd.io  flux-system/a  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b\n  ✗  Kustomization.kustomize.toolkit.fluxcd.io  flux-system/b  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a\n\n  ✗ 2 failed\n"
-	for _, workers := range []string{"2"} {
+	for _, workers := range []string{"1", "2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
 				if code != 1 || stdout != "" || stderr != want {
 					t.Fatalf("substitution cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 				}

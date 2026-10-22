@@ -16,7 +16,7 @@ const (
 	// EventObjectAdded fires when a new manifest is added (or when a
 	// listener is registered with flush=true, to replay existing state).
 	EventObjectAdded EventKind = iota + 1
-	// EventStatusUpdated fires when status transitions.
+	// EventStatusUpdated reports condition transitions and transient reconciliation progress.
 	EventStatusUpdated
 	// EventArtifactUpdated fires when an artifact is stored.
 	EventArtifactUpdated
@@ -112,17 +112,24 @@ type idPayload struct {
 func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 	switch event {
 	case EventObjectAdded:
-		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]manifest.BaseManifest {
-			return sh.objects
-		}, func(obj manifest.BaseManifest) (any, bool) { return obj, true })
+		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]objectCell {
+			return sh.cells
+		}, func(sh *shard, id manifest.NamedResource, _ objectCell) (any, bool) {
+			obj := sh.objectLocked(id)
+			return obj, obj != nil
+		})
 	case EventStatusUpdated:
 		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]conditionRecord {
 			return sh.conditions
-		}, func(record conditionRecord) (any, bool) { return record.statusInfo() })
+		}, func(_ *shard, _ manifest.NamedResource, record conditionRecord) (any, bool) {
+			return record.statusInfo()
+		})
 	case EventArtifactUpdated:
-		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]Artifact {
+		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]artifactRecord {
 			return sh.artifacts
-		}, func(art Artifact) (any, bool) { return art, true })
+		}, func(_ *shard, _ manifest.NamedResource, record artifactRecord) (any, bool) {
+			return record.value, record.value != nil
+		})
 	}
 	return nil
 }
@@ -134,7 +141,7 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 // pre-sized to the summed map lengths so the common all-keep case never
 // re-grows. Caller MUST hold every shard's write lock (see
 // snapshotForReplay).
-func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedResource]V, conv func(V) (any, bool)) []idPayload {
+func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedResource]V, conv func(*shard, manifest.NamedResource, V) (any, bool)) []idPayload {
 	total := 0
 	for _, sh := range shards {
 		total += len(pick(sh))
@@ -142,66 +149,35 @@ func collectReplay[V any](shards []*shard, pick func(*shard) map[manifest.NamedR
 	out := make([]idPayload, 0, total)
 	for _, sh := range shards {
 		for id, v := range pick(sh) {
-			if sh.hidden[id] {
+			if sh.derived && sh.cells[id].hidden {
+				continue
+			}
+			payload, ok := conv(sh, id, v)
+			if !ok {
 				continue
 			}
 			var input Child
-			if _, ok := any(v).(*Emission); ok {
-				input, _ = sh.representativeLocked(id)
+			if _, ok := payload.(*Emission); ok {
+				var view capture
+				sh.captureLocked(id, sh.cells[id], &view)
+				input = view.child
 			}
-			if eventObj, ok := any(v).(manifest.BaseManifest); ok {
-				obj := sh.objectLocked(eventObj.Named())
-				if obj == nil {
-					continue
-				}
-				v = any(obj).(V)
-			}
-			if payload, ok := conv(v); ok {
-				out = append(out, idPayload{id: id, payload: payload, input: input})
-			}
+
+			out = append(out, idPayload{id: id, payload: payload, input: input})
 		}
 	}
 	return out
 }
 
-// A generic no-op closure captures its dictionary and allocates.
-var emptyDispatch = func() {}
-
 var emptyListenerSnapshot listenerSnapshot
 
-// fireUnderLock is the race-safe dispatcher writers MUST use: it
-// captures the listener snapshot under the caller's already-held
-// shard lock and returns a closure the caller invokes AFTER releasing
-// the lock. The pattern is:
-//
-//	sh.mu.Lock()
-//	... mutate sh.objects / sh.conditions / sh.artifacts ...
-//	dispatch := fireUnderLock(s, EventX, id, payload)
-//	sh.mu.Unlock()
-//	dispatch()
-//
-// Holding the shard lock while snapshotting listeners closes the
-// AddListener-vs-writer race documented on AddListener: a
-// flush=false add holds every shard's RLock, so the snapshot
-// captured here cannot interleave with an in-progress add.
-//
-// When no listeners are registered for event, fireUnderLock returns
-// a no-op closure without boxing the payload. AddObject dispatches changed objects
-// and must stay cheap on the render hot path when nothing's listening.
-//
-// Published snapshots are immutable. An in-flight dispatch may still invoke
-// an unsubscribed listener; registration affects only future snapshots.
-func fireUnderLock[T any](s *Store, event EventKind, id manifest.NamedResource, payload T) func() {
+// fireUnderLock MUST capture the immutable listener set before the writer unlocks.
+func fireUnderLock(s *Store, event EventKind, id manifest.NamedResource) eventDispatch {
 	listeners := s.listeners[event].snapshot.Load()
 	if len(listeners.entries) == 0 {
-		return emptyDispatch
+		return eventDispatch{}
 	}
-	boxed := any(payload)
-	return func() {
-		for _, entry := range listeners.entries {
-			safeInvoke(entry.fn, id, boxed)
-		}
-	}
+	return eventDispatch{id: id, listeners: listeners}
 }
 
 func safeInvoke(fn Listener, id manifest.NamedResource, payload any) {
@@ -261,8 +237,17 @@ func (l *listenerSet) remove(id int64) {
 }
 
 type eventDispatch struct {
-	id  manifest.NamedResource
-	run func()
+	id        manifest.NamedResource
+	listeners *listenerSnapshot
+	payload   any
+}
+
+func (e *eventDispatch) run() {
+	if e.listeners != nil {
+		for _, entry := range e.listeners.entries {
+			safeInvoke(entry.fn, e.id, e.payload)
+		}
+	}
 }
 
 func dispatchEvents(events []eventDispatch) {

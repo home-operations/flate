@@ -45,17 +45,37 @@ func (s *Store) AddWarning(origin manifest.NamedResource, w manifest.Warning) {
 // Warnings returns a copy of the collected advisories ordered by
 // manifest.CompareWarning, or nil when none were recorded.
 func (s *Store) Warnings() []manifest.Warning {
+	reduction := &Store{}
 	s.warnMu.Lock()
-	var out []manifest.Warning
-	if len(s.warnOrder) > 0 {
-		out = make([]manifest.Warning, len(s.warnOrder))
-	}
-	for i, record := range s.warnOrder {
-		w := record.warning
-		w.Detail = slices.Clone(w.Detail)
-		out[i] = w
+	for _, record := range s.warnOrder {
+		for origin := range record.origins {
+			reduction.AddWarning(origin, record.warning)
+		}
 	}
 	s.warnMu.Unlock()
+	var out []manifest.Warning
+	var bundles []*ReadSet
+	for _, sh := range s.shards {
+		sh.mu.RLock()
+		for _, cell := range sh.cells {
+			if cell.links != nil {
+				if reads := cell.links.assessment.Load(); reads != nil {
+					bundles = append(bundles, reads)
+				}
+			}
+		}
+		sh.mu.RUnlock()
+	}
+	for _, reads := range bundles {
+		if reads.Valid() {
+			for _, warning := range reads.warnings {
+				reduction.AddWarning(reads.id, warning)
+			}
+		}
+	}
+	for _, record := range reduction.warnOrder {
+		out = append(out, record.warning)
+	}
 	type contribution struct {
 		owner manifest.NamedResource
 		child Child
@@ -64,7 +84,7 @@ func (s *Store) Warnings() []manifest.Warning {
 		byID := map[manifest.NamedResource][]contribution{}
 		sh.mu.RLock()
 		for id, members := range sh.members {
-			if sh.hidden[id] {
+			if sh.derived && sh.cells[id].hidden {
 				continue
 			}
 			for _, m := range members {

@@ -24,8 +24,10 @@ func BenchmarkCollectDeps_Scope(b *testing.B) {
 				c.Configure(opts)
 				rs := &manifest.ResourceSet{Name: "app", Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: target.api, Kind: target.kind, Name: "dependency"}}}
 				manifest.KindOf(&manifest.RawObject{APIVersion: target.api, Kind: target.kind}).Namespaced()
+				execution := c.newExecution(rs.Named())
+				defer execution.run.Close()
 				for b.Loop() {
-					c.collectDeps(rs)
+					execution.collectDeps(rs)
 				}
 			})
 		}

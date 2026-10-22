@@ -39,11 +39,11 @@ const valuesToken = ".Values"
 // Schema-independent and advisory only: fail-open (nil) on a load error or a
 // chart with no templates. The controller surfaces the result as a
 // manifest.Warning; this function never logs or fails a render.
-func (c *Client) StaleValuePaths(ctx context.Context, hr *manifest.HelmRelease, values map[string]any) []string {
+func (c *Client) StaleValuePaths(ctx context.Context, hr *manifest.HelmRelease, values map[string]any, sources Sources) []string {
 	if len(values) == 0 {
 		return nil
 	}
-	loaded, err := c.describeChart(ctx, hr)
+	loaded, err := c.describeChart(ctx, hr, sources)
 	if err == nil && loaded.analysis == nil {
 		err = c.decodeChart(ctx, &loaded)
 	}

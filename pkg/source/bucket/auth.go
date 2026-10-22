@@ -11,14 +11,14 @@ import (
 
 // resolveCredentials picks up accesskey/secretkey from the SecretRef
 // or falls back to anonymous (which is valid for public buckets).
-func (f *Fetcher) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {
+func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {
 	if b.SecretRef == nil {
 		return credentials.NewStaticV4("", "", ""), nil
 	}
-	if f.Secrets == nil {
+	if f.secrets == nil {
 		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name))
 	}
-	sec := f.Secrets(b.Namespace, b.SecretRef.Name)
+	sec := f.secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
 		return nil, source.MissingSecretErr(b.Named(), b.SecretRef.Name, "not found")
 	}

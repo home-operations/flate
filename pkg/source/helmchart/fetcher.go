@@ -18,10 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// RepoLookup resolves a HelmRepository CR by (namespace, name). The
-// orchestrator wires it against the canonical Store.
-type RepoLookup func(namespace, name string) *manifest.HelmRepository
-
 // ociFetcher is the slice of the OCI source fetcher the OCI branch
 // delegates to (source/oci.Fetcher satisfies it). Kept as an interface so
 // the branch is unit-testable without standing up a registry, and so this
@@ -30,10 +26,8 @@ type ociFetcher = source.TypedFetcher[*manifest.OCIRepository]
 
 // Fetcher resolves a HelmChart into an immutable source artifact.
 type Fetcher struct {
-	secrets source.SecretGetter // HTTP-branch SecretRef/CertSecretRef auth
-	repos   RepoLookup          // resolves the chart's backing HelmRepository
-	oci     ociFetcher          // OCI-backed charts (a synthesized OCIRepository)
-	cache   *cache.Cache        // content-addressed store for HTTP chart tarballs
+	oci     ociFetcher   // OCI-backed charts (a synthesized OCIRepository)
+	cache   *cache.Cache // content-addressed store for HTTP chart tarballs
 	network *source.Network
 
 	indexCache                 sync.Map                // map[string]*repo.IndexFile
@@ -52,8 +46,8 @@ type Config struct {
 }
 
 // New constructs a fetcher borrowing the caller's cache and required non-nil Network.
-func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Config) *Fetcher {
-	return &Fetcher{secrets: secrets, repos: repos, oci: oci, cache: cfg.Cache,
+func New(oci ociFetcher, cfg Config) *Fetcher {
+	return &Fetcher{oci: oci, cache: cfg.Cache,
 		network: cfg.Network, disableChartDigestTracking: cfg.DisableChartDigestTracking,
 		indexLocks: keylock.New[string]()}
 }
@@ -61,8 +55,20 @@ func New(secrets source.SecretGetter, repos RepoLookup, oci ociFetcher, cfg Conf
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It
 // resolves the backing HelmRepository, then pulls the chart: OCI repos via
 // the OCI fetcher (a synthesized OCIRepository), HTTP repos by streaming chart tarballs.
-func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
-	r := f.repos(hc.Namespace, hc.SourceRef.Name)
+type operation struct {
+	*Fetcher
+	reads   *store.ReadSet
+	secrets source.SecretGetter
+}
+
+// Fetch acquires content using one execution's captured credentials and declarations.
+func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	return operation.fetchSource(ctx, hc, policy)
+}
+
+func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
+	r, _ := f.reads.Get[*manifest.HelmRepository](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: hc.Namespace, Name: hc.SourceRef.Name})
 	if r == nil {
 		return nil, fmt.Errorf("%w: %s backing HelmChart %s", manifest.ErrObjectNotFound,
 			source.QualifiedName("HelmRepository", hc.Namespace, hc.SourceRef.Name), hc.Named().String())
@@ -77,7 +83,7 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, polic
 		// the synthetic HelmChart's identity.
 		syn := synthesizeOCIRepository(r, hc)
 		syn.Interval = r.Interval
-		art, err := f.oci.Fetch(ctx, syn, policy)
+		art, err := f.oci.Fetch(ctx, syn, f.reads, policy)
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
 			retry := missing.RetryWithRegistryConfig
 			wrapped := *missing

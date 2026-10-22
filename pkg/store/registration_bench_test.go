@@ -28,6 +28,13 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 				other := &manifest.Secret{Name: "unqueried", Namespace: "ns"}
 				unrelated := &manifest.ConfigMap{Name: "unrelated", Namespace: "ns"}
 				reads := make([]int, workers-1)
+				state := &struct {
+					sets   []ReadSet
+					inputs [][]Input
+				}{make([]ReadSet, workers-1), make([][]Input, workers-1)}
+				for worker := range state.inputs {
+					state.inputs[worker] = make([]Input, len(ids)/(workers-1)+1)
+				}
 				generation := 0
 				b.ReportAllocs()
 				for b.Loop() {
@@ -39,8 +46,13 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 								defer start()
 							}
 							reads[worker] = 0
+							set := &state.sets[worker]
+							set.Init(s, consumer, nil)
+							clear(state.inputs[worker])
 							for i := worker; i < len(ids); i += workers - 1 {
-								_, present := s.Get[*manifest.Secret](ids[i])
+								input := &state.inputs[worker][i/(workers-1)]
+								input.Ref.NamedResource = ids[i]
+								_, present := set.Capture(input).(*manifest.Secret)
 								if present {
 									reads[worker]++
 								}
@@ -64,6 +76,12 @@ func BenchmarkReadRegistration_Optional10000(b *testing.B) {
 						s.AddObject(&freshCM)
 					})
 					tasks.BlockTillDone()
+					for i := range state.sets {
+						state.sets[i].Valid()
+						state.sets[i].Retire()
+					}
+					for range s.Sweep() {
+					}
 					s.UpdateStatus(consumer, StatusReady, "", "")
 					if mode == "absent" {
 						s.DeleteObject(ids[0])
@@ -96,13 +114,20 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 				s.UpdateStatus(consumers[i], StatusReady, "", "")
 			}
 			tasks := task.NewBounded(workers)
+			state := &struct {
+				sets   []ReadSet
+				inputs []Input
+			}{make([]ReadSet, len(consumers)), make([]Input, len(consumers))}
 			generation := 0
 			b.ReportAllocs()
 			for b.Loop() {
 				for worker := range workers {
 					tasks.Go(b.Context(), "observe", func(context.Context) {
 						for i := worker; i < len(consumers); i += workers {
-							s.GetObject(ids[i])
+							clear(state.inputs[i : i+1])
+							state.sets[i].Init(s, consumers[i], nil)
+							state.inputs[i].Ref.NamedResource = ids[i]
+							state.sets[i].Capture(&state.inputs[i])
 							s.UpdateStatus(consumers[i], StatusReady, "", "")
 						}
 					})
@@ -116,7 +141,7 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 							defer start()
 						}
 						for i := worker; i < len(consumers); i += workers - 1 {
-							s.GetObject(ids[i])
+							state.sets[i].GetObject(ids[i])
 							if i == 0 {
 								start()
 							}
@@ -132,6 +157,12 @@ func BenchmarkReadRegistration_FanIn10000(b *testing.B) {
 					s.AddObject(versions[generation%2])
 				})
 				tasks.BlockTillDone()
+				for i := range state.sets {
+					state.sets[i].Valid()
+					state.sets[i].Retire()
+				}
+				for range s.Sweep() {
+				}
 				generation++
 			}
 			if tasks.Failures() != 0 {

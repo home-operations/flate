@@ -6,19 +6,6 @@
 //   - Client.Template renders a HelmRelease to
 //     a YAML stream (the equivalent of
 //     `helm template --dry-run --client-only`).
-//   - Client.SetSourceResolver wires the canonical source-CR lookup
-//     surface — production callers pass NewStoreSourceResolver(store)
-//     so HelmRepository / OCIRepository / GitRepository / Bucket /
-//     ExternalArtifact lookups read straight from the canonical
-//     object store. Embedders rendering a single HR without an
-//     orchestrator can implement SourceResolver directly.
-//   - Prepare(hr, lookup, provider, cache) performs the pre-render dance
-//     (Clone → ResolveChartRef → ExpandValueReferences) — call this
-//     before Template when rendering a HelmRelease in isolation.
-//   - Options exposes the helm CLI flags flate understands
-//     (--kube-version, --api-versions, --no-hooks, etc.).
-//
-// The client is safe for concurrent use; fetched chart bytes live in
-// the shared content-addressed source cache, and parallel first-loads
-// of the same chart coalesce through a per-path keylock.
+//   - NewSources binds each operation to its captured source declarations and artifacts.
+//   - Client.Template receives those sources through RenderOptions.
 package helm

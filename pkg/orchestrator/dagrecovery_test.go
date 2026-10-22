@@ -11,6 +11,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -19,14 +22,21 @@ import (
 
 type emptySourceFetcher struct{}
 
-func (emptySourceFetcher) Fetch(context.Context, manifest.BaseManifest, sourcecache.Policy) (*store.SourceArtifact, error) {
+func (emptySourceFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
 	return nil, nil
 }
 
-type arrivalDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait)
+type fixtureDispatcher struct {
+	store    *store.Store
+	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result
+}
 
-func (d arrivalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return d(ctx, id, attempt)
+func (d fixtureDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+	return d.dispatch(ctx, id, level)
+}
+
+func (d fixtureDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
+	return slices.Collect(d.store.Sweep())
 }
 
 func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
@@ -54,26 +64,32 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 			assert.Equal(t, slices.Contains(o.seedNodes(), obj.Named()), tc.fetcher)
 			obj = &manifest.ExternalArtifact{Name: "arriving", Namespace: "apps"}
 			producer, consumer := testutil.KustomizationID("flux-system", "producer"), testutil.KustomizationID("flux-system", "consumer")
+			o.store.AddObject(&manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace})
 			attempted := make(chan struct{})
 			var dispatched atomic.Int64
 			var completed atomic.Bool
-			d := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+			d := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 				switch id {
 				case producer:
 					o.tasks.YieldSlot(func() { <-attempted })
 					o.store.AddObject(obj)
 				case consumer:
-					if o.store.GetObject(obj.Named()) == nil {
-						close(attempted)
-						return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: []schedule.NodeID{obj.Named()}}
-					}
-					completed.Store(true)
+					execution := controllertest.NewExecution(base.New(o.store, o.tasks, "fixture"), id)
+					execution.Dispatch(ctx, level, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+						if execution.Reads.GetObject(obj.Named()) == nil {
+							close(attempted)
+							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{obj.Named()}}
+						}
+						completed.Store(true)
+						return nil
+					})
+					return schedule.Result{Assessment: execution}
 				case obj.Named():
 					dispatched.Add(1)
 					return dagDispatcher{o}.Dispatch(ctx, id, level)
 				}
-				return schedule.Outcome{}, manifest.ReconcileWait{}
-			})
+				return schedule.Result{}
+			}}
 			sched := schedule.New(o.tasks, d)
 			unsubscribe := o.watchDAG(sched)
 			defer unsubscribe()
@@ -102,26 +118,27 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	o.configureControllers()
 	d := dagDispatcher{o}
 	victim, ghost := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "ghost")
-	out, outWait := d.Dispatch(t.Context(), victim, manifest.ReconcileAttempt{Drain: manifest.DrainCascade})
-	if out.Rerun || out.Kind != schedule.DependencyFailed || !slices.Equal(outWait.Deps, []manifest.NamedResource{ghost}) {
-		t.Fatalf("derived failure = %v/%v, want ghost blocker", out, outWait)
+	result := d.Dispatch(t.Context(), victim, manifest.DrainCascade)
+	info, _ := o.store.GetStatus(victim)
+	if result.Assessment.Outcome() == schedule.Blocked || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{ghost}) {
+		t.Fatalf("derived failure = %+v, want ghost blocker", info)
 	}
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
 	o.store.UpdateStatus(ghost, store.StatusReady, "", "")
-	out, outWait = d.Dispatch(t.Context(), victim, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	info, _ := o.store.GetStatus(victim)
-	if out.Rerun || (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
-		t.Fatalf("recovery = %v/%v status=%+v blockers=%v failures=%v", out, outWait, info, info.BlockedBy(), o.store.FailedResources())
+	result = d.Dispatch(t.Context(), victim, manifest.DrainNone)
+	info, _ = o.store.GetStatus(victim)
+	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
+		t.Fatalf("recovery status=%+v blockers=%v failures=%v", info, info.BlockedBy(), o.store.FailedResources())
 	}
 	ks, _ := o.store.Get[*manifest.Kustomization](victim)
 	ks = ks.Clone()
 	ks.Path = "./missing-directory"
 	o.store.AddObject(ks)
 	o.store.UpdateFailure(victim, &manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{ghost}})
-	out, outWait = d.Dispatch(t.Context(), victim, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	result = d.Dispatch(t.Context(), victim, manifest.DrainNone)
 	info, _ = o.store.GetStatus(victim)
-	if out.Rerun || (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
-		t.Fatalf("primary failure misclassified = %v/%v status=%+v blockers=%v", out, outWait, info, info.BlockedBy())
+	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
+		t.Fatalf("primary failure misclassified: status=%+v blockers=%v", info, info.BlockedBy())
 	}
 	t.Run("released pin recovery", func(t *testing.T) {
 		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
@@ -144,8 +161,8 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		o.store.SetArtifact(repo.Named(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: dir, Key: "fixture"})
 		o.store.UpdateStatus(repo.Named(), store.StatusReady, "", "")
 		attempted, acquired := make(chan struct{}), make(chan struct{})
-		dispatch := arrivalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-			assert.Equal(t, level.Drain, manifest.DrainNone)
+		dispatch := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			assert.Equal(t, level, manifest.DrainNone)
 			if id == repo.Named() {
 				o.tasks.YieldSlot(func() {
 					select {
@@ -153,16 +170,16 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 					case <-ctx.Done():
 					}
 				})
-				out, outWait := d.Dispatch(ctx, id, level)
+				result := d.Dispatch(ctx, id, level)
 				info, _ := o.store.GetStatus(id)
 				assert.Equal(t, info.Status, store.StatusReady)
 				assert.Equal(t, fetcher.fetched.Load(), true)
 				close(acquired)
-				return out, outWait
+				return result
 			}
-			out, outWait := d.Dispatch(ctx, id, level)
-			if out.Kind == schedule.Blocked {
-				assert.Diff(t, outWait, manifest.ReconcileWait{Deps: []schedule.NodeID{repo.Named()}})
+			result := d.Dispatch(ctx, id, level)
+			if result.Assessment.Outcome() == schedule.Blocked {
+				assert.Diff(t, result.Assessment.(*base.Execution).Blocked, []schedule.NodeID{repo.Named()})
 				close(attempted)
 				// Ready must precede the consumer's first blocked-edge registration.
 				o.tasks.YieldSlot(func() {
@@ -172,8 +189,8 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 					}
 				})
 			}
-			return out, outWait
-		})
+			return result
+		}}
 		sched := schedule.New(o.tasks, dispatch)
 		unsubscribe := o.watchDAG(sched)
 		defer unsubscribe()
@@ -207,7 +224,14 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	victim := testutil.KustomizationID("flux-system", "app")
 	unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); ok && id == victim && info.Status == store.StatusReady {
-			o.store.Refire(id)
+			current, _ := o.store.Get[*manifest.Kustomization](id)
+			fresh := current.Clone()
+			if fresh.Path == "./app" {
+				fresh.Path = "app"
+			} else {
+				fresh.Path = "./app"
+			}
+			o.store.AddObject(fresh)
 		}
 	}, false)
 	defer unsub()

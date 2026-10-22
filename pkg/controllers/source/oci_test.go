@@ -70,20 +70,10 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			root := t.TempDir()
 			st := store.New()
 			cache := cachetest.New(t, root, sourcecache.New)
-			lookups := make(chan struct{}, 2)
-			release := make(chan struct{})
 			network := new(src.Network)
 			t.Cleanup(network.Close)
 			f := &oci.Fetcher{
 				Cache: cache, Network: network, RegistryConfig: config,
-				Secrets: func(ns, name string) *manifest.Secret {
-					sec, _ := st.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name})
-					if sec == nil {
-						lookups <- struct{}{}
-						<-release
-					}
-					return sec
-				},
 			}
 			ts := task.NewBounded(2)
 			c := New(st, ts)
@@ -103,16 +93,12 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 				repo.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				st.AddObject(repo)
 				ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
-					_, deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: 0})
-					if len(deps.Deps) != 1 || deps.Deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
+					deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
+					if len(deps) != 1 || deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}) {
 						t.Errorf("blocked dependencies = %v, want Secret ns/creds", deps)
 					}
 				})
 			}
-			for range 2 {
-				<-lookups
-			}
-			close(release)
 			ts.BlockTillDone()
 			if got := requests.Load(); got != 0 {
 				t.Fatalf("requests before Secret render = %d, want 0", got)
@@ -124,7 +110,7 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			})
 			for _, repo := range repos {
 				ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
-					if _, deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: 0}); !deps.Empty() {
+					if deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked; len(deps) != 0 {
 						t.Errorf("blocked dependencies after Secret render = %v, want none", deps)
 					}
 				})

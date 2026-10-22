@@ -5,10 +5,9 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -18,12 +17,14 @@ func BenchmarkDispatchNodeReady(b *testing.B) {
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusReady, "", "")
 	c := base.New(st, nil, "benchmark")
-	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt, _ bool) (schedule.Outcome, error) {
-		return schedule.Outcome{}, nil
-	}
+	reconcile := func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil }
 	b.ReportAllocs()
 	for b.Loop() {
-		c.DispatchNode(b.Context(), obj.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}, reconcile)
+		execution := controllertest.NewExecution(c, obj.Named())
+		execution.Dispatch(b.Context(), manifest.DrainNone, reconcile)
+		execution.Close()
+		for range st.Sweep() {
+		}
 	}
 }
 
@@ -37,10 +38,11 @@ func BenchmarkRequire_Dependency(b *testing.B) {
 			c := base.New(st, nil, "benchmark")
 			deps := []manifest.DependencyRef{{NamedResource: obj.Named()}}
 			id := testutil.HelmReleaseID("apps", "consumer")
+			execution := controllertest.NewExecution(c, id)
+			defer execution.Close()
 			b.ReportAllocs()
 			for b.Loop() {
-				var result depwait.Resolution
-				_ = c.Require(&depwait.Waiter{Parent: id, Dependencies: deps}, manifest.ReconcileAttempt{}, &result)
+				_ = execution.Require(b.Context(), deps, manifest.DrainNone)
 			}
 		})
 	}

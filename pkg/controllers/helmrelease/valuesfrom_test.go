@@ -4,12 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/depwait"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -20,8 +21,8 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		name         string
 		waitValues   bool
 		materialized bool
+		wiped        bool
 		duplicate    bool
-		refreshed    bool
 		fail         bool
 		wantGreeting string
 		wantWarnings int
@@ -30,8 +31,8 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		{name: "values wait, materialized", waitValues: true, materialized: true, wantGreeting: "supplied"},
 		{name: "chart wait, still missing", wantGreeting: "fallback", wantWarnings: 1},
 		{name: "chart wait, materialized", materialized: true, wantGreeting: "supplied"},
-		{name: "chart wait, current positions", refreshed: true, wantGreeting: "supplied"},
-		{name: "chart failed", fail: true},
+		{name: "chart failed", fail: true, wantWarnings: 1},
+		{name: "wiped values file", wiped: true, wantGreeting: "fallback", wantWarnings: 1},
 		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback", wantWarnings: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,7 +63,7 @@ data:
 			hr := &manifest.HelmRelease{
 				Name: "demo", Namespace: "default",
 				ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
-				Chart:      manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+				Chart:      manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}},
 			}
 			if tc.duplicate {
 				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"})
@@ -70,27 +71,23 @@ data:
 			if tc.waitValues {
 				hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "chart-values"})
 			}
-			expectedRefs := slices.Clone(hr.ValuesFrom)
 			st.AddObject(hr)
-			if _, blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); blocked.Empty() {
+			if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked; len(blocked) == 0 {
 				t.Fatal("expected reconciliation to wait for a dependency")
 			}
 			assert.Equal(t, len(st.Warnings()), 0)
-			if tc.refreshed {
-				fresh := hr.Clone()
-				fresh.ValuesFrom = []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "current-values"}}
-				expectedRefs = slices.Clone(fresh.ValuesFrom)
-				st.AddObject(fresh)
-				st.AddObject(&manifest.Secret{Name: "current-values", Namespace: hr.Namespace, StringData: map[string]any{"values.yaml": "greeting: supplied\n"}})
-			}
 			st.AddObject(&manifest.ConfigMap{
 				Name: "chart-values", Namespace: "default",
 				Data: map[string]any{"values.yaml": "{}"},
 			})
-			if tc.materialized {
+			if tc.materialized || tc.wiped {
+				value := "greeting: supplied\n"
+				if tc.wiped {
+					value = "..PLACEHOLDER_values.yaml.."
+				}
 				st.AddObject(&manifest.Secret{
 					Name: "app-values", Namespace: "default",
-					StringData: map[string]any{"values.yaml": "greeting: supplied\n"},
+					StringData: map[string]any{"values.yaml": value},
 				})
 			}
 			status := store.StatusReady
@@ -98,10 +95,8 @@ data:
 				status = store.StatusFailed
 			}
 			st.UpdateStatus(src.Named(), status, "", "chart source")
-			assert.Equal(t, runValuesFixture(t, c, hr).Status, status)
+			assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, status)
 			assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
-			stored, _ := st.Get[*manifest.HelmRelease](hr.Named())
-			assert.Diff(t, stored.ValuesFrom, expectedRefs)
 			for _, warning := range st.Warnings() {
 				assert.Equal(t, warning.Count, 1)
 			}
@@ -123,15 +118,27 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
 	s.UpdateStatus(chart.Named(), store.StatusFailed, "", "chart unavailable")
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Name: chart.Name, Namespace: chart.Namespace}}}
+	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: chart.Name}}}
 	s.AddObject(hr)
-	err := c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: preparePrereqs(hr), Declaration: hr, AllowMissingSecrets: true}, manifest.ReconcileAttempt{Drain: manifest.DrainForce}, &depwait.Resolution{})
+	attempts := 0
+	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if id == hr.Named() && payload.(store.StatusInfo).Message == "awaiting pre-render references" {
+			attempts++
+			if attempts > 1 {
+				t.Fatal("retried a failed chartRef with no removable valuesFrom refs")
+			}
+			// Identical status writes suppress events, so reset the progress message.
+			s.UpdateStatus(id, store.StatusPending, "", "checking references")
+		}
+	}, false)
+	t.Cleanup(unsub)
+	err := c.newExecution((hr).Named()).resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainForce)
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
 	if !ok {
 		t.Fatalf("error = %v, want DependencyFailedError", err)
 	}
 	assert.Diff(t, failed.Failed, []manifest.NamedResource{chart.Named()})
-	assert.Equal(t, len(hr.ValuesFrom), 0)
+	assert.Equal(t, attempts, 1)
 }
 
 func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
@@ -147,28 +154,18 @@ func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
 				if materializer == "pending" {
 					s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: owner, Authored: target, Path: "source/values.yaml", File: "values.yaml"}}}}})
 				}
-				declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration", Spec: map[string]any{"target": map[string]any{"name": "values"}}}
-				s.AddObject(declaration)
-				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Declaration: declaration.Named()}}}}}
-				if materializer == "pending" {
-					index.Records[target] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Declaration: declaration.Named()}, {Owner: owner, Authored: target, Path: "source/values.yaml", File: "values.yaml"}}}
-				}
-				s.SetDiscoveryIndex(index)
+				publishRawFixture(t, c, &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Namespace: "apps", Name: "declaration", Spec: map[string]any{"target": map[string]any{"name": "values"}}})
 				if materializer == "actual" {
 					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"values.yaml": "real"}})
 				}
-				hr := &manifest.HelmRelease{Name: "reader", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: target.Name}}}
-				var resolved depwait.Resolution
-				err := c.Require(&depwait.Waiter{Parent: hr.Named(), Declaration: hr}, manifest.ReconcileAttempt{}, &resolved)
-				if (len(resolved.Omitted) > 0) != (materializer == "none") {
-					t.Fatalf("mixed evidence resolution=%+v err=%v", resolved, err)
-				}
-				if materializer == "pending" {
-					if _, blocked := errors.AsType[*depwait.ErrBlocked](err); !blocked {
-						t.Fatalf("pending supplier did not block: %v", err)
-					}
-				} else if err != nil {
-					t.Fatal(err)
+				execution := c.newExecution(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"})
+				s.UpdateStatus(testutil.KustomizationID("apps", "producer-root"), store.StatusReady, "", "")
+				input := execution.data.Lookup(target)
+				w := depwait.Waiter{Store: &execution.run.Reads, Parent: execution.run.Reads.ID()}
+				result := w.Available(t.Context(), depwait.DataDependency{NamedResource: target, Input: input}, manifest.DrainNone)
+				hasProducer, omit := input.Generated, result.Omit
+				if omit != (materializer == "none") || omit && !hasProducer {
+					t.Fatalf("mixed evidence omitted=%t producer=%t", omit, hasProducer)
 				}
 			})
 		}

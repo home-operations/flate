@@ -111,7 +111,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	cfg.Store.SetDiscoveryIndex(l.Index)
-	d.promoteOrphans(standaloneSecrets)
+	d.promoteOrphans(ctx, standaloneSecrets)
 	return &Result{
 		DependencySubstitutions:    substitutions,
 		RepoRoot:                   repoRoot,

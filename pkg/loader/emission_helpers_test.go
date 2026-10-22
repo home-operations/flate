@@ -1,10 +1,11 @@
 package loader
 
-import (
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
-)
+import "github.com/home-operations/flate/pkg/manifest"
 
-func promoteForTest(st *store.Store, id manifest.NamedResource, r manifest.DiscoveryRecord, opts PromoteOptions) bool {
-	return Promote(st, id, manifest.Production{Authored: r.Authored, Path: r.Path, File: r.File}, opts)
+func productionForTest(r manifest.DiscoveryRecord) manifest.Production {
+	p := manifest.Production{Authored: r.Authored, Path: r.Path, File: r.File}
+	if len(r.Productions) != 0 {
+		p.Source = r.Productions[0].Source
+	}
+	return p
 }

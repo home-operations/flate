@@ -298,10 +298,10 @@ func TestStaleValuePaths_MutableCapture(t *testing.T) {
 	st := store.New()
 	hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo"}}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, Key: "misleading"})
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second")), []string{"second"})
+
+	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st)), []string{"second"})
 	input["templates/cm.yaml"].Data = []byte("{{ .Values.second }}")
-	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second")), []string{"first"})
+	assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st)), []string{"first"})
 	input["Chart.yaml"].Data = []byte("invalid")
-	assert.Equal(t, len(cli.StaleValuePaths(t.Context(), hr, vals("first", "second"))), 0)
+	assert.Equal(t, len(cli.StaleValuePaths(t.Context(), hr, vals("first", "second"), NewSources(st))), 0)
 }

@@ -41,14 +41,14 @@ data:
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 
-	out, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, Options{})
+	out, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -88,7 +88,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	hr.ChartValuesFiles = []string{"mychart/values.yaml", "mychart/first.yaml", "mychart/second.yaml"}
 	snapshot := manifest.DeepCopyMap(vals)
 	hrBefore := hr.Clone()
-	canonical, err := loadDecodedChart(t.Context(), cli, hr)
+	canonical, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	chartSnapshot := manifest.DeepCopyMap(canonical.chart.Values)
 	start := make(chan struct{})
@@ -100,7 +100,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 			ready.Done()
 			<-start
 			var err error
-			outputs[i], err = cli.Template(t.Context(), hr, vals, Options{})
+			outputs[i], err = cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Error(err)
 			}
@@ -122,7 +122,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	for key, value := range cli.chartValuesCache {
 		cachedBefore[key] = manifest.DeepCopyMap(value.merged)
 	}
-	repeated, err := cli.Template(t.Context(), hr, vals, Options{})
+	repeated, err := cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Equal(t, repeated, outputs[0])
 	assert.Equal(t, len(cli.chartValuesCache), len(cachedBefore))
@@ -131,12 +131,12 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	}
 }
 
-func helmChartFixture(t *testing.T) *Client {
+func helmChartFixture(t *testing.T) (*Client, Sources) {
 	t.Helper()
 	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t)))
-	return cli
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
+	return cli, cliSources
 }
 
 func helmChartDirectory(t *testing.T) string {
@@ -157,7 +157,7 @@ func helmChartDirectory(t *testing.T) string {
 // localChartResolver wires a *store.Store containing a single
 // GitRepository with its on-disk artifact, then returns a
 // StoreSourceResolver backed by it.
-func localChartResolver(t *testing.T, name, namespace, dir string) SourceResolver {
+func localChartResolver(t *testing.T, name, namespace, dir string) Sources {
 	t.Helper()
 	st := store.New()
 	gr := &manifest.GitRepository{Name: name, Namespace: namespace}
@@ -165,7 +165,7 @@ func localChartResolver(t *testing.T, name, namespace, dir string) SourceResolve
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: os.DirFS(dir), LocalPath: dir,
 	})
-	return NewStoreSourceResolver(st)
+	return NewSources(st)
 }
 
 func newHR() *manifest.HelmRelease {
@@ -177,10 +177,10 @@ func newHR() *manifest.HelmRelease {
 
 func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 	t.Parallel()
-	cli := helmChartFixture(t)
+	cli, cliSources := helmChartFixture(t)
 	hr := newHR()
 
-	out, err := cli.Template(context.Background(), hr, nil, Options{})
+	out, err := cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
@@ -208,7 +208,7 @@ func templateResources(t *testing.T, raw string) []string {
 
 func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 	t.Parallel()
-	cli := helmChartFixture(t)
+	cli, cliSources := helmChartFixture(t)
 	for _, tc := range []struct {
 		name string
 		skip bool
@@ -221,7 +221,7 @@ func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 			t.Parallel()
 			hr := newHR()
 			hr.Test = &helmv2.Test{Enable: true}
-			out, err := cli.Template(t.Context(), hr, nil, Options{SkipTests: tc.skip})
+			out, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipTests: tc.skip, Sources: cliSources})
 			assert.NoError(t, err)
 			assert.Diff(t, templateResources(t, out), tc.want)
 		})
@@ -230,7 +230,7 @@ func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 
 func TestTemplate_ActionHookPolicy(t *testing.T) {
 	t.Parallel()
-	cli := helmChartFixture(t)
+	cli, cliSources := helmChartFixture(t)
 	on, off := true, false
 	for _, tc := range []struct {
 		name              string
@@ -262,7 +262,7 @@ func TestTemplate_ActionHookPolicy(t *testing.T) {
 			if tc.upgrade != nil {
 				hr.Upgrade = &helmv2.Upgrade{DisableHooks: *tc.upgrade}
 			}
-			out, err := cli.Template(t.Context(), hr, nil, Options{IsUpgrade: tc.isUpgrade, NoHooks: tc.noHooks})
+			out, err := cli.Template(t.Context(), hr, nil, RenderOptions{IsUpgrade: tc.isUpgrade, NoHooks: tc.noHooks, Sources: cliSources})
 			assert.NoError(t, err)
 			want := []string{"ConfigMap/demo-cm"}
 			if tc.wantHook {
@@ -277,13 +277,13 @@ func TestTemplate_ActionHookPolicy(t *testing.T) {
 		hr.Install = &helmv2.Install{}
 		hr.Upgrade = &helmv2.Upgrade{DisableHooks: true}
 		opts := Options{ShowOnly: []string{"mychart/templates/pre-install-hook.yaml"}}
-		out, err := cli.Template(t.Context(), hr, nil, opts)
+		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		assert.NoError(t, err)
 		const want = "---\n# Source: mychart/templates/pre-install-hook.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n"
 		assert.Equal(t, out, want)
 		assert.Diff(t, templateResources(t, out), []string{"ConfigMap/demo-pre"})
 		opts.NoHooks = true
-		out, err = cli.Template(t.Context(), hr, nil, opts)
+		out, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		assert.NoError(t, err)
 		assert.Equal(t, out, "")
 	})
@@ -454,7 +454,8 @@ metadata:
 			raw := tc.docs
 			if tc.renderedChart {
 				var err error
-				raw, err = helmChartFixture(t).Template(t.Context(), hr, nil, Options{NoHooks: true})
+				cli, cliSources := helmChartFixture(t)
+				raw, err = cli.Template(t.Context(), hr, nil, RenderOptions{NoHooks: true, Sources: cliSources})
 				assert.NoError(t, err)
 			}
 			docs, err := manifest.SplitDocs([]byte(raw))

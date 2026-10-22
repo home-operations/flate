@@ -20,7 +20,6 @@ type KindInfo struct {
 	Test            bool
 	Parent          bool
 	Data            bool
-	Refire          bool
 	Structural      bool
 	SourceOnly      bool
 	TransientOutput bool
@@ -78,14 +77,14 @@ var (
 // Decoders initialize after package variables because parsing reads this registry.
 func init() {
 	kindTable = [...]kindEntry{
-		kindKustomization:    {KindInfo: KindInfo{Group: FluxKustomizeDomain, Kind: KindKustomization, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Parent: true, Refire: true, Structural: true, Render: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
+		kindKustomization:    {KindInfo: KindInfo{Group: FluxKustomizeDomain, Kind: KindKustomization, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Parent: true, Structural: true, Render: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseKustomization(d) }},
 		kindHelmRelease:      {KindInfo: KindInfo{Group: HelmReleaseDomain, Kind: KindHelmRelease, Tracked: true, Runnable: true, Status: true, Test: true, Parent: true, SourceOnly: true, TransientOutput: true, Render: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRelease(d) }},
-		kindGitRepository:    {KindInfo: KindInfo{Group: SourceDomain, Kind: KindGitRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
-		kindOCIRepository:    {KindInfo: KindInfo{Group: SourceDomain, Kind: KindOCIRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) }},
-		kindHelmRepository:   {KindInfo: KindInfo{Group: SourceDomain, Kind: KindHelmRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) }},
+		kindGitRepository:    {KindInfo: KindInfo{Group: SourceDomain, Kind: KindGitRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseGitRepository(d) }},
+		kindOCIRepository:    {KindInfo: KindInfo{Group: SourceDomain, Kind: KindOCIRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseOCIRepository(d) }},
+		kindHelmRepository:   {KindInfo: KindInfo{Group: SourceDomain, Kind: KindHelmRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmRepository(d) }},
 		kindHelmChartSource:  {KindInfo: KindInfo{Group: SourceDomain, Kind: KindHelmChart, Tracked: true, Runnable: true, Status: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseHelmChartSource(d) }},
-		kindExternalArtifact: {KindInfo: KindInfo{Group: SourceDomain, Kind: KindExternalArtifact, Tracked: true, Runnable: true, Status: true, Discovery: true, Refire: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) }},
-		kindBucket:           {KindInfo: KindInfo{Group: SourceDomain, Kind: KindBucket, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseBucket(d) }},
+		kindExternalArtifact: {KindInfo: KindInfo{Group: SourceDomain, Kind: KindExternalArtifact, Tracked: true, Runnable: true, Status: true, Discovery: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseExternalArtifact(d) }},
+		kindBucket:           {KindInfo: KindInfo{Group: SourceDomain, Kind: KindBucket, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseBucket(d) }},
 		kindResourceSet:      {KindInfo: KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSet, Tracked: true, Runnable: true, Status: false, Discovery: true, Parent: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseResourceSet(d) }},
 		kindResourceSetInputProvider: {KindInfo: KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Tracked: true, Runnable: false, Status: false, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) {
 			return parseResourceSetInputProvider(d)

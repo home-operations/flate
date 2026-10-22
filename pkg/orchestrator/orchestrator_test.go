@@ -83,6 +83,7 @@ func TestDetectOrphans(t *testing.T) {
 	for _, ks := range []*manifest.Kustomization{parent, orphan, emittedChild, root} {
 		o.store.AddObject(ks)
 	}
+	o.store.UpdateStatus(parent.Named(), store.StatusReady, "", "")
 	// Mark emittedChild as rendered by its parent — simulates the
 	// AddObject + RecordEmitted call cluster-apps's render would make.
 	publishFixture(t, o.store, parent.Named(), []manifest.NamedResource{emittedChild.Named()})

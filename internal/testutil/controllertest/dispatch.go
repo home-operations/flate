@@ -3,8 +3,10 @@ package controllertest
 
 import (
 	"context"
+	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -16,7 +18,17 @@ type Dispatch struct {
 	Tasks         *task.Service
 	Store         *store.Store
 	ID            manifest.NamedResource
-	ReconcileNode func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait)
+	ReconcileNode func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution
+}
+
+// Dispatch captures one reconciliation's assessment for the scheduler.
+func (d Dispatch) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+	return schedule.Result{Assessment: d.ReconcileNode(ctx, id, level)}
+}
+
+// Sweep delivers pending store publications and returns invalidated executions.
+func (d Dispatch) Sweep(context.Context, bool) []schedule.NodeID {
+	return slices.Collect(d.Store.Sweep())
 }
 
 // Reconcile submits one pass and reports whether it has no blocked dependencies.
@@ -25,8 +37,9 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 	var terminal bool
 	failures := d.Tasks.Failures()
 	d.Tasks.Go(ctx, "test/"+d.ID.String(), func(ctx context.Context) {
-		out, _ := d.ReconcileNode(ctx, d.ID, manifest.ReconcileAttempt{Drain: drain})
-		terminal = out.Kind != schedule.Blocked
+		assessment := d.ReconcileNode(ctx, d.ID, drain)
+		terminal = assessment.Outcome() != schedule.Blocked
+		assessment.Close()
 	})
 	d.Tasks.BlockTillDone()
 	if added := d.Tasks.Failures() - failures; added > 0 {
@@ -35,14 +48,25 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 	return terminal
 }
 
-// DispatchToFixpoint escalates drain levels and returns the final store status.
+// DispatchToFixpoint runs retained assessments to structural settlement.
 func DispatchToFixpoint(ctx context.Context, tb testing.TB, d Dispatch) store.StatusInfo {
 	tb.Helper()
-	for _, drain := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-		if Reconcile(ctx, tb, d, drain) {
-			break
-		}
+	failures := d.Tasks.Failures()
+	scheduler := schedule.New(d.Tasks, d)
+	scheduler.Seed([]schedule.NodeID{d.ID})
+	if err := scheduler.Run(ctx); err != nil {
+		tb.Errorf("reconcile %s: %v", d.ID, err)
+	}
+	if added := d.Tasks.Failures() - failures; added > 0 {
+		tb.Errorf("reconcile %s: %d task failures", d.ID, added)
 	}
 	info, _ := d.Store.GetStatus(d.ID)
 	return info
+}
+
+// NewExecution initializes caller-owned captured reconciliation storage for a fixture.
+func NewExecution(c *base.Controller, id manifest.NamedResource) *base.Execution {
+	e := new(base.Execution)
+	e.Init(c, id)
+	return e
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +40,12 @@ func (p *SliceProvider) Data(id manifest.NamedResource) manifest.Data {
 		}
 	}
 	return nil
+}
+
+func expandValuesForTest(t *testing.T, hr *manifest.HelmRelease, provider Provider, cache *Cache) {
+	t.Helper()
+	_, err := ExpandValueReferences(hr, provider, cache)
+	assert.NoError(t, err)
 }
 
 func TestDeepMergeInto_MutatesDstPreservesSemantics(t *testing.T) {
@@ -85,13 +90,13 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	st := store.New()
 	st.AddObject(cm)
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
-	provider := NewStoreProvider(st, true)
+	provider := NewStoreProvider(st, true, nil)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
 		Values:     map[string]any{"image": map[string]any{"repository": "x"}},
 	}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if hr.Values["replicaCount"] != float64(5) {
@@ -114,7 +119,7 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 			st := store.New()
 			st.AddObject(obj)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}}}
-			assert.NoError(t, ExpandValueReferences(hr, NewStoreProvider(st, true), nil))
+			expandValuesForTest(t, hr, NewStoreProvider(st, true, nil), nil)
 			if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
 				t.Errorf("replicaCount = %v, want 3", got)
 			}
@@ -134,7 +139,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 				st := store.New()
 				st.AddObject(obj)
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
-				err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), nil)
 				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "data[values.yaml]") {
 					t.Fatalf("malformed requested key must fail with its name: %v", err)
 				}
@@ -156,7 +161,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 			{Kind: "ConfigMap", Name: "k", ValuesKey: "v", TargetPath: "auth.password"},
 		},
 	}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	auth := hr.Values["auth"].(map[string]any)
@@ -186,7 +191,7 @@ environment = ["FOO=bar", "BAZ=qux"]
 			},
 		},
 	}
-	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	runners := hr.Values["runners"].(map[string]any)
@@ -218,7 +223,7 @@ func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
 			},
 		},
 	}
-	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	annotations := hr.Values["annotations"].(map[string]any)
@@ -237,7 +242,7 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 		},
 	}
 	provider := &SliceProvider{}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if _, ok := hr.Values["k"]; ok {
@@ -280,7 +285,7 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 				}
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"existing": "kept"},
 					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional}}}
-				err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), nil)
 				if optional && tc.kind != "Deployment" && tc.want != nil {
 					assert.NoError(t, err)
 					assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})
@@ -315,7 +320,7 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 		},
 	}
 
-	if err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil); err != nil {
 		t.Fatalf("ExpandValueReferences: %v", err)
 	}
 	if hr.Values["existing"] != "kept" || len(hr.Values) != 1 {
@@ -340,7 +345,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	}
 
 	a := hr()
-	if err := ExpandValueReferences(a, provider, cache); err != nil {
+	if _, err := ExpandValueReferences(a, provider, cache); err != nil {
 		t.Fatalf("first ExpandValueReferences: %v", err)
 	}
 	if a.Values["replicaCount"] != float64(5) {
@@ -353,7 +358,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	b := hr()
 	b.Namespace = other.Namespace
 	b.ValuesFrom = []manifest.ValuesReference{{Kind: "ConfigMap", Name: other.Name, ValuesKey: "extra.yaml"}}
-	if err := ExpandValueReferences(b, provider, cache); err != nil {
+	if _, err := ExpandValueReferences(b, provider, cache); err != nil {
 		t.Fatalf("second ExpandValueReferences: %v", err)
 	}
 	if b.Values["replicaCount"] != float64(5) {
@@ -369,7 +374,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 	// Top-level writes must not reach the shared cache canonical.
 	a.Values["replicaCount"] = "stomped"
 	c := hr()
-	if err := ExpandValueReferences(c, provider, cache); err != nil {
+	if _, err := ExpandValueReferences(c, provider, cache); err != nil {
 		t.Fatalf("third ExpandValueReferences: %v", err)
 	}
 	if c.Values["replicaCount"] != float64(5) {
@@ -394,7 +399,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 	}
 
 	a := mk()
-	if err := ExpandValueReferences(a, provider, cache); err != nil {
+	if _, err := ExpandValueReferences(a, provider, cache); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	if a.Values["replicaCount"] != float64(5) {
@@ -404,7 +409,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 	cm.Data["values.yaml"] = "replicaCount: 99\n"
 
 	b := mk()
-	if err := ExpandValueReferences(b, provider, cache); err != nil {
+	if _, err := ExpandValueReferences(b, provider, cache); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	if b.Values["replicaCount"] != float64(99) {
@@ -426,7 +431,7 @@ func TestExpandValueReferences_NilCache(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
 	}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences nil cache: %v", err)
 	}
 	if hr.Values["replicaCount"] != float64(7) {
@@ -445,7 +450,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
 	st.AddObject(&manifest.Secret{Name: "secret-vars", Namespace: cm.Namespace, StringData: map[string]any{"TOKEN": "core"}})
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindSecret, Name: "secret-vars", Namespace: cm.Namespace})
-	provider := NewStoreProvider(st, true)
+	provider := NewStoreProvider(st, true, nil)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 
@@ -528,37 +533,38 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 	}
 }
 
-// TestUnreadableSubstituteSecrets reports only substituteFrom Secret refs whose
-// data flate can't read offline. A SOPS-wiped Secret (placeholder data) and a
-// real Secret are readable; a ConfigMap ref and an optional ref are skipped.
-func TestUnreadableSubstituteSecrets(t *testing.T) {
+func TestStoreProvider_LookupReadability(t *testing.T) {
 	t.Parallel()
-	provider := &SliceProvider{
-		ConfigMaps: []*manifest.ConfigMap{{Name: "cm", Namespace: "flux-system", Data: map[string]any{"X": "1"}}},
-		Secrets: []*manifest.Secret{
-			{Name: "sops-vars", Namespace: "flux-system", StringData: map[string]any{"Y": manifest.ValuePlaceholder("Y")}},
-			{Name: "real", Namespace: "flux-system", StringData: map[string]any{"Z": "z"}},
-			{Name: "empty", Namespace: "flux-system"},
-			{Name: "empty-value", Namespace: "flux-system", StringData: map[string]any{"Z": ""}},
-		},
+	s := store.New()
+	for _, secret := range []*manifest.Secret{
+		{Name: "sops-vars", Namespace: "apps", StringData: map[string]any{"Y": manifest.ValuePlaceholder("Y")}},
+		{Name: "real", Namespace: "apps", StringData: map[string]any{"Z": "z"}},
+		{Name: "empty", Namespace: "apps"},
+		{Name: "empty-value", Namespace: "apps", StringData: map[string]any{"Z": ""}},
+	} {
+		s.AddObject(secret)
 	}
-	ks := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-			{Kind: manifest.KindSecret, Name: "absent-vars"}, // unreadable → reported
-			{Kind: manifest.KindSecret, Name: "sops-vars"},   // placeholder data → readable
-			{Kind: manifest.KindSecret, Name: "empty"},
-			{Kind: manifest.KindSecret, Name: "empty-value"},
-			{Kind: manifest.KindSecret, Name: "real"},                       // real data → readable
-			{Kind: manifest.KindConfigMap, Name: "cm"},                      // not a Secret → skipped
-			{Kind: manifest.KindSecret, Name: "opt-absent", Optional: true}, // optional → skipped
-		}},
-	}
-	if got, want := UnreadableSubstituteSecrets(ks, provider), []string{"absent-vars", "empty"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("UnreadableSubstituteSecrets = %v, want %v", got, want)
-	}
-	if got := UnreadableSubstituteSecrets(&manifest.Kustomization{Name: "x", Namespace: "ns"}, provider); got != nil {
-		t.Errorf("no substituteFrom should yield nil, got %v", got)
+	for _, tc := range []struct {
+		name       string
+		unreadable bool
+	}{
+		{"absent-vars", true}, {"empty", true}, {"empty-value", false}, {"sops-vars", false}, {"real", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var reads store.ReadSet
+			reads.Init(s, manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}, nil)
+			provider := NewStoreProvider(&reads, true, nil)
+			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.name}
+			input := provider.Lookup(id)
+			unreadable := input.Data == nil || !input.Data.HasKeys()
+			if unreadable != tc.unreadable {
+				t.Fatalf("unreadable=%t, want %t", unreadable, tc.unreadable)
+			}
+			if provider.Data(id) != input.Data {
+				t.Fatal("expansion read a different captured value")
+			}
+		})
 	}
 }
 
@@ -704,7 +710,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 	}}}
 	cache := NewCache()
 	prior := wholeDocHR()
-	assert.NoError(t, ExpandValueReferences(prior, provider, cache))
+	expandValuesForTest(t, prior, provider, cache)
 	before := manifest.DeepCopyMap(prior.Values)
 	canonical, ok := cache.lookup(cm.Data["values.yaml"].(string))
 	if !ok {
@@ -746,7 +752,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 			inlineBefore := manifest.DeepCopyMap(tc.inline)
 			ready.Done()
 			<-start
-			err := ExpandValueReferences(hr, provider, cache)
+			_, err := ExpandValueReferences(hr, provider, cache)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("%s: error = %v, want error %v", tc.name, err, tc.wantErr)
 				return
@@ -761,7 +767,7 @@ func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 	assert.Diff(t, canonical, before)
 	assert.Diff(t, prior.Values, before)
 	after := wholeDocHR()
-	assert.NoError(t, ExpandValueReferences(after, provider, cache))
+	expandValuesForTest(t, after, provider, cache)
 	assert.Diff(t, after.Values, before)
 }
 
@@ -781,19 +787,19 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
 				Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
 			}}}
-			assert.NoError(t, ExpandValueReferences(hr, provider, cache))
+			expandValuesForTest(t, hr, provider, cache)
 			before := manifest.DeepCopyMap(hr.Values)
 			hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{
 				Kind: "ConfigMap", Name: "inject", ValuesKey: "v",
 				TargetPath: "env[0].value=changed,broken[bad]", Literal: tc.literal,
 			})
-			err := ExpandValueReferences(hr, provider, cache)
+			_, err := ExpandValueReferences(hr, provider, cache)
 			if err == nil {
 				t.Fatal("malformed target path succeeded")
 			}
 			assert.Diff(t, hr.Values, before)
 			after := wholeDocHR()
-			assert.NoError(t, ExpandValueReferences(after, provider, cache))
+			expandValuesForTest(t, after, provider, cache)
 			assert.Diff(t, after.Values, before)
 			if tc.cached {
 				canonical, _ := cache.lookup(cm.Data["values.yaml"].(string))
@@ -818,8 +824,8 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 			cache := NewCache()
 			priorFirst := wholeDocHR()
 			priorSecond := &manifest.HelmRelease{Name: "prior", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: second.Name}}}
-			assert.NoError(t, ExpandValueReferences(priorFirst, provider, cache))
-			assert.NoError(t, ExpandValueReferences(priorSecond, provider, cache))
+			expandValuesForTest(t, priorFirst, provider, cache)
+			expandValuesForTest(t, priorSecond, provider, cache)
 			firstBefore := manifest.DeepCopyMap(priorFirst.Values)
 			secondBefore := manifest.DeepCopyMap(priorSecond.Values)
 			hr := wholeDocHR()
@@ -832,7 +838,7 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "later.image.tag", Literal: literal},
 				manifest.ValuesReference{Kind: "ConfigMap", Name: "inject", ValuesKey: "v", TargetPath: "later.env[0].value", Literal: literal},
 			)
-			assert.NoError(t, ExpandValueReferences(hr, provider, cache))
+			expandValuesForTest(t, hr, provider, cache)
 			assert.Diff(t, hr.Values, map[string]any{
 				"image": map[string]any{"repository": "nginx", "tag": "inline", "pullPolicy": "Always"},
 				"env":   []any{map[string]any{"name": "A", "value": "Always"}},
@@ -878,7 +884,7 @@ func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
 			{Kind: "ConfigMap", Name: "generator-cm"},
 		},
 	}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+	if _, err := ExpandValueReferences(hr, provider, nil); err != nil {
 		t.Fatalf("ExpandValueReferences failed: %v", err)
 	}
 	if hr.Values["domain"] != "..PLACEHOLDER_DOMAIN.." {
@@ -889,10 +895,6 @@ func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
 	}
 }
 
-// TestExpandValueReferences_WipedScalarPlaceholderTolerated verifies that
-// a Secret whose values.yaml is a wiped scalar placeholder string (e.g. from
-// a SOPS-encrypted values file) is safely treated as empty rather than failing
-// YAML unmarshaling.
 func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 	t.Parallel()
 	sec := &manifest.Secret{
@@ -910,9 +912,11 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 			{Kind: "Secret", Name: "sops-secret"},
 		},
 	}
-	if err := ExpandValueReferences(hr, provider, nil); err != nil {
+	omitted, err := ExpandValueReferences(hr, provider, nil)
+	if err != nil {
 		t.Fatalf("ExpandValueReferences failed for wiped scalar placeholder: %v", err)
 	}
+	assert.Diff(t, omitted, []manifest.NamedResource{sec.Named()})
 	if len(hr.Values) != 0 {
 		t.Errorf("expected empty values, got %v", hr.Values)
 	}
@@ -933,7 +937,7 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 				st := store.New()
 				st.AddObject(&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"requested.yaml": tc.document}})
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional}}}
-				err := ExpandValueReferences(hr, NewStoreProvider(st, true), NewCache())
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), NewCache())
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("malformed values must retain input/domain identity: %v", err)
 				}
@@ -973,7 +977,7 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 			const path = "env[bad].value"
 			cm := &manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"value": "replacement"}}
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"retained": "yes"}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: cm.Name, ValuesKey: "value", TargetPath: path, Literal: literal, Optional: true}}}
-			err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+			_, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
 			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, strconv.ErrSyntax) {
 				t.Fatalf("target parser identities lost: %v", err)
 			}
@@ -991,6 +995,51 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 	}
 }
 
+type countedDataReader struct {
+	*store.ReadSet
+	objects, productions int
+}
+
+func (r *countedDataReader) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) store.ReferenceFacts {
+	r.objects++
+	r.productions++
+	return r.ReadSet.ReferenceFacts(id, index)
+}
+
+func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	first := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
+	s.AddObject(first)
+	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{first.Named(): {Productions: []manifest.Production{{Owner: owner, Path: "settings.yaml", Authored: first.Named()}}}}})
+	s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: first}}, Complete: true})
+	var reads store.ReadSet
+	reader := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}
+	reads.Init(s, reader, nil)
+	counted := &countedDataReader{ReadSet: &reads}
+	provider := NewStoreProvider(counted, true, nil)
+	input := provider.Lookup(first.Named())
+	if input.Data != first || !input.Offline || len(input.Materializers) != 0 {
+		t.Fatalf("captured input=%+v", input)
+	}
+	next := *first
+	next.Data = map[string]any{"VALUE": "next"}
+	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true})
+	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 1 || counted.productions != 1 {
+		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
+	}
+	if reads.Valid() {
+		t.Fatal("changed consumed data did not invalidate execution")
+	}
+	var fresh store.ReadSet
+	fresh.Init(s, reader, nil)
+	if got := NewStoreProvider(&fresh, true, nil).Data(first.Named()); got != &next {
+		t.Fatalf("next execution retained preceding value: %v", got)
+	}
+}
+
 func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	t.Parallel()
 	st := store.New()
@@ -1003,7 +1052,7 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	if facts.Data != raw || facts.Accepted {
 		t.Fatalf("covered facts=%+v", facts)
 	}
-	if NewStoreProvider(st, true).Data(id) != raw {
+	if NewStoreProvider(st, true, nil).Data(id) != raw {
 		t.Fatal("data-only provider rejected visible prediction")
 	}
 	first, second := facts.Productions, facts.Productions

@@ -25,9 +25,19 @@ type orchestratorExistence struct {
 	filter      *change.Filter
 }
 
-func (e *orchestratorExistence) Promote(id manifest.NamedResource) bool {
-	for _, p := range e.store.ReferenceFacts(id, e.index).Productions {
-		if loader.Promote(e.store, id, p, loader.PromoteOptions{WipeSecrets: e.wipeSecrets, Admit: e.admit}) {
+func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSet, id manifest.NamedResource) bool {
+	if obj := e.store.GetObject(id); obj != nil {
+		return e.admit(obj)
+	}
+	productions := e.store.Productions(id, e.index)
+	if reads != nil {
+		productions = reads.Promotions(id, e.index)
+	}
+	for _, p := range productions {
+		if loader.Promote(ctx, e.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.wipeSecrets, Admit: e.admit}) {
+			if reads != nil {
+				reads.Productions(id, e.index)
+			}
 			return true
 		}
 	}
@@ -53,32 +63,11 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return ok && r.Path != ""
 }
 
-// Run starts every controller, blocks until the task service drains,
-// then aggregates and returns any failures. The post-drain reporting
-// + error-string assembly lives in finalize so Run reads as a clean
-// start → drain → finalize sequence.
+// Run starts the controllers and returns their settled failures.
 func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	defer func() { err = errors.Join(err, o.Stop()) }()
 	o.configureControllers()
-	// Re-detect dependsOn cycles when render-emitted children land.
-	// Bootstrap's one-shot pass only sees file-loaded resources; a
-	// parent KS render that emits a child with a dependsOn pointing at
-	// another freshly-emitted (or pre-existing) peer can introduce a
-	// cycle invisible to the Bootstrap pass.
-	//
-	// Hot path: updateDependencyGraphFor touches only the changed id's
-	// edges. The pre-Phase-2.6 implementation re-ran a full O(N+E) DFS
-	// on every event — N events × O(N+E) at bootstrap turned 5k-object
-	// repos into a quadratic cycle-detection storm. Incremental updates
-	// keep each event O(reachable from new dst) in the healthy case and
-	// fall back to a per-failed-node revalidation only when an edge is
-	// removed.
-	//
-	// REGISTERED BEFORE the controllers: listeners fire in registration
-	// order, so this records preflight failures synchronously BEFORE the
-	// controllers' listeners spawn their reconcile goroutines. Without
-	// the ordering the controller goroutine could start waiting on a peer
-	// that's also waiting on it.
+	// Cycle failures MUST publish before scheduler admission of emitted objects.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if !id.KindInfo().Render {
 			return

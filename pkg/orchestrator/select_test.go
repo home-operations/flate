@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"maps"
 	"slices"
 	"strings"
 	"testing"
+
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -334,6 +335,9 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 				info, _ := run.store.GetStatus(resource)
 				run.Result.Failed[resource] = info
 			}
+			for resource, deps := range blocked {
+				acceptInputsForTest(t, run.store, resource, deps)
+			}
 			setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{a: selected, b: selected, consumer: selected})
 			run.Err = &FailuresError{Message: "raw failure summary"}
 			root := testutil.KustomizationID("", "")
@@ -373,7 +377,12 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	selected, root, other, a, b := testutil.KustomizationID("flux-system", "selected"), testutil.KustomizationID("flux-system", "root"), testutil.KustomizationID("flux-system", "other"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b")
 	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: map[manifest.NamedResource][]manifest.NamedResource{selected: {root}, other: {root}, a: {b}, b: {a}}})
 	for _, id := range []manifest.NamedResource{selected, root, other, a, b} {
+		run.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+		run.store.UpdateStatus(id, store.StatusFailed, "", id.Name+" failure")
 		run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: id.Name + " failure"}
+	}
+	for id, deps := range run.Result.Blocked {
+		acceptInputsForTest(t, run.store, id, deps)
 	}
 	run.Err = &FailuresError{Message: "raw summary"}
 	panicErr := errors.New("unattributed panic")
@@ -391,6 +400,9 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	missing := testutil.KustomizationID("flux-system", "missing")
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, other: {missing}}
 	run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{selected: {Status: store.StatusFailed, Message: "selected blocked"}, other: {Status: store.StatusFailed, Message: "other blocked"}}
+	for id, deps := range run.Result.Blocked {
+		acceptInputsForTest(t, run.store, id, deps)
+	}
 	results, _, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
 	assert.Diff(t, results[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}})
 	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Category: manifest.WarnUnrelatedFailure, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
@@ -861,7 +873,7 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 	}
 }
 
-func TestSelect_AuthoredPrerequisites(t *testing.T) {
+func TestSelect_AcceptedPrerequisites(t *testing.T) {
 	t.Parallel()
 	dep := testutil.HelmReleaseID("other", "dep")
 	provider := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "provider"}
@@ -885,12 +897,20 @@ func TestSelect_AuthoredPrerequisites(t *testing.T) {
 			for _, id := range tc.deps {
 				run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "dependency failed"}
 			}
-			if tc.name == "DependsOn" {
-				run.Result.DependsOn = map[manifest.NamedResource][]manifest.NamedResource{tc.object.Named(): tc.deps}
+			reads := new(store.ReadSet)
+			reads.Init(run.store, tc.object.Named(), nil)
+			reads.GetObject(tc.object.Named())
+			for _, dep := range tc.deps {
+				reads.GetObject(dep)
+				reads.Require(manifest.DependencyRef{NamedResource: dep})
+			}
+			reads.Accept()
+			reads.Retire()
+			for range run.store.Sweep() {
 			}
 			selected, err, _ := Select([]Rendered{run}, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{tc.object.Named()}, nil)
 			if err == nil || len(selected[0].Failed) != len(tc.deps) || len(selected[0].Unrelated) != 0 {
-				t.Fatalf("authored prerequisites omitted: %+v %v", selected[0], err)
+				t.Fatalf("accepted prerequisites omitted: %+v %v", selected[0], err)
 			}
 		})
 	}

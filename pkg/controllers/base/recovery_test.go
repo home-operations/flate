@@ -7,15 +7,15 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
+func TestExecution_ReplacesDerivedFailureProvenance(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"recovered", "vanished", "suspended", "filtered", "preflight", "primary error", "primary status", "blocked", "new dependency failure", "prior primary failure"} {
 		t.Run(mode, func(t *testing.T) {
@@ -40,27 +40,21 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
 			}
 			ran := false
-			facts := schedule.Outcome{Noop: true, Rerun: true}
-			blocked, blockedWait := c.DispatchNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
-				if gated {
-					return schedule.Outcome{}, nil
-				}
+			execution := controllertest.NewExecution(c, id)
+			execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				ran = true
-				info, _ := st.GetStatus(id)
-				if got := info.BlockedBy(); len(got) != 0 {
-					t.Errorf("reconcile inherited old blockers: %v", got)
-				}
+
 				switch mode {
 				case "primary error":
-					return facts, errors.New("render failed")
+					return errors.New("render failed")
 				case "primary status":
 					st.UpdateStatus(id, store.StatusFailed, "", "render failed")
 				case "blocked":
-					return facts, &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
+					return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
 				case "new dependency failure":
-					return facts, &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
+					return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
 				}
-				return facts, nil
+				return nil
 			})
 			wantStatus := store.StatusReady
 			wantRan := true
@@ -73,7 +67,7 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			case "primary error", "primary status", "new dependency failure", "prior primary failure":
 				wantStatus = store.StatusFailed
 			case "blocked":
-				wantStatus = store.StatusPending
+				wantStatus = store.StatusFailed
 			}
 			info, _ := st.GetStatus(id)
 			if ran != wantRan || info.Status != wantStatus {
@@ -83,27 +77,17 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			if mode == "new dependency failure" {
 				wantBlockers = []manifest.NamedResource{fresh}
 			}
+			if mode == "blocked" {
+				wantBlockers = []manifest.NamedResource{old}
+			}
 			if got := info.BlockedBy(); !slices.Equal(got, wantBlockers) {
 				t.Fatalf("blockers=%v, want %v", got, wantBlockers)
 			}
-			if mode == "blocked" && !slices.Equal(blockedWait.Deps, []manifest.NamedResource{fresh}) {
-				t.Fatalf("parked dependencies=%v", blocked)
+			if mode == "blocked" && !slices.Equal(execution.Blocked, []manifest.NamedResource{fresh}) {
+				t.Fatalf("parked dependencies=%v", execution.Blocked)
 			}
-			kind := schedule.Terminal
-			if mode == "blocked" {
-				kind = schedule.Blocked
-			}
-			if mode == "new dependency failure" {
-				kind = schedule.DependencyFailed
-			}
-			if blocked.Kind != kind || blocked.Noop != (mode == "recovered") || blocked.Rerun != wantRan {
-				t.Fatalf("returned facts=%+v, want kind=%v noop=%v rerun=%v", blocked, kind, mode == "recovered", wantRan)
-			}
-			if mode == "new dependency failure" && (blocked.Kind != schedule.DependencyFailed || !slices.Equal(blockedWait.Deps, []manifest.NamedResource{fresh})) {
-				t.Fatalf("missing returned dependency failure: %+v", blocked)
-			}
-			if mode != "blocked" && mode != "new dependency failure" && !blockedWait.Empty() {
-				t.Fatalf("terminal result had parked dependencies: %v", blocked)
+			if mode != "blocked" && len(execution.Blocked) != 0 {
+				t.Fatalf("terminal result had parked dependencies: %v", execution.Blocked)
 			}
 			if wantStatus == store.StatusReady {
 				if failed := st.FailedResources(); len(failed) != 0 {

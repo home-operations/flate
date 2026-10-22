@@ -322,6 +322,7 @@ func (d *discoverer) publishEntrySource(candidate entryResolution, artifact *sto
 	if candidate.synthetic {
 		d.cfg.Store.AddObject(candidate.object)
 	}
+
 	d.cfg.Store.SetArtifact(id, artifact)
 	d.cfg.Store.UpdateStatus(id, store.StatusReady, "", "local entry source")
 	d.resolvedSources[id] = candidate

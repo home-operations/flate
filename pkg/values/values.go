@@ -33,68 +33,106 @@ type Provider interface {
 	Data(manifest.NamedResource) manifest.Data
 }
 
-// NewStoreProvider returns a Provider backed by the central Store.
-func NewStoreProvider(s *store.Store, wipeSecrets bool) Provider {
-	return &storeProvider{s: s, wipeSecrets: wipeSecrets}
+type dataReader interface {
+	GetObject(manifest.NamedResource) manifest.BaseManifest
+	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex) store.ReferenceFacts
 }
 
-type storeProvider struct {
-	s           *store.Store
+// Input retains data and the evidence explaining its offline availability.
+type Input struct {
+	Data          manifest.Data
+	Materializers []manifest.NamedResource
+	Generated     bool
+	Offline       bool
+	Private       bool
+}
+
+// NewStoreProvider returns one execution's captured values and availability evidence.
+func NewStoreProvider(s dataReader, wipeSecrets bool, supplied map[manifest.NamedResource]manifest.BaseManifest) *StoreProvider {
+	p := &StoreProvider{s: s, wipeSecrets: wipeSecrets, supplied: supplied}
+	if owner, ok := s.(interface{ ID() manifest.NamedResource }); ok {
+		p.owner = owner.ID()
+	}
+	return p
+}
+
+// StoreProvider retains one execution's captured values and availability evidence.
+type StoreProvider struct {
+	s           dataReader
 	wipeSecrets bool
+	owner       manifest.NamedResource
+	supplied    map[manifest.NamedResource]manifest.BaseManifest
+	inputs      map[manifest.NamedResource]Input
 }
 
-func (p *storeProvider) Data(id manifest.NamedResource) manifest.Data {
-	facts := p.s.ReferenceFacts(id, nil)
-	if facts.Data != nil || !p.wipeSecrets {
-		return facts.Data
+// Data returns the captured data for id.
+func (p *StoreProvider) Data(id manifest.NamedResource) manifest.Data { return p.Lookup(id).Data }
+
+// Lookup captures a values object and its materializers once for expansion and diagnostics.
+func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
+	if input, ok := p.inputs[id]; ok {
+		return input
 	}
-	for _, production := range facts.Productions {
-		if production.Declaration == (manifest.NamedResource{}) && (production.Owner != (manifest.NamedResource{}) || production.Path != "") {
-			return nil
-		}
-	}
-	return DeclaredData(p.s, id, facts.Productions)
-}
-
-// ResolvedInput retains one immutable data selection, including explicit absence.
-type ResolvedInput struct {
-	manifest.NamedResource
-	Value manifest.Data
-}
-
-// ResolvedInputs is an invocation-local provider without live fallback.
-type ResolvedInputs []ResolvedInput
-
-// Data returns the selected value or its frozen absence.
-func (p ResolvedInputs) Data(id manifest.NamedResource) manifest.Data {
-	if i := slices.IndexFunc(p, func(input ResolvedInput) bool { return input.NamedResource == id }); i >= 0 {
-		return p[i].Value
-	}
-	return nil
-}
-
-// DeclaredData interprets declared keys after the caller has settled offline supply.
-func DeclaredData(s *store.Store, id manifest.NamedResource, productions []manifest.Production) manifest.Data {
-	for _, p := range productions {
-		if p.Declaration == (manifest.NamedResource{}) {
-			continue
-		}
-		declaration := s.GetObject(p.Declaration)
-		if declaration == nil {
-			continue
-		}
-		for _, target := range manifest.ProducerTargets(declaration, id) {
-			if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
-				continue
+	data, supplied := p.supplied[id].(manifest.Data)
+	input := Input{Data: data, Private: supplied}
+	if !supplied {
+		facts := p.s.ReferenceFacts(id, nil)
+		self, independent := false, false
+		var declarations []manifest.NamedResource
+		for _, production := range facts.Productions {
+			self = self || production.Owner == p.owner && p.owner != (manifest.NamedResource{})
+			if production.Owner != (manifest.NamedResource{}) && production.Owner != p.owner && !slices.Contains(input.Materializers, production.Owner) {
+				input.Materializers = append(input.Materializers, production.Owner)
 			}
-			data := make(map[string]any, len(target.DeclaredKeys))
-			for _, key := range target.DeclaredKeys {
-				data[key] = manifest.ValuePlaceholder(key)
+			if production.Declaration == (manifest.NamedResource{}) {
+				input.Offline = input.Offline || production.Owner != (manifest.NamedResource{}) || production.Path != ""
+				independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
+			} else {
+				input.Generated = true
+				declarations = append(declarations, production.Declaration)
 			}
-			return &manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: data}
+		}
+		input.Private = self
+		if p.owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0 {
+			input.Data = facts.Data
+		}
+		pending := false
+		if reads, ok := p.s.(interface {
+			UnsettledProducers(manifest.NamedResource) []manifest.NamedResource
+		}); ok && input.Data == nil && input.Generated {
+			pending = len(reads.UnsettledProducers(id)) != 0
+		}
+		if input.Data == nil && p.wipeSecrets && !input.Offline && !pending {
+			for _, declarationID := range declarations {
+				declaration := p.s.GetObject(declarationID)
+				if declaration == nil {
+					continue
+				}
+				for _, target := range manifest.ProducerTargets(declaration, id) {
+					if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
+						continue
+					}
+					data := make(map[string]any, len(target.DeclaredKeys))
+					for _, key := range target.DeclaredKeys {
+						data[key] = manifest.ValuePlaceholder(key)
+					}
+					input.Data = &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: data}
+					break
+				}
+				if input.Data != nil {
+					break
+				}
+			}
+		}
+		if input.Data != nil {
+			input.Materializers = nil
 		}
 	}
-	return nil
+	if p.inputs == nil {
+		p.inputs = make(map[manifest.NamedResource]Input)
+	}
+	p.inputs[id] = input
+	return input
 }
 
 // DeepMergeInto merges override into dst using Helm's merge semantics.
@@ -159,15 +197,17 @@ func (c *Cache) put(key string, parsed map[string]any) {
 // Hard errors from the lookup itself — unsupported kind, malformed
 // binaryData — always bubble up; they are unrelated to whether the ref
 // is optional.
+// The returned identities name required wiped values files omitted during expansion.
 //
 // cache may be nil — tests and embedders without an orchestrator pass
 // nil and pay the (small) per-ref yaml.Unmarshal cost. Orchestrators
 // supply a Cache constructed at startup so refs shared across HRs
 // (a common pattern for platform-wide values CMs) parse exactly once.
-func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *Cache) error {
+func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *Cache) ([]manifest.NamedResource, error) {
 	if hr == nil || len(hr.ValuesFrom) == 0 {
-		return nil
+		return nil, nil
 	}
+	var omitted []manifest.NamedResource
 	values := map[string]any{}
 	owned := true
 	for edge := range manifest.References(hr) {
@@ -180,7 +220,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
 				continue
 			}
-			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
+			return omitted, fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 		if ref.TargetPath != "" {
 			if !owned {
@@ -194,16 +234,20 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 				err = replaceValueAtPath(values, ref.TargetPath, found)
 			}
 		} else {
-			err = cache.updateHelmReleaseValues(ref, found, values)
+			var unavailable bool
+			unavailable, err = cache.updateHelmReleaseValues(ref, found, values)
+			if unavailable && !ref.Optional {
+				omitted = append(omitted, edge.NamedResource)
+			}
 			owned = false
 		}
 		if err != nil {
-			return fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
+			return omitted, fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
 		}
 	}
 	DeepMergeInto(values, hr.Values)
 	hr.Values = values
-	return nil
+	return omitted, nil
 }
 
 // lookupValueRef reads only the requested key, preserving unrelated malformed siblings.
@@ -221,7 +265,8 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 		return "", err
 	}
 	if !ok {
-		if !hasData(data) {
+		// Empty bags retain the same missing-resource disposition as absent objects.
+		if !data.HasKeys() {
 			return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
 		}
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name, key: key}
@@ -236,16 +281,6 @@ func resourceData(kind, namespace, name string, p Provider) (manifest.Data, erro
 		return nil, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
 	}
 	return p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}), nil
-}
-
-// Empty bags retain the same missing-resource disposition as absent objects.
-func hasData(data manifest.Data) bool {
-	if data != nil {
-		for range data.Keys() {
-			return true
-		}
-	}
-	return false
 }
 
 type missingValueRefError struct {
@@ -270,25 +305,25 @@ func (e *missingValueRefError) Unwrap() error {
 	return manifest.ErrObjectNotFound
 }
 
-func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) error {
+func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found string, values map[string]any) (bool, error) {
 	parsed, ok := c.lookup(found)
 	if !ok {
 		var decoded map[string]any
 		if err := yaml.Unmarshal([]byte(found), &decoded); err != nil {
 			// Wiped scalar placeholders MUST act as empty values files.
 			if manifest.HasValuePlaceholder(found) {
-				return nil
+				return true, nil
 			}
-			return fmt.Errorf("%w: expected '%s' values key %q to be valid YAML: %w", manifest.ErrInput, ref.Name, ref.GetValuesKey(), err)
+			return false, fmt.Errorf("%w: expected '%s' values key %q to be valid YAML: %w", manifest.ErrInput, ref.Name, ref.GetValuesKey(), err)
 		}
 		if decoded == nil {
-			return nil
+			return false, nil
 		}
 		parsed = decoded
 		c.put(found, parsed)
 	}
 	DeepMergeInto(values, parsed)
-	return nil
+	return false, nil
 }
 
 // Matching quotes MUST force strings instead of Helm's ordinary type coercion.
@@ -363,7 +398,7 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 			}
 			return err
 		}
-		if !hasData(data) {
+		if data == nil || !data.HasKeys() {
 			if !ref.Optional && ref.Kind != manifest.KindSecret {
 				slog.Debug("values: SubstituteReference not found",
 					"id", ks.Named().String(), "ref", ref.Name)
@@ -407,39 +442,4 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 	}
 	ks.PostBuild.Substitute = values
 	return nil
-}
-
-// UnreadableSubstituteSecrets returns the names of substituteFrom
-// Secret references whose data flate can't read offline — an absent Secret or
-// an ExternalSecret-synthesized empty target, both of which yield no data so
-// the ${VAR}s they would supply expand to the empty string. SOPS-encrypted
-// Secrets are NOT reported: their data is wiped to placeholders, so their vars
-// still substitute. Optional refs are skipped (the author marked them
-// best-effort). The result is sorted and de-duplicated; nil when none.
-//
-// This is a pure advisory query — it does not affect substitution. The
-// Kustomization controller surfaces the result as a WarnUnresolvedSubstitution
-// Warning so an unreadable secret is explained rather than silently leaving
-// empty values behind.
-func UnreadableSubstituteSecrets(ks *manifest.Kustomization, p Provider) []string {
-	if ks == nil || ks.Namespace == "" {
-		return nil
-	}
-	var unreadable []string
-	for ref := range manifest.References(ks) {
-		if ref.Use != "substituteFrom" {
-			continue
-		}
-		if ref.Kind != manifest.KindSecret || ref.Optional {
-			continue
-		}
-		if data, err := resourceData(ref.Kind, ref.Namespace, ref.Name, p); err == nil && !hasData(data) {
-			unreadable = append(unreadable, ref.Name)
-		}
-	}
-	if len(unreadable) == 0 {
-		return nil
-	}
-	slices.Sort(unreadable)
-	return slices.Compact(unreadable)
 }

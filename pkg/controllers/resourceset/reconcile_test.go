@@ -62,6 +62,8 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			execution := c.newExecution(id)
+			defer execution.run.Close()
 			var accepted atomic.Pointer[store.Emission]
 			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
 				if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
@@ -89,7 +91,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				defer close(rendered)
 				var attempt store.Emission
 				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(st), func(content any) (bool, error) {
-					fp, hit, _, err := c.FingerprintDedup(id, content)
+					fp, hit, err := execution.run.FingerprintDedup(id, content)
 					if hit || err != nil {
 						return hit, err
 					}
@@ -144,7 +146,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 	}
 }
 
-func TestReconcile_ProviderInventoryRetention(t *testing.T) {
+func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 	t.Parallel()
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
@@ -220,14 +222,13 @@ func TestReconcile_ProviderInventoryRetention(t *testing.T) {
 			broken := *a
 			broken.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid")}}
 			publish(&broken, b)
-			check(2, store.StatusFailed)
-			_, retained := st.GetEmission(rs.Named())
-			defer retained.Finish()
-			if retained.Fingerprint != accepted.Fingerprint {
-				t.Fatal("failed successor replaced accepted output")
+			check(0, store.StatusFailed)
+			if failed, ok := st.GetArtifact(rs.Named()).(*store.Emission); ok && (len(failed.Manifests) != 0 || len(failed.Children) != 0) {
+				t.Fatal("failed successor exposed output with changed provider inputs")
 			}
-			assert.Diff(t, retained.Manifests, accepted.Manifests)
-			assert.Diff(t, retained.Children, accepted.Children)
+			publish(&changed, b)
+			recovered := check(2, store.StatusReady)
+			assert.Diff(t, recovered.Manifests, accepted.Manifests)
 			publish()
 			check(0, store.StatusReady)
 			if st.GetObject(a.Named()) != nil || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "a"}) != nil {

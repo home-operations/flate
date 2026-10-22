@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type providerContent struct {
@@ -131,10 +130,14 @@ func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {
 	return decoded
 }
 
-// StoreResolver returns a store-backed resolver for one sequential reconciliation.
-// References and selectors MUST remain immutable; the resolver MUST NOT be shared
-// across reconciliations or goroutines.
-func StoreResolver(s *store.Store) ProviderResolver {
+type providerReader interface {
+	GetObject(manifest.NamedResource) manifest.BaseManifest
+	ListObjects(string, string) []manifest.BaseManifest
+}
+
+// StoreResolver resolves named or selected providers from immutable query inputs.
+// References MUST remain immutable, and the resolver MUST be used sequentially.
+func StoreResolver(s providerReader) ProviderResolver {
 	type compilation struct {
 		selector labels.Selector
 		err      error
@@ -144,7 +147,7 @@ func StoreResolver(s *store.Store) ProviderResolver {
 	var selectors map[*metav1.LabelSelector]compilation
 	return func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		if id.Name != "" {
-			obj, ok := s.Get[*manifest.ResourceSetInputProvider](id)
+			obj, ok := s.GetObject(id).(*manifest.ResourceSetInputProvider)
 			if !ok {
 				return nil, nil
 			}
@@ -153,35 +156,29 @@ func StoreResolver(s *store.Store) ProviderResolver {
 		if ref.Selector == nil {
 			return nil, nil
 		}
-		var out []*manifest.ResourceSetInputProvider
-		var matcher labels.Selector
-		for _, p := range s.ListAs[*manifest.ResourceSetInputProvider](id.Group, id.Kind) {
-			if p.Namespace != id.Namespace {
-				continue
-			}
-			if matcher == nil {
-				compiled := firstCompilation
-				if ref.Selector != firstSelector {
-					var ok bool
-					compiled, ok = selectors[ref.Selector]
-					if !ok {
-						compiled.selector, compiled.err = metav1.LabelSelectorAsSelector(ref.Selector)
-						if firstSelector == nil {
-							firstSelector, firstCompilation = ref.Selector, compiled
-						} else {
-							if selectors == nil {
-								selectors = make(map[*metav1.LabelSelector]compilation)
-							}
-							selectors[ref.Selector] = compiled
-						}
+		compiled := firstCompilation
+		if ref.Selector != firstSelector {
+			var ok bool
+			compiled, ok = selectors[ref.Selector]
+			if !ok {
+				compiled.selector, compiled.err = metav1.LabelSelectorAsSelector(ref.Selector)
+				if firstSelector == nil {
+					firstSelector, firstCompilation = ref.Selector, compiled
+				} else {
+					if selectors == nil {
+						selectors = make(map[*metav1.LabelSelector]compilation)
 					}
+					selectors[ref.Selector] = compiled
 				}
-				if compiled.err != nil {
-					return nil, compiled.err
-				}
-				matcher = compiled.selector
 			}
-			if matcher.Matches(labels.Set(p.Labels)) {
+		}
+		if compiled.err != nil {
+			return nil, compiled.err
+		}
+		var out []*manifest.ResourceSetInputProvider
+		for _, object := range s.ListObjects(id.Group, id.Kind) {
+			p, ok := object.(*manifest.ResourceSetInputProvider)
+			if ok && p.Namespace == id.Namespace && compiled.selector.Matches(labels.Set(p.Labels)) {
 				out = append(out, p)
 			}
 		}

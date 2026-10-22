@@ -6,6 +6,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
@@ -28,10 +29,11 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 			if tc.source != nil {
 				identity = struct{ Digest, Revision string }{tc.source.Digest, tc.source.Revision}
 			}
-			c := base.New(store.New(), nil, "test")
+			c := controllertest.NewExecution(base.New(store.New(), nil, "test"), hr.Named())
+			defer c.Close()
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp, _, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
+				if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}
@@ -45,13 +47,14 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st := store.New()
 	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Digest: digest, Revision: "6.15.0@" + digest})
-	resolver := helm.NewStoreSourceResolver(st)
-	c := base.New(st, nil, "test")
+	resolver := helm.NewSources(st)
+	c := controllertest.NewExecution(base.New(st, nil, "test"), hr.Named())
+	defer c.Close()
 	b.ReportAllocs()
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.ChartSource())
 		identity := struct{ Digest, Revision string }{source.Digest, source.Revision}
-		if fp, _, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
+		if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
 	}
@@ -63,9 +66,11 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	st := store.New()
 	c := &Controller{Controller: base.New(st, nil, "helmrelease")}
 	c.Configure(ReconcileOptions{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)})
+	execution := c.newExecution(hr.Named())
+	defer execution.run.Close()
 	b.ReportAllocs()
 	for b.Loop() {
-		c.collectDeps(hr)
+		execution.collectDeps(hr)
 	}
 }
 

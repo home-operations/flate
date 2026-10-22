@@ -48,7 +48,7 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 		Provider:   sourcev1.BucketProviderAmazon,
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 	}
-	_, err := f.Fetch(context.Background(), b, cache.Policy{MaxAge: b.SourceInterval()})
+	_, err := f.Fetch(context.Background(), b, (testInputs{}).readSet(b), cache.Policy{MaxAge: b.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -60,9 +60,9 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 func TestFetcher_ForceGenericProvider(t *testing.T) {
 	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
+	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
 	f := &bucket.Fetcher{Network: newTestNetwork(t),
 		ForceGeneric: true,
-		Secrets:      func(_, _ string) *manifest.Secret { return nil },
 	}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
@@ -70,7 +70,7 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b, cache.Policy{MaxAge: b.SourceInterval()})
+	_, err := f.Fetch(context.Background(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}
@@ -155,9 +155,10 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 					root = t.TempDir()
 				}
 				c := cachetest.New(t, root, cache.New)
-				f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c, Secrets: func(ns, _ string) *manifest.Secret {
+				fInputs := testInputs{secrets: func(ns, _ string) *manifest.Secret {
 					return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
 				}}
+				f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c}
 				var wg sync.WaitGroup
 				for _, namespace := range []string{"first", "second"} {
 					wg.Go(func() {
@@ -166,7 +167,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 							SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
 						var family string
 						for range 2 {
-							art, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+							art, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
 							if attempts == 1 {
 								if err == nil || art != nil {
 									t.Errorf("%s retry-off artifact=%v, error=%v", namespace, art, err)
@@ -220,7 +221,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 				go func() {
 					b := &manifest.Bucket{Name: "source", Namespace: "canceled", BucketName: "data", Prefix: "prefix/",
 						Endpoint: srv.URL, Insecure: true, Region: "us-east-1", SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
-					_, err := f.Fetch(ctx, b, cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+					_, err := f.Fetch(ctx, b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
 					done <- err
 				}()
 				select {
@@ -269,7 +270,10 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 			_, err := f.Fetch(t.Context(), &manifest.Bucket{
 				Name: "retry", Namespace: "test", BucketName: "data",
 				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
-			}, cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}})
+			}, (testInputs{}).readSet(&manifest.Bucket{
+				Name: "retry", Namespace: "test", BucketName: "data",
+				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
+			}), cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}})
 			if tc.status == http.StatusForbidden {
 				cause, ok := errors.AsType[minio.ErrorResponse](err)
 				response, typed := errors.AsType[*fetcherr.ResponseError](err)
@@ -310,7 +314,7 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 				Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
 			}
 			retry := cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}
-			_, err = f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval(), Retry: retry})
+			_, err = f.Fetch(t.Context(), b, (testInputs{}).readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: retry})
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			cause, typed := errors.AsType[*fetcherr.ResponseError](err)
 			if !ok || !terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet || cause.Error() != "temporary failure fixture-secret" || calls.Load() != 3 {
@@ -362,7 +366,7 @@ func TestFetcher_TerminalStatusReplay(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = reopened.Close() })
 			f.Cache = reopened
-			_, err = f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval(), Retry: retry})
+			_, err = f.Fetch(t.Context(), b, (testInputs{}).readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: retry})
 			terminal, ok = errors.AsType[*cache.TerminalError](err)
 			cause, typed = errors.AsType[*fetcherr.ResponseError](err)
 			if !ok || terminal.Attempted || !typed || cause.StatusCode != status || cause.Op != http.MethodGet || cause.Err != nil || cause.Message != "" || calls.Load() != 3 {
@@ -433,7 +437,7 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := f.Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}, cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
+			_, err := f.Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}, (testInputs{}).readSet(&manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: target, Insecure: true, Region: "us-east-1"}), cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			wantLists := int32(0)
 			if route == "object" {

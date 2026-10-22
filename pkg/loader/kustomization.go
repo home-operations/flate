@@ -47,22 +47,31 @@ type documentReader struct {
 	regular   bool
 }
 
-func (r *documentReader) mountSources(s *store.Store) []string {
+type sourceReader interface {
+	GetArtifact(manifest.NamedResource) store.Artifact
+	ListObjects(string, string) []manifest.BaseManifest
+}
+
+func mountSource(mounted map[string]*store.SourceArtifact, artifact store.Artifact) {
+	if art, ok := artifact.(*store.SourceArtifact); ok && art.LocalPath != "" {
+		mounted[art.LocalPath] = art
+	}
+}
+
+func (r *documentReader) mountSources(s sourceReader) []string {
 	mounted := map[string]*store.SourceArtifact{}
 	for info := range manifest.Kinds() {
-		if !info.SourceArtifact {
-			continue
-		}
-		for _, obj := range s.ListObjects(info.Group, info.Kind) {
-			art, ok := s.GetArtifact(obj.Named()).(*store.SourceArtifact)
-			if ok && art.LocalPath != "" {
-				mounted[art.LocalPath] = art
+		if info.SourceArtifact {
+			for _, obj := range s.ListObjects(info.Group, info.Kind) {
+				mountSource(mounted, s.GetArtifact(obj.Named()))
 			}
 		}
 	}
-	if bootstrap, ok := s.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact); ok && bootstrap.LocalPath != "" {
-		mounted[bootstrap.LocalPath] = bootstrap
-	}
+	mountSource(mounted, s.GetArtifact(manifest.BootstrapSourceID))
+	return r.setSources(mounted)
+}
+
+func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []string {
 	var changed []string
 	for root, art := range mounted {
 		if r.artifacts[root] != art {

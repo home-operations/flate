@@ -56,9 +56,10 @@ func TestStore_Snapshot(t *testing.T) {
 				t.Run(fmt.Sprint(requested), func(t *testing.T) {
 					t.Parallel()
 					var observation Observation
-					obj := st.Snapshot(&tc.id, requested, &observation)
+					obj, observation := st.Snapshot(tc.id, requested)
 					assert.Equal(t, obj, tc.obj)
-					assert.Equal(t, st.Snapshot(&tc.id, requested, nil), tc.obj)
+					snapshot61, _ := st.Snapshot(tc.id, requested)
+					assert.Equal(t, snapshot61, tc.obj)
 					assert.Equal(t, observation.Statusful, statusful)
 					want, _ := st.GetStatus(tc.id)
 					if tc.obj != nil && !statusful && !requested {
@@ -73,7 +74,7 @@ func TestStore_Snapshot(t *testing.T) {
 					if len(observation.Conditions) != 0 {
 						observation.Conditions[0].Message = "mutated"
 						var fresh Observation
-						st.Snapshot(&tc.id, true, &fresh)
+						_, fresh = st.Snapshot(tc.id, true)
 						assert.Diff(t, fresh.Conditions, conditions)
 						assert.Equal(t, fresh.StatusInfo, want)
 					}
@@ -338,47 +339,28 @@ func TestStore_AddListener_Flush(t *testing.T) {
 	assert.Equal(t, len(got), 2) // both seeds replayed
 }
 
-func TestStore_Refire_ResetsStatusBeforeDispatch(t *testing.T) {
+func TestStore_AdmissionInvalidatesWithoutStatusReset(t *testing.T) {
 	t.Parallel()
 	s := New()
-	src := &manifest.OCIRepository{Name: "src", Namespace: "flux-system"}
-	id := src.Named()
-	s.AddObject(src)
+	obj := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
+	id := obj.Named()
+	s.AddObject(obj)
+	s.SetIncluded(id, false)
 	s.UpdateStatus(id, StatusReady, ReasonUnchanged, "unchanged")
-	var events []EventKind
-	s.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
-		events = append(events, EventStatusUpdated)
-		info := payload.(StatusInfo)
-		if info.Status != StatusPending || info.Reason != ReasonRefetching || info.Message != "re-fetching" {
-			t.Errorf("Refire status event = %+v", info)
-		}
-	}, false)
-	var observed StatusInfo
-	s.AddListener(EventObjectAdded, func(eventID manifest.NamedResource, _ any) {
-		events = append(events, EventObjectAdded)
-		observed, _ = s.GetStatus(eventID)
-	}, false)
-	s.Refire(id)
-	if observed.Status != StatusPending || observed.Reason != ReasonRefetching || observed.Message != "re-fetching" {
-		t.Errorf("object listener saw stale status: %+v", observed)
+	var reads ReadSet
+	reads.Init(s, id, nil)
+	reads.GetObject(id)
+	if reads.Admitted() {
+		t.Fatal("excluded execution admitted")
 	}
-	assert.Diff(t, events, []EventKind{EventStatusUpdated, EventObjectAdded})
-}
-
-// TestStore_Refire_NoopMissingID pins that Refire silently returns
-// when id isn't in the store — used by callers that may speculatively
-// refire ids that race a DeleteObject.
-func TestStore_Refire_NoopMissingID(t *testing.T) {
-	t.Parallel()
-	s := New()
-	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "nope"}
-
-	fired := 0
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) { fired++ }, false)
-	s.Refire(id) // must not panic, must not dispatch
-	assert.Equal(t, fired, 0)
-	if _, ok := s.GetStatus(id); ok {
-		t.Errorf("Refire on missing id left status behind")
+	arrivals := 0
+	s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
+	s.SetIncluded(id, true)
+	if reads.Valid() || arrivals != 0 {
+		t.Fatalf("valid=%t arrivals=%d", reads.Valid(), arrivals)
+	}
+	if info, _ := s.GetStatus(id); info.Status != StatusReady || info.Outcome() != OutcomeUnchanged {
+		t.Fatalf("admission rewrote status: %+v", info)
 	}
 }
 
@@ -450,7 +432,7 @@ func TestStatusInfo_Outcome(t *testing.T) {
 		{name: "failed before skip", info: StatusInfo{Status: StatusFailed, Reason: ReasonSkipped}, outcome: OutcomeFailed, unavailable: true},
 		{name: "blocked before skip", info: StatusInfo{Status: StatusFailed, Reason: ReasonSkipped, failure: failure}, outcome: OutcomeBlocked, unavailable: true},
 		{name: "pending before suspension", info: StatusInfo{Status: StatusPending, Reason: ReasonSuspended}, outcome: OutcomePending},
-		{name: "refetching", info: StatusInfo{Status: StatusPending, Reason: ReasonRefetching, Message: "suspended"}, outcome: OutcomePending},
+		{name: "refetching", info: StatusInfo{Status: StatusPending, Reason: StatusReason("CustomPending"), Message: "suspended"}, outcome: OutcomePending},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -472,7 +454,7 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
 	assert.Equal(t, statusEvents, 1)
 	var observation Observation
-	s.Snapshot(&id, true, &observation)
+	_, observation = s.Snapshot(id, true)
 	conds := observation.Conditions
 	if got := len(conds); got != 2 {
 		t.Fatalf("expected 2 conditions, got %d", got)
@@ -490,7 +472,7 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: string(ReasonSkipped), Message: "ok"}
 	s.SetCondition(id, cond)
 	var observation Observation
-	s.Snapshot(&id, true, &observation)
+	_, observation = s.Snapshot(id, true)
 	snapshot := observation.Conditions
 	cond.Reason = "Custom"
 	s.SetCondition(id, cond)
@@ -1026,7 +1008,7 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 	}
 
 	var observation Observation
-	s.Snapshot(&id, true, &observation)
+	_, observation = s.Snapshot(id, true)
 	conds := observation.Conditions
 	assert.Equal(t, len(conds), 1)
 }
@@ -1046,7 +1028,7 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	s.SetCondition(id, healthy)
 
 	var before Observation
-	s.Snapshot(&id, true, &before)
+	_, before = s.Snapshot(id, true)
 	conds := before.Conditions
 	if got := len(conds); got != 2 {
 		t.Fatalf("conditions length = %d, want 2 (Ready + Healthy)", got)
@@ -1061,7 +1043,7 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	assert.Diff(t, conds, want)
 	conds[0].Message = "caller mutation"
 	var after Observation
-	s.Snapshot(&id, true, &after)
+	_, after = s.Snapshot(id, true)
 	conds = after.Conditions
 	if got := len(conds); got != 2 {
 		t.Errorf("conditions length = %d after Ready transition, want 2", got)
@@ -1139,7 +1121,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						s.DeleteObject(parent)
 						assert.Equal(t, s.GetObject(removed), nil)
 						var removedObservation Observation
-						s.Snapshot(&removed, true, &removedObservation)
+						_, removedObservation = s.Snapshot(removed, true)
 						conds := removedObservation.Conditions
 						assert.Equal(t, len(conds), 0)
 						assert.Equal(t, s.GetArtifact(removed), nil)
@@ -1150,7 +1132,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						assert.Equal(t, status.Message, id.Group)
 						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
 						var observation Observation
-						s.Snapshot(&id, true, &observation)
+						_, observation = s.Snapshot(id, true)
 						conds = observation.Conditions
 						assert.Diff(t, conds, []Condition{readyCondition(StatusReady, "", id.Group)})
 						parent = id

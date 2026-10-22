@@ -9,6 +9,14 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// RenderOptions supplies one render's captured sources and template settings.
+type RenderOptions struct {
+	Options
+	Sources Sources
+	// Admit receives the cache owner's content key; true returns empty output without rendering.
+	Admit func(string) (bool, error)
+}
+
 // Options collects the helm template flags flate supports.
 type Options struct {
 	// DisableChartDigestTracking preserves direct OCI chart versions when true.

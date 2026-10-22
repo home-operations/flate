@@ -73,7 +73,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
+
 			hrB := hr.Clone()
 			hrB.Name = "second"
 			hrB.Chart.Source.Name = "second-source"
@@ -104,7 +104,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 							errs[i] = ctx.Err()
 							return
 						}
-						output[i], errs[i] = cli.Template(ctx, release, nil, Options{DisableChartDigestTracking: mode.disable})
+						output[i], errs[i] = cli.Template(ctx, release, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)})
 					})
 				}
 				<-entered
@@ -163,12 +163,12 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: mode.disable}); err != nil {
+
+			if _, err := cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}); err != nil {
 				t.Fatal(err)
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			if _, err := cli.Template(t.Context(), hr, nil, Options{DisableChartDigestTracking: mode.disable}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if _, err := cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid chart version bypassed validation: %v", err)
 			}
 

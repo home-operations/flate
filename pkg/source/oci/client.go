@@ -24,7 +24,7 @@ import (
 const dockerConfigJSONKey = ".dockerconfigjson"
 
 // newRepoClient binds one credential and transport snapshot before cache admission.
-func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store) (*remote.Repository, any, error) {
+func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store) (*remote.Repository, any, error) {
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, nil, err
@@ -42,7 +42,7 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 	}
 	owner := repo.Named()
 	owner.Name = repo.Namespace + "/" + repo.Name
-	resolved, err := source.ResolveTransport(f.Secrets, owner, []source.TransportInput{
+	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
 		{Reference: repo.CertSecretRef, Use: source.TransportCert},
 		{Reference: repo.ProxySecretRef, Use: source.TransportProxy},
 	})
@@ -69,14 +69,14 @@ func (f *Fetcher) newRepoClient(ctx context.Context, repo *manifest.OCIRepositor
 // config and Docker defaults retain their upstream stores. Global credentials
 // MUST wait for the source controller to exhaust rendered Secrets; eligible
 // retries are carried by MissingSecretError.
-func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (credentials.Store, error) {
+func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (credentials.Store, error) {
 	if repo.SecretRef == nil {
 		return loadCredentials(f.RegistryConfig)
 	}
-	if f.Secrets == nil {
+	if f.secrets == nil {
 		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}
-	sec := f.Secrets(repo.Namespace, repo.SecretRef.Name)
+	sec := f.secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
 		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found"), policy)
 	}
@@ -102,7 +102,7 @@ func (f *Fetcher) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIR
 // registryFallback preserves the missing Secret until renders are exhausted.
 // A pull retry requires a credential for this registry; unrelated credentials
 // MUST leave producer-backed sources skippable.
-func (f *Fetcher) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (credentials.Store, error) {
+func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (credentials.Store, error) {
 	parsed, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)

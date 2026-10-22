@@ -65,14 +65,14 @@ func TestLoadChart_CoalescesConcurrentFirstLoad(t *testing.T) {
 				st := store.New()
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: location, Source: manifest.NamedResource{Name: "repo", Namespace: "default", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input, LocalPath: root, Key: "untrusted"})
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
+				cliSources := NewSources(st)
 				var charts [callers]*chart.Chart
 				var wg sync.WaitGroup
 				start := make(chan struct{})
 				for i := range callers {
 					wg.Go(func() {
 						<-start
-						loaded, err := loadDecodedChart(t.Context(), cli, hr)
+						loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 						if err != nil {
 							t.Error(err)
 							return
@@ -109,9 +109,9 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+	cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
 	hr := newHR()
-	first, err := loadDecodedChart(t.Context(), cli, hr)
+	first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	touched, err := loadDecodedChart(t.Context(), cli, hr)
+	touched, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 		{"dependency template", "mychart/charts/child/templates/cm.yaml", "ConfigMap", "Namespace"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			before, err := loadDecodedChart(t.Context(), cli, hr)
+			before, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ func TestLoadChart_InvalidatesOnFileMtimeChange(t *testing.T) {
 			if err := os.Chtimes(filepath.Join(dir, tc.path), stamp, stamp); err != nil {
 				t.Fatal(err)
 			}
-			after, err := loadDecodedChart(t.Context(), cli, hr)
+			after, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,8 +170,8 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 	st := store.New()
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: ".", Source: manifest.NamedResource{Name: "repo", Namespace: "default", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}}
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	canonical, err := loadDecodedChart(t.Context(), cli, hr)
+	cliSources := NewSources(st)
+	canonical, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	snapshot := func() string {
 		t.Helper()
@@ -187,7 +187,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 			<-start
 			enabled := i%2 == 0
 			value := fmt.Sprintf("rendered-%02d", i)
-			out, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, Options{})
+			out, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Error(err)
 				return
@@ -199,7 +199,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 	close(start)
 	wg.Wait()
 	assert.Equal(t, snapshot(), before)
-	loaded, err := loadDecodedChart(t.Context(), cli, hr)
+	loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 	assert.NoError(t, err)
 	assert.Equal(t, loaded.chart == canonical.chart, true)
 }
@@ -239,7 +239,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 	cli, err := NewClient(owner)
 	assert.NoError(t, err)
 	st := store.New()
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	cliSources := NewSources(st)
 	hr := &manifest.HelmRelease{Name: "first", Namespace: "default", Chart: manifest.HelmChart{Name: "one", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "repo", Namespace: "default"}}}
 	var previous *chart.Chart
 	for _, id := range []string{"git-one", "git-two"} {
@@ -266,8 +266,8 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				selected.ChartValuesFiles = []string{"config/prod.yaml"}
 				sources := store.New()
 				sources.SetArtifact(selected.ChartSource(), &store.SourceArtifact{FS: input})
-				renderer.SetSourceResolver(NewStoreSourceResolver(sources))
-				first, err := renderer.Template(t.Context(), selected, nil, Options{})
+				rendererSources := NewSources(sources)
+				first, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
 				assert.NoError(t, err)
 				if !strings.Contains(first, `marker: "acquired"`) {
 					t.Fatal(first)
@@ -276,14 +276,14 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				if reads == 0 {
 					t.Fatal("first render did not read acquired backing")
 				}
-				second, err := renderer.Template(t.Context(), selected, nil, Options{})
+				second, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
 				assert.NoError(t, err)
 				assert.Equal(t, second, first)
 				assert.Equal(t, backing.opens.Load(), reads)
 				if !persistent {
 					return
 				}
-				d, err := renderer.describeChart(t.Context(), selected)
+				d, err := renderer.describeChart(t.Context(), selected, rendererSources)
 				assert.NoError(t, err)
 				d.values, err = renderer.observeValuesFiles(t.Context(), d, selected.ChartValuesFiles, false)
 				assert.NoError(t, err)
@@ -297,9 +297,9 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				assert.NoError(t, r.Close())
 				fresh, err := NewClient(cachetest.New(t, outputRoot, cache.New))
 				assert.NoError(t, err)
-				fresh.SetSourceResolver(NewStoreSourceResolver(sources))
+				freshSources := NewSources(sources)
 				before := backing.opens.Load()
-				hit, err := fresh.Template(t.Context(), selected, nil, Options{})
+				hit, err := fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 				assert.NoError(t, err)
 				assert.Equal(t, hit, witness)
 				reads = backing.opens.Load()
@@ -311,7 +311,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 						t.Fatal("persisted hit did not leave an observation-only entry")
 					}
 				}
-				hit, err = fresh.Template(t.Context(), selected, nil, Options{})
+				hit, err = fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 				assert.NoError(t, err)
 				assert.Equal(t, hit, witness)
 				assert.Equal(t, backing.opens.Load(), reads)
@@ -324,7 +324,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		assert.Equal(t, pin == "", false)
 		art := &store.SourceArtifact{FS: input, Key: "untrusted", InputAlias: true, LocalPath: root, Revision: id}
 		st.SetArtifact(hr.ChartSource(), art)
-		first, err := loadDecodedChart(t.Context(), cli, hr)
+		first, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)
 		if first.chart == previous {
 			t.Fatal("different acquisition pins shared parsed entries")
@@ -333,7 +333,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		reads := backing.opens.Load()
 		other := hr.Clone()
 		other.Name = "second"
-		warm, err := loadDecodedChart(t.Context(), cli, other)
+		warm, err := loadDecodedChart(t.Context(), cli, other, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == first.chart, true)
 		assert.Equal(t, backing.opens.Load(), reads)
@@ -344,27 +344,27 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, values["marker"], any("acquired"))
 		other.Chart.Name = "two"
-		second, err := loadDecodedChart(t.Context(), cli, other)
+		second, err := loadDecodedChart(t.Context(), cli, other, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, second.chart == first.chart, false)
 		explicit := hr.Clone()
 		explicit.Chart.Name = "."
-		rootChart, err := loadDecodedChart(t.Context(), cli, explicit)
+		rootChart, err := loadDecodedChart(t.Context(), cli, explicit, cliSources)
 		assert.NoError(t, err)
 		auto := explicit.Clone()
 		auto.Chart.Source.Kind = manifest.KindHelmChart
 		st.SetArtifact(auto.ChartSource(), art)
-		autoChart, err := loadDecodedChart(t.Context(), cli, auto)
+		autoChart, err := loadDecodedChart(t.Context(), cli, auto, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, autoChart.chart == rootChart.chart, false)
 		reads = backing.opens.Load()
-		warm, err = loadDecodedChart(t.Context(), cli, auto)
+		warm, err = loadDecodedChart(t.Context(), cli, auto, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == autoChart.chart, true)
 		assert.Equal(t, backing.opens.Load(), reads)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		_, err = loadDecodedChart(ctx, cli, auto)
+		_, err = loadDecodedChart(ctx, cli, auto, cliSources)
 		assert.Equal(t, errors.Is(err, context.Canceled), true)
 		assert.Equal(t, art.Key, "untrusted")
 	}
@@ -384,7 +384,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 			cli, err := NewClient(owner)
 			assert.NoError(t, err)
 			st := store.New()
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			cliSources := NewSources(st)
 			hr := &manifest.HelmRelease{Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "chart"}}}
 			if tc.kind == manifest.KindBucket {
 				hr.Chart.Name = "."
@@ -423,7 +423,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				}
 				art := &store.SourceArtifact{FS: acquired, Key: "untrusted", LocalPath: "same-label", Revision: version}
 				st.SetArtifact(hr.ChartSource(), art)
-				loaded, err := loadDecodedChart(t.Context(), cli, hr)
+				loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 				assert.NoError(t, err)
 				assert.Equal(t, loaded.chart.Metadata.Version, version)
 				assert.Equal(t, loaded.chart != previous, true)
@@ -434,18 +434,18 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				if err == nil {
 					t.Fatal("backing poison did not prevent chart reads")
 				}
-				warm, err := loadDecodedChart(t.Context(), cli, hr)
+				warm, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 				assert.NoError(t, err)
 				assert.Equal(t, warm.chart == loaded.chart, true)
 				assert.Equal(t, warm.fingerprint, loaded.fingerprint)
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				_, err = loadDecodedChart(ctx, cli, hr)
+				_, err = loadDecodedChart(ctx, cli, hr, cliSources)
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 				explicit := hr.Clone()
 				explicit.Chart.Source.Kind, explicit.Chart.Name = manifest.KindGitRepository, "."
 				st.SetArtifact(explicit.ChartSource(), art)
-				if _, err := loadDecodedChart(t.Context(), cli, explicit); err == nil {
+				if _, err := loadDecodedChart(t.Context(), cli, explicit, cliSources); err == nil {
 					t.Fatal("explicit root reused a different chart selector")
 				}
 			}

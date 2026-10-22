@@ -56,7 +56,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 			ValuesFrom: []manifest.ValuesReference{ref},
 			Values:     map[string]any{"replicaCount": 2},
 		}
-		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+		if _, err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}
@@ -104,7 +104,7 @@ counts:
 			ValuesFrom: refs,
 			Values:     map[string]any{"image": map[string]any{"repository": "nginx"}},
 		}
-		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+		if _, err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}
@@ -124,7 +124,7 @@ func BenchmarkExpandValueReferences_TargetPaths(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				hr := &manifest.HelmRelease{Name: "app", Namespace: "default", ValuesFrom: refs}
-				if err := ExpandValueReferences(hr, provider, cache); err != nil {
+				if _, err := ExpandValueReferences(hr, provider, cache); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -159,7 +159,7 @@ func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
 			Name: "app", Namespace: "default",
 			ValuesFrom: []manifest.ValuesReference{ref},
 		}
-		if err := ExpandValueReferences(hr, provider, cache); err != nil {
+		if _, err := ExpandValueReferences(hr, provider, cache); err != nil {
 			b.Fatalf("ExpandValueReferences: %v", err)
 		}
 	}

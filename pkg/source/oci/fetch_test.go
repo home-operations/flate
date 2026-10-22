@@ -109,7 +109,7 @@ func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "v2.8.8"},
 	}
 
-	art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestFetcher_ExtractCollidesWithOCILayoutName(t *testing.T) {
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
 	}
 
-	art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestFetcher_Freshness(t *testing.T) {
 					repo.Reference.SemVer = "1.x"
 				}
 			}
-			first, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: tt.interval})
+			first, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: tt.interval})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -256,7 +256,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			if tt.offline {
 				srv.Close()
 			}
-			second, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: tt.interval})
+			second, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: tt.interval})
 			if tt.failRefresh {
 				if err == nil {
 					t.Fatal("expected refresh to fail after registry shutdown")
@@ -365,7 +365,7 @@ func TestFetcher_Revalidation(t *testing.T) {
 				}
 				failResolve.Store(phase == "resolve failure")
 				beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()
-				art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+				art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 				if phase == "resolve failure" {
 					if err == nil || !errors.Is(err, manifest.ErrFlux) || art != nil {
 						t.Fatalf("stale revalidation result: artifact=%+v error=%v", art, err)
@@ -456,7 +456,7 @@ func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 			beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()
 			request := *repo
 			request.Name = fmt.Sprintf("source-%d", operation)
-			art, err := f.Fetch(t.Context(), &request, sourcecache.Policy{MaxAge: request.SourceInterval()})
+			art, err := f.Fetch(t.Context(), &request, (testInputs{}).readSet(&request), sourcecache.Policy{MaxAge: request.SourceInterval()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -654,7 +654,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		v := newFakeOCIArtifact(t, map[string]string{"app.yaml": body})
 		srv := startFakeRegistry(t, v.manifest, v.config, v.layer)
 		repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Digest: v.manifestDigest}}
-		art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+		art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -665,7 +665,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		client, material, err := f.newRepoClient(t.Context(), repo, nil)
+		client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -790,7 +790,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 						}
 						f.Cache = c
 					}
-					_, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+					_, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 					terminal, _ := errors.AsType[*sourcecache.TerminalError](err)
 					if err == nil || terminal != nil && !terminal.Attempted || layers.Load() != int32(attempt+1) {
 						t.Fatalf("integrity failure suppressed: layers=%d terminal=%+v error=%v", layers.Load(), terminal, err)
@@ -800,7 +800,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 					}
 				}
 				repaired.Store(true)
-				art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+				art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -815,10 +815,10 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 	for _, layerOperation := range []string{sourcev1.OCILayerCopy, sourcev1.OCILayerExtract} {
 		for _, tc := range []struct {
-			operation string
-			status    int
-			attempts  int32
-			replay    bool
+			stage    string
+			status   int
+			attempts int32
+			replay   bool
 		}{
 			{"list tags", 400, 1, false},
 			{"resolve", 400, 1, false},
@@ -835,11 +835,11 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 			{"fetch layer", 600, 1, false},
 			{"resolve", 404, 1, false},
 		} {
-			operation := tc.operation
-			if operation == "layer header" && layerOperation == sourcev1.OCILayerCopy {
+			stage := tc.stage
+			if stage == "layer header" && layerOperation == sourcev1.OCILayerCopy {
 				continue
 			}
-			t.Run(fmt.Sprintf("%s/%s/%d", layerOperation, operation, tc.status), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s/%d", layerOperation, stage, tc.status), func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				art := newFakeOCIArtifact(t, map[string]string{"file": "x"})
@@ -851,7 +851,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						failures.Add(1)
 						http.Error(w, "registry failure", tc.status)
 					case strings.Contains(r.URL.Path, "/manifests/"):
-						if operation == "resolve" || operation == "fetch manifest" && strings.HasSuffix(r.URL.Path, art.manifestDigest) && r.Method == http.MethodGet {
+						if stage == "resolve" || stage == "fetch manifest" && strings.HasSuffix(r.URL.Path, art.manifestDigest) && r.Method == http.MethodGet {
 							failures.Add(1)
 							http.Error(w, "registry failure", tc.status)
 							return
@@ -860,7 +860,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						w.Header().Set("Docker-Content-Digest", art.manifestDigest)
 						_, _ = w.Write(art.manifest)
 					case strings.HasSuffix(r.URL.Path, art.layerDigest):
-						if operation == "fetch layer" {
+						if stage == "fetch layer" {
 							failures.Add(1)
 							http.Error(w, "registry failure", tc.status)
 							return
@@ -872,7 +872,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				repo := &manifest.OCIRepository{Name: "failure", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/chart",
 					Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 					LayerSelector: &sourcev1.OCILayerSelector{Operation: layerOperation}}
-				if operation == "list tags" {
+				if stage == "list tags" {
 					repo.Reference = &sourcev1.OCIRepositoryRef{SemVer: ">=1"}
 				}
 				root := t.TempDir()
@@ -886,18 +886,18 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						t.Error(err)
 					}
 				})
-				client, material, err := f.newRepoClient(ctx, repo, nil)
+				client, material, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
 				var original error
-				if strings.HasSuffix(operation, "body") || operation == "layer header" {
+				if strings.HasSuffix(stage, "body") || stage == "layer header" {
 					response := &errcode.ErrorResponse{Method: http.MethodGet, URL: mustURL(t, srv.URL+"/body"), StatusCode: tc.status}
 					original = response
-					if operation == "neutral body" {
+					if stage == "neutral body" {
 						original = &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: response.Method, Err: response}
 					}
-					if operation == "canceled body" {
+					if stage == "canceled body" {
 						original = context.Canceled
 					}
 					client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
@@ -905,17 +905,17 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						if err != nil || req.Method != http.MethodGet {
 							return resp, err
 						}
-						manifestBody := operation == "manifest body" && strings.Contains(req.URL.Path, "/manifests/")
-						layerBody := operation != "manifest body" && strings.HasSuffix(req.URL.Path, art.layerDigest)
+						manifestBody := stage == "manifest body" && strings.Contains(req.URL.Path, "/manifests/")
+						layerBody := stage != "manifest body" && strings.HasSuffix(req.URL.Path, art.layerDigest)
 						if manifestBody || layerBody {
 							failures.Add(1)
 							_ = resp.Body.Close()
 							var prefix []byte
-							if layerBody && operation != "layer header" {
+							if layerBody && stage != "layer header" {
 								prefix = art.layer[:10]
 							}
 							resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(original)))
-							if operation == "canceled body" {
+							if stage == "canceled body" {
 								cancel()
 							}
 						}
@@ -928,8 +928,8 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 					t.Fatalf("producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
 				}
 				t.Logf("live producer failures=%d; total requests=%d", failures.Load(), requests.Load())
-				prefix := operation
-				switch operation {
+				prefix := stage
+				switch stage {
 				case "list tags":
 					prefix = "semver: list tags:"
 				case "manifest body":
@@ -939,7 +939,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				case "layer body", "neutral body", "canceled body":
 					prefix = ""
 				}
-				if err == nil || !strings.HasPrefix(err.Error(), source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name)+" "+prefix) || operation != "canceled body" && strings.Contains(err.Error(), "cache:") {
+				if err == nil || !strings.HasPrefix(err.Error(), source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name)+" "+prefix) || stage != "canceled body" && strings.Contains(err.Error(), "cache:") {
 					t.Fatalf("failure identity: %v", err)
 				}
 				if !errors.Is(err, manifest.ErrFlux) {
@@ -952,7 +952,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 					}
 					return
 				}
-				if operation == "canceled body" {
+				if stage == "canceled body" {
 					if ok || !errors.Is(err, context.Canceled) {
 						t.Fatalf("caller cancellation changed: %v", err)
 					}
@@ -960,7 +960,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				}
 				response, typed := errors.AsType[*errcode.ErrorResponse](err)
 				method := http.MethodGet
-				if operation == "resolve" {
+				if stage == "resolve" {
 					method = http.MethodHead
 				}
 				if !ok || !typed || neutral.StatusCode != tc.status || neutral.Op != method || response.StatusCode != tc.status || response.Method != method || neutral.Error() != neutral.Err.Error() {
@@ -973,7 +973,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				} else if !errors.Is(err, original) {
 					t.Fatalf("original body failure changed: %v", err)
 				}
-				if operation == "neutral body" && !errors.Is(original, neutral) {
+				if stage == "neutral body" && !errors.Is(original, neutral) {
 					t.Fatalf("neutral body failure wrapped twice: %v", err)
 				}
 				if !tc.replay {
@@ -1004,7 +1004,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				if !ok || terminal.Attempted || !errors.Is(err, manifest.ErrFlux) || !neutralOK || !typed || neutral.StatusCode != tc.status || neutral.Op != method || response.StatusCode != tc.status || response.Method != method {
 					t.Fatalf("replayed response: terminal=%+v neutral=%+v response=%+v error=%v", terminal, neutral, response, err)
 				}
-				t.Logf("attempts=%d; requests before/after replay=%d/%d; status=%d operation=%s", tc.attempts, before, requests.Load(), neutral.StatusCode, neutral.Op)
+				t.Logf("attempts=%d; requests before/after replay=%d/%d; status=%d stage=%s", tc.attempts, before, requests.Load(), neutral.StatusCode, neutral.Op)
 			})
 		}
 	}
@@ -1044,7 +1044,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			}
 			root := t.TempDir()
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
-			got, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 			if name == "unmatched" {
 				if err == nil {
 					t.Fatal("unmatched mediaType accepted")
@@ -1072,7 +1072,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 			if name == "digest selectors" {
 				copyRepo := *repo
 				copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
-				copied, err := f.Fetch(t.Context(), &copyRepo, sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
+				copied, err := f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1087,7 +1087,7 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 				}
 				f.Cache = cachetest.New(t, root, sourcecache.New)
 				for range 2 {
-					warm, err := f.Fetch(t.Context(), &copyRepo, sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
+					warm, err := f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -1159,21 +1159,22 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 			if route == "copy" {
 				repo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
 			}
+			fInputs := testInputs{}
 			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: &network}
 			retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
 			if route == "fallback" {
 				repo.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
-				f.Secrets = func(_, _ string) *manifest.Secret { return nil }
+				fInputs.secrets = func(_, _ string) *manifest.Secret { return nil }
 				f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
 				testutil.WriteFileAt(t, f.RegistryConfig, fmt.Sprintf(`{"auths":{%q:{"auth":"dXNlcjpwYXNz"}}}`, mustURL(t, registryURL).Host))
-				_, err = f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
+				_, err = f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
 				if !ok || missing.RetryWithRegistryConfig == nil {
 					t.Fatalf("fallback: %v", err)
 				}
 				_, err = missing.RetryWithRegistryConfig(t.Context(), f.RegistryConfig)
 			} else {
-				_, err = f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
+				_, err = f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 			}
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || terminal.Attempted || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || bypass.Load() != 0 {
@@ -1240,7 +1241,7 @@ func TestFetcher_Revalidation_SelectedTagMetadata(t *testing.T) {
 				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
 				Reference:     &sourcev1.OCIRepositoryRef{SemVer: ">=1.0.0"},
 				LayerSelector: &sourcev1.OCILayerSelector{Operation: operation}}
-			first, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+			first, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 			assert.NoError(t, err)
 			firstMetadata := map[string]string{"content.annotation": "retained", "flate.revision": "v1.0.0@" + artifact.manifestDigest, "flate.resolved-tag": "v1.0.0"}
 			assert.Diff(t, first.Metadata, firstMetadata)
@@ -1251,7 +1252,7 @@ func TestFetcher_Revalidation_SelectedTagMetadata(t *testing.T) {
 					f.Cache = cachetest.New(t, root, sourcecache.New)
 				}
 				beforeTags, beforeHeads, beforeManifests, beforeLayers := tags.Load(), heads.Load(), manifests.Load(), layers.Load()
-				got, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+				got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 				assert.NoError(t, err)
 				if tags.Load()-beforeTags != 1 || heads.Load()-beforeHeads != 1 || manifests.Load() != beforeManifests || layers.Load() != beforeLayers {
 					t.Fatalf("%s: tag lists/HEAD/manifest GET/layer GET=%d/%d/%d/%d", phase, tags.Load()-beforeTags, heads.Load()-beforeHeads, manifests.Load()-beforeManifests, layers.Load()-beforeLayers)

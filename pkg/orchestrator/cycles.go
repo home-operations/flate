@@ -44,14 +44,15 @@ func (o *Orchestrator) syncPreflightFailures() {
 	o.preflightMu.Lock()
 	cleared := o.replacePreflightFailures(failures)
 	o.preflightMu.Unlock()
-	if len(failures) > 0 {
-		// Formatting the full member list for each member would be quadratic.
-		for _, message := range slices.Compact(slices.Sorted(maps.Values(failures))) {
-			o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnDependencyCycle,
-				Message: "dependency cycle detected", Detail: []string{message}})
-		}
+	for _, message := range slices.Compact(slices.Sorted(maps.Values(failures))) {
+		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnDependencyCycle, Message: "dependency cycle detected", Detail: []string{message}})
 	}
-	o.refireClearedPreflightFailures(cleared)
+	for id, message := range failures {
+		o.store.SetPreflight(id, message)
+	}
+	for _, id := range cleared {
+		o.store.SetPreflight(id, "")
+	}
 }
 
 // rebuildDependencyGraphFromStore pushes every KS + HR's current
@@ -82,15 +83,7 @@ func sameKindDepTargets(obj manifest.BaseManifest, out []manifest.NamedResource)
 	return out
 }
 
-func (o *Orchestrator) refireClearedPreflightFailures(ids []manifest.NamedResource) {
-	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	for _, id := range ids {
-		if id.KindInfo().Render {
-			o.store.Refire(id)
-		}
-	}
-}
-
+// formatCyclePath returns the cycle as "A → B → C → A" for log output.
 func formatCyclePath(path []manifest.NamedResource) string {
 	parts := make([]string, len(path))
 	for i, id := range path {

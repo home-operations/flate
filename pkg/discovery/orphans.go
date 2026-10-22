@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"log/slog"
 	"slices"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (d *discoverer) promoteOrphans(standaloneSecrets []manifest.NamedResource) {
+func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []manifest.NamedResource) {
 	index := d.loader.Index
 	// All admitted stand-ins MUST be removed before promotion so real sibling Secrets take precedence.
 	slices.SortFunc(standaloneSecrets, manifest.NamedResource.Compare)
@@ -25,7 +26,7 @@ func (d *discoverer) promoteOrphans(standaloneSecrets []manifest.NamedResource) 
 			continue
 		}
 		admit := func(obj manifest.BaseManifest) bool { return d.admitOrphan(obj.Named(), record.Path) }
-		if !loader.Promote(d.cfg.Store, id, manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, loader.PromoteOptions{WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
+		if !loader.Promote(ctx, d.cfg.Store, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}

@@ -16,7 +16,6 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -56,6 +55,20 @@ type Options struct {
 	StrictSubstitutions bool
 }
 
+type execution struct {
+	*Controller
+	run        base.Execution
+	data       *values.StoreProvider
+	unreadable []manifest.NamedResource
+}
+
+func (c *Controller) newExecution(id manifest.NamedResource) *execution {
+	execution := &execution{Controller: c}
+	execution.run.Init(c.Controller, id)
+	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.substitutionSources)
+	return execution
+}
+
 // New constructs a Kustomization controller.
 func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecrets bool) *Controller {
 	return &Controller{
@@ -75,139 +88,110 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.substitutionSources = opts.SubstituteFrom
 	c.substitute = opts.Substitute
 	c.strictSubstitutions = opts.StrictSubstitutions
+
 }
 
-// ReconcileNode runs one Kustomization invocation and returns its dependency classification.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return c.DispatchNode(ctx, id, attempt, c.reconcile)
+// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
+// dependency set (nil = terminalized). The
+// orchestrator's scheduler Dispatcher calls this for Kustomization nodes.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+	execution := c.newExecution(id)
+	execution.run.Dispatch(ctx, level, execution.reconcile)
+	return &execution.run
 }
 
-func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
-	if gated {
-		return schedule.Outcome{}, nil
-	}
-	level := invocation.Drain
+func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, level manifest.DrainLevel) error {
 	id := ks.Named()
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
-	// SetPendingUnlessReady (not a raw UpdateStatus) on every pre-render
-	// progress write: a no-op re-reconcile of an already-Ready KS (re-emitted
-	// by its structural parent / coalesced re-run) must not transiently
-	// downgrade Ready→Pending, or a dependent's quiescence-bound depwait can
-	// re-read it at a transient pool drain and give up ("parent Kustomization
-	// not ready"). The genuine-render downgrade at "rendering" below (after the
-	// fingerprint dedup) stays unconditional so a changed re-render re-gates
-	// dependents. See base.SetPendingUnlessReady (#657).
 	c.SetPendingUnlessReady(id, "resolving dependencies")
 
 	deps := c.collectDeps(ks)
 	if len(deps) > 0 {
-		// RequireRefresh fuses the gate with the load-bearing re-read: our
-		// structural parent may have re-emitted us with mutated spec (e.g.
-		// `replacements:` injecting spec.targetNamespace) while we were
-		// waiting. Without the refresh the first render would use the
-		// stale-spec snapshot captured by DispatchNode, producing
-		// duplicate renders that linger in the store with the wrong
-		// namespace. See #102.
-		fresh, ok, err := c.RequireRefresh[*manifest.Kustomization](
-			ctx, id, deps, level)
+		err := c.run.Require(ctx, deps, level)
 		if err != nil {
 			ref := ks.SourceID()
 			_, blocked := errors.AsType[*depwait.ErrBlocked](err)
 			_, failed := errors.AsType[*manifest.DependencyFailedError](err)
-			if (blocked || failed) && level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
-				return schedule.Outcome{}, fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
+			if (blocked || failed) && level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.run.Reads.GetObject(ref) == nil && c.run.Reads.GetArtifact(ref) == nil {
+				return fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
 			}
-			return schedule.Outcome{}, err
-		}
-		if ok {
-			ks = fresh
+			return err
 		}
 	}
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
-	var source *store.SourceArtifact
-	var applyIgnore bool
-	var attempt store.Emission
-	for {
-		var err error
-		source, applyIgnore, err = c.resolveSource(ks, level)
-		if err != nil {
-			return schedule.Outcome{}, err
-		}
-		effective, captured := c.Store.GetEmission(id)
-		current, _ := effective.(*manifest.Kustomization)
-		sourceID := ks.SourceID()
-		if sourceID.Name == "" || sourceID.Kind == "" {
-			sourceID = manifest.BootstrapSourceID
-		}
-		if current == ks && c.Store.GetArtifact(sourceID) == source {
-			attempt = captured
-			break
-		}
-		captured.Finish()
-		if current == nil {
-			return schedule.Outcome{}, nil
-		}
-		ks = current
-	}
-	defer attempt.Finish()
-
-	c.SetPendingUnlessReady(id, "expanding substitutions")
-	var resolved depwait.Resolution
-	if err := c.Require(&depwait.Waiter{Parent: id, Declaration: ks, Supplied: c.substitutionSources, WipeSecrets: c.WipeSecrets}, invocation, &resolved); err != nil {
-		return schedule.Outcome{}, err
-	}
-	ks, err := kustomize.Prepare(ks, resolved.Inputs, c.substitute)
+	source, applyIgnore, err := c.resolveSource(ks, level)
 	if err != nil {
-		return schedule.Outcome{}, err
+		return err
 	}
-	// A substituteFrom Secret flate can't read offline (absent, or an
-	// ExternalSecret-synthesized empty target) leaves its variables unavailable.
-	// References remain unchanged when substitution is skipped; otherwise they
-	// use defaults or render empty, which may cause schema/template validation
-	// failures. Surface that as a non-fatal
-	// advisory so the gap is explained rather than silent; substitution
-	// itself stays Flux-faithful. SOPS secrets resolve to placeholders and
-	// aren't reported. Render-global and keyed on the bare Secret name (not
-	// ns/name): the same logical secret is referenced by the many per-
-	// namespace KSes a cluster-config KS re-emits, so the store collapses
-	// them to one advisory line per secret name.
-	for _, name := range values.UnreadableSubstituteSecrets(ks, resolved.Inputs) {
-		c.Store.AddWarning(id, manifest.Warning{
+	c.SetPendingUnlessReady(id, "expanding substitutions")
+	var inputs []depwait.DataDependency
+	for ref := range manifest.References(ks) {
+		if ref.Use != "substituteFrom" || ref.Name == "" || !ref.NamedResource.KindInfo().Data {
+			continue
+		}
+		if c.substitutionSources[ref.NamedResource] == nil {
+			c.run.PromoteData(ctx, ref.NamedResource)
+		}
+		input := c.data.Lookup(ref.NamedResource)
+		inputs = append(inputs, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: input, Optional: ref.Optional, AllowMissing: ref.Kind == manifest.KindSecret})
+		unreadable := input.Data == nil || !input.Data.HasKeys()
+		if ref.Kind == manifest.KindSecret && !ref.Optional && unreadable {
+			c.unreadable = append(c.unreadable, ref.NamedResource)
+			if c.substitutionSources[ref.NamedResource] == nil {
+				c.run.Unreadable = append(c.run.Unreadable, ref.NamedResource)
+			}
+		}
+	}
+	return c.run.AwaitData(ctx, base.DataWait{Inputs: inputs, Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []manifest.NamedResource) error {
+		return c.render(ctx, ks, source, applyIgnore)
+	}}, level)
+}
+
+func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, source *store.SourceArtifact, applyIgnore bool) error {
+	id := ks.Named()
+	ks, err := kustomize.Prepare(ks, c.data, c.substitute)
+	if err != nil {
+		return err
+	}
+	for _, ref := range c.unreadable {
+		c.run.Reads.AddWarning(id, manifest.Warning{
 			Category: manifest.WarnUnresolvedSubstitution,
 			Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; "+
 				"its variables are unavailable, so their ${VAR} references may remain unsubstituted "+
-				"or resolve to defaults or empty values", name),
+				"or resolve to defaults or empty values", ref.Name),
 		})
 	}
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
 	sourceContent := struct{ Path, Key, Revision, Digest string }{source.LocalPath, source.Key, source.Revision, source.Digest}
-	fp, handled, _, err := c.FingerprintDedup(id, ks.Content(sourceContent))
+	fp, handled, err := c.run.FingerprintDedup(id, ks.Content(sourceContent))
 	if handled {
-		return schedule.Outcome{}, err
+		return err
 	}
 
+	_, attempt := c.run.Reads.GetEmission(id)
+	defer attempt.Finish()
 	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering")
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
 	}, c.retry)
 	if err != nil {
-		return schedule.Outcome{}, err
+		return err
 	}
 	docs, err := manifest.SplitDocs(data)
 	if err != nil {
-		return schedule.Outcome{}, err
+		return err
 	}
 	docs = manifest.FlattenLists(docs)
 
@@ -226,36 +210,39 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 			}
 			substituted, sErr := substituteDoc(doc, vars, c.strictSubstitutions)
 			if sErr != nil {
-				return schedule.Outcome{}, fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
+				return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
 			}
 			docs[i] = substituted
 		}
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "", fmt.Sprintf("applying %d objects", len(docs)))
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace})
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, data
-	c.Emit(id, &attempt)
-	return schedule.Outcome{}, nil
+	c.run.Emit(id, &attempt)
+	return nil
 }
 
-// collectDeps preserves authored ordering, declaration parents and source gates.
-func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
-	deps := make([]manifest.DependencyRef, 0, len(ks.DependsOn))
+func (c *execution) collectDeps(ks *manifest.Kustomization) []manifest.DependencyRef {
+	var deps []manifest.DependencyRef
+	if len(ks.DependsOn) != 0 {
+		deps = make([]manifest.DependencyRef, 0, len(ks.DependsOn))
+	}
 	var source manifest.DependencyRef
 	for ref := range manifest.References(ks) {
+		if ref.Use == "dependsOn" && c.run.KeepOrderingDep(ref.NamedResource) {
+			deps = append(deps, ref.DependencyRef)
+		}
 		if ref.Use == "source" {
 			source = ref.DependencyRef
-		} else if ref.Use == "dependsOn" && c.KeepOrderingDep(ref.NamedResource) {
-			deps = append(deps, ref.DependencyRef)
 		}
 	}
 	record, _ := c.index.Lookup(ks.Named())
 	start := len(deps)
-	for _, p := range c.Store.Productions(ks.Named(), c.index) {
+	for _, p := range c.run.Reads.Productions(ks.Named(), c.index) {
 		if p.Path == "" && p.Owner != (manifest.NamedResource{}) && p.Owner != ks.Named() {
 			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
 		}
@@ -271,7 +258,7 @@ func (c *Controller) collectDeps(ks *manifest.Kustomization) []manifest.Dependen
 
 // resolveSource retains source-controller ignore shaping for working-tree aliases.
 // Acquired immutable views already carry their fetcher's policy.
-func (c *Controller) resolveSource(ks *manifest.Kustomization, level manifest.DrainLevel) (*store.SourceArtifact, bool, error) {
+func (c *execution) resolveSource(ks *manifest.Kustomization, level manifest.DrainLevel) (*store.SourceArtifact, bool, error) {
 	srcID := ks.SourceID()
 	if srcID.Kind == "" || srcID.Name == "" {
 		// Child Kustomizations that inherit sourceRef from a parent's
@@ -285,13 +272,13 @@ func (c *Controller) resolveSource(ks *manifest.Kustomization, level manifest.Dr
 		}
 		srcID = manifest.BootstrapSourceID
 	}
-	art := c.Store.GetArtifact(srcID)
+	art := c.run.Reads.GetArtifact(srcID)
 	if art == nil {
 		// A source that soft-skipped (--allow-missing-secrets) reports
 		// Ready with ReasonSkipped but writes no artifact. Surface
 		// that as a typed skip so the caller can mark the KS skipped too
 		// rather than reporting a generic "artifact not found" failure.
-		if err := c.SourceSkipped(srcID, "source"); err != nil {
+		if err := c.run.SourceSkipped(srcID, "source"); err != nil {
 			return nil, false, err
 		}
 		return nil, false, fmt.Errorf("%w: source %s artifact not found", manifest.ErrObjectNotFound, srcID.String())

@@ -65,9 +65,9 @@ kind: ConfigMap
 metadata: {name: out, namespace: default}
 data: {v: "${K}"}
 `)
-			_, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
-			if code != 1 || !strings.Contains(stderr, "other") {
-				t.Fatalf("exit=%d stderr=%s", code, stderr)
+			stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			if code != 0 || !strings.Contains(stdout, "name: out") || !strings.Contains(stdout, "v: v") || !strings.Contains(stderr, "other") {
+				t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
 		})
 	}

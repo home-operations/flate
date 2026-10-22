@@ -51,7 +51,7 @@ data:
 
 	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	hr := newHR()
 	values := map[string]any{
 		"ports": map[string]any{"http": 80, "bittorrent": 50413},
@@ -60,9 +60,9 @@ data:
 			`{{ now | durationRound }}|{{ now | dateModify "-2h" | durationRound }}|` +
 			`{{ values (dict "z" "first" "a" "last" "m" "middle") | join "," }}`,
 	}
-	first, err := cli.Template(t.Context(), hr, values, Options{})
+	first, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	assert.NoError(t, err)
-	second, err := cli.Template(t.Context(), hr, values, Options{})
+	second, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	assert.NoError(t, err)
 	assert.Equal(t, second, first)
 	for _, rendered := range []string{first, second} {
@@ -96,8 +96,8 @@ data:
 `)
 	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
-	out, err := cli.Template(t.Context(), newHR(), nil, Options{})
+
+	out, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if err == nil {
 		t.Error("invalid mustToDate rendered successfully")
 	}
@@ -114,11 +114,11 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
 		t.Run(plaintext, func(t *testing.T) {
 			t.Parallel()
-			out, err := cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, Options{})
+			out, err := cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -1385,6 +1385,64 @@ func TestE2E_PinnedDiff_SubstituteFromProducer(t *testing.T) {
 	testPinnedProducerDiff(t, false)
 }
 
+func TestE2E_PinnedDiff_DirtyTransitiveSubstituteFrom(t *testing.T) {
+	var roots [2]string
+	for i, mode := range []string{"before", "after"} {
+		root, repo, _, _ := sourceRefFixture(t)
+		roots[i] = root
+		testutil.WriteFile(t, root, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: working, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+---
+`+testutil.KustomizationYAML("bridge", "apps", `  interval: 10m
+  path: ./bridge
+  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: hello, optional: true}]
+`)+"---\n"+testutil.KustomizationYAML("consumer", "apps", `  interval: 10m
+  path: ./consumer
+  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: bridge-settings, optional: true}]
+`))
+		testutil.WriteFile(t, root, "bridge/kustomization.yaml", "resources: [settings.yaml]\n")
+		testutil.WriteFile(t, root, "bridge/settings.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: bridge-settings, namespace: apps}
+data:
+  value: ${value}
+`)
+		testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [../shared/consumer.yaml]\n")
+		testutil.WriteFile(t, root, "shared/consumer.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: consumer, namespace: apps}
+data:
+  value: ${value}
+  mode: before
+`)
+		testutil.GitCommitAll(t, repo, "add consumers", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+		if mode == "after" {
+			harness.MutateFile(t, filepath.Join(root, "shared/consumer.yaml"), "mode: before", "mode: after")
+		}
+		harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty-pin")
+	}
+	var priorOut, priorWarnings string
+	for run := range 2 {
+		out, warnings := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(roots[1], "flux"), "--path-orig", filepath.Join(roots[0], "flux"),
+			"--concurrency", "2", "--cache-dir", t.TempDir(), "--log-level", "warn", "-o", "diff")
+		if strings.Count(out, "-  mode: before") != 1 || strings.Count(out, "+  mode: after") != 1 || strings.Count(out, "   value: v1.0.0") != 1 || strings.Contains(out, "dirty-pin") || strings.Contains(out, "${") {
+			t.Fatalf("expected dirty consumer changes with transitive pinned substitution on both sides:\n%s\n%s", out, warnings)
+		}
+		if run != 0 && (out != priorOut || warnings != priorWarnings) {
+			t.Fatalf("diff or warnings changed across runs:\n%s\n%s", out, warnings)
+		}
+		priorOut, priorWarnings = out, warnings
+	}
+}
+
 func TestE2E_PinnedDiff_DeletedSubstituteFromProducer(t *testing.T) {
 	testPinnedProducerDiff(t, true)
 }

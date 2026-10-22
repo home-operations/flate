@@ -43,6 +43,9 @@ func (c *ConfigMap) Value(key string) (string, bool, error) {
 	return s, true, nil
 }
 
+// HasKeys reports whether the ConfigMap has substitution keys.
+func (c *ConfigMap) HasKeys() bool { return len(c.Data) != 0 }
+
 // Keys yields the data keys without imposing output order.
 func (c *ConfigMap) Keys() iter.Seq[string] { return maps.Keys(c.Data) }
 
@@ -109,6 +112,9 @@ func (s *Secret) Value(key string) (string, bool, error) {
 	}
 	return string(decoded), true, nil
 }
+
+// HasKeys reports whether the Secret has substitution keys.
+func (s *Secret) HasKeys() bool { return len(s.Data) != 0 || len(s.StringData) != 0 }
 
 // Keys yields each key once without allocating a union map.
 func (s *Secret) Keys() iter.Seq[string] {

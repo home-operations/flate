@@ -26,13 +26,6 @@ type SecretGetter = source.SecretGetter
 
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
-	mu sync.RWMutex
-	// resolver is the canonical (and only) source-lookup surface.
-	// Embedders MUST call SetSourceResolver before any Template call;
-	// the orchestrator wires NewStoreSourceResolver(store) at
-	// construction.
-	resolver SourceResolver
-
 	// Canonical charts MUST remain immutable; renders clone at the mutation boundary.
 	chartMu        sync.RWMutex
 	chartCache     map[string]chartDescription
@@ -70,27 +63,6 @@ func NewClient(owner *cache.Cache) (*Client, error) {
 // Clients constructed via NewClient.
 func (c *Client) ValuesCache() *values.Cache { return c.valuesCache }
 
-// SetSourceResolver installs the canonical lookup surface for
-// HelmRepository / OCIRepository / local-artifact sources. helm.Client
-// reads through the resolver on every Template call — there's no
-// alternate path. Safe to call before any template call; typically
-// once at orchestrator construction.
-func (c *Client) SetSourceResolver(r SourceResolver) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.resolver = r
-}
-
-// Resolver returns the configured SourceResolver, or nil when none
-// has been wired. Exposed so the HelmRelease controller (and embedders
-// calling Prepare) can pass resolver.HelmChart into ResolveChartRef
-// without holding a separate reference to the resolver.
-func (c *Client) Resolver() SourceResolver {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.resolver
-}
-
 type chartDescription struct {
 	captured      capturedChart
 	key, location string
@@ -106,7 +78,7 @@ type chartDescription struct {
 	valuesPin     string
 }
 
-func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease) (chartDescription, error) {
+func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, sources Sources) (chartDescription, error) {
 	if hr == nil {
 		return chartDescription{}, errors.New("nil HelmRelease")
 	}
@@ -119,10 +91,7 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease) (c
 	default:
 		return chartDescription{}, fmt.Errorf("%w: unsupported chart repo kind %s", manifest.ErrInput, hr.Chart.Source.Kind)
 	}
-	var art *store.SourceArtifact
-	if r := c.Resolver(); r != nil {
-		art = r.LocalSourceArtifact(hr.ChartSource())
-	}
+	art := sources.LocalSourceArtifact(hr.ChartSource())
 	if art == nil || art.FS == nil {
 		return chartDescription{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.Source.Kind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())

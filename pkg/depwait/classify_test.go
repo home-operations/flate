@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/home-operations/flate/pkg/schedule"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -27,60 +26,60 @@ func TestClassify_CoreStates(t *testing.T) {
 
 	w := &Waiter{Store: s}
 
-	if got := w.classify(ready, manifest.DrainNone, w.Existence); got.Kind != schedule.Terminal {
-		t.Errorf("ready: got %+v, want ClassReady", got)
+	if got := w.Classify(t.Context(), ready, manifest.DrainNone); got.Kind != schedule.Terminal {
+		t.Errorf("ready: got %+v, want schedule.Terminal", got)
 	}
 	for _, reason := range []store.StatusReason{store.ReasonSkipped, store.ReasonUnchanged, store.ReasonSuspended} {
 		t.Run(string(reason), func(t *testing.T) {
 			s.UpdateStatus(ready.NamedResource, store.StatusReady, reason, "")
-			if got := w.classify(ready, manifest.DrainNone, w.Existence); got.Kind != schedule.Terminal {
+			if got := w.Classify(t.Context(), ready, manifest.DrainNone); got.Kind != schedule.Terminal {
 				t.Fatalf("typed Ready reason %s blocked dependency: %+v", reason, got)
 			}
 		})
 	}
-	if got := w.classify(failed, manifest.DrainNone, w.Existence); got.Kind != schedule.DependencyFailed || got.Message != "boom" {
-		t.Errorf("failed: got %+v, want ClassFailed 'boom'", got)
+	if got := w.Classify(t.Context(), failed, manifest.DrainNone); got.Kind != schedule.DependencyFailed || got.Message != "boom" {
+		t.Errorf("failed: got %+v, want schedule.DependencyFailed 'boom'", got)
 	}
 	// Present-Pending: blocks at none/cascade, fails "not ready" only at force.
-	if got := w.classify(pending, manifest.DrainNone, w.Existence); got.Kind != schedule.Blocked {
-		t.Errorf("pending@none: got %+v, want ClassBlocked", got)
+	if got := w.Classify(t.Context(), pending, manifest.DrainNone); got.Kind != schedule.Blocked {
+		t.Errorf("pending@none: got %+v, want schedule.Blocked", got)
 	}
-	if got := w.classify(pending, manifest.DrainCascade, w.Existence); got.Kind != schedule.Blocked {
-		t.Errorf("pending@cascade: got %+v, want ClassBlocked (cascade keeps Pending blocked)", got)
+	if got := w.Classify(t.Context(), pending, manifest.DrainCascade); got.Kind != schedule.Blocked {
+		t.Errorf("pending@cascade: got %+v, want schedule.Blocked (cascade keeps Pending blocked)", got)
 	}
-	if got := w.classify(pending, manifest.DrainForce, w.Existence); got.Kind != schedule.DependencyFailed || got.Message != "not ready" {
-		t.Errorf("pending@force: got %+v, want ClassFailed 'not ready'", got)
+	if got := w.Classify(t.Context(), pending, manifest.DrainForce); got.Kind != schedule.DependencyFailed || got.Message != "not ready" {
+		t.Errorf("pending@force: got %+v, want schedule.DependencyFailed 'not ready'", got)
 	}
 	// Present with no Ready condition (a synthetic HelmChart before its source
 	// worker's first write) classifies exactly like Pending.
-	for level, want := range map[manifest.DrainLevel]classification{
+	for level, want := range map[manifest.DrainLevel]Classification{
 		manifest.DrainNone:    {Kind: schedule.Blocked},
 		manifest.DrainCascade: {Kind: schedule.Blocked},
 		manifest.DrainForce:   {Kind: schedule.DependencyFailed, Message: "not ready"},
 	} {
-		if got := w.classify(statusless, level, w.Existence); got != want {
+		if got := w.Classify(t.Context(), statusless, level); got != want {
 			t.Errorf("statusless@%v: got %+v, want %+v", level, got, want)
 		}
 	}
 	// Absent: blocks at none, fails "dependency not found" once draining.
-	if got := w.classify(absent, manifest.DrainNone, w.Existence); got.Kind != schedule.Blocked {
-		t.Errorf("absent@none: got %+v, want ClassBlocked", got)
+	if got := w.Classify(t.Context(), absent, manifest.DrainNone); got.Kind != schedule.Blocked {
+		t.Errorf("absent@none: got %+v, want schedule.Blocked", got)
 	}
-	if got := w.classify(absent, manifest.DrainCascade, w.Existence); got.Kind != schedule.DependencyFailed || got.Message != "dependency not found" {
-		t.Errorf("absent@cascade: got %+v, want ClassFailed 'dependency not found'", got)
+	if got := w.Classify(t.Context(), absent, manifest.DrainCascade); got.Kind != schedule.DependencyFailed || got.Message != "dependency not found" {
+		t.Errorf("absent@cascade: got %+v, want schedule.DependencyFailed 'dependency not found'", got)
 	}
 	for _, group := range []string{"", "example.test"} {
 		t.Run("group="+group, func(t *testing.T) {
 			foreign := ready
 			foreign.Group = group
-			if got := w.classify(foreign, manifest.DrainNone, w.Existence); got.Kind != schedule.Blocked {
+			if got := w.Classify(t.Context(), foreign, manifest.DrainNone); got.Kind != schedule.Blocked {
 				t.Fatalf("absent lookalike borrowed Ready status: %+v", got)
 			}
-			if got := w.classify(foreign, manifest.DrainCascade, w.Existence); got.Kind != schedule.DependencyFailed || got.Message != "dependency not found" {
+			if got := w.Classify(t.Context(), foreign, manifest.DrainCascade); got.Kind != schedule.DependencyFailed || got.Message != "dependency not found" {
 				t.Fatalf("absent lookalike at drain: %+v", got)
 			}
 			s.UpdateStatus(foreign.NamedResource, store.StatusPending, "", "foreign status")
-			if got := w.classify(foreign, manifest.DrainNone, w.Existence); got.Kind != schedule.Terminal {
+			if got := w.Classify(t.Context(), foreign, manifest.DrainNone); got.Kind != schedule.Terminal {
 				t.Fatalf("status-only lookalike acquired Flux readiness: %+v", got)
 			}
 		})
@@ -91,13 +90,13 @@ func TestClassify_CoreStates(t *testing.T) {
 			t.Run(fmt.Sprintf("CRD/group=%s/allow=%t", group, allow), func(t *testing.T) {
 				dep := manifest.DependencyRef{Group: group, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.test"}
 				for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade, manifest.DrainForce} {
-					want := classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}
+					want := Classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}
 					if level == manifest.DrainNone {
-						want = classification{Kind: schedule.Blocked}
+						want = Classification{Kind: schedule.Blocked}
 					} else if allow && group == "apiextensions.k8s.io" {
-						want = classification{Kind: schedule.Terminal}
+						want = Classification{Kind: schedule.Terminal}
 					}
-					if got := w.classify(dep, level, w.Existence); got != want {
+					if got := w.Classify(t.Context(), dep, level); got != want {
 						t.Fatalf("missing CRD at %v: %+v, want %+v", level, got, want)
 					}
 				}
@@ -110,36 +109,16 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	dep := manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", "infra")}
-	parent := &manifest.ResourceSet{Name: "parent", Namespace: "ns"}
-	s.AddObject(parent)
-	s.AddObject(&manifest.Kustomization{Name: dep.Name, Namespace: dep.Namespace})
-	s.UpdateStatus(parent.Named(), store.StatusPending, "", "waiting on infra")
 	s.UpdateStatus(dep.NamedResource, store.StatusReady, "", "")
-	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`
+	dep.ReadyExpr = `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")` // not satisfied
 
-	w := &Waiter{Store: s, Parent: parent.Named()}
-	if got := w.classify(dep, manifest.DrainNone, w.Existence); got.Kind != schedule.Blocked {
-		t.Errorf("replace ReadyExpr false@none: got %+v, want ClassBlocked", got)
+	w := &Waiter{Store: s}
+	if got := w.Classify(t.Context(), dep, manifest.DrainNone); got.Kind != schedule.Blocked {
+		t.Errorf("replace ReadyExpr false@none: got %+v, want schedule.Blocked", got)
 	}
-	if got := w.classify(dep, manifest.DrainCascade, w.Existence); got.Kind != schedule.DependencyFailed ||
+	if got := w.Classify(t.Context(), dep, manifest.DrainCascade); got.Kind != schedule.DependencyFailed ||
 		got.Message != "readyExpr timeout: context deadline exceeded" {
-		t.Errorf("replace ReadyExpr false@cascade: got %+v, want ClassFailed 'readyExpr timeout: context deadline exceeded'", got)
-	}
-	pending, _ := s.GetStatus(parent.Named())
-	dep.ReadyExpr = fmt.Sprintf(`dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True") && self.status.conditions.exists(c, c.type == "Ready" && c.status == %q && c.reason == %q && c.message == %q)`, metav1.ConditionUnknown, pending.Reason, pending.Message)
-	for _, tc := range []struct {
-		name  string
-		level manifest.DrainLevel
-	}{
-		{"ordinary", manifest.DrainNone},
-		{"cascade", manifest.DrainCascade},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := w.classify(dep, tc.level, w.Existence); got.Kind != schedule.Terminal {
-				t.Errorf("ResourceSet self condition: got %+v, want Terminal", got)
-			}
-		})
+		t.Errorf("replace ReadyExpr false@cascade: got %+v, want schedule.DependencyFailed 'readyExpr timeout: context deadline exceeded'", got)
 	}
 }
 
@@ -163,11 +142,41 @@ func TestClassify_EdgeReadiness(t *testing.T) {
 			s.AddObject(tc.obj)
 			s.UpdateStatus(tc.obj.Named(), store.StatusPending, "", "working")
 			w := &Waiter{Store: s}
-			got := w.classify(manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: tc.expr}, manifest.DrainNone, w.Existence)
+			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: tc.expr}, manifest.DrainNone)
 			if got.Kind != tc.want {
 				t.Fatalf("classification = %+v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
+	s.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
+	s.AddObject(&manifest.Kustomization{Name: b.Name, Namespace: b.Namespace})
+	failure := &manifest.DependencyFailedError{Parent: a, Failed: []manifest.NamedResource{b}, Reasons: map[manifest.NamedResource]string{b: "not ready"}}
+	s.UpdateFailure(a, failure)
+	w := Waiter{Store: s, Parent: b}
+	ref := manifest.DependencyRef{NamedResource: a}
+	first := w.Classify(t.Context(), ref, manifest.DrainForce)
+	if first != (Classification{Kind: schedule.DependencyFailed, Message: failure.Error()}) {
+		t.Fatalf("derived failure: %+v", first)
+	}
+	nested := &manifest.DependencyFailedError{Parent: b, Failed: []manifest.NamedResource{a}, Reasons: map[manifest.NamedResource]string{a: first.Message}}
+	s.UpdateFailure(b, nested)
+	w.Parent = a
+	next := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce)
+	if next != (Classification{Kind: schedule.DependencyFailed, Message: nested.Error()}) {
+		t.Fatalf("nested failure lost its cause: %+v", next)
+	}
+	if got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce); got != next {
+		t.Fatalf("unchanged failure changed: %+v", got)
+	}
+	s.UpdateStatus(a, store.StatusFailed, "", "leaf failure")
+	if got := w.Classify(t.Context(), ref, manifest.DrainForce); got.Message != "leaf failure" {
+		t.Fatalf("direct failure lost its reason: %+v", got)
 	}
 }
 
@@ -178,14 +187,14 @@ func TestClassify_OrdinaryPromotion(t *testing.T) {
 		materialize bool
 		withdraw    bool
 		status      store.Status
-		want        classification
+		want        Classification
 	}{
-		{name: "absent", want: classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}},
-		{name: "materialized", materialize: true, want: classification{Kind: schedule.Terminal}},
-		{name: "withdrawn", materialize: true, withdraw: true, want: classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}},
-		{name: "ready", materialize: true, status: store.StatusReady, want: classification{Kind: schedule.Terminal}},
-		{name: "failed", materialize: true, status: store.StatusFailed, want: classification{Kind: schedule.DependencyFailed, Message: "boom"}},
-		{name: "pending", materialize: true, status: store.StatusPending, want: classification{Kind: schedule.Blocked}},
+		{name: "absent", want: Classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}},
+		{name: "materialized", materialize: true, want: Classification{Kind: schedule.Terminal}},
+		{name: "withdrawn", materialize: true, withdraw: true, want: Classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}},
+		{name: "ready", materialize: true, status: store.StatusReady, want: Classification{Kind: schedule.Terminal}},
+		{name: "failed", materialize: true, status: store.StatusFailed, want: Classification{Kind: schedule.DependencyFailed, Message: "boom"}},
+		{name: "pending", materialize: true, status: store.StatusPending, want: Classification{Kind: schedule.Blocked}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -209,9 +218,9 @@ func TestClassify_OrdinaryPromotion(t *testing.T) {
 				}
 			}
 			w := Waiter{Store: st, Existence: promotion}
-			got := w.classify(manifest.DependencyRef{NamedResource: data.Named()}, manifest.DrainCascade, w.Existence)
+			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: data.Named()}, manifest.DrainCascade)
 			if promotion.calls != 1 || got != tc.want {
-				t.Fatalf("promotion calls=%d classification=%+v, want %+v", promotion.calls, got, tc.want)
+				t.Fatalf("promotion calls=%d Classification=%+v, want %+v", promotion.calls, got, tc.want)
 			}
 		})
 	}

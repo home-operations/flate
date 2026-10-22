@@ -23,22 +23,19 @@ import (
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-// stubTypedFetcher records its Fetch calls so the Wrap test can pin
-// the typed-dispatch path.
 type stubTypedFetcher struct {
 	called *manifest.GitRepository
 	policy sourcecache.Policy
+	reads  *store.ReadSet
 }
 
-func (s *stubTypedFetcher) Fetch(_ context.Context, obj *manifest.GitRepository, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (s *stubTypedFetcher) Fetch(_ context.Context, obj *manifest.GitRepository, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	s.called = obj
+	s.reads = reads
 	s.policy = policy
 	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
 }
 
-// TestWrap_DispatchesTypedPayload pins the happy path: Wrap turns a
-// TypedFetcher into a Fetcher whose Fetch routes a matching payload
-// through the typed inner function.
 func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	t.Parallel()
 	inner := &stubTypedFetcher{}
@@ -47,7 +44,11 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	repo.URL = "https://example.com/repo.git"
 
 	policy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}}
-	art, err := f.Fetch(context.Background(), repo, policy)
+	reads := testReadSet(repo)
+	art, err := f.Fetch(t.Context(), repo, reads, policy)
+	if inner.reads != reads {
+		t.Fatal("ReadSet was not forwarded")
+	}
 	if inner.policy != policy {
 		t.Fatalf("policy=%+v, want %+v", inner.policy, policy)
 	}
@@ -62,20 +63,13 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	}
 }
 
-// TestWrap_MismatchedPayloadReturnsInputError pins the single
-// type-assertion site: a wrong-kind payload returns a wrapped
-// ErrInput naming the responsible kind. Previously every concrete
-// fetcher's Fetch opened with its own assertion — four copies of
-// the same boilerplate, each a potential panic site if anyone
-// forgot the `, ok` check.
 func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 	t.Parallel()
 	inner := &stubTypedFetcher{}
 	f := Wrap(manifest.KindGitRepository, inner)
-	// An OCIRepository payload going through a Git-typed wrapper.
 	wrong := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
 
-	_, err := f.Fetch(context.Background(), wrong, sourcecache.Policy{})
+	_, err := f.Fetch(context.Background(), wrong, testReadSet(wrong), sourcecache.Policy{})
 	if err == nil {
 		t.Fatal("expected ErrInput on mismatched payload")
 	}

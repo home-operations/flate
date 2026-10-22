@@ -55,14 +55,14 @@ data:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	wantAll, err := manifest.SplitDocs([]byte(crd + "---\n" + cm))
 	if err != nil {
 		t.Fatal(err)
 	}
 	skipHR := newHR()
 	skipHR.CRDsPolicy = "Skip"
-	wantRaw, err := cli.Template(t.Context(), skipHR, nil, Options{SkipCRDs: true})
+	wantRaw, err := cli.Template(t.Context(), skipHR, nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ data:
 			opts := Options{SkipCRDs: tc.skip}
 			inst, _ := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())
 			assert.Equal(t, inst.IncludeCRDs, tc.wantInclude)
-			raw, err := cli.Template(t.Context(), hr, nil, opts)
+			raw, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ data:
 				wantOutput = "---\n# Source: mychart/crds/widgets.yaml\n" + crd + "\n" + wantRaw
 			}
 			assert.Equal(t, raw, wantOutput)
-			docsRaw, err := cli.Template(t.Context(), hr, nil, opts)
+			docsRaw, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			var docs []map[string]any
 			if err == nil {
 				docs, err = manifest.SplitDocs([]byte(docsRaw))
@@ -132,12 +132,12 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	want, err := manifest.SplitDocs([]byte(cm))
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, wantErr := cli.Template(t.Context(), newHR(), nil, Options{})
+	raw, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if wantErr == nil {
 		_, wantErr = manifest.SplitDocs([]byte(raw))
 	}
@@ -162,7 +162,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 			t.Parallel()
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
-			docsRaw, err := cli.Template(t.Context(), hr, nil, Options{SkipCRDs: tc.skip})
+			docsRaw, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			var docs []map[string]any
 			if err == nil {
 				docs, err = manifest.SplitDocs([]byte(docsRaw))
@@ -195,8 +195,8 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
-	raw, wantErr := cli.Template(t.Context(), newHR(), nil, Options{})
+
+	raw, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if wantErr == nil {
 		_, wantErr = manifest.SplitDocs([]byte(raw))
 	}
@@ -204,7 +204,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
 	for range 2 {
-		raw, err := cli.Template(t.Context(), newHR(), nil, Options{SkipCRDs: true})
+		raw, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 		if err == nil {
 			_, err = manifest.SplitDocs([]byte(raw))
 		}
@@ -235,7 +235,7 @@ dependencies:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	want, err := manifest.SplitDocs([]byte(cm))
 	if err != nil {
 		t.Fatal(err)
@@ -255,12 +255,12 @@ dependencies:
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
 			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
-			includedRaw, wantErr := cli.Template(t.Context(), hr, values, Options{})
+			includedRaw, wantErr := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			var included []map[string]any
 			if wantErr == nil {
 				included, wantErr = manifest.SplitDocs([]byte(includedRaw))
 			}
-			docsRaw, err := cli.Template(t.Context(), hr, values, Options{SkipCRDs: true})
+			docsRaw, err := cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			var docs []map[string]any
 			if err == nil {
 				docs, err = manifest.SplitDocs([]byte(docsRaw))
@@ -542,7 +542,7 @@ data:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	for _, tc := range []struct {
 		name, version, want string
 		fail                bool
@@ -553,7 +553,7 @@ data:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			raw, err := cli.Template(t.Context(), newHR(), nil, Options{KubeVersion: tc.version})
+			raw, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{KubeVersion: tc.version, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if tc.fail {
 				if err == nil {
 					t.Fatal("invalid override accepted")
@@ -597,7 +597,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 			hr := newHR()
 			hr.DisableSchemaValidation = tc.install
 			if tc.install {
@@ -615,11 +615,11 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			warm := hr.Clone()
 			warm.DisableSchemaValidation = true
 			warm.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
-			if _, err := cli.Template(t.Context(), warm, values, opts); err != nil {
+			if _, err := cli.Template(t.Context(), warm, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}); err != nil {
 				t.Fatalf("warm cache: %v", err)
 			}
 			for range 2 {
-				_, err := cli.Template(t.Context(), hr, values, opts)
+				_, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 				assert.Diff(t, hr.HelmReleaseSpec, original.HelmReleaseSpec)
 				assert.Equal(t, hr.DisableSchemaValidation, original.DisableSchemaValidation)
 				if tc.wantSkip {
@@ -644,7 +644,7 @@ func TestTemplate_ShowOnlyFraming(t *testing.T) {
 	testutil.WriteFile(t, dir, "demo/templates/b.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}")
 	cli, err := NewClient(cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", dir))
+
 	const a = "---\n# Source: demo/templates/a.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}\n"
 	const b = "---\n# Source: demo/templates/b.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}\n"
 	for _, tc := range []struct {
@@ -665,7 +665,7 @@ func TestTemplate_ShowOnlyFraming(t *testing.T) {
 			for i := range 2 {
 				hr := newHR()
 				hr.Chart.Name = "demo"
-				out, err := cli.Template(t.Context(), hr, nil, Options{ShowOnly: tc.paths})
+				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{ShowOnly: tc.paths, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 				assert.NoError(t, err)
 				assert.Equal(t, out, tc.want)
 				assert.Diff(t, templateResources(t, out), tc.names)

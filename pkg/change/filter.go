@@ -102,15 +102,15 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	return ok
 }
 
-func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResource {
+func (f *Filter) producersFor(id manifest.NamedResource, objs ObjectLister) []manifest.NamedResource {
 	if f == nil {
 		return nil
 	}
 	var out []manifest.NamedResource
-	if f.objs == nil {
+	if objs == nil {
 		return nil
 	}
-	for _, p := range f.objs.Productions(id, f.index) {
+	for _, p := range objs.Productions(id, f.index) {
 		if id.KindInfo().Discovery && p.Declaration == (manifest.NamedResource{}) {
 			continue
 		}
@@ -152,9 +152,8 @@ func (f *Filter) producersFor(id manifest.NamedResource) []manifest.NamedResourc
 // AddObject — if AddEmitted ran after, the listener sees the old
 // keep set and short-circuits to Ready/"unchanged".
 //
-// Returns newly-kept ids after releasing the filter lock. Callers may refire
-// their arrivals before publishing the consumer. Safe for concurrent use.
-func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseManifest) []manifest.NamedResource {
+// Returns newly-kept ids after releasing the filter lock so callers can publish admission.
+func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseManifest, objs ObjectLister) []manifest.NamedResource {
 	if !f.Enabled() {
 		return nil
 	}
@@ -170,13 +169,13 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 		added = append(added, id)
 	}
 	f.primary[id] = struct{}{}
-	for _, accepted := range f.acceptedChildren(id) {
-		added = append(added, f.addRecursiveLocked(accepted.Obj.Named())...)
+	for _, accepted := range acceptedChildren(id, objs) {
+		added = append(added, f.addRecursiveLocked(accepted.Obj.Named(), objs)...)
 	}
 	var refs [8]manifest.NamedResource
 	for _, dep := range appendReferences(refs[:0], child, false) {
-		added = append(added, f.addRecursiveLocked(dep)...)
-		added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)
+		added = append(added, f.addRecursiveLocked(dep, objs)...)
+		added = append(added, f.addDependencyOnlyRecursiveLocked(objs, f.producersFor(dep, objs)...)...)
 	}
 	return added
 }
@@ -194,7 +193,7 @@ func (f *Filter) markKept(id manifest.NamedResource) {
 // addRecursiveLocked is the lock-free body of addRecursive — the
 // caller MUST hold f.mu.Lock(). Pulled out so AddEmitted can do its
 // gate-and-recurse atomically under a single lock acquisition.
-func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedResource {
+func (f *Filter) addRecursiveLocked(id manifest.NamedResource, objs ObjectLister) []manifest.NamedResource {
 	var added []manifest.NamedResource
 	stack := []manifest.NamedResource{id}
 	for len(stack) > 0 {
@@ -221,14 +220,14 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 		// objs may be nil for tests that construct a Filter without
 		// an ObjectLister; in that case the walk is a no-op (the
 		// resolve() pre-build covered the initial graph already).
-		if f.objs == nil {
+		if objs == nil {
 			continue
 		}
-		for _, child := range f.acceptedChildren(cur) {
+		for _, child := range acceptedChildren(cur, objs) {
 			stack = append(stack, child.Obj.Named())
 		}
 		var refs [8]manifest.NamedResource
-		for _, dep := range appendReferences(refs[:0], f.objs.GetObject(cur), false) {
+		for _, dep := range appendReferences(refs[:0], objs.GetObject(cur), false) {
 			if _, ok := f.primary[dep]; !ok {
 				stack = append(stack, dep)
 			}
@@ -238,7 +237,7 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 			// re-introduce the #204 keep cascade (an unchanged
 			// producer's render output for unrelated siblings is
 			// identical to baseline). See #418.
-			added = append(added, f.addDependencyOnlyRecursiveLocked(f.producersFor(dep)...)...)
+			added = append(added, f.addDependencyOnlyRecursiveLocked(objs, f.producersFor(dep, objs)...)...)
 		}
 	}
 	return added
@@ -258,7 +257,7 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource) []manifest.NamedR
 // Chained producers are walked: a producer that itself has a
 // substituteFrom CM produced by another KS pulls that KS in too,
 // again ancestor-only. See #418.
-func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource) []manifest.NamedResource {
+func (f *Filter) addDependencyOnlyRecursiveLocked(objs ObjectLister, ids ...manifest.NamedResource) []manifest.NamedResource {
 	var added []manifest.NamedResource
 	stack := slices.Clone(ids)
 	for len(stack) > 0 {
@@ -269,13 +268,13 @@ func (f *Filter) addDependencyOnlyRecursiveLocked(ids ...manifest.NamedResource)
 		}
 		f.markKept(cur)
 		added = append(added, cur)
-		if f.objs == nil {
+		if objs == nil {
 			continue
 		}
 		var refs [8]manifest.NamedResource
-		for _, dep := range appendReferences(refs[:0], f.objs.GetObject(cur), false) {
+		for _, dep := range appendReferences(refs[:0], objs.GetObject(cur), false) {
 			stack = append(stack, dep)
-			for _, producer := range f.producersFor(dep) {
+			for _, producer := range f.producersFor(dep, objs) {
 				if producer == cur {
 					continue
 				}
@@ -428,7 +427,7 @@ func (f *Filter) resolve() {
 	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
 		_, headPrimary := primary[queue[head]]
 		if headPrimary {
-			for _, child := range f.acceptedChildren(queue[head]) {
+			for _, child := range acceptedChildren(queue[head], objs) {
 				enqueuePrimary(child.Obj.Named())
 			}
 		}
@@ -457,7 +456,7 @@ func (f *Filter) resolve() {
 			// Read discovery data owners via the unlocked producersFor:
 			// resolve() runs pre-publication (f.keep / f.primary not yet set),
 			// before the keep-set lock is used by concurrent readers.
-			for _, producer := range f.producersFor(d) {
+			for _, producer := range f.producersFor(d, objs) {
 				if producer == queue[head] {
 					continue
 				}
@@ -534,9 +533,9 @@ func (f *Filter) KeepNamespaces() map[string]struct{} {
 	return out
 }
 
-func (f *Filter) acceptedChildren(id manifest.NamedResource) []store.Child {
-	if f.objs != nil {
-		if current, ok := f.objs.GetArtifact(id).(*store.Emission); ok {
+func acceptedChildren(id manifest.NamedResource, objs ObjectLister) []store.Child {
+	if objs != nil {
+		if current, ok := objs.GetArtifact(id).(*store.Emission); ok {
 			return current.Children
 		}
 	}

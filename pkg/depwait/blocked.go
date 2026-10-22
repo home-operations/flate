@@ -2,10 +2,10 @@ package depwait
 
 import "github.com/home-operations/flate/pkg/manifest"
 
-// ErrBlocked carries parking identities without turning content suppliers into causes.
-// It MUST remain outside the user-facing error sentinel chain.
+// ErrBlocked retains unresolved dependency identities for structural classification.
+// It MUST remain separate from user-facing failure sentinels.
 type ErrBlocked struct {
-	manifest.ReconcileWait
+	Deps []manifest.NamedResource
 }
 
 func (e *ErrBlocked) Error() string { return "blocked on dependencies" }

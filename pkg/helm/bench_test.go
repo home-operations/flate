@@ -52,7 +52,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	if acquired {
 		input = acquireChartFS(b, cli.cache, input)
 	}
-	cli.SetSourceResolver(benchChartResolver(b, chartDir, input))
+	cliSources := benchChartResolver(b, chartDir, input)
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -64,7 +64,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := cli.Template(ctx, hr, values, Options{})
+		out, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
@@ -82,7 +82,7 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewClient: %v", err)
 	}
-	cli.SetSourceResolver(benchChartResolver(b, chartDir, os.DirFS(chartDir)))
+	cliSources := benchChartResolver(b, chartDir, os.DirFS(chartDir))
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -94,7 +94,7 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := cli.Template(ctx, hr, values, Options{})
+		out, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
@@ -128,21 +128,21 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				b.Fatal(err)
 			}
 			input := acquireChartFS(b, owner, os.DirFS(dir))
-			cli.SetSourceResolver(benchChartResolver(b, dir, input))
+			cliSources := benchChartResolver(b, dir, input)
 			hr := newHR()
 			hr.ChartValuesFiles = []string{"config/prod.yaml"}
-			first, err := cli.Template(b.Context(), hr, nil, Options{})
+			first, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				b.Fatal(err)
 			}
 			if !strings.Contains(first, `greeting: "pinned"`) || !strings.Contains(first, `replicas: "3"`) {
 				b.Fatal(first)
 			}
-			second, err := cli.Template(b.Context(), hr, nil, Options{})
+			second, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil || second != first {
 				b.Fatalf("warm render differs: %v", err)
 			}
-			loaded, err := cli.describeChart(b.Context(), hr)
+			loaded, err := cli.describeChart(b.Context(), hr, cliSources)
 			if err != nil || loaded.valuesPin == "" {
 				b.Fatalf("source values are not pinned: %v", err)
 			}
@@ -161,7 +161,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				if err := reader.Close(); err != nil {
 					b.Fatal(err)
 				}
-				out, err := cli.Template(b.Context(), hr, nil, Options{})
+				out, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				if err != nil || out != witness {
 					b.Fatalf("persisted output witness missing: %v", err)
 				}
@@ -169,7 +169,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := cli.Template(b.Context(), hr, nil, Options{}); err != nil {
+				if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -207,12 +207,12 @@ spec:
 				if err != nil {
 					b.Fatal(err)
 				}
-				cli.SetSourceResolver(benchChartResolver(b, dir, os.DirFS(dir)))
+				cliSources := benchChartResolver(b, dir, os.DirFS(dir))
 				hr := newHR()
 				hr.CRDsPolicy = policy
 				b.ReportAllocs()
 				for b.Loop() {
-					if _, err := cli.Template(b.Context(), hr, nil, Options{SkipCRDs: true}); err != nil {
+					if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{SkipCRDs: true, Sources: cliSources}); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -243,7 +243,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	if acquired {
 		input = acquireChartFS(b, cli.cache, input)
 	}
-	cli.SetSourceResolver(benchChartResolver(b, chartDir, input))
+	cliSources := benchChartResolver(b, chartDir, input)
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
@@ -251,7 +251,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	}
 	values := map[string]any{"greeting": "hello"}
 	ctx := context.Background()
-	if _, err := cli.Template(ctx, hr, values, Options{}); err != nil {
+	if _, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources}); err != nil {
 		b.Fatalf("warm Template: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		i++
 		// CommonMetadata MUST remain outside the completed-output key.
 		hr.CommonMetadata = &helmv2.CommonMetadata{Labels: map[string]string{"rev": fmt.Sprintf("%d", i)}}
-		out, err := cli.Template(ctx, hr, values, Options{})
+		out, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
@@ -292,21 +292,21 @@ func benchmarkLoadChartCached(b *testing.B, acquired bool) {
 	if acquired {
 		input = acquireChartFS(b, cli.cache, input)
 	}
-	cli.SetSourceResolver(benchChartResolver(b, chartDir, input))
+	cliSources := benchChartResolver(b, chartDir, input)
 
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 	ctx := context.Background()
-	if _, err := loadDecodedChart(ctx, cli, hr); err != nil {
+	if _, err := loadDecodedChart(ctx, cli, hr, cliSources); err != nil {
 		b.Fatalf("warm loadChart: %v", err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := loadDecodedChart(ctx, cli, hr); err != nil {
+		if _, err := loadDecodedChart(ctx, cli, hr, cliSources); err != nil {
 			b.Fatalf("loadChart: %v", err)
 		}
 	}
@@ -368,7 +368,7 @@ data:
 	return dir
 }
 
-func benchChartResolver(b *testing.B, dir string, input fs.FS) SourceResolver {
+func benchChartResolver(b *testing.B, dir string, input fs.FS) Sources {
 	b.Helper()
 	st := store.New()
 	gr := &manifest.GitRepository{Name: "chart-repo", Namespace: "flux-system"}
@@ -376,5 +376,5 @@ func benchChartResolver(b *testing.B, dir string, input fs.FS) SourceResolver {
 	st.SetArtifact(gr.Named(), &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: input, LocalPath: dir,
 	})
-	return NewStoreSourceResolver(st)
+	return NewSources(st)
 }

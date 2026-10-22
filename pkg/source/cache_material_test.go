@@ -103,7 +103,7 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 				certLookups := 0
 				network := new(source.Network)
 				t.Cleanup(network.Close)
-				f := &bucket.Fetcher{Network: network, Cache: owner, Secrets: func(ns, name string) *manifest.Secret {
+				fInputs := testInputs{secrets: func(ns, name string) *manifest.Secret {
 					assert.Equal(t, ns, b.Namespace)
 					switch name {
 					case "proxy":
@@ -116,7 +116,8 @@ func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 						return nil
 					}
 				}}
-				artifact, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval()})
+				f := &bucket.Fetcher{Network: network, Cache: owner}
+				artifact, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval()})
 				assert.NoError(t, err)
 				if artifact.Key == "" || artifact.Revision == "" {
 					t.Fatal("fetch returned an empty key or revision")

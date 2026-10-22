@@ -8,10 +8,8 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -20,7 +18,7 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
+func TestSubstitutionProvider_AcceptedIdentity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, group, kind, namespace, ref string
@@ -36,14 +34,14 @@ func TestCollectDeps_AcceptedSubstitutionExactIdentity(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			c := New(st, task.NewBounded(2), nil, true)
-			source := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
+			source := &manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}}
 			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Group: tc.group, Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
 			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
 			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}}
-			var resolved depwait.Resolution
-			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks, Supplied: c.substitutionSources}, manifest.ReconcileAttempt{Drain: manifest.DrainCascade}, &resolved)
-			if (err == nil) != tc.accepted || (resolved.Inputs.Data(source.Named()) == source) != tc.accepted {
-				t.Fatalf("resolution=%+v err=%v accepted=%v", resolved, err, tc.accepted)
+			execution := c.newExecution(ks.Named())
+			input := execution.data.Lookup(source.Named())
+			if (input.Data == source) != tc.accepted {
+				t.Fatalf("input=%+v accepted=%t", input, tc.accepted)
 			}
 		})
 	}
@@ -66,19 +64,42 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			c := New(st, task.NewBounded(2), nil, true)
 			c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}}, sourcecache.RetryConfig{})
 			st.AddObject(tc.late)
+			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
+			defer execution.run.Close()
+			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.substitutionSources)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
-			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: external.Named().Kind, Name: "external"}}}}
-			var resolved depwait.Resolution
-			err := c.Require(&depwait.Waiter{Parent: ks.Named(), Declaration: ks, Supplied: c.substitutionSources}, manifest.ReconcileAttempt{}, &resolved)
-			assert.NoError(t, err)
-			if resolved.Inputs.Data(external.Named()) != external.(manifest.Data) || resolved.Inputs.Data(missing) != nil {
-				t.Fatal("lost exact supplied precedence or frozen absence")
+			if provider.Data(external.Named()) != external.(manifest.Data) || provider.Data(other.Named()) != other.(manifest.Data) || provider.Data(missing) != nil {
+				t.Fatal("provider lost exact frozen precedence or fallback")
 			}
-			if got := values.UnreadableSubstituteSecrets(ks, resolved.Inputs); len(got) != 0 {
-				t.Fatalf("readable supplied source reported unreadable: %v", got)
+			if !provider.Lookup(external.Named()).Data.HasKeys() {
+				t.Fatal("readable supplied source reported unreadable")
 			}
-			if got, _, err := values.NewStoreProvider(st, true).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
+
+			if got, _, err := values.NewStoreProvider(st, true, nil).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
 				t.Fatal("ordinary provider used supplied values")
+			}
+		})
+	}
+}
+
+func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
+	for _, source := range []manifest.BaseManifest{
+		&manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}},
+		&manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}},
+	} {
+		t.Run(source.Named().Kind, func(t *testing.T) {
+			st := store.New()
+			c := New(st, task.NewBounded(2), nil, true)
+			c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{source.Named(): source}}, sourcecache.RetryConfig{})
+			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
+			defer execution.run.Close()
+			provider := execution.data
+			id := source.Named()
+			if provider.Data(id) != source.(manifest.Data) {
+				t.Fatal("provider lost supplied identity")
+			}
+			if allocs := testing.AllocsPerRun(100, func() { provider.Data(id) }); allocs != 0 {
+				t.Fatalf("supplied lookup allocated %g times, want 0", allocs)
 			}
 		})
 	}
@@ -97,11 +118,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	owner := cachetest.New(t, "", sourcecache.New)
 	tasks := task.NewBounded(2)
-	network := new(source.Network)
-	t.Cleanup(network.Close)
-	inputs := source.NewHTTPInputs(owner, network, tasks)
-	t.Cleanup(inputs.Close)
-	trees := kustomize.NewTreeCache(owner, &inputs, tasks)
+	trees := kustomize.NewTreeCache(owner, nil, tasks)
 	t.Cleanup(trees.Close)
 	c := New(st, tasks, trees, false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
@@ -115,7 +132,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	}
 	ks := obj.(*manifest.Kustomization)
 	st.AddObject(ks)
-	_, err = c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false)
+	err = c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone)
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 		t.Fatalf("strict engine failure lost classification: %v", err)
 	}

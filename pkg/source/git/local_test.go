@@ -597,7 +597,7 @@ func TestCheckoutRef_PreservesOriginFirstBranchLookup(t *testing.T) {
 			spec := &manifest.GitRepository{
 				URL: srv.URL, Reference: ref, RecurseSubmodules: true,
 			}
-			artifact, err := f.Fetch(t.Context(), spec, sourcecache.Policy{MaxAge: time.Hour})
+			artifact, err := f.Fetch(t.Context(), spec, (testInputs{}).readSet(spec), sourcecache.Policy{MaxAge: time.Hour})
 			assert.NoError(t, err)
 			acquired := openGeneration(t, f, spec, artifact)
 			local, err := acquired.Reference(branch, true)

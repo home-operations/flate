@@ -3,6 +3,7 @@ package store
 import (
 	"io/fs"
 	"reflect"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -25,6 +26,8 @@ type Artifact interface {
 // Size is the artifact size in bytes when known, and Metadata holds
 // kind-specific annotations (OCI image annotations, bucket ETag…).
 type SourceArtifact struct {
+	// Reads retains the declaration and material that produced this acquisition.
+	Reads     *ReadSet
 	Kind      string
 	URL       string
 	LocalPath string
@@ -53,7 +56,10 @@ type SourceArtifact struct {
 
 func (*SourceArtifact) artifact() {}
 
-// --- Store operations on artifacts ---
+type artifactRecord struct {
+	value Artifact
+	authority
+}
 
 // SetArtifact stores fetched content or a rendered inventory and notifies live readers.
 // Equal payloads are deduplicated; hidden writes remain private.
@@ -61,37 +67,54 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	prev, exists := sh.artifacts[id]
-	// Dedup cheapest-first: pointer identity (the hot path when a
-	// fetcher caches its own SourceArtifact and re-publishes the same
-	// pointer every refresh tick, skipping reflection entirely) before
-	// the reflect.DeepEqual fallback for distinct-pointer equal content.
-	if exists && (prev == artifact || sameArtifact(prev, artifact)) {
+	if exists && sameArtifact(prev.value, artifact) {
+		var retired *ReadSet
+		if a, ok := artifact.(*SourceArtifact); ok && a.Reads != nil {
+			if before, ok := prev.value.(*SourceArtifact); ok && before.Reads != a.Reads {
+				retired = before.Reads
+				prev.value = artifact
+				sh.artifacts[id] = prev
+			}
+		}
+		sh.mu.Unlock()
+		retired.Retire()
+		return
+	}
+	sh.requireCapacityLocked(prev.authority)
+	if prev.generation == 0 {
+		if !sh.canAdmit(1) {
+			sh.mu.Unlock()
+			panic("store: authority generation exhausted")
+		}
+		sh.admitAbsenceLocked(id, artifactFacet)
+	}
+	prev.authority, prev.value = sh.advanceLocked(prev.authority), artifact
+	sh.artifacts[id] = prev
+	if sh.derived && sh.cells[id].hidden {
 		sh.mu.Unlock()
 		return
 	}
-	sh.artifacts[id] = artifact
-	if sh.hidden[id] {
-		sh.mu.Unlock()
-		return
-	}
-	dispatch := fireUnderLock(s, EventArtifactUpdated, id, artifact)
+	dispatch := fireUnderLock(s, EventArtifactUpdated, id)
+	dispatch.payload = artifact
 	sh.mu.Unlock()
-	dispatch()
+	dispatch.run()
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
 func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	if sh.hidden[id] {
+	if sh.derived && sh.cells[id].hidden {
 		sh.mu.RUnlock()
 		return nil
 	}
-	artifact := sh.artifacts[id]
+	artifact := sh.artifacts[id].value
 	e, emitted := artifact.(*Emission)
 	var input Child
 	if emitted && e.input != nil {
-		input, _ = sh.representativeLocked(id)
+		var view capture
+		sh.captureLocked(id, sh.cells[id], &view)
+		input = view.child
 	}
 	sh.mu.RUnlock()
 	if emitted && !emissionCurrent(e, input) {
@@ -102,16 +125,26 @@ func (s *Store) GetArtifact(id manifest.NamedResource) Artifact {
 
 // Family and generation metadata pin payload identity; never walk a filesystem under the shard lock.
 func sameArtifact(prev, next Artifact) bool {
+	if prev == next {
+		return true
+	}
+	if a, ok := prev.(*Emission); ok {
+		b, ok := next.(*Emission)
+		return ok && a != nil && b != nil && a.Complete == b.Complete &&
+			(a.Children == nil) == (b.Children == nil) &&
+			slices.EqualFunc(a.Children, b.Children, childEqual) && a.sameContent(b)
+	}
 	a, aok := prev.(*SourceArtifact)
 	b, bok := next.(*SourceArtifact)
 	if !aok || !bok {
 		return reflect.DeepEqual(prev, next)
 	}
-	if (a.FS != nil || b.FS != nil) && ((a.FS == nil) != (b.FS == nil) || a.Key == "" || b.Key == "") {
+	if (a.FS == nil) != (b.FS == nil) || a.FS != nil && (a.Key == "" || b.Key == "") {
 		return false
 	}
 	ac, bc := *a, *b
 	ac.FS, bc.FS = nil, nil
+	ac.Reads, bc.Reads = nil, nil
 	ac.Warnings, bc.Warnings = nil, nil
 	return reflect.DeepEqual(ac, bc)
 }
@@ -134,4 +167,17 @@ func emissionCurrent(e *Emission, input Child) bool {
 		e.validated.Store(validated)
 	}
 	return true
+}
+
+func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
+	sh.requireCapacityLocked(sh.conditions[id].stamp(), sh.artifacts[id].authority)
+	if record := sh.conditions[id]; len(record.conditions) > 0 || record.failure != nil {
+		record.advanceLocked(sh)
+		record.conditions, record.failure = record.conditions[:0], nil
+		sh.conditions[id] = record
+	}
+	if record := sh.artifacts[id]; record.value != nil {
+		record.authority, record.value = sh.advanceLocked(record.authority), nil
+		sh.artifacts[id] = record
+	}
 }

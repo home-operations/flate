@@ -22,9 +22,9 @@ import (
 func TestHelmRepoTransport_NoCertRef(t *testing.T) {
 	t.Parallel()
 	r := httpRepo("https://charts.example")
-	f := newHTTPFetcherWithSecrets(t, r, nil)
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, nil)
 
-	prepared, err := f.prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
 	if err != nil {
 		t.Fatalf("prepareHTTP: %v", err)
 	}
@@ -42,15 +42,15 @@ func TestHelmRepoTransport_CertSecret(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	ca := testutil.SelfSignedCA(t)
-	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
 		return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
 	})
 
-	prepared, err := f.prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
 	if err != nil {
 		t.Fatalf("prepareHTTP: %v", err)
 	}
-	material, err := source.ResolveTransport(f.secrets, r.Named(), []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
+	material, err := source.ResolveTransport(fInputs.secrets, r.Named(), []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +69,11 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	r.Name, r.Namespace = "charts", "ns"
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	secret := &manifest.Secret{StringData: map[string]any{"ca.crt": testutil.SelfSignedCA(t)}}
-	f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
-	preparedHTTP(t, f, r)
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+	preparedHTTP(t, f, fInputs, r)
 	secret = nil
 
-	prepared, err := f.prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
 	if err == nil {
 		t.Fatal("expected an error for an absent certSecretRef Secret")
 	}
@@ -109,10 +109,10 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 			r := httpRepo("https://charts.example")
 			r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 			secret := &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
-			f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
-			preparedHTTP(t, f, r)
+			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+			preparedHTTP(t, f, fInputs, r)
 			secret = &manifest.Secret{StringData: tc.data}
-			prepared, err := f.prepareHTTP(r)
+			prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.soft || prepared != nil {
 				t.Fatalf("warm memo bypassed material policy: repository=%v, error=%v", prepared, err)
 			}
@@ -128,10 +128,10 @@ func TestHelmRepoTransport_ProxySnapshot(t *testing.T) {
 	t.Setenv("https_proxy", "")
 	t.Setenv("no_proxy", "bypass.invalid")
 	r := httpRepo("http://bypass.invalid")
-	f := newHTTPFetcher(t, r)
-	first := preparedHTTP(t, f, r)
+	f, fInputs := newHTTPFetcher(t, r)
+	first := preparedHTTP(t, f, fInputs, r)
 	t.Setenv("http_proxy", "http://proxy:second@proxy.invalid:8080")
-	second := preparedHTTP(t, f, r)
+	second := preparedHTTP(t, f, fInputs, r)
 	if manifest.Fingerprint(first.material) == manifest.Fingerprint(second.material) {
 		t.Fatal("cross-host proxy rotation reused identity")
 	}
@@ -168,7 +168,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			if settings == "proxy" {
 				t.Setenv("http_proxy", "http://proxy:first@proxy.invalid:8080")
 			}
-			f := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
 			other := *r
 			other.Name = "other"
 			if r.SecretRef != nil {
@@ -184,7 +184,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			for i, repo := range []*manifest.HelmRepository{r, &other} {
 				wg.Go(func() {
 					<-start
-					prepared[i], errs[i] = f.prepareHTTP(repo)
+					prepared[i], errs[i] = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).prepareHTTP(repo)
 				})
 			}
 			close(start)
@@ -201,7 +201,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			if settings == "anonymous" && first.material != nil {
 				t.Fatal("anonymous identity must be empty")
 			}
-			if warm := preparedHTTP(t, f, r); warm.client.Transport != first.client.Transport {
+			if warm := preparedHTTP(t, f, fInputs, r); warm.client.Transport != first.client.Transport {
 				t.Fatal("warm preparation replaced the transport")
 			}
 			switch settings {
@@ -214,7 +214,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			case "proxy":
 				t.Setenv("http_proxy", "http://proxy:second@proxy.invalid:8080")
 			}
-			changed := preparedHTTP(t, f, r)
+			changed := preparedHTTP(t, f, fInputs, r)
 			equal := settings == "anonymous"
 			if (manifest.Fingerprint(first.material) == manifest.Fingerprint(changed.material)) != equal || (first.client.Transport == changed.client.Transport) != equal {
 				t.Fatal("client isolation did not follow captured identity")
@@ -241,10 +241,11 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 	t.Cleanup(srv.Close)
 	network := newTestNetwork(t)
 	r := httpRepo(srv.URL)
-	f := New(nil, func(_, _ string) *manifest.HelmRepository { return r }, nil, Config{Cache: cachetest.New(t, "", sourcecache.New), Network: network})
+	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return r }}
+	f := New(nil, Config{Cache: cachetest.New(t, "", sourcecache.New), Network: network})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := f.Fetch(ctx, helmChart("repo", "app", "1.0.0"), sourcecache.Policy{})
+	_, err := f.Fetch(ctx, helmChart("repo", "app", "1.0.0"), fInputs.readSet(helmChart("repo", "app", "1.0.0")), sourcecache.Policy{})
 	if err == nil {
 		t.Fatal("malformed index unexpectedly succeeded")
 	}

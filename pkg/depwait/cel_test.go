@@ -6,11 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -52,7 +54,7 @@ func TestReadyExpr_ProjectsObservedGeneration(t *testing.T) {
 
 // TestReadyExpr_ReplaceOverridesBuiltin: in the default (replace) mode a
 // satisfied ReadyExpr makes the dep Ready even when the built-in status is
-// Failed — Classify must return ClassReady (readyNow short-circuits on the CEL).
+// Failed — Classify must return schedule.Terminal (readyNow short-circuits on the CEL).
 func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	t.Parallel()
 	s := store.New()
@@ -64,8 +66,8 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	ref := manifest.DependencyRef{NamedResource: dep,
 		ReadyExpr: `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}
-	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != schedule.Terminal {
-		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want ClassReady", got)
+	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Terminal {
+		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want schedule.Terminal", got)
 	}
 }
 
@@ -85,9 +87,9 @@ func TestReadyExpr_CompileError(t *testing.T) {
 			}
 			w := &Waiter{Store: s}
 			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
-			got := w.classify(ref, manifest.DrainNone, w.Existence)
+			got := w.Classify(t.Context(), ref, manifest.DrainNone)
 			if got.Kind != schedule.DependencyFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
-				t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
+				t.Errorf("compile error: got %+v, want schedule.DependencyFailed with 'readyExpr:' prefix", got)
 			}
 		})
 	}
@@ -123,14 +125,14 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	w := &Waiter{Store: s}
 	const expr = `dep.status.conditions[100].type == "Ready"` // index out of range → runtime eval error
 	var observation store.Observation
-	obj := s.Snapshot(&dep, true, &observation)
+	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
 	if ready, failMsg := w.tryReadyExpr(manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}, obj, conds); ready || failMsg != "" {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
-	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != schedule.Blocked {
-		t.Errorf("transient eval error@none: got %+v, want ClassBlocked (re-runnable, not failed)", got)
+	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Blocked {
+		t.Errorf("transient eval error@none: got %+v, want schedule.Blocked (re-runnable, not failed)", got)
 	}
 }
 
@@ -147,7 +149,7 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	})
 	s.UpdateStatus(dep, store.StatusReady, "", "")
 	var observation store.Observation
-	obj := s.Snapshot(&dep, true, &observation)
+	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
 	fresh := obj.(*manifest.Kustomization).Clone()
 	fresh.Labels = map[string]string{"tier": "changed"}
@@ -183,7 +185,7 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 		t.Errorf("self/dep binding: ok=%v err=%v, want true/nil", ok, err)
 	}
 	var observation store.Observation
-	obj := s.Snapshot(&dep, true, &observation)
+	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
 	s.UpdateStatus(dep, store.StatusFailed, "", "replacement")
 	for _, tc := range []struct {
@@ -254,7 +256,7 @@ func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
 
 func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
 	var observation store.Observation
-	obj := s.Snapshot(&dep, true, &observation)
+	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
 	w := Waiter{Store: s, Parent: self}
 	return w.evaluateReadyExpr(expr, dep, obj, conds)

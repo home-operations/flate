@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestRender_ScanAndPathWarnings(t *testing.T) {
@@ -334,8 +335,10 @@ spec:
 	repo := &manifest.GitRepository{Name: "ssh", Namespace: "flux-system"}
 	repo.URL = "ssh://git@example.test/cluster"
 	repo.SecretRef = &manifest.LocalObjectReference{Name: "cloudflared-secret"}
-	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, sourcecache.Policy{})
-	if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.Detail != "missing 'identity' for SSH auth" {
+	var reads store.ReadSet
+	reads.Init(o.Store(), repo.Named(), nil)
+	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
+	if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.Detail != "missing 'identity' for SSH auth" || missing.Secret.Name != "cloudflared-secret" || !reads.Valid() {
 		t.Fatalf("producer-declared credential did not retain placeholder classification: %v", err)
 	}
 

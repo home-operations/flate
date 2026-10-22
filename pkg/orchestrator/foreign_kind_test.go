@@ -77,12 +77,12 @@ spec:
 		t.Run(kind, func(t *testing.T) {
 			foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: kind, Name: "apps", Namespace: "flux-system"}
 			o.store.AddObject(foreign)
-			out, outWait := (dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || !outWait.Empty() || out.Rerun {
+			result := (dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || result.Assessment != nil {
 				t.Fatalf("foreign %s entered a Flux controller", kind)
 			}
 			o.store.UpdateStatus(foreign.Named(), store.StatusPending, "", "foreign status")
-			(dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+			(dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
 			if info, _ := o.store.GetStatus(foreign.Named()); info.Status != store.StatusPending || info.Message != "foreign status" {
 				t.Fatalf("foreign %s status was rewritten by a Flux controller: %+v", kind, info)
 			}

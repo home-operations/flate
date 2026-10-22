@@ -66,54 +66,84 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if _, parentFailed := failed[parent]; parentFailed {
 			continue
 		}
-		out[id] = info.Message
+		if status, _ := o.store.GetStatus(parent); status.Status == store.StatusReady {
+			out[id] = info.Message
+		}
 	}
 	return out
 }
 
-// finalize is the post-BlockTillDone reporting phase: demote orphans
-// from Failed → Ready, log per-resource warnings, and assemble the
-// aggregated error string. Pulled out of Run so the lifecycle entry
-// point reads as start → drain → finalize.
-func (o *Orchestrator) finalize() error {
-	var prefixes []manifest.KSClaim
-	var inputErrs []error
-	if o.index != nil && len(o.index.Errors) != 0 {
-		prefixes = loader.Claims(o.store, o.repoRoot)
-		for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
-			_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
-			for reader := range o.index.ReadersOfFile(file) {
-				owned = true
-				if !o.filter.ShouldReconcile(reader) {
-					continue
-				}
-				if info, _ := o.store.GetStatus(reader); info.Status != store.StatusFailed && info.Outcome() != store.OutcomeSuspended {
-					o.store.UpdateFailure(reader, o.index.Errors[file])
-				}
-			}
-			if !owned {
-				inputErrs = append(inputErrs, o.index.Errors[file])
+const orphanedMessage = "orphaned (not referenced by any parent kustomization.yaml)"
+
+func (o *Orchestrator) decodeFailures(prefixes []manifest.KSClaim) (map[manifest.NamedResource]error, []error) {
+	var unowned []error
+	attributed := make(map[manifest.NamedResource]error)
+	if o.index == nil {
+		return attributed, unowned
+	}
+	for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
+		_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
+		for reader := range o.index.ReadersOfFile(file) {
+			owned = true
+			if o.filter.ShouldReconcile(reader) && attributed[reader] == nil {
+				attributed[reader] = o.index.Errors[file]
 			}
 		}
+		if !owned {
+			unowned = append(unowned, o.index.Errors[file])
+		}
+	}
+	return attributed, unowned
+}
+
+func (o *Orchestrator) classifyCompleted() {
+	var prefixes []manifest.KSClaim
+	if o.index != nil && len(o.index.Errors) != 0 {
+		prefixes = loader.Claims(o.store, o.repoRoot)
+		attributed, _ := o.decodeFailures(prefixes)
+		for _, id := range slices.SortedFunc(maps.Keys(attributed), manifest.NamedResource.Compare) {
+			if info, _ := o.store.GetStatus(id); info.Status != store.StatusFailed && info.Outcome() != store.OutcomeSuspended &&
+				(info.Message != orphanedMessage || o.orphans[id] != attributed[id].Error()) {
+				o.store.UpdateFailure(id, attributed[id])
+			}
+		}
+	}
+	for id := range o.orphans {
+		if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady || info.Message != orphanedMessage {
+			delete(o.orphans, id)
+		}
+	}
+	failed := o.store.FailedResources()
+	if len(failed) == 0 {
+		return
+	}
+	if prefixes == nil {
+		prefixes = loader.Claims(o.store, o.repoRoot)
+	}
+	orphans := o.detectOrphans(failed, prefixes)
+	if len(orphans) != 0 && o.orphans == nil {
+		o.orphans = make(map[manifest.NamedResource]string)
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(orphans), manifest.NamedResource.Compare) {
+		o.orphans[id] = orphans[id]
+		o.store.UpdateStatus(id, store.StatusReady, "", orphanedMessage)
+	}
+}
+
+func (o *Orchestrator) finalize() error {
+	var inputErrs []error
+	if o.index != nil && len(o.index.Errors) != 0 {
+		_, inputErrs = o.decodeFailures(loader.Claims(o.store, o.repoRoot))
 	}
 	failed := o.store.FailedResources()
 	ksCount := len(o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	hrCount := len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease))
-	// Final ownership includes every Kustomization present after the drain.
-	if len(failed) != 0 && prefixes == nil {
-		prefixes = loader.Claims(o.store, o.repoRoot)
-	}
-	o.orphans = o.detectOrphans(failed, prefixes)
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
-		o.store.UpdateStatus(id, store.StatusReady, "", "orphaned (not referenced by any parent kustomization.yaml)")
-		o.store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource,
-			Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
-		delete(failed, id)
+		o.store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource, Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
 	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
 	o.logResourceFailures(failed)
-
 	var errs []error
 	if n := o.tasks.Failures(); n > 0 {
 		errs = append(errs, fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n))
@@ -124,8 +154,6 @@ func (o *Orchestrator) finalize() error {
 	return errors.Join(append(errs, inputErrs...)...)
 }
 
-// warnMissingCRDs uses only final canonical references and Ready/artifact
-// eligibility; retained output does not establish which revision passed a gate.
 func (o *Orchestrator) warnMissingCRDs() {
 	if !o.cfg.AllowMissingCRDs {
 		return
@@ -144,11 +172,10 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if _, ok := o.store.GetArtifact(id).(*store.Emission); !ok {
 			continue
 		}
-		for dep := range manifest.References(rs) {
-			if dep.Use != "dependsOn" || !dep.IsCRD() {
+		for crd := range o.store.RequiredInputs(id) {
+			if !crd.IsCRD() {
 				continue
 			}
-			crd := dep.NamedResource
 			if o.store.GetObject(crd) != nil {
 				continue
 			}

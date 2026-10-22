@@ -7,8 +7,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -50,14 +51,20 @@ func TestReconcile_TaskFailures(t *testing.T) {
 			d := Dispatch{
 				Tasks: tasks,
 				ID:    testutil.HelmReleaseID("media", "sonarr"),
-				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution {
 					if tc.panics {
 						panic("reconcile failure")
 					}
-					if len(tc.dependencies) == 0 {
-						return schedule.Outcome{}, manifest.ReconcileWait{}
-					}
-					return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: tc.dependencies}
+					execution := NewExecution(base.New(store.New(), tasks, "test"), testutil.HelmReleaseID("media", "sonarr"))
+					object := &manifest.HelmRelease{Name: "sonarr", Namespace: "media"}
+					execution.Store.AddObject(object)
+					execution.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+						if len(tc.dependencies) != 0 {
+							return &depwait.ErrBlocked{Deps: tc.dependencies}
+						}
+						return nil
+					})
+					return execution
 				},
 			}
 			before := tasks.Failures()
@@ -80,7 +87,7 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 		Tasks: tasks,
 		Store: st,
 		ID:    id,
-		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution {
 			panic("reconcile failure")
 		},
 	}
@@ -91,35 +98,26 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 	assert.Equal(t, len(recorder.errors) > 0, true)
 }
 
-func TestReconcile_TypedWait(t *testing.T) {
+func TestDispatchToFixpoint_SettlesRetainedAssessment(t *testing.T) {
 	t.Parallel()
-	id := testutil.HelmReleaseID("apps", "reader")
-	for _, tc := range []struct {
-		name   string
-		wait   manifest.ReconcileWait
-		failed bool
-	}{
-		{name: "nil"},
-		{name: "empty content", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{}}},
-		{name: "dependencies", wait: manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}},
-		{name: "targets", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{Targets: []manifest.NamedResource{id}}}},
-		{name: "suppliers", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{Suppliers: []manifest.Opportunity{{NamedResource: id}}}}},
-		{name: "declaration", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{Declaration: &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}}}},
-		{name: "dependency failure", wait: manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}, failed: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			d := Dispatch{Tasks: task.NewBounded(2), ID: id, ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-				out := schedule.Outcome{}
-				if !tc.wait.Empty() {
-					out.Kind = schedule.Blocked
-				}
-				if tc.failed {
-					out.Kind = schedule.DependencyFailed
-				}
-				return out, tc.wait
-			}}
-			assert.Equal(t, Reconcile(t.Context(), t, d, manifest.DrainForce), tc.wait.Empty() || tc.failed)
-		})
-	}
+	tasks := task.NewBounded(2)
+	st := store.New()
+	obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	st.AddObject(obj)
+	dependency := manifest.DependencyRef{NamedResource: testutil.HelmReleaseID("apps", "absent")}
+	dispatches := 0
+	info := DispatchToFixpoint(t.Context(), t, Dispatch{
+		Tasks: tasks, Store: st, ID: obj.Named(),
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+			dispatches++
+			execution := NewExecution(base.New(st, tasks, "test"), id)
+			execution.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
+				return execution.Require(ctx, []manifest.DependencyRef{dependency}, level)
+			})
+			return execution
+		},
+	})
+	assert.Equal(t, info.Status, store.StatusFailed)
+	assert.Equal(t, dispatches, 1)
+	assert.Diff(t, info.BlockedBy(), []manifest.NamedResource{dependency.NamedResource})
 }

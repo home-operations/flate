@@ -73,7 +73,7 @@ func TestFetcher_PackedContent(t *testing.T) {
 					root = t.TempDir()
 				}
 				f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
-				art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL}, sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
+				art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL}, (testInputs{}).readSet(&manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL}), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}})
 				if attempts == 1 {
 					if err == nil || art != nil || acquisitions.Load() != 1 {
 						t.Fatalf("retry-off artifact=%v, error=%v, acquisitions=%d", art, err, acquisitions.Load())
@@ -111,7 +111,7 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 	}
 	mustCommitFile(t, src, "hello.txt", "hi")
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src}, sourcecache.Policy{})
+	art, err := f.Fetch(t.Context(), &manifest.GitRepository{Name: "links", URL: "file://" + src}, (testInputs{}).readSet(&manifest.GitRepository{Name: "links", URL: "file://" + src}), sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 	}
 
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 		t.Errorf("expected checked-out file: %v", err)
 	}
 
-	art2, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art2, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 			}
 			if !want {
 				f.Cache = new(sourcecache.Cache)
-				_, err := f.Fetch(t.Context(), &manifest.GitRepository{URL: url}, sourcecache.Policy{})
+				_, err := f.Fetch(t.Context(), &manifest.GitRepository{URL: url}, (testInputs{}).readSet(&manifest.GitRepository{URL: url}), sourcecache.Policy{})
 				if !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("public Fetch must reject before acquisition: %v", err)
 				}
@@ -270,7 +270,7 @@ func TestFetcher_Freshness(t *testing.T) {
 					repo.Reference.Tag = "ignored"
 				}
 			}
-			first, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+			first, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 			assert.NoError(t, err)
 			assert.Equal(t, first.Revision, initial)
 			t.Logf("initial: advertisements=%d upload_pack=%d accepted_connections=%d", advertisements.Load(), uploads.Load(), connections.Load())
@@ -280,7 +280,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			beforeAdvertisements, beforeUploads, beforeConnections := advertisements.Load(), uploads.Load(), connections.Load()
 			if tc.fail {
 				srv.Close()
-				if _, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()}); err == nil {
+				if _, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()}); err == nil {
 					t.Fatal("expected refresh to fail after upstream shutdown")
 				}
 				if _, err := fs.Stat(first.FS, "hello.txt"); err != nil {
@@ -295,7 +295,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			if tc.commit {
 				srv.Close()
 				assert.NoError(t, os.RemoveAll(src))
-				second, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: tc.interval})
+				second, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: tc.interval})
 				if tc.mixed {
 					if err == nil || second != nil {
 						t.Fatal("mixed commit unexpectedly retained forever")
@@ -312,7 +312,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			if tip == initial {
 				t.Fatal("tip did not move")
 			}
-			second, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+			second, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 			assert.NoError(t, err)
 			t.Logf("refresh: advertisements=%d upload_pack=%d new_connections=%d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, connections.Load()-beforeConnections)
 			if tc.interval != 0 || tc.pinned {
@@ -340,7 +340,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			cached := *repo
 			cached.Interval.Duration = time.Hour
 			beforeAdvertisements, beforeUploads, beforeConnections = advertisements.Load(), uploads.Load(), connections.Load()
-			hit, err := f.Fetch(t.Context(), &cached, sourcecache.Policy{MaxAge: cached.SourceInterval()})
+			hit, err := f.Fetch(t.Context(), &cached, (testInputs{}).readSet(&cached), sourcecache.Policy{MaxAge: cached.SourceInterval()})
 			assert.NoError(t, err)
 			assert.Equal(t, hit.Revision, want)
 			assert.Equal(t, hit.Key, second.Key)
@@ -363,7 +363,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			}
 			assert.NoError(t, f.Cache.Close())
 			f = &Fetcher{Cache: cachetest.New(t, cacheDir, sourcecache.New), Depth: tc.depth}
-			reopened, err := f.Fetch(t.Context(), &cached, sourcecache.Policy{MaxAge: cached.SourceInterval()})
+			reopened, err := f.Fetch(t.Context(), &cached, (testInputs{}).readSet(&cached), sourcecache.Policy{MaxAge: cached.SourceInterval()})
 			assert.NoError(t, err)
 			assert.Equal(t, reopened.Revision, want)
 			t.Logf("reopened fresh: advertisements=%d upload_pack=%d new_connections=%d", advertisements.Load()-beforeAdvertisements, uploads.Load()-beforeUploads, connections.Load()-beforeConnections)
@@ -421,10 +421,10 @@ func TestFetcher_References(t *testing.T) {
 			if tc.warmCommit != "" {
 				unconstrained := *repo
 				unconstrained.Reference = &sourcev1.GitRepositoryRef{Commit: tc.warmCommit}
-				_, err := f.Fetch(t.Context(), &unconstrained, sourcecache.Policy{MaxAge: unconstrained.SourceInterval()})
+				_, err := f.Fetch(t.Context(), &unconstrained, (testInputs{}).readSet(&unconstrained), sourcecache.Policy{MaxAge: unconstrained.SourceInterval()})
 				assert.NoError(t, err)
 			}
-			art, err := f.Fetch(t.Context(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+			art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 			if tc.wantErr {
 				if err == nil || tc.errText != "" && !strings.Contains(err.Error(), tc.errText) {
 					t.Fatalf("Fetch error = %v, want failure containing %q", err, tc.errText)
@@ -463,7 +463,10 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
 				Name: "test", Namespace: "flux-system", URL: "file://" + src,
 				SparseCheckout: []string{prefix},
-			}, sourcecache.Policy{})
+			}, (testInputs{}).readSet(&manifest.GitRepository{
+				Name: "test", Namespace: "flux-system", URL: "file://" + src,
+				SparseCheckout: []string{prefix},
+			}), sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -501,7 +504,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 		Ignore: &patterns,
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -535,7 +538,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 		Ignore:    &patterns,
 	}
 	f := &Fetcher{Cache: cache}
-	art, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -545,7 +548,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 	if err := os.RemoveAll(src); err != nil {
 		t.Fatal(err)
 	}
-	art2, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	art2, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err != nil {
 		t.Fatalf("Fetch second: %v", err)
 	}
@@ -694,13 +697,13 @@ func TestFetcher_GenerationAdmission(t *testing.T) {
 					f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
 					repo := &manifest.GitRepository{URL: "file://" + src}
 					policy := sourcecache.Policy{MaxAge: time.Hour}
-					artifact, err := f.Fetch(t.Context(), repo, policy)
+					artifact, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), policy)
 					if !errors.Is(err, manifest.ErrInput) || invalid == "metadata" && (artifact == nil || artifact.FS != nil || len(artifact.Warnings) != 1 || artifact.Warnings[0].Category != manifest.WarnSkippedSubmodule || artifact.Warnings[0].Resource != repo.Named()) || invalid == "ignore" && artifact != nil {
 						t.Fatalf("cold invalid view = %v, %v", artifact, err)
 					}
 					assert.NoError(t, os.RemoveAll(src))
 					mustInitRepo(t, src)
-					artifact, err = f.Fetch(t.Context(), repo, policy)
+					artifact, err = f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), policy)
 					assert.NoError(t, err)
 					assert.Equal(t, artifact.Revision, mustHead(t, src))
 					assertWorktree(t, artifact.FS, "hello.txt", "hi")
@@ -711,7 +714,9 @@ func TestFetcher_GenerationAdmission(t *testing.T) {
 				testGenerationWaiter(t, disk, func(ctx context.Context, f *Fetcher, url string) (*store.SourceArtifact, error) {
 					return f.Fetch(ctx, &manifest.GitRepository{
 						URL: url, SparseCheckout: []string{"apps"}, Ignore: new("*.tmp\n"),
-					}, sourcecache.Policy{MaxAge: time.Hour})
+					}, (testInputs{}).readSet(&manifest.GitRepository{
+						URL: url, SparseCheckout: []string{"apps"}, Ignore: new("*.tmp\n"),
+					}), sourcecache.Policy{MaxAge: time.Hour})
 				}, []string{"apps/keep.yaml"})
 			})
 		})

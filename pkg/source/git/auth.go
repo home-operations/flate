@@ -18,11 +18,11 @@ import (
 // For HTTPS URLs the secret may carry either
 // (username, password) or (bearerToken); for SSH URLs the secret
 // carries `identity` (PEM private key) and an optional `password`.
-func (f *Fetcher) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret) (transport.AuthMethod, error) {
+func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret) (transport.AuthMethod, error) {
 	if repo.SecretRef == nil {
 		return nil, nil
 	}
-	if f.Secrets == nil {
+	if f.secrets == nil {
 		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name))
 	}
 	if sec == nil {

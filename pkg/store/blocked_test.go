@@ -80,8 +80,6 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 		{"Healthy condition", func(st *Store) {
 			st.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue})
 		}, StatusFailed, metav1.ConditionFalse, ReasonFailed, failure.Error(), true},
-		{"refire", func(st *Store) { st.Refire(id) },
-			StatusPending, metav1.ConditionUnknown, string(ReasonRefetching), "re-fetching", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -89,14 +87,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			hr := &manifest.HelmRelease{Name: id.Name}
 			st.AddObject(hr)
 			st.UpdateFailure(id, failure)
-			if tc.name == "refire" {
-				st.AddListener(EventObjectAdded, func(eventID manifest.NamedResource, _ any) {
-					info, _ := st.GetStatus(eventID)
-					if info.Status != StatusPending || info.Reason != ReasonRefetching || info.IsDependencyFailure() || info.BlockedBy() != nil {
-						t.Errorf("Refire object listener saw stale terminal state: %+v", info)
-					}
-				}, false)
-			}
+
 			tc.write(st)
 			info, ok := st.GetStatus(id)
 			if !ok || info.Status != tc.status || info.Reason != StatusReason(tc.reason) || info.Message != tc.message || info.IsDependencyFailure() != tc.failed {
@@ -110,14 +101,14 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 				t.Fatalf("transition retained blockers: %v", info.BlockedBy())
 			}
 			var initial Observation
-			obj := st.Snapshot(&id, true, &initial)
+			obj, initial := st.Snapshot(id, true)
 			snapshot := initial.StatusInfo
 			conds := initial.Conditions
 			if obj != hr || snapshot != info {
 				t.Fatalf("snapshot object/status = %v/%+v, want %v/%+v", obj, snapshot, hr, info)
 			}
 			var uncopiedObservation Observation
-			uncopied := st.Snapshot(&id, false, &uncopiedObservation)
+			uncopied, uncopiedObservation := st.Snapshot(id, false)
 			status := uncopiedObservation.StatusInfo
 			omitted := uncopiedObservation.Conditions
 			if uncopied != obj || status != snapshot || omitted != nil {
@@ -132,7 +123,7 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			}
 			conds[0].Message = "caller mutation"
 			var retainedObservation Observation
-			st.Snapshot(&id, true, &retainedObservation)
+			_, retainedObservation = st.Snapshot(id, true)
 			retained := retainedObservation.StatusInfo
 			copied := retainedObservation.Conditions
 			if retained != info || !slices.EqualFunc(copied, want, conditionEqual) {
@@ -232,7 +223,7 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	}
 	check := func(info StatusInfo) {
 		if info.Status != StatusFailed {
-			if info.Reason != ReasonRefetching || info.IsDependencyFailure() || info.BlockedBy() != nil {
+			if info.Reason != StatusReason("CustomPending") || info.IsDependencyFailure() || info.BlockedBy() != nil {
 				t.Error("ordinary snapshot retained blockers")
 			}
 			return
@@ -270,7 +261,7 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	info, _ := st.GetStatus(id)
 	check(info)
 	var initial Observation
-	observed := st.Snapshot(&id, true, &initial)
+	observed, initial := st.Snapshot(id, true)
 	snapshot := initial.StatusInfo
 	conditions := initial.Conditions
 	check(snapshot)
@@ -280,13 +271,13 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	for _, info := range st.FailedResources() {
 		check(info)
 	}
-	st.Refire(id)
+	st.UpdateStatus(id, StatusPending, "CustomPending", "reassessing")
 	check(first)
 	check(second)
 	info, _ = st.GetStatus(id)
 	check(info)
 	var updated Observation
-	st.Snapshot(&id, true, &updated)
+	_, updated = st.Snapshot(id, true)
 	snapshot = updated.StatusInfo
 	conditions = updated.Conditions
 	check(snapshot)

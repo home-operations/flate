@@ -1,6 +1,7 @@
 package kustomization
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -19,7 +20,9 @@ import (
 type indexedOrderingDeps map[manifest.NamedResource]bool
 
 func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
-func (indexedOrderingDeps) Promote(manifest.NamedResource) bool            { return false }
+func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.NamedResource) bool {
+	return false
+}
 
 func TestCollectDeps_OrderingFilter(t *testing.T) {
 	t.Parallel()
@@ -71,7 +74,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			c := New(st, nil, nil, false)
 			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {Productions: []manifest.Production{{Owner: parent}}}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Productions: testutil.ProductionEvidence(producers)}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Productions: testutil.ProductionEvidence([]manifest.NamedResource{consumer.Named()})}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "ignored"}: &manifest.ConfigMap{}}}, sourcecache.RetryConfig{})
 			size := len(filter.KeepNames())
-			deps := c.collectDeps(consumer)
+			deps := c.newExecution(consumer.Named()).collectDeps(consumer)
 			var want []manifest.DependencyRef
 			if tc.retain {
 				want = append(want, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}, manifest.DependencyRef{NamedResource: target.Named(), ReadyExpr: "true"})

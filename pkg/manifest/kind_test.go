@@ -14,14 +14,14 @@ func TestKindInfo_Rosters(t *testing.T) {
 		want    KindInfo
 		version string
 	}{
-		{&Kustomization{}, KindInfo{Group: FluxKustomizeDomain, Kind: KindKustomization, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Parent: true, Refire: true, Structural: true, Render: true}, kustomizeAPIVersion},
+		{&Kustomization{}, KindInfo{Group: FluxKustomizeDomain, Kind: KindKustomization, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Parent: true, Structural: true, Render: true}, kustomizeAPIVersion},
 		{&HelmRelease{}, KindInfo{Group: HelmReleaseDomain, Kind: KindHelmRelease, Tracked: true, Runnable: true, Status: true, Test: true, Parent: true, SourceOnly: true, TransientOutput: true, Render: true}, helmAPIVersion},
-		{&GitRepository{}, KindInfo{Group: SourceDomain, Kind: KindGitRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true, SourceArtifact: true}, sourceAPIVersion},
-		{&OCIRepository{}, KindInfo{Group: SourceDomain, Kind: KindOCIRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true, SourceArtifact: true}, sourceAPIVersion},
-		{&HelmRepository{}, KindInfo{Group: SourceDomain, Kind: KindHelmRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true}, sourceAPIVersion},
+		{&GitRepository{}, KindInfo{Group: SourceDomain, Kind: KindGitRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, sourceAPIVersion},
+		{&OCIRepository{}, KindInfo{Group: SourceDomain, Kind: KindOCIRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, sourceAPIVersion},
+		{&HelmRepository{}, KindInfo{Group: SourceDomain, Kind: KindHelmRepository, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true}, sourceAPIVersion},
 		{&HelmChartSource{}, KindInfo{Group: SourceDomain, Kind: KindHelmChart, Tracked: true, Runnable: true, Status: true, Discovery: true}, sourceAPIVersion},
-		{&ExternalArtifact{}, KindInfo{Group: SourceDomain, Kind: KindExternalArtifact, Tracked: true, Runnable: true, Status: true, Discovery: true, Refire: true, SourceArtifact: true}, sourceAPIVersion},
-		{&Bucket{}, KindInfo{Group: SourceDomain, Kind: KindBucket, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, Refire: true, SourceArtifact: true}, sourceAPIVersion},
+		{&ExternalArtifact{}, KindInfo{Group: SourceDomain, Kind: KindExternalArtifact, Tracked: true, Runnable: true, Status: true, Discovery: true, SourceArtifact: true}, sourceAPIVersion},
+		{&Bucket{}, KindInfo{Group: SourceDomain, Kind: KindBucket, Tracked: true, Runnable: true, Status: true, Discovery: true, Test: true, SourceArtifact: true}, sourceAPIVersion},
 		{&ResourceSet{}, KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSet, Tracked: true, Runnable: true, Discovery: true, Parent: true}, ""},
 		{&ResourceSetInputProvider{}, KindInfo{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Tracked: true, Discovery: true}, ""},
 		{&ConfigMap{}, KindInfo{Kind: KindConfigMap, Tracked: true, Data: true}, ""},

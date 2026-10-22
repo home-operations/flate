@@ -22,13 +22,12 @@ import (
 // secretChartFetcher checks the source's CA Secret and returns a local
 // chart, so the test exercises Kustomize and Helm without a registry.
 type secretChartFetcher struct {
-	store *store.Store
 	chart string
 }
 
-func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *secretChartFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, reads *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	repo := obj.(*manifest.OCIRepository)
-	secret, ok := f.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name})
+	secret, ok := reads.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name})
 	if !ok {
 		return nil, source.MissingSecretErr(repo.Named(), repo.CertSecretRef.Name, "not found")
 	}
@@ -150,7 +149,7 @@ spec:
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			o.WithFetcher(manifest.KindOCIRepository, &secretChartFetcher{store: o.Store(), chart: chart})
+			o.WithFetcher(manifest.KindOCIRepository, &secretChartFetcher{chart: chart})
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			res, err := o.Render(ctx)

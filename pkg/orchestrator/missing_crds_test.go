@@ -2,11 +2,13 @@ package orchestrator
 
 import (
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/home-operations/flate/pkg/schedule"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
@@ -16,7 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -141,7 +142,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 	}
 	art, ok := o.store.GetArtifact(id).(*store.Emission)
 	if !ok || len(art.Manifests) != 2 {
-		t.Fatalf("ResourceSet artifact=%+v", art)
+		t.Fatalf("ResourceSet artifact=%+v status=%+v present=%t inventory=%t", art, info, o.store.GetObject(id) != nil, o.store.HasInventory(id))
 	}
 	docs, err := manifest.DecodeDocs(strings.NewReader(issueResourceSet))
 	if err != nil {
@@ -228,6 +229,24 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 	}
 }
 
+func acceptCRDGatesForTest(t *testing.T, st *store.Store, rs *manifest.ResourceSet) {
+	t.Helper()
+	reads := new(store.ReadSet)
+	reads.Init(st, rs.Named(), nil)
+	reads.GetObject(rs.Named())
+	for ref := range manifest.References(rs) {
+		if ref.Use == "dependsOn" {
+			reads.GetObject(ref.NamedResource)
+			reads.Require(ref.DependencyRef)
+		}
+	}
+	reads.Accept()
+	assert.Equal(t, reads.Valid(), true)
+	reads.Retire()
+	for range st.Sweep() {
+	}
+}
+
 func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	t.Parallel()
 	s := store.New()
@@ -256,6 +275,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		if tc.artifact {
 			s.SetArtifact(rs.Named(), &store.Emission{})
 		}
+		acceptCRDGatesForTest(t, s, rs)
 	}
 	o.warnMissingCRDs()
 	want := []manifest.Warning{}
@@ -296,6 +316,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				}
 				st.UpdateStatus(crdA, status, "", "")
 			}
+			acceptCRDGatesForTest(t, st, rs)
 			(&Orchestrator{store: st, cfg: cfg}).warnMissingCRDs()
 			want := 0
 			if strings.HasPrefix(state, "foreign") {
@@ -331,9 +352,11 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 			}
 			s.AddObject(rs)
-			if blocked, _ := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: 1}); blocked.Kind == schedule.Blocked {
-				t.Fatalf("initial render blocked: %v", blocked)
+			initial := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
+			if initial.Outcome() == schedule.Blocked {
+				t.Fatalf("initial render blocked: %v", initial.Blocked)
 			}
+			t.Cleanup(initial.Close)
 			before := s.GetArtifact(rs.Named())
 			fresh := *rs
 			fresh.ResourceSetSpec = *rs.DeepCopy()
@@ -359,10 +382,17 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				c.Configure(opts)
 				c.StartLifecycle()
 				t.Cleanup(c.Close)
+				s.SetIncluded(rs.Named(), false)
 			}
-			if blocked, _ := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: 1}); blocked.Kind == schedule.Blocked {
-				t.Fatalf("final render blocked: %v", blocked)
+			publications := 0
+			u := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { publications++ }, false)
+			defer u()
+			current := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
+			if current.Outcome() == schedule.Blocked {
+				t.Fatalf("final render blocked: %v", current.Blocked)
 			}
+			initial.Retire()
+			t.Cleanup(current.Close)
 			info, _ := s.GetStatus(rs.Named())
 			wantStatus := store.StatusReady
 			if state == "failed gate" {
@@ -373,9 +403,9 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			}
 			assert.Equal(t, info.Status, wantStatus)
 			if state == "dedup" {
-				if s.GetArtifact(rs.Named()) != before {
-					t.Fatal("retained artifact changed")
-				}
+				accepted := s.GetArtifact(rs.Named()).(*store.Emission)
+				assert.Diff(t, accepted.Manifests, before.(*store.Emission).Manifests)
+				assert.Equal(t, publications, 0)
 			}
 			o.warnMissingCRDs()
 			wantWarnings := 1
@@ -389,6 +419,9 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			_, accepted := s.GetEmission(rs.Named())
 			raw := accepted.Manifests
 			wantNames := []string{"old"}
+			if strings.HasPrefix(state, "filter") || state == "failed gate" {
+				wantNames = []string{}
+			}
 			if state == "remove" || state == "add" {
 				wantNames = []string{"new"}
 			}

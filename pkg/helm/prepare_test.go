@@ -21,7 +21,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 			hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Namespace: namespace, Name: "source"}
 			projected := hr.WithNamespace("effective").(*manifest.HelmRelease)
 			want := tc.want
-			got, err := Prepare(projected, func(id manifest.NamedResource) *manifest.HelmChartSource {
+			got, _, err := Prepare(projected, func(id manifest.NamedResource) *manifest.HelmChartSource {
 				assert.Equal(t, id, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: want, Name: "source"})
 				return &manifest.HelmChartSource{Namespace: "sources", Chart: "resolved-name", ValuesFiles: []string{"custom.yaml"}, IgnoreMissingValuesFiles: true, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "resolved"}}
 			}, nil, nil)
@@ -42,7 +42,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 			assert.Equal(t, hr.ChartRef.Namespace, namespace)
 			assert.Equal(t, hr.Values["key"], any("original"))
 			hr.ChartRef.Kind, hr.Chart.Source.Kind = manifest.KindOCIRepository, manifest.KindOCIRepository
-			got, err = Prepare(hr.WithNamespace("effective").(*manifest.HelmRelease), nil, nil, nil)
+			got, _, err = Prepare(hr.WithNamespace("effective").(*manifest.HelmRelease), nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

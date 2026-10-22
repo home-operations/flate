@@ -46,10 +46,10 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 					}
 					dep.ReadyExpr += ` && self.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
 				}
-				w.classify(dep, manifest.DrainCascade, w.Existence)
+				w.Classify(b.Context(), dep, manifest.DrainCascade)
 			}
 			for b.Loop() {
-				w.classify(dep, manifest.DrainCascade, w.Existence)
+				w.Classify(b.Context(), dep, manifest.DrainCascade)
 			}
 		})
 	}

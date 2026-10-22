@@ -91,7 +91,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
+				cliSources := NewSources(st)
 				opts := Options{DisableChartDigestTracking: disable}
 				held := acquireChartFS(t, cli.cache, os.DirFS(dir))
 				var canonical *chart.Chart
@@ -99,11 +99,11 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					t.Helper()
 					identity.Kind, identity.LocalPath, identity.FS = manifest.KindOCIRepository, dir, held
 					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &identity)
-					out, err := cli.Template(t.Context(), hr, nil, opts)
+					out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 					if err != nil {
 						t.Fatal(err)
 					}
-					loaded, err := loadDecodedChart(t.Context(), cli, hr)
+					loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -122,7 +122,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						t.Fatal("render did not cache values under its effective fingerprint")
 					}
 					key := computeTemplateKey(loaded, merged.merged, opts, hr)
-					repeated, err := cli.Template(t.Context(), hr, nil, opts)
+					repeated, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 					if err != nil || repeated != out {
 						t.Fatalf("repeat render differs: %v", err)
 					}
@@ -156,7 +156,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				assert.Diff(t, hr, original)
 				for _, revision := range []string{"6.14.0@" + next, "invalid"} {
 					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: held, LocalPath: dir, Digest: next, Revision: revision})
-					if _, err := cli.Template(t.Context(), hr, nil, opts); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+					if _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 						t.Fatalf("invalid revision bypassed validation: %v", err)
 					}
 				}
@@ -172,11 +172,11 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 		observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) { reads[name]++; return input.Open(name) }}
 		first := &store.SourceArtifact{FS: observed, Key: "untrusted", Revision: "6.15.0@" + digest, Digest: digest}
 		second := &store.SourceArtifact{Revision: "invalid", FS: fstest.MapFS{}}
-		resolver := &changingChartResolver{SourceResolver: NewStoreSourceResolver(st), artifacts: []*store.SourceArtifact{first, second}}
+		resolver := &changingChartReader{sourceReader: st, artifacts: []*store.SourceArtifact{first, second}}
 		cli, err := NewClient(cachetest.New(t, "", cache.New))
 		assert.NoError(t, err)
-		cli.SetSourceResolver(resolver)
-		out, err := cli.Template(t.Context(), hr, nil, Options{})
+		cliSources := NewSources(resolver)
+		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		assert.Equal(t, resolver.calls, 1)
 		assert.Equal(t, reads[".helmignore"], 1)
@@ -224,7 +224,7 @@ data:
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository, FS: input, Digest: digest, Revision: "6.15.0@" + digest,
 	})
-	newClient := func(t *testing.T, owner *cache.Cache, reverse bool) *Client {
+	newClient := func(t *testing.T, owner *cache.Cache, reverse bool) (*Client, Sources) {
 		t.Helper()
 		_, pin, err := source.OperationView(t.Context(), input)
 		assert.NoError(t, err)
@@ -255,14 +255,14 @@ data:
 		})
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
+		cliSources := NewSources(st)
 		// Canonical charts MUST remain immutable; choose the loader order before admission.
 		cli.chartCache[selector] = chartDescription{chart: ch, captured: captured, key: selector, location: ".", fingerprint: captured.fingerprint(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
-		return cli
+		return cli, cliSources
 	}
-	keyFor := func(t *testing.T, cli *Client) cache.BlobKey {
+	keyFor := func(t *testing.T, cli *Client, cliSources Sources) cache.BlobKey {
 		t.Helper()
-		loaded, err := loadDecodedChart(t.Context(), cli, hr)
+		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)
 		loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
 		_, err = cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
@@ -300,14 +300,14 @@ data:
 	}
 	root := t.TempDir()
 	owner := cachetest.New(t, root, cache.New)
-	cli := newClient(t, owner, false)
-	key := keyFor(t, cli)
+	cli, cliSources := newClient(t, owner, false)
+	key := keyFor(t, cli, cliSources)
 	_, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 	if !errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("cold lookup: got %v, want not found", err)
 	}
 	t.Log("direct cold lookup: not found")
-	cold, err := cli.Template(t.Context(), hr, nil, Options{})
+	cold, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	for _, name := range []string{"child", "sibling"} {
 		if !strings.Contains(cold, "name: "+name+"\n") {
@@ -316,31 +316,31 @@ data:
 	}
 	assert.Equal(t, readBlob(t, owner, key), cold)
 	t.Log("direct cold publication: exact render bytes")
-	second, err := cli.Template(t.Context(), hr, nil, Options{})
+	second, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Equal(t, second, cold)
 	marked := cold + "\n# persisted-subchart-hit\n"
 	writeBlob(t, owner, key, marked)
-	warm, err := cli.Template(t.Context(), hr, nil, Options{})
+	warm, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Equal(t, warm, marked)
 	t.Log("same-client marked hit: verified")
 	assert.NoError(t, owner.Close())
 	owner = cachetest.New(t, root, cache.New)
-	cli = newClient(t, owner, true)
-	reopenedKey := keyFor(t, cli)
+	cli, cliSources = newClient(t, owner, true)
+	reopenedKey := keyFor(t, cli, cliSources)
 	reader, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, cache.Policy{MaxAge: cache.Forever}, nil)
 	if lookupErr == nil {
 		assert.NoError(t, reader.Close())
 	}
 	t.Logf("fresh-owner direct lookup: %v", lookupErr)
-	reopened, err := cli.Template(t.Context(), hr, nil, Options{})
+	reopened, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	if reopened != marked {
 		t.Fatalf("fresh owner/client rerendered unchanged subcharts: marker absent=%v, fresh bytes equal cold=%v", !strings.Contains(reopened, "# persisted-subchart-hit"), reopened == cold)
 	}
 	writeBlob(t, owner, reopenedKey, cold)
-	restored, err := cli.Template(t.Context(), hr, nil, Options{})
+	restored, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Equal(t, restored, cold)
 	assert.Equal(t, reopenedKey.Content, key.Content)
@@ -372,8 +372,8 @@ data:
 			})
 			next, err := NewClient(owner)
 			assert.NoError(t, err)
-			next.SetSourceResolver(NewStoreSourceResolver(nextStore))
-			nextKey := keyFor(t, next)
+			nextSources := NewSources(nextStore)
+			nextKey := keyFor(t, next, nextSources)
 			if nextKey.Content == key.Content {
 				t.Fatal("edited child reused the original completed-output key")
 			}
@@ -381,7 +381,7 @@ data:
 			if !errors.Is(err, errdef.ErrNotFound) {
 				t.Fatalf("edited child lookup: got %v, want not found", err)
 			}
-			out, err := next.Template(t.Context(), hr, nil, Options{})
+			out, err := next.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: nextSources})
 			assert.NoError(t, err)
 			if out == cold || strings.Contains(out, "# persisted-subchart-hit") || !strings.Contains(out, "edited-") {
 				t.Fatal("edited child reused stale output or omitted its new content")
@@ -410,15 +410,15 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			cliSources := NewSources(st)
 			var first, key string
 			for _, disabled := range []bool{false, true} {
 				opts := Options{DisableChartDigestTracking: disabled}
-				out, err := cli.Template(t.Context(), hr, nil, opts)
+				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 				if err != nil {
 					t.Fatal(err)
 				}
-				loaded, err := loadDecodedChart(t.Context(), cli, hr)
+				loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -618,16 +618,16 @@ data:
 			}
 			st := store.New()
 			st.SetArtifact(newHR().ChartSource(), &store.SourceArtifact{FS: input})
-			resolver := NewStoreSourceResolver(st)
-			cli.SetSourceResolver(resolver)
-			first, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
+			resolver := NewSources(st)
+			cliSources := resolver
+			first, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Fatal(err)
 			}
-			canonical, err := loadDecodedChart(t.Context(), cli, newHR())
+			canonical, err := loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			assert.NoError(t, err)
 			beforeReads := reads["mychart/templates/configmap.yaml"]
-			second, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
+			second, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -635,16 +635,16 @@ data:
 			if backing != "acquired" {
 				assert.Equal(t, reads["mychart/templates/configmap.yaml"], beforeReads+1)
 			}
-			warm, err := loadDecodedChart(t.Context(), cli, newHR())
+			warm, err := loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			assert.NoError(t, err)
 			assert.Equal(t, warm.chart == canonical.chart, true)
 			assert.Equal(t, warm.fingerprint, canonical.fingerprint)
-			third, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "different"}, Options{})
+			third, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "different"}, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Fatal(err)
 			}
 			assert.Equal(t, third == first, false)
-			loaded, err := loadDecodedChart(t.Context(), cli, newHR())
+			loaded, err := loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -669,8 +669,8 @@ data:
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(resolver)
-			loaded, err = loadDecodedChart(t.Context(), cli, newHR())
+			cliSources = resolver
+			loaded, err = loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			assert.NoError(t, err)
 			if backing == "acquired" {
 				// Remove chart backing alone so completed output remains readable.
@@ -679,21 +679,21 @@ data:
 				if err == nil {
 					t.Fatal("backing removal did not prevent chart reads")
 				}
-				repeated, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, Options{})
+				repeated, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
 				assert.Equal(t, repeated, first)
 			}
-			out, err := cli.Template(t.Context(), newHR(), values, Options{})
+			out, err := cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources})
 			if root != "" && renderPersistenceEligible(t) {
 				t.Log("verified persisted completed-output hit")
 				if err != nil || out != first {
 					t.Fatalf("completed hit: output=%q, error=%v", out, err)
 				}
-				initial, err := cli.describeChart(t.Context(), newHR())
+				initial, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
-				_, err = cli.Template(t.Context(), newHR(), values, Options{})
+				_, err = cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
-				repeated, err := cli.describeChart(t.Context(), newHR())
+				repeated, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
 				if initial.record == nil || repeated.record != initial.record {
 					t.Fatal("repeated hit did not share its typed record")
@@ -710,9 +710,9 @@ data:
 				assert.NoError(t, err)
 				assert.Equal(t, cache.AcquisitionIdentity(r), initial.record.identity)
 				assert.NoError(t, r.Close())
-				_, err = cli.Template(t.Context(), newHR(), alternate, Options{})
+				_, err = cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
-				distinct, err := cli.describeChart(t.Context(), newHR())
+				distinct, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
 				if distinct.record == initial.record || distinct.record.key != alternateKey.Content {
 					t.Fatal("distinct release key reused a typed record")
@@ -729,7 +729,7 @@ data:
 					})
 					assert.NoError(t, err)
 					assert.NoError(t, r.Close())
-					out, err := cli.Template(t.Context(), newHR(), alternate, Options{})
+					out, err := cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources})
 					switch replacement {
 					case "changed output":
 						assert.NoError(t, err)
@@ -749,12 +749,12 @@ data:
 			} else if err == nil || !strings.Contains(err.Error(), "cache miss action") {
 				t.Fatalf("ineligible output did not bypass persistence: %v", err)
 			}
-			warm, err = loadDecodedChart(t.Context(), cli, newHR())
+			warm, err = loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			assert.NoError(t, err)
 			assert.Equal(t, warm.chart == loaded.chart, true)
 			assert.Equal(t, warm.fingerprint, loaded.fingerprint)
 			values["greeting"] = "changed"
-			if _, err := cli.Template(t.Context(), newHR(), values, Options{}); err == nil || !strings.Contains(err.Error(), "cache miss action") {
+			if _, err := cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources}); err == nil || !strings.Contains(err.Error(), "cache miss action") {
 				t.Fatalf("changed input did not miss completed output: %v", err)
 			}
 		})
@@ -790,18 +790,18 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
 		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
 	owner := cachetest.New(t, "", cache.New)
-	newClient := func() *Client {
+	newClient := func() (*Client, Sources) {
 		cli, err := NewClient(owner)
 		if err != nil {
 			t.Fatal(err)
 		}
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
-		return cli
+		cliSources := NewSources(st)
+		return cli, cliSources
 	}
-	cli := newClient()
+	cli, cliSources := newClient()
 	for _, disable := range []bool{false, true, false, true, false} {
 		opts := Options{DisableChartDigestTracking: disable}
-		out, err := cli.Template(t.Context(), hr, nil, opts)
+		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -812,7 +812,8 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 		if !strings.Contains(out, `version: "`+version+`"`) {
 			t.Fatalf("disable=%v returned incompatible output:\n%s", disable, out)
 		}
-		fresh, err := newClient().Template(t.Context(), hr, nil, opts)
+		freshClient, freshSources := newClient()
+		fresh, err := freshClient.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: freshSources})
 		if err != nil || fresh != out {
 			t.Fatalf("fresh disable=%v result differs: err=%v output=%s", disable, err, fresh)
 		}
@@ -836,14 +837,14 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(localChartResolver(t, "chart-repo", "flux-system", chartDir))
+			cliSources := localChartResolver(t, "chart-repo", "flux-system", chartDir)
 			hr := newHR()
 			if fault == "lookup" {
 				for range 2 {
-					_, err := cli.Template(t.Context(), hr, nil, Options{})
+					_, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
 				}
-				d, err := cli.describeChart(t.Context(), hr)
+				d, err := cli.describeChart(t.Context(), hr, cliSources)
 				assert.NoError(t, err)
 				if d.record == nil {
 					t.Fatal("lookup fault fixture did not warm a typed record")
@@ -853,7 +854,7 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				out, err := cli.Template(t.Context(), hr, nil, Options{})
+				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				if out != "" || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, errdef.ErrNotFound) {
 					t.Fatalf("%s fault returned output %q, error %v", fault, out, err)
 				}
@@ -862,13 +863,13 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 	}
 }
 
-type changingChartResolver struct {
-	SourceResolver
+type changingChartReader struct {
+	sourceReader
 	artifacts []*store.SourceArtifact
 	calls     int
 }
 
-func (r *changingChartResolver) LocalSourceArtifact(manifest.NamedResource) *store.SourceArtifact {
+func (r *changingChartReader) GetArtifact(manifest.NamedResource) store.Artifact {
 	artifact := r.artifacts[min(r.calls, len(r.artifacts)-1)]
 	r.calls++
 	return artifact
@@ -882,7 +883,7 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 	resolver := localChartResolver(t, "chart-repo", "flux-system", helmChartDirectory(t))
 	warm, err := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	assert.NoError(t, err)
-	warm.SetSourceResolver(resolver)
+	warmSources := resolver
 	for i, state := range []struct {
 		isUpgrade, install, upgrade, noHooks bool
 		wantHook                             bool
@@ -906,16 +907,16 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			hr := newHR()
 			hr.Install = &helmv2.Install{DisableHooks: state.install}
 			hr.Upgrade = &helmv2.Upgrade{DisableHooks: state.upgrade}
-			out, err := warm.Template(t.Context(), hr, nil, opts)
+			out, err := warm.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: warmSources})
 			assert.NoError(t, err)
 			assert.Diff(t, templateResources(t, out), want)
 			fresh, err := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			assert.NoError(t, err)
-			fresh.SetSourceResolver(resolver)
+			freshSources := resolver
 			freshHR := newHR()
 			freshHR.Install = &helmv2.Install{DisableHooks: state.install}
 			freshHR.Upgrade = &helmv2.Upgrade{DisableHooks: state.upgrade}
-			uncached, err := fresh.Template(t.Context(), freshHR, nil, opts)
+			uncached, err := fresh.Template(t.Context(), freshHR, nil, RenderOptions{Options: opts, Sources: freshSources})
 			assert.NoError(t, err)
 			assert.Diff(t, templateResources(t, uncached), want)
 			assert.Equal(t, out, uncached)
@@ -952,8 +953,8 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 	owner := cachetest.New(t, cacheRoot, cache.New)
 	cli, err := NewClient(owner)
 	assert.NoError(t, err)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	first, err := cli.Template(t.Context(), hr, nil, Options{})
+	cliSources := NewSources(st)
+	first, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	if !strings.Contains(first, `marker: "first"`) {
 		t.Fatal(first)
@@ -968,10 +969,10 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		owner := cachetest.New(t, cacheRoot, cache.New)
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
-		first, err := cli.Template(t.Context(), hr, nil, Options{})
+		cliSources := NewSources(st)
+		first, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
-		initial, err := loadDecodedChart(t.Context(), cli, hr)
+		initial, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)
 		initial.values, initial.valuesErr = cli.observeValuesFiles(t.Context(), initial, hr.ChartValuesFiles, true)
 		assert.NoError(t, initial.valuesErr)
@@ -995,11 +996,11 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		assert.NoError(t, r.Close())
 		fresh, err := NewClient(cachetest.New(t, cacheRoot, cache.New))
 		assert.NoError(t, err)
-		fresh.SetSourceResolver(NewStoreSourceResolver(st))
-		hit, err := fresh.Template(t.Context(), hr, nil, Options{})
+		freshSources := NewSources(st)
+		hit, err := fresh.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 		assert.NoError(t, err)
 		assert.Equal(t, hit, cached)
-		assertSourceValuesChanges(t, fresh, hr, root)
+		fresh.assertSourceValuesChanges(t, hr, root, freshSources)
 	})
 	t.Run("packaged cache cannot mask missing source values", func(t *testing.T) {
 		t.Parallel()
@@ -1017,13 +1018,13 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		owner := cachetest.New(t, cacheRoot, cache.New)
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
-		first, err := cli.Template(t.Context(), hr, nil, Options{})
+		cliSources := NewSources(st)
+		first, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		if !strings.Contains(first, `marker: "packaged"`) {
 			t.Fatal(first)
 		}
-		initial, err := cli.describeChart(t.Context(), hr)
+		initial, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
 		key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
 		if key == "" {
@@ -1044,8 +1045,8 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		st.SetArtifact(sourceHR.ChartSource(), artifact)
 		fresh, err := NewClient(cachetest.New(t, cacheRoot, cache.New))
 		assert.NoError(t, err)
-		fresh.SetSourceResolver(NewStoreSourceResolver(st))
-		out, err := fresh.Template(t.Context(), sourceHR, nil, Options{})
+		freshSources := NewSources(st)
+		out, err := fresh.Template(t.Context(), sourceHR, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 		assert.Equal(t, out, "")
 		if !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 			t.Fatalf("missing source values error = %v, want fs.ErrNotExist, ErrInput and ErrFlux", err)
@@ -1053,7 +1054,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		if !strings.Contains(err.Error(), `read values file "prod.yaml"`) {
 			t.Fatal(err)
 		}
-		missing, err := fresh.describeChart(t.Context(), sourceHR)
+		missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources)
 		assert.NoError(t, err)
 		missing.values, missing.valuesErr = fresh.observeValuesFiles(t.Context(), missing, sourceHR.ChartValuesFiles, false)
 		if !errors.Is(missing.valuesErr, fs.ErrNotExist) {
@@ -1061,12 +1062,12 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		}
 		assert.Equal(t, computeTemplateKey(missing, map[string]any{}, Options{}, sourceHR), key)
 	})
-	assertSourceValuesChanges(t, cli, hr, root)
+	cli.assertSourceValuesChanges(t, hr, root, cliSources)
 }
 
-func assertSourceValuesChanges(t *testing.T, cli *Client, hr *manifest.HelmRelease, root string) {
+func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmRelease, root string, cliSources Sources) {
 	t.Helper()
-	initial, err := loadDecodedChart(t.Context(), cli, hr)
+	initial, err := loadDecodedChart(t.Context(), c, hr, cliSources)
 	assert.NoError(t, err)
 	for _, marker := range []string{"changed", "", "added"} {
 		if marker == "" {
@@ -1074,7 +1075,7 @@ func assertSourceValuesChanges(t *testing.T, cli *Client, hr *manifest.HelmRelea
 		} else {
 			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		}
-		out, err := cli.Template(t.Context(), hr, nil, Options{})
+		out, err := c.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		want := marker
 		if want == "" {
@@ -1083,10 +1084,10 @@ func assertSourceValuesChanges(t *testing.T, cli *Client, hr *manifest.HelmRelea
 		if !strings.Contains(out, `marker: "`+want+`"`) {
 			t.Fatal(out)
 		}
-		repeated, err := cli.Template(t.Context(), hr, nil, Options{})
+		repeated, err := c.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		assert.Equal(t, repeated, out)
-		loaded, err := loadDecodedChart(t.Context(), cli, hr)
+		loaded, err := loadDecodedChart(t.Context(), c, hr, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, loaded.chart == initial.chart, true)
 	}

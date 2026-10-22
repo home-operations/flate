@@ -13,13 +13,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -58,6 +58,11 @@ type FetchOptions struct {
 	AllowMissingSecrets bool
 }
 
+type execution struct {
+	*Controller
+	run base.Execution
+}
+
 // New constructs a source controller. Register fetchers on the
 // returned struct's Fetchers map before StartLifecycle.
 func New(s *store.Store, t *task.Service) *Controller {
@@ -90,96 +95,122 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 	return obj == nil && id.Group == manifest.SourceDomain || manifest.KindOf(obj).Runnable
 }
 
-// ReconcileNode runs one source invocation and returns its dependency classification.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return c.DispatchNode(ctx, id, attempt, c.reconcile)
+// ReconcileNode returns the captured assessment of a source acquisition.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+	execution := &execution{Controller: c}
+	execution.run.Init(c.Controller, id)
+	execution.run.Dispatch(ctx, level, execution.reconcile)
+	return &execution.run
 }
 
-// reconcile fetches the source artifact via the registered Fetcher and
-// writes the result through base.DispatchNode so panic recovery,
-// final status writes, and ErrSourceSkipped routing match the
-// KS/HR controllers' shape. Returning ErrSourceSkipped yields a
-// Ready/ReasonSkipped status; ErrBlocked parks the fetch for a dependency
-// retry; any other error yields Failed.
-func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
-	if gated {
-		return schedule.Outcome{}, nil
-	}
-	level := invocation.Drain
+func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
 	facts := obj.(sourceFacts)
 	if facts.ExistenceOnly() {
-		return schedule.Outcome{}, nil
+		return nil
 	}
 	// Dispatcher ownership guarantees a fetcher for this kind.
 	fetcher := c.Fetchers[id.Kind]
 	// Available content survives idempotent re-emission. Released pins must
 	// reacquire normally and publish a Ready transition to wake content consumers.
 	if art, ok := c.Store.GetArtifact(id).(*store.SourceArtifact); ok {
-		if art.FS != nil {
+		if art.FS != nil && art.Reads.Valid() {
 			for _, warning := range art.Warnings {
-				c.Store.AddWarning(id, warning)
+				c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
 			}
-			return schedule.Outcome{}, nil
+			c.run.Reused = true
+			return nil
 		}
-		c.Store.UpdateStatus(id, store.StatusPending, "", "acquiring source content")
+		if art.FS != nil && c.run.Reads.Matches(art.Reads) {
+			captured := *art
+			captured.Reads = &c.run.Reads
+			c.Store.SetArtifact(id, &captured)
+			for _, warning := range art.Warnings {
+				c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
+			}
+			c.run.Reused = true
+			return nil
+		}
+	}
+	if level == manifest.DrainNone {
+		// A producer may need this source's content; drain releases availability waits.
+		if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {
+			return &depwait.ErrBlocked{Deps: blocked}
+		}
 	}
 
 	c.SetPendingUnlessReady(id, "fetching")
-	started := time.Now()
 
 	// Release the worker slot during network I/O so other nodes can progress.
 	var artifact *store.SourceArtifact
 	var fetchErr error
 	c.Tasks.YieldSlot(func() {
-		artifact, fetchErr = fetcher.Fetch(ctx, obj, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
+		artifact, fetchErr = fetcher.Fetch(ctx, obj, &c.run.Reads, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
 	})
-	if artifact != nil {
-		for _, warning := range artifact.Warnings {
-			c.Store.AddWarning(id, warning)
-		}
-	}
 	// A Kustomization may still emit or patch this Secret. Wait for the
 	// rendered contents; only fall back, fail or skip for a missing Secret
 	// once the scheduler reaches a fixpoint. The wait MUST precede the
 	// fallback so an in-repo Secret takes precedence over the global
 	// registry config.
-	missing, isMissing := errors.AsType[*src.MissingSecretError](fetchErr)
-	if isMissing && level == manifest.DrainNone {
+	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && level == manifest.DrainNone {
 		c.Store.UpdateStatus(id, store.StatusPending, "", "waiting for source Secret")
-		return schedule.Outcome{}, &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
+		return &pendingSource{execution: c, object: obj, missing: missing}
 	}
-	if isMissing && missing.RetryWithRegistryConfig != nil && !c.producerBacked(fetchErr) {
-		c.Tasks.YieldSlot(func() {
-			artifact, fetchErr = missing.RetryWithRegistryConfig(ctx, missing.RegistryConfig)
-		})
-		if artifact != nil {
-			for _, warning := range artifact.Warnings {
-				c.Store.AddWarning(id, warning)
-			}
-		}
-		// An optional registry retry MUST preserve --allow-missing-secrets skips.
-		if fetchErr != nil && c.allowMissingSecrets {
-			fetchErr = missing
+	return c.completeFetch(obj, artifact, fetchErr)
+}
+
+type pendingSource struct {
+	execution *execution
+	object    manifest.BaseManifest
+	missing   *src.MissingSecretError
+}
+
+func (p *pendingSource) Error() string { return p.missing.Error() }
+func (p *pendingSource) Unwrap() error {
+	return &depwait.ErrBlocked{Deps: []manifest.NamedResource{p.missing.Secret}}
+}
+func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error {
+	c := p.execution
+	var artifact *store.SourceArtifact
+	var err error = p.missing
+	if p.missing.RetryWithRegistryConfig != nil && !c.producerBacked(err) {
+		c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryWithRegistryConfig(ctx, p.missing.RegistryConfig) })
+		if err != nil && c.allowMissingSecrets {
+			err = p.missing
 		}
 	}
-	if fetchErr != nil {
-		c.Logger().Debug("fetch failed", "id", id.String(), "duration", time.Since(started), "err", fetchErr)
-		// Skip a missing auth Secret either when the user asked globally
-		// (--allow-missing-secrets) or when an in-repo ExternalSecret /
-		// SealedSecret declares it (producer-backed: positive evidence it
-		// materializes live). A missing Secret with neither still fails loud.
-		if errors.Is(fetchErr, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(fetchErr)) {
-			c.Logger().Info("skipped (missing secret)", "id", id.String(), "err", fetchErr)
-			return schedule.Outcome{}, fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
-		}
-		return schedule.Outcome{}, fetchErr
-	}
-	c.Logger().Debug("fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
+	return c.completeFetch(p.object, artifact, err)
+}
+
+func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {
 	if artifact != nil {
-		c.Store.SetArtifact(id, artifact)
+		for _, warning := range artifact.Warnings {
+			c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
+		}
 	}
-	return schedule.Outcome{}, nil
+	if err != nil {
+		if errors.Is(err, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(err)) {
+			if c.run.Reads.Valid() {
+				slog.Info("skipped (missing secret)", "id", obj.Named().String(), "err", err)
+			}
+			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(err.Error()))
+		}
+		return err
+	}
+	if artifact != nil {
+		if !c.run.Reads.Valid() {
+			return nil
+		}
+		current, _ := c.Store.GetArtifact(obj.Named()).(*store.SourceArtifact)
+		captured := *artifact
+		captured.Reads = &c.run.Reads
+		c.Store.SetArtifact(obj.Named(), &captured)
+		if current != nil && current.Reads != captured.Reads {
+			current.Reads.Retire()
+		}
+	}
+	slog.Debug("fetch complete", "id", obj.Named().String())
+	return nil
 }
 
 // producerBacked reports whether err is a missing-auth-Secret error whose
@@ -188,12 +219,12 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 // --allow-missing-secrets flag. The structured *src.MissingSecretError carries
 // the Secret identity; a missing-secret error that isn't that type (or whose
 // Secret has no producer) is not producer-backed.
-func (c *Controller) producerBacked(err error) bool {
+func (c *execution) producerBacked(err error) bool {
 	mse, ok := errors.AsType[*src.MissingSecretError](err)
 	if !ok {
 		return false
 	}
-	for _, p := range c.Store.Productions(mse.Secret, nil) {
+	for _, p := range c.run.Reads.Productions(mse.Secret, nil) {
 		if p.Declaration != (manifest.NamedResource{}) {
 			return true
 		}

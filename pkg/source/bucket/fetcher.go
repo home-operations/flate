@@ -22,8 +22,8 @@ import (
 // here but return a clear "not implemented" error rather than silently
 // falling back, unless ForceGeneric sends them down the generic path.
 type Fetcher struct {
-	Cache   *cache.Cache
-	Secrets source.SecretGetter
+	Cache *cache.Cache
+
 	// Network is the required non-nil invocation owner, borrowed by this fetcher.
 	Network *source.Network
 
@@ -33,7 +33,19 @@ type Fetcher struct {
 }
 
 // Fetch implements source.TypedFetcher[*manifest.Bucket].
-func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, policy cache.Policy) (*store.SourceArtifact, error) {
+type operation struct {
+	*Fetcher
+	reads   *store.ReadSet
+	secrets source.SecretGetter
+}
+
+// Fetch acquires content using one execution's captured credentials and declarations.
+func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	return operation.fetchSource(ctx, b, policy)
+}
+
+func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy cache.Policy) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
 		return nil, source.ErrUnsupportedProvider(b.Named(), b.Provider, sourcev1.BucketProviderGeneric,
 			"S3-compatible")
@@ -70,10 +82,8 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, policy cache.Po
 	}, nil
 }
 
-func (f *Fetcher) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error) {
-	prepared := *f
-	prepared.Secrets = source.SnapshotSecrets(f.Secrets)
-	creds, err := prepared.resolveCredentials(b)
+func (f *operation) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error) {
+	creds, err := f.resolveCredentials(b)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -83,7 +93,7 @@ func (f *Fetcher) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error)
 	}
 	owner := b.Named()
 	owner.Name = b.Namespace + "/" + b.Name
-	resolved, err := source.ResolveTransport(prepared.Secrets, owner, []source.TransportInput{
+	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
 		{Reference: b.ProxySecretRef, Use: source.TransportProxy},
 		{Reference: b.CertSecretRef, Use: source.TransportCert},
 	})

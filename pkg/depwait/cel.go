@@ -75,8 +75,7 @@ func (w *Waiter) evaluateReadyExpr(expr string, dep manifest.NamedResource, obj 
 	} else {
 		dependency = func() any { return projectObject(dep, obj, conds) }
 		self = func() any {
-			var info store.Observation
-			obj := st.Snapshot(new(parent), true, &info)
+			obj, info := st.Snapshot(parent, true)
 			return projectObject(parent, obj, info.Conditions)
 		}
 	}

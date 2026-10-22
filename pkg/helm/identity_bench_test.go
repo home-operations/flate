@@ -29,12 +29,11 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 					if err != nil {
 						b.Fatal(err)
 					}
-					cli.SetSourceResolver(resolver)
 					return cli
 				}
 				cli := newClient()
 				if warm {
-					if _, err := loadDecodedChart(b.Context(), cli, hr); err != nil {
+					if _, err := loadDecodedChart(b.Context(), cli, hr, resolver); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -43,7 +42,7 @@ func BenchmarkLoadChart_Mode(b *testing.B) {
 					if !warm {
 						cli = newClient()
 					}
-					if _, err := loadDecodedChart(b.Context(), cli, hr); err != nil {
+					if _, err := loadDecodedChart(b.Context(), cli, hr, resolver); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -67,14 +66,14 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
+				cliSources := NewSources(st)
 				opts := Options{DisableChartDigestTracking: disabled}
-				if _, err := cli.Template(b.Context(), hr, nil, opts); err != nil {
+				if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}); err != nil {
 					b.Fatal(err)
 				}
 				b.ReportAllocs()
 				for b.Loop() {
-					if _, err := cli.Template(b.Context(), hr, nil, opts); err != nil {
+					if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -90,8 +89,8 @@ func BenchmarkChartValues_Cached(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	loaded, err := loadDecodedChart(b.Context(), cli, hr)
+	cliSources := NewSources(st)
+	loaded, err := loadDecodedChart(b.Context(), cli, hr, cliSources)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -118,10 +117,10 @@ func BenchmarkChartValues_PinnedSource(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	cli.SetSourceResolver(benchChartResolver(b, dir, acquireChartFS(b, owner, os.DirFS(dir))))
+	cliSources := benchChartResolver(b, dir, acquireChartFS(b, owner, os.DirFS(dir)))
 	hr := newHR()
 	hr.ChartValuesFiles = names
-	loaded, err := loadDecodedChart(b.Context(), cli, hr)
+	loaded, err := loadDecodedChart(b.Context(), cli, hr, cliSources)
 	if err != nil || loaded.valuesPin == "" {
 		b.Fatalf("source values are not pinned: %v", err)
 	}

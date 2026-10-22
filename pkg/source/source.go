@@ -38,12 +38,12 @@ const (
 // dispatches via this untyped interface. Concrete implementations
 // satisfy it through Wrap[T] — see TypedFetcher.
 type Fetcher interface {
-	Fetch(ctx context.Context, obj manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error)
 }
 
 // TypedFetcher acquires artifacts of one manifest type with explicit freshness and retries.
 type TypedFetcher[T manifest.BaseManifest] interface {
-	Fetch(ctx context.Context, obj T, policy sourcecache.Policy) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj T, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error)
 }
 
 // Wrap converts a TypedFetcher into the untyped Fetcher interface
@@ -60,12 +60,12 @@ type typedAdapter[T manifest.BaseManifest] struct {
 	inner TypedFetcher[T]
 }
 
-func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	typed, ok := obj.(T)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s fetcher: unexpected payload %T", manifest.ErrInput, a.label, obj)
 	}
-	return a.inner.Fetch(ctx, typed, policy)
+	return a.inner.Fetch(ctx, typed, reads, policy)
 }
 
 // ErrUnsupportedProvider is the canonical "we only support X" error

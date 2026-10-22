@@ -1,9 +1,10 @@
 package resourceset
 
 import (
-	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/schedule"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -34,7 +35,7 @@ func TestCollectDeps_ScopeAndImmutability(t *testing.T) {
 			manifest.KindOf(&manifest.RawObject{APIVersion: tc.api, Kind: tc.kind}).Namespaced()
 			s.AddObject(rs)
 			want := []manifest.DependencyRef{{Group: schema.FromAPIVersionAndKind(tc.api, tc.kind).Group, Kind: tc.kind, Name: "dependency", Namespace: tc.want, ReadyExpr: "true"}}
-			assert.Diff(t, c.collectDeps(rs), want)
+			assert.Diff(t, c.newExecution(rs.Named()).collectDeps(rs), want)
 			assert.Equal(t, rs.DependsOn[0].Namespace, tc.namespace)
 			stored, ok := s.Get[*manifest.ResourceSet](rs.Named())
 			if !ok {
@@ -85,15 +86,11 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 				first.Name, last.Name = "a-parent", "z-parent"
 				want = append(want, manifest.DependencyRef{NamedResource: first}, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{NamedResource: last})
 			}
-			deps := c.collectDeps(rs)
+			deps := c.newExecution(rs.Named()).collectDeps(rs)
 			assert.Diff(t, deps, want)
 			w := &depwait.Waiter{Store: c.Store}
 			assert.Equal(t, rs.DependsOn[0].Ready, false)
-			w.Dependencies = deps[:1]
-			var result depwait.Resolution
-			w.Classify(manifest.ReconcileAttempt{}, &result)
-			_, blocked := errors.AsType[*depwait.ErrBlocked](result.Err())
-			assert.Equal(t, blocked, true)
+			assert.Equal(t, w.Classify(t.Context(), deps[0], manifest.DrainNone).Kind, schedule.Blocked)
 		})
 	}
 }

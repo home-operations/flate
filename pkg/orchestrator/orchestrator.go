@@ -191,12 +191,7 @@ type Orchestrator struct {
 	// failure message.
 	orphans map[manifest.NamedResource]string
 
-	// preflightFailures records dependency cycles found before a
-	// controller renders the resource. Controllers consult it from
-	// their object listeners and mark the resource Failed instead of
-	// waiting on a graph that cannot converge.
-	// preflightMu guards the full detect-replace-refire unit in
-	// failDependsOnCycles and serializes reads in preflightFailure.
+	// Store publication MUST follow cycle replacement after releasing preflightMu.
 	preflightMu       sync.RWMutex
 	preflightFailures map[manifest.NamedResource]string
 
@@ -324,7 +319,6 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	if err != nil {
 		return nil, err
 	}
-	client.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	ts := task.NewBounded(cfg.Concurrency)
 	o := &Orchestrator{inputs: source.NewHTTPInputs(owner, cfg.Network, ts)}
 	trees := kustomize.NewTreeCache(owner, &o.inputs, ts)
@@ -436,55 +430,6 @@ func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.
 	return children
 }
 
-// requiredDataDependencies returns authored HR/KS inputs and their known
-// producers and owners, including optional or unavailable inputs. Bootstrap
-// must have completed and Render must have returned; do not call concurrently
-// with either. The sorted, deduplicated slice is independent of stored state.
-func (o *Orchestrator) requiredDataDependencies(consumer manifest.NamedResource) []manifest.NamedResource {
-	deps := map[manifest.NamedResource]struct{}{}
-	addOwners := func(id manifest.NamedResource) {
-		record, _ := o.index.Lookup(id)
-		for _, p := range o.store.Productions(id, o.index) {
-			if p.Owner != (manifest.NamedResource{}) {
-				deps[p.Owner] = struct{}{}
-			}
-			if p.Declaration != (manifest.NamedResource{}) {
-				deps[p.Declaration] = struct{}{}
-			}
-		}
-		if record.Parent != (manifest.NamedResource{}) {
-			deps[record.Parent] = struct{}{}
-		}
-		file := record.File
-		if file == "" {
-			id.Namespace = ""
-			raw, _ := o.index.Lookup(id)
-			file = raw.File
-		}
-		for owner := range o.index.ReadersOfFile(file) {
-			deps[owner] = struct{}{}
-		}
-	}
-	addInput := func(id manifest.NamedResource) {
-		if id.Name == "" {
-			return
-		}
-		deps[id] = struct{}{}
-		addOwners(id)
-
-	}
-	if obj := o.store.GetObject(consumer); obj != nil {
-		for ref := range manifest.References(obj) {
-			if ref.Use == "valuesFrom" || ref.Use == "substituteFrom" {
-				addInput(ref.NamedResource)
-			}
-		}
-	}
-	out := slices.Collect(maps.Keys(deps))
-	slices.SortFunc(out, manifest.NamedResource.Compare)
-	return out
-}
-
 // Bootstrap discovers manifests, applies namespace inheritance, primes
 // existence-only sources Ready, and prepares the change filter.
 // Delegates the load / expand / alias phase to pkg/discovery; the
@@ -539,14 +484,8 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
 		o.hrc.Options.DisableChartDigestTracking = *requested
 	}
-	provider := values.NewStoreProvider(o.store, o.cfg.WipeSecrets)
-	secretGet := func(ns, name string) *manifest.Secret {
-		secret, _ := provider.Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: ns, Name: name}).(*manifest.Secret)
-		return secret
-	}
-	resolver := helm.NewStoreSourceResolver(o.store)
 	gitFetcher := &git.Fetcher{
-		Cache: o.cache, Secrets: secretGet, Depth: o.cfg.GitDepth,
+		Cache: o.cache, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
 	}
 	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
@@ -558,13 +497,13 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 		}
 		return artifact, err
 	})
-	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}
-	chartFetcher := helmchart.New(secretGet, resolver.HelmRepository, ociFetcher, helmchart.Config{
+	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
+	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
 		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
-			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, Secrets: secretGet, ForceGeneric: o.cfg.ForceGenericProvider}),
+			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, ForceGeneric: o.cfg.ForceGenericProvider}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
 		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
 	} {

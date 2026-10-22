@@ -25,7 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *Fetcher) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}

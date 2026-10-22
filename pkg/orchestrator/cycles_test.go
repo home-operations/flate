@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,7 +89,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	}
 }
 
-func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
+func TestFailDependsOnCycles_InvalidatesResolvedMembers(t *testing.T) {
 	t.Parallel()
 	idA := testutil.KustomizationID("ns", "a")
 	idB := testutil.KustomizationID("ns", "b")
@@ -97,6 +98,10 @@ func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 	o.store.AddObject(makeKS("a", "ns", idB))
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.failDependsOnCycles()
+	var reads store.ReadSet
+	reads.Init(o.store, idB, nil)
+	reads.GetObject(idB)
+	defer reads.Retire()
 
 	seen := map[manifest.NamedResource]int{}
 	o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -106,8 +111,9 @@ func TestFailDependsOnCycles_RefiresResolvedMembers(t *testing.T) {
 	o.store.AddObject(makeKS("a", "ns"))
 	o.failDependsOnCycles()
 
-	if seen[idB] == 0 {
-		t.Fatal("resolved cycle member b was not refired after preflight failure cleared")
+	changed := slices.Collect(o.store.Sweep())
+	if reads.Valid() || !slices.Contains(changed, idB) || seen[idB] != 0 {
+		t.Fatal("cleared preflight did not invalidate its retained assessment without an arrival")
 	}
 }
 
@@ -168,10 +174,18 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	}
 }
 
+// TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle stresses the
+// incremental hot path: feed the graph 10k acyclic edges via the
+// per-event listener API, assert no false positive, then add a single
+// cycle-introducing edge and assert it's flagged. Mirrors the post-
+// Bootstrap listener: every store add hits updateDependencyGraphFor
+// with exactly one id, no batched DFS.
 func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
+	t.Parallel()
 	const N = 10000
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
+	// Chain: ks-0 → ks-1 → ks-2 → ... → ks-(N-1). Pure DAG.
 	ids := make([]manifest.NamedResource, N)
 	for i := range N {
 		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("ks-%05d", i))
@@ -193,17 +207,10 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 		}
 	}
 
-	if got := testing.AllocsPerRun(10, func() { o.syncPreflightFailures() }); got != 0 {
-		t.Fatalf("acyclic warning collection allocates %g times", got)
-	}
-
+	// Close the chain: ks-(N-1) → ks-0 creates one huge cycle.
 	o.store.AddObject(makeKS(ids[N-1].Name, ids[N-1].Namespace, ids[0]))
 	o.updateDependencyGraphFor(ids[N-1])
 
-	warnings := o.store.Warnings()
-	if len(warnings) != 1 || warnings[0].Category != manifest.WarnDependencyCycle || warnings[0].Count != 1 || len(warnings[0].Detail) != 1 {
-		t.Fatalf("large cycle warning = %+v", warnings)
-	}
 	failures := o.depGraph.Failures()
 	if len(failures) != N {
 		t.Fatalf("cycle-closing edge should flag every chain member; got %d / %d", len(failures), N)

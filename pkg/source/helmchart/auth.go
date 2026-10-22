@@ -16,8 +16,8 @@ type httpRepository struct {
 	material           any
 }
 
-func (f *Fetcher) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
-	secrets := source.SnapshotSecrets(f.secrets)
+func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
+	secrets := f.secrets
 	prepared := &httpRepository{HelmRepository: r}
 	if r.SecretRef != nil {
 		if secrets == nil {

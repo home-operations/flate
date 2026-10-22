@@ -3,6 +3,7 @@ package loader
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -87,7 +88,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !promoteForTest(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+	if !Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -104,7 +105,7 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	t.Parallel()
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got := promoteForTest(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got := Promote(t.Context(), idx.Store, id, PromoteOptions{Record: productionForTest(idx.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
@@ -139,7 +140,7 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got := promoteForTest(l.Store, id, l.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got := Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -181,8 +182,8 @@ data:
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
 	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
-	if !promoteForTest(l.Store, cmID, l.Index.Records[cmID], PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
-		t.Fatalf("promoteForTest(cm) should succeed")
+	if !Promote(t.Context(), l.Store, cmID, PromoteOptions{Record: productionForTest(l.Index.Records[cmID]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+		t.Fatalf("promoteForTest(t.Context(), cm) should succeed")
 	}
 	if st.GetObject(cmID) == nil {
 		t.Errorf("CM not in store after Promote")
@@ -232,7 +233,7 @@ stringData: {value: fixture}
 				id = secret
 			}
 			admit := func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }
-			if got := promoteForTest(idx.Store, id, idx.Index.Records[id], PromoteOptions{WipeSecrets: true, Admit: admit}); got == tc.secret {
+			if got := Promote(t.Context(), idx.Store, id, PromoteOptions{Record: productionForTest(idx.Index.Records[id]), WipeSecrets: true, Admit: admit}); got == tc.secret {
 				t.Errorf("Promote returned %v, want %v", got, !tc.secret)
 			}
 			if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
@@ -322,15 +323,15 @@ spec:
 				record.Authored = id
 				record.Authored.Namespace = tc.authored
 			}
-			if got := promoteForTest(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != (tc.version != "") {
-				t.Fatalf("promoteForTest(%s) = %v, want %v", id, got, tc.version != "")
+			if got := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) bool { return true }}); got != (tc.version != "") {
+				t.Fatalf("promoteForTest(t.Context(), %s) = %v, want %v", id, got, tc.version != "")
 			}
 			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
 				t.Errorf("%s chart version = %s, want %s", id, got, tc.version)
 			}
 			foreign := id
 			foreign.Group = "foreign.example"
-			if promoteForTest(st, foreign, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}) {
+			if Promote(t.Context(), st, foreign, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) bool { return true }}) {
 				t.Fatal("foreign promotion borrowed the real HelmRelease")
 			}
 			sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
@@ -381,14 +382,84 @@ func TestPromote_SourceView(t *testing.T) {
 				}
 			}
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
-			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml")}
+			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml"), Productions: []manifest.Production{{Source: source.Named()}}}
 			record.Authored.Namespace = "authored"
-			if got := promoteForTest(st, id, record, PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }}); got != present {
+			if got := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) bool { return true }}); got != present {
 				t.Fatalf("Promote = %v, want %v", got, present)
 			}
 			if present && st.GetObject(id).(*manifest.ConfigMap).Data["source"] != "committed" {
 				t.Fatal("promotion read the working file instead of the mounted view")
 			}
 		})
+	}
+}
+
+type promotionBarrier struct {
+	fs.FS
+	opened  chan struct{}
+	release chan struct{}
+}
+
+func (b promotionBarrier) Open(name string) (fs.File, error) {
+	close(b.opened)
+	<-b.release
+	return b.FS.Open(name)
+}
+
+func TestPromote_CapturedSourceReplacement(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+	st.AddObject(source)
+	root := t.TempDir()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "selected", Namespace: "apps"}
+	makeFS := func(value string) fstest.MapFS {
+		return fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: apps}\ndata: {value: " + value + "}\n")}}
+	}
+	barrier := promotionBarrier{FS: makeFS("old"), opened: make(chan struct{}), release: make(chan struct{})}
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "old", LocalPath: root, FS: barrier})
+	var first store.ReadSet
+	first.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
+	options := PromoteOptions{Record: manifest.Production{Source: source.Named(), Authored: id, Path: filepath.Join(root, "values.yaml")}, Reads: &first, Admit: func(manifest.BaseManifest) bool { return true }}
+	var arrivals int
+	st.AddListener(store.EventObjectAdded, func(changed manifest.NamedResource, _ any) {
+		if changed == id {
+			arrivals++
+		}
+	}, false)
+	done := make(chan bool, 1)
+	go func() { done <- Promote(t.Context(), st, id, options) }()
+	<-barrier.opened
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "new", LocalPath: root, FS: makeFS("new")})
+	close(barrier.release)
+	if <-done || st.GetObject(id) != nil || first.Valid() || arrivals != 0 {
+		t.Fatal("changed source admitted stale raw bytes")
+	}
+	first.Retire()
+	var second store.ReadSet
+	second.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
+	options.Reads = &second
+	if !Promote(t.Context(), st, id, options) {
+		t.Fatal("current captured source did not admit")
+	}
+	if got, _ := second.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "new" || !second.Valid() {
+		t.Fatalf("current promotion = %+v, valid=%t", got, second.Valid())
+	}
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "third", LocalPath: root, FS: makeFS("third")})
+	if st.GetObject(id) != nil || second.Valid() {
+		t.Fatal("source-bound raw admission survived changed source")
+	}
+	var third store.ReadSet
+	third.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
+	options.Reads = &third
+	if !Promote(t.Context(), st, id, options) {
+		t.Fatal("replacement source could not replace raw admission")
+	}
+	if got, _ := third.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "third" || !third.Valid() {
+		t.Fatalf("replacement promotion = %+v, valid=%t", got, third.Valid())
+	}
+	second.Retire()
+	third.Retire()
+	for range st.Sweep() {
 	}
 }

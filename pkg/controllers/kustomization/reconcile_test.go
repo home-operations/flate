@@ -277,10 +277,20 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			start := make(chan struct{})
 			completed := make(chan struct{})
 			var accepted *store.Emission
+			var authority store.ReadSet
+			var replayEvents atomic.Int64
+			var stopReplay func()
+			var renders atomic.Int64
+			stopRenders := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+				if id == first && payload.(store.StatusInfo).Message == "rendering" {
+					renders.Add(1)
+				}
+			}, false)
+			defer stopRenders()
 			for i, ks := range consumers {
 				c.Tasks.Go(t.Context(), ks.Named().String(), func(ctx context.Context) {
 					<-start
-					if _, deps := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
+					if deps := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked; len(deps) != 0 {
 						t.Errorf("blocked dependencies = %v", deps)
 					}
 					if i == 0 {
@@ -297,11 +307,33 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			}
 			s.AddObject(stamped)
 			assert.Equal(t, s.GetObject(first), manifest.BaseManifest(stamped))
+			if replay {
+				authority.Init(s, manifest.NamedResource{Name: "output-reader"}, nil)
+				authority.GetArtifact(first)
+				if !authority.Valid() {
+					t.Fatal("captured output was already invalid before metadata replay")
+				}
+				var stops []store.Unsubscribe
+				for _, kind := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
+					stops = append(stops, s.AddListener(kind, func(id manifest.NamedResource, _ any) {
+						if id == first {
+							t.Logf("metadata replay event=%v", kind)
+							replayEvents.Add(1)
+						}
+					}, false))
+				}
+				stopReplay = func() {
+					for _, stop := range stops {
+						stop()
+					}
+				}
+			}
+
 			if !replay {
 				close(start)
 			} else {
 				c.Tasks.Go(t.Context(), "metadata replay", func(ctx context.Context) {
-					if _, deps := c.ReconcileNode(ctx, first, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
+					if deps := c.ReconcileNode(ctx, first, manifest.DrainNone).Blocked; len(deps) != 0 {
 						t.Errorf("replay blocked dependencies = %v", deps)
 					}
 				})
@@ -311,9 +343,22 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			if accepted == nil || accepted.Fingerprint == "" || len(accepted.Manifests) != 1 {
 				t.Fatalf("first emission = %+v", accepted)
 			}
-			if got := s.GetArtifact(first); got != accepted {
-				t.Fatalf("metadata replay replaced accepted output/fingerprint: %p -> %p", accepted, got)
+			current := s.GetArtifact(first).(*store.Emission)
+			if current.Fingerprint != accepted.Fingerprint {
+				t.Fatal("metadata replay changed accepted fingerprint")
 			}
+			assert.Diff(t, current.Manifests, accepted.Manifests)
+			if replay {
+				stopReplay()
+				if !authority.Valid() || replayEvents.Load() != 0 {
+					t.Fatalf("metadata replay changed output authority: valid=%t events=%d", authority.Valid(), replayEvents.Load())
+				}
+				authority.Retire()
+			}
+			if renders.Load() != 1 {
+				t.Fatalf("metadata replay rendered %d times, want 1", renders.Load())
+			}
+
 			for _, ks := range consumers {
 				info, _ := s.GetStatus(ks.Named())
 				assert.Equal(t, info.Status, store.StatusReady)
@@ -371,7 +416,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	c.ReconcileNode(context.Background(), ks.Named(), manifest.ReconcileAttempt{Drain: 0})
+	c.ReconcileNode(context.Background(), ks.Named(), 0)
 	secondFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
@@ -440,7 +485,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	c.ReconcileNode(context.Background(), ks.Named(), manifest.ReconcileAttempt{Drain: 0})
+	c.ReconcileNode(context.Background(), ks.Named(), 0)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -495,7 +540,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	changed := ks.Clone()
 	changed.TargetNamespace = "elsewhere"
 	s.AddObject(changed)
-	c.ReconcileNode(context.Background(), ks.Named(), manifest.ReconcileAttempt{Drain: 0})
+	c.ReconcileNode(context.Background(), ks.Named(), 0)
 
 	var secondFP string
 	if art, ok := s.GetArtifact(ks.Named()).(*store.Emission); ok && art.Fingerprint != firstFP {
@@ -618,11 +663,9 @@ data: {greeting: hi}
 					"dependsOn": []any{map[string]any{"name": parent.Name}},
 				},
 			}
-			level := manifest.DrainNone
 			if tt.cascade {
 				doc["spec"].(map[string]any)["sourceRef"] = map[string]any{"kind": manifest.KindOCIRepository, "name": "missing"}
 				st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: parent.Namespace, Name: "missing"}, store.StatusReady, "", "")
-				level = manifest.DrainCascade
 			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 			if err != nil {
@@ -651,13 +694,8 @@ data: {greeting: hi}
 				published.Store(true)
 			}, false)
 			t.Cleanup(unsub)
-			c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-				if _, blocked := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: level}); !blocked.Empty() {
-					t.Errorf("blocked on %v", blocked)
-				}
-			})
-			c.Tasks.BlockTillDone()
-			if observations.Load() != 1 || !published.Load() || c.Tasks.Failures() != 0 {
+			controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
+			if observations.Load() < 1 || !published.Load() || c.Tasks.Failures() != 0 {
 				t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), c.Tasks.Failures())
 			}
 			fresh, ok := st.Get[*manifest.Kustomization](ks.Named())
@@ -697,11 +735,11 @@ func TestReconcile_ReleasedPinWaitsForSource(t *testing.T) {
 		t.Fatalf("first reconcile: %+v", info)
 	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Key: "released"})
-	_, _, err := c.resolveSource(ks, manifest.DrainNone)
+	_, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainNone)
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != manifest.BootstrapSourceID {
 		t.Fatalf("released pin did not wait for source acquisition: %v", err)
 	}
-	if _, _, err := c.resolveSource(ks, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+	if _, _, err := c.newExecution(ks.Named()).resolveSource(ks, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("unavailable content at fixpoint: %v", err)
 	}
 }
@@ -757,9 +795,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			l.SourceRoot, l.Options.WipeSecrets = root, false
 			_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
 			assert.NoError(t, err)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
-				t.Fatal(err)
-			}
+			l.FinalizeIndex(t.Context(), root)
 			shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
 			exclusive := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "exclusive"}
 			if len(s.Productions(exclusive, l.Index)) == 0 {
@@ -768,7 +804,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			for _, id := range []manifest.NamedResource{shared, exclusive} {
 				for _, p := range s.Productions(id, l.Index) {
 					if p.Path != "" {
-						loader.Promote(s, id, p, loader.PromoteOptions{Admit: func(manifest.BaseManifest) bool { return true }})
+						loader.Promote(t.Context(), s, id, loader.PromoteOptions{Record: p, Admit: func(manifest.BaseManifest) bool { return true }})
 					}
 				}
 				if s.GetObject(id) == nil {
@@ -783,11 +819,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			assert.NoError(t, err)
 			t.Cleanup(func() { _ = owner.Close() })
 			tasks := task.NewBounded(2)
-			network := new(source.Network)
-			t.Cleanup(network.Close)
-			inputs := source.NewHTTPInputs(owner, network, tasks)
-			t.Cleanup(inputs.Close)
-			trees := kustomize.NewTreeCache(owner, &inputs, tasks)
+			trees := kustomize.NewTreeCache(owner, nil, tasks)
 			t.Cleanup(trees.Close)
 			c := New(s, tasks, trees, false)
 			c.Configure(Options{Index: l.Index}, sourcecache.RetryConfig{})
@@ -797,18 +829,18 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			} else {
 				s.SetArtifact(sourceID, &next)
 			}
-			if _, err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
-				t.Fatal(err)
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+				t.Fatalf("settled source render: %+v", info)
 			}
-			if got := s.GetObject(exclusive) != nil; got == swapDuringRender {
-				t.Fatalf("retirement followed store source rather than rendered source: retained=%t", got)
+			if s.GetObject(exclusive) == nil {
+				t.Fatal("unaccepted source render retired prediction from another source view")
 			}
 			if s.GetObject(shared) == nil {
 				t.Fatal("coverage retired Q support")
 			}
 			if !swapDuringRender {
 				s.SetArtifact(sourceID, &initial)
-				if _, err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
+				if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
 					t.Fatal(err)
 				}
 				if s.GetObject(exclusive) != nil {
@@ -835,7 +867,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 				t.Log("raw render persistence unavailable for this build identity")
 			}
 			before := guard.opened.Load()
-			if _, err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
+			if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
 				t.Fatalf("raw cache hit: %v", err)
 			}
 			if persistent && guard.opened.Load() != before {
@@ -846,7 +878,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			fresh.NamePrefix = "arbitrary-second-"
 
 			s.AddObject(fresh)
-			if _, err := c.reconcile(t.Context(), fresh, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
+			if err := c.newExecution((fresh).Named()).reconcile(t.Context(), fresh, manifest.DrainNone); err != nil {
 				t.Fatal(err)
 			}
 			old := shared
@@ -861,7 +893,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			failed.FS = &guardedSourceFS{FS: input.FS}
 			failed.FS.(*guardedSourceFS).deny.Store(true)
 			s.SetArtifact(sourceID, &failed)
-			if _, err := c.reconcile(t.Context(), fresh, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err == nil || s.GetObject(newID) == nil {
+			if err := c.newExecution((fresh).Named()).reconcile(t.Context(), fresh, manifest.DrainNone); err == nil || s.GetObject(newID) == nil {
 				t.Fatal("failed successor withdrew completed output")
 			}
 			_, empty = s.GetEmission(ks.Named())

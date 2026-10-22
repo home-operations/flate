@@ -32,8 +32,8 @@ import (
 
 // Fetcher acquires immutable Git generations through the common cache owner.
 type Fetcher struct {
-	Cache   *sourcecache.Cache
-	Secrets source.SecretGetter
+	Cache *sourcecache.Cache
+
 	// Depth bounds history for refs that do not require reachability validation.
 	Depth int
 	// RestrictSchemes permits only HTTPS and SSH for untrusted inputs.
@@ -43,9 +43,20 @@ type Fetcher struct {
 	fallback     sync.Map
 }
 
-// Fetch returns an immutable source view after acquisition succeeds.
-// An error may retain warnings without usable content.
-func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+// Fetch publishes an immutable source view only after acquisition succeeds.
+type operation struct {
+	*Fetcher
+	reads   *store.ReadSet
+	secrets source.SecretGetter
+}
+
+// Fetch acquires content using one execution's captured credentials and declarations.
+func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	return operation.fetchSource(ctx, repo, policy)
+}
+
+func (f *operation) fetchSource(ctx context.Context, repo *manifest.GitRepository, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
 		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GitProviderGeneric,
 			"SecretRef-based credentials")
@@ -57,8 +68,8 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, polic
 	return f.fetch(ctx, request, policy)
 }
 
-func (f *Fetcher) resolveTransport(repo *manifest.GitRepository) (gitAcquisition, error) {
-	secrets := source.SnapshotSecrets(f.Secrets)
+func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisition, error) {
+	secrets := f.secrets
 	var sec *manifest.Secret
 	if repo.SecretRef != nil && secrets != nil {
 		sec = secrets(repo.Namespace, repo.SecretRef.Name)

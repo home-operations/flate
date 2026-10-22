@@ -21,7 +21,7 @@ import (
 // hitting the network. FS exposes the fixed working-tree fixture content.
 type fakeOCIFetcher struct{ localPath string }
 
-func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f fakeOCIFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	return &store.SourceArtifact{
 		Kind:      manifest.KindOCIRepository,
 		URL:       "oci://example.test/homepage-config",

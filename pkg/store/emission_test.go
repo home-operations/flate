@@ -109,7 +109,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			predecessor := s.GetArtifact(p).(*Emission)
 			_, attempt := s.GetEmission(p)
 			defer attempt.Finish()
-			attempt.Complete = initial.Complete
+			attempt.Complete, attempt.Fingerprint = initial.Complete, initial.Fingerprint
 			tc.edit(&attempt)
 			checkPredecessor := func() {
 				t.Helper()
@@ -218,7 +218,7 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 				if got := s.GetObject(id); got == nil || got.Named() != id {
 					t.Fatal("reverse position lost object")
 				}
-				obj := s.Snapshot(&id, true, nil)
+				obj, _ := s.Snapshot(id, true)
 				if obj == nil || obj.Named() != id {
 					t.Fatal("reverse position changed snapshot identity")
 				}
@@ -410,7 +410,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 							t.Fatal("hidden Ready leaked")
 						}
 						var observation Observation
-						obj := s.Snapshot(&id, true, &observation)
+						obj, observation := s.Snapshot(id, true)
 						info := observation.StatusInfo
 						conditions := observation.Conditions
 						if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
@@ -936,10 +936,10 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				t.Helper()
 				for _, id := range []manifest.NamedResource{k, l, tail.Obj.Named()} {
 					sh := s.shardFor(id)
-					if (s.GetObject(id) != nil) != want || sh.hidden[id] == want {
+					if (s.GetObject(id) != nil) != want || sh.cells[id].hidden == want {
 						t.Errorf("%v support/visibility disagree, want live=%t", id, want)
 					}
-					if sh.static[id] != nil && sh.retired[id] == want {
+					if sh.cells[id].static != nil && sh.cells[id].retired == want {
 						t.Errorf("%v retirement disagrees, want live=%t", id, want)
 					}
 				}
@@ -1159,7 +1159,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 			t.Fatal("absent producer leaked terminal state")
 		}
 		var observation Observation
-		obj := s.Snapshot(&id, true, &observation)
+		obj, observation := s.Snapshot(id, true)
 		info := observation.StatusInfo
 		conditions := observation.Conditions
 		if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
@@ -1185,7 +1185,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	if _, ok := s.GetStatus(child.Obj.Named()); ok {
 		t.Fatal("external anchor activated retained static Ready")
 	}
-	if !s.shardFor(child.Obj.Named()).retired[child.Obj.Named()] {
+	if !s.shardFor(child.Obj.Named()).cells[child.Obj.Named()].retired {
 		t.Fatal("actual membership restored shadowed static authority")
 	}
 	if _, ok := s.GetStatus(p); ok {
@@ -1267,6 +1267,25 @@ func TestStore_ProductionsQueryAllocations(t *testing.T) {
 				t.Fatalf("production query allocations=%v, want 0", got)
 			}
 		})
+	}
+	obj := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
+	s.AddObject(obj)
+	var reads ReadSet
+	measure := func(productions bool) float64 {
+		return testing.AllocsPerRun(10, func() {
+			reads.Init(s, obj.Named(), nil)
+			reads.GetObject(obj.Named())
+			if productions {
+				reads.Productions(obj.Named(), nil)
+			}
+			reads.Retire()
+			for range s.Sweep() {
+			}
+		})
+	}
+	baseline := measure(false)
+	if got := measure(true); got != baseline {
+		t.Fatalf("empty captured production query allocations=%v, capture alone=%v", got, baseline)
 	}
 }
 
@@ -1471,7 +1490,7 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 					assert.Equal(t, s.EmissionOwner(id), owner)
 					assert.Equal(t, s.GetObject(id), child.Obj)
 					var observation Observation
-					obj := s.Snapshot(&id, true, &observation)
+					obj, observation := s.Snapshot(id, true)
 					info := observation.StatusInfo
 					conditions := observation.Conditions
 					assert.Equal(t, obj, child.Obj)
@@ -1612,8 +1631,14 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		sh := s.shardFor(id)
 		sh.mu.RLock()
 		defer sh.mu.RUnlock()
-		child, owner := sh.representativeLocked(id)
-		if !sh.hidden[id] || !sh.retired[id] || child.Obj != nil || owner != (manifest.NamedResource{}) {
+		var view capture
+		sh.captureLocked(id, sh.cells[id], &view)
+		child := view.child
+		var owner manifest.NamedResource
+		if view.owner != nil {
+			owner = view.owner.id
+		}
+		if !sh.cells[id].hidden || !sh.cells[id].retired || child.Obj != nil || owner != (manifest.NamedResource{}) {
 			t.Errorf("%v hidden, retirement and representative disagree", id)
 		}
 		if slot := sh.slots[id]; slot != nil && (slot.visible.Load() || !slot.hidden.Load()) {
@@ -1653,7 +1678,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 					t.Error("reanchoring restored retained Ready")
 				}
 				sh := s.shardFor(l.Obj.Named())
-				if sh.retired[l.Obj.Named()] || sh.hidden[l.Obj.Named()] {
+				if sh.cells[l.Obj.Named()].retired || sh.cells[l.Obj.Named()].hidden {
 					t.Error("restored frozen descendant remains retired or hidden")
 				}
 				seedRetained(t, s, l.Obj.Named())
@@ -1719,7 +1744,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 				if s.GetObject(late.Obj.Named()) != late.Obj || s.GetObject(l.Obj.Named()) != nil {
 					t.Fatal("reanchoring must restore actual membership without restoring shadowed coverage")
 				}
-				if !s.shardFor(l.Obj.Named()).retired[l.Obj.Named()] {
+				if !s.shardFor(l.Obj.Named()).cells[l.Obj.Named()].retired {
 					t.Fatal("shadowed static prediction was not retired")
 				}
 				if !s.DeleteObject(k) {
@@ -2063,5 +2088,194 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 	assert.Diff(t, facts.Productions, []manifest.Production{{Owner: owner.Named(), Declaration: generator.Named()}})
 	if facts.Data != nil || facts.Accepted {
 		t.Fatalf("prediction supplied authority: %+v", facts)
+	}
+}
+
+func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
+	t.Parallel()
+	s := New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	s.AddObject(owner)
+	first, last := emissionChild("first", "a"), emissionChild("last", "b")
+	_, complete := s.GetEmission(owner.Named())
+	complete.Children = []Child{first, last}
+	complete.Manifests = []map[string]any{first.Doc, last.Doc}
+	complete.Fingerprint = manifest.Fingerprint(complete.Manifests)
+	complete.Complete = true
+	s.RecordEmitted(owner.Named(), &complete)
+	complete.Finish()
+	var observer, writer ReadSet
+	observer.Init(s, ownerID("observer"), nil)
+	writer.Init(s, owner.Named(), nil)
+	defer observer.Retire()
+	defer writer.Retire()
+	before := observer.GetArtifact(owner.Named()).(*Emission)
+	var objects, artifacts int
+	stopObjects := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { objects++ }, false)
+	defer stopObjects()
+	stopArtifacts := s.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { artifacts++ }, false)
+	defer stopArtifacts()
+	_, partial := writer.GetEmission(owner.Named())
+	partial.Children = partial.Children[len(partial.Children)-1:]
+	s.RecordEmitted(owner.Named(), &partial)
+	partial.Finish()
+	after := s.GetArtifact(owner.Named()).(*Emission)
+	if !observer.Valid() || objects != 0 || artifacts != 0 {
+		t.Fatalf("equal partial subset invalidated output: valid=%t objects=%d artifacts=%d", observer.Valid(), objects, artifacts)
+	}
+	if !after.Complete || after.Fingerprint != before.Fingerprint {
+		t.Fatal("equal partial subset lost completed render identity")
+	}
+	assert.Diff(t, after.Children, before.Children)
+	assert.Diff(t, after.Manifests, before.Manifests)
+}
+
+func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"partial", "rebound", "rejected"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			s.AddObject(owner)
+			var first, second ReadSet
+			first.Init(s, owner.Named(), nil)
+			second.Init(s, owner.Named(), nil)
+			defer first.Retire()
+			defer second.Retire()
+			_, output := first.GetEmission(owner.Named())
+			child := emissionChild("output", "old")
+			output.Children, output.Manifests = []Child{child}, []map[string]any{child.Doc}
+			output.Fingerprint = manifest.Fingerprint(output.Manifests)
+			output.Complete = true
+			first.Bind(&output)
+			s.RecordEmitted(owner.Named(), &output)
+			output.Finish()
+			_, next := second.GetEmission(owner.Named())
+			defer next.Finish()
+			next.Complete = mode != "partial"
+			if mode == "rejected" {
+				child = emissionChild("output", "new")
+				next.Children, next.Manifests = []Child{child}, []map[string]any{child.Doc}
+				next.Fingerprint = manifest.Fingerprint(next.Manifests)
+				sh := s.shardFor(owner.Named())
+				sh.mu.Lock()
+				sh.slots[owner.Named()].generation = ^uint64(0)
+				sh.mu.Unlock()
+			}
+			second.Bind(&next)
+			if mode == "rejected" {
+				func() {
+					defer func() {
+						if message, ok := recover().(string); !ok || message != "store: authority generation exhausted" {
+							t.Error("expected exhausted publication rejection")
+						}
+					}()
+					s.RecordEmitted(owner.Named(), &next)
+				}()
+			} else {
+				s.RecordEmitted(owner.Named(), &next)
+			}
+			current := s.GetArtifact(owner.Named()).(*Emission)
+			if mode == "rebound" {
+				if !first.retired.Load() || current.OutputReads != &second {
+					t.Fatal("accepted rebound retained the predecessor borrower")
+				}
+			} else if first.retired.Load() || current.OutputReads != &first {
+				t.Fatal("publication retired an output borrower it did not replace")
+			}
+			if !current.OutputReads.Valid() {
+				t.Fatal("current output lost valid provenance")
+			}
+		})
+	}
+}
+
+func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"changed", "missing", "source_hidden"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			var declaration manifest.BaseManifest = &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "old"}
+			if scenario == "source_hidden" {
+				declaration = &manifest.GitRepository{Name: "consumer", Namespace: "apps"}
+			}
+			s.AddObject(parent)
+			s.UpdateStatus(parent.Named(), StatusReady, "", "")
+			publish := func(children ...Child) {
+				s.RecordEmitted(parent.Named(), &Emission{Children: children, Complete: true})
+			}
+			publish(Child{Obj: declaration})
+			var first, second ReadSet
+			first.Init(s, declaration.Named(), nil)
+			defer first.Retire()
+			first.GetObject(declaration.Named())
+			first.GetStatus(parent.Named())
+			first.RequireData(parent.Named())
+			if scenario == "source_hidden" {
+				s.SetArtifact(declaration.Named(), &SourceArtifact{Reads: &first, Key: "content"})
+			} else {
+				_, output := first.GetEmission(declaration.Named())
+				child := emissionChild("output", "old")
+				output.Children, output.Manifests = []Child{child}, []map[string]any{child.Doc}
+				output.Complete = true
+				first.Bind(&output)
+				s.RecordEmitted(declaration.Named(), &output)
+				output.Finish()
+			}
+			first.Accept()
+			if scenario == "changed" {
+				changed := *declaration.(*manifest.Kustomization)
+				changed.Path = "new"
+				publish(Child{Obj: &changed})
+			} else {
+				publish()
+			}
+			if s.GetArtifact(declaration.Named()) != nil {
+				t.Fatal("changed parent input left the old artifact visible")
+			}
+			second.Init(s, declaration.Named(), nil)
+			second.GetObject(declaration.Named())
+			second.Close()
+			for range s.Sweep() {
+			}
+			registrations := 0
+			for input := first.inputs; input != nil; input = input.next {
+				for i := range input.cells {
+					cell := &input.cells[i]
+					if cell.head == nil {
+						continue
+					}
+					for current := cell.head.first.Load(); current != nil; current = current.next.Load() {
+						if current == cell {
+							registrations++
+						}
+					}
+				}
+			}
+			if !first.retired.Load() || registrations != 0 {
+				t.Fatalf("cancelled successor left hidden borrower active: retired=%t registrations=%d", first.retired.Load(), registrations)
+			}
+			if first.GetObject(declaration.Named()) != declaration {
+				t.Fatal("closing discarded the accepted read snapshot")
+			}
+			if !slices.Contains(slices.Collect(first.Required()), parent.Named()) {
+				t.Fatal("closing discarded the accepted required-input footprint")
+			}
+			sh := s.shardFor(declaration.Named())
+			sh.mu.RLock()
+			var retained *ReadSet
+			if scenario == "source_hidden" {
+				retained = sh.artifacts[declaration.Named()].value.(*SourceArtifact).Reads
+			} else {
+				retained = sh.slots[declaration.Named()].current.Load().OutputReads
+			}
+			sh.mu.RUnlock()
+			if retained != &first {
+				t.Fatal("closing discarded borrowed output provenance")
+			}
+		})
 	}
 }

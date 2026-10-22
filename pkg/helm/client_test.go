@@ -3,12 +3,13 @@ package helm
 import (
 	"context"
 	"errors"
-	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 	"os"
 	"path/filepath"
-	"sigs.k8s.io/yaml"
 	"sync"
 	"testing"
+
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
+	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -36,8 +37,8 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			_, err = loadDecodedChart(t.Context(), cli, hr)
+			cliSources := NewSources(st)
+			_, err = loadDecodedChart(t.Context(), cli, hr, cliSources)
 			_, typed := errors.AsType[chart.ValidationError](err)
 			if !typed || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("validation chain = %v", err)
@@ -59,11 +60,11 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	cliSources := NewSources(st)
 	var previous string
 	for i, dir := range []string{first, second} {
 		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
-		loaded, err := loadDecodedChart(t.Context(), cli, hr)
+		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,10 +96,10 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			cliSources := NewSources(st)
 			withoutFiles := hr.Clone()
 			withoutFiles.ChartValuesFiles = nil
-			loaded, err := loadDecodedChart(t.Context(), cli, withoutFiles)
+			loaded, err := loadDecodedChart(t.Context(), cli, withoutFiles, cliSources)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,7 +109,7 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			var wg sync.WaitGroup
 			for i := range results {
 				wg.Go(func() {
-					results[i], failures[i] = loadDecodedChart(t.Context(), cli, hr)
+					results[i], failures[i] = loadDecodedChart(t.Context(), cli, hr, cliSources)
 				})
 			}
 			wg.Wait()
@@ -128,8 +129,8 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 	}
 }
 
-func loadDecodedChart(ctx context.Context, c *Client, hr *manifest.HelmRelease) (chartDescription, error) {
-	d, err := c.describeChart(ctx, hr)
+func loadDecodedChart(ctx context.Context, c *Client, hr *manifest.HelmRelease, sources Sources) (chartDescription, error) {
+	d, err := c.describeChart(ctx, hr, sources)
 	if err != nil {
 		return chartDescription{}, err
 	}

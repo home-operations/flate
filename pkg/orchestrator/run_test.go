@@ -50,7 +50,7 @@ spec: {}
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true}
-	if !e.Promote(id) || st.GetObject(id) == nil {
+	if !e.Promote(t.Context(), nil, id) || st.GetObject(id) == nil {
 		t.Fatal("selected data must be admitted")
 	}
 	for _, excluded := range []manifest.NamedResource{
@@ -116,14 +116,14 @@ spec: {url: https://example.test/excluded.git}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true, filter: filter}
 	size := len(filter.KeepNames())
-	if !e.Promote(selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
+	if !e.Promote(t.Context(), nil, selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
 	}
 	if got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]; got != "greeting: selected" {
 		t.Errorf("selected values = %v", got)
 	}
 	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
-		if e.Promote(id) || st.GetObject(id) != nil || filter.ShouldReconcile(id) {
+		if e.Promote(t.Context(), nil, id) || st.GetObject(id) != nil || filter.ShouldReconcile(id) {
 			t.Errorf("excluded sibling %s must remain absent", id)
 		}
 	}
@@ -131,7 +131,7 @@ spec: {url: https://example.test/excluded.git}
 		t.Error("ordering promotion must not expand keep")
 	}
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
-	if e.Promote(excluded) {
+	if e.Promote(t.Context(), nil, excluded) {
 		t.Error("availability must not bypass admission")
 	}
 }

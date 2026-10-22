@@ -177,7 +177,7 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 				}
 			}
 			child := &manifest.Kustomization{Name: "emitted", Namespace: "flux-system"}
-			f.AddEmitted(app, child)
+			f.AddEmitted(app, child, nil)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), tc.want)
 		})
 	}

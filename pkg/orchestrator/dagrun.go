@@ -3,13 +3,14 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"slices"
 
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// dagDispatcher routes invocations to their owning controller.
 type dagDispatcher struct{ o *Orchestrator }
 
 // Go admits scheduler bodies through the invocation's shared task service.
@@ -24,26 +25,34 @@ func (d dagDispatcher) BlockTillDone() {
 	d.o.tasks.BlockTillDone()
 }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 	o := d.o
+	var execution *base.Execution
 	switch {
 	case id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization:
-		return o.ksc.ReconcileNode(ctx, id, attempt)
+		execution = o.ksc.ReconcileNode(ctx, id, level)
 	case id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease:
-		return o.hrc.ReconcileNode(ctx, id, attempt)
+		execution = o.hrc.ReconcileNode(ctx, id, level)
 	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
-		return o.rsc.ReconcileNode(ctx, id, attempt)
+		execution = o.rsc.ReconcileNode(ctx, id, level)
 	case o.src.Owns(id):
-		return o.src.ReconcileNode(ctx, id, attempt)
-	default:
-		return schedule.Outcome{}, manifest.ReconcileWait{}
+		execution = o.src.ReconcileNode(ctx, id, level)
 	}
+	if execution == nil {
+		return schedule.Result{}
+	}
+	return schedule.Result{Assessment: execution}
 }
 
-// seedNodes returns every file-loaded reconcilable + ResourceSet + source
-// object currently in the store — the scheduler's initial frontier.
-// ResourceSetInputProviders are NOT seeded: they are pure data, not
-// runnable nodes according to the manifest kind table.
+func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.NodeID {
+	changed := slices.Collect(d.o.store.Sweep())
+	if !quiescent || len(changed) != 0 || ctx.Err() != nil {
+		return changed
+	}
+	d.o.classifyCompleted()
+	return slices.Collect(d.o.store.Sweep())
+}
+
 func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	var ids []manifest.NamedResource
 	for info := range manifest.Kinds() {
@@ -59,15 +68,10 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 	return ids
 }
 
-// runDAG drives reconciliation with the re-entrant fixpoint scheduler instead
-// of the event-driven dispatch loop. The cycle-detect listener is already
-// registered by Run (shared with the event path), so preflight cycle failures
-// are recorded before any node runs.
 func (o *Orchestrator) runDAG(ctx context.Context) error {
 	dispatcher := dagDispatcher{o}
 	sched := schedule.New(dispatcher, dispatcher)
 
-	// Wake adapters MUST be registered before any reconcile can publish output.
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
 	o.hrc.Start(ctx)
@@ -91,15 +95,6 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
-	// Store → scheduler adapters (fire-only, flush=false), registered AFTER the
-	// shared cycle-detect listener so cycle preflight runs first.
-	//
-	//   EventObjectAdded: discover render-emitted nodes, wake nodes parked on
-	//   an arriving dep (source/CM/KS), and re-dispatch a terminal producer
-	//   whose Refire status-reset re-arrival signals a changed-only
-	//   resurrection. The listener runs OUTSIDE the store shard lock (AddObject
-	//   fires it post-unlock), and sched.OnArrival only updates
-	//   scheduler state, so there is no store-lock ↔ sched.mu inversion.
 	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		obj, _ := payload.(manifest.BaseManifest)
 		if obj == nil {
@@ -108,18 +103,13 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		}
 		sched.OnArrival(id, o.schedulable(obj))
 	}, false)
-	//   EventStatusUpdated: wake nodes parked on a dep that reached a terminal
-	//   status. Non-terminal (Pending) updates return before the scheduler lock.
-	unsubStatus := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		info, ok := payload.(store.StatusInfo)
-		if !ok {
-			return
-		}
-		sched.OnStatusWake(id, info.Status == store.StatusReady, info.Status == store.StatusFailed)
-	}, false)
 
+	publication := func(manifest.NamedResource, any) { sched.OnPublication() }
+	unsubStatus := o.store.AddListener(store.EventStatusUpdated, publication, false)
+	unsubArtifact := o.store.AddListener(store.EventArtifactUpdated, publication, false)
 	return func() {
-		unsubStatus()
 		unsubAdd()
+		unsubStatus()
+		unsubArtifact()
 	}
 }

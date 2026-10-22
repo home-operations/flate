@@ -96,21 +96,8 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 		if parent, ok := s.run.parentOf(id); ok {
 			add(parent)
 		}
-		for _, dep := range s.run.Result.DependsOn[id] {
+		for dep := range s.run.store.RequiredInputs(id) {
 			add(dep)
-		}
-		for _, dep := range s.run.Result.Blocked[id] {
-			add(dep)
-		}
-		if obj := s.run.store.GetObject(id); obj != nil {
-			for ref := range manifest.References(obj) {
-				add(ref.NamedResource)
-			}
-		}
-		if id.KindInfo().Render {
-			for _, dep := range s.run.requiredDataDependencies(id) {
-				add(dep)
-			}
 		}
 	}
 	return seen

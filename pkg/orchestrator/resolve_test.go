@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -20,8 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/source"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -105,77 +102,6 @@ func (r r4Tasks) Go(ctx context.Context, name string, fn func(context.Context)) 
 }
 func (r r4Tasks) BlockTillDone() { r.tasks.BlockTillDone() }
 
-func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		t.Run(kind, func(t *testing.T) {
-			t.Parallel()
-			f := newR4Fixture(t, kind, "data", false)
-			f.o.configureControllers()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			keeper := testutil.KustomizationID("flux-system", "keeper")
-			keeping, releaseKeeper := make(chan struct{}), make(chan struct{})
-			observed, releaseReader := make(chan struct{}), make(chan struct{})
-			observedOnce := sync.OnceFunc(func() { close(observed) })
-			var started, requested atomic.Bool
-			var sched *schedule.Scheduler
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-				if id == keeper {
-					close(keeping)
-					<-releaseKeeper
-					return schedule.Outcome{}, manifest.ReconcileWait{}
-				}
-				if id == f.supplier {
-					started.Store(true)
-				}
-				queued := false
-				if id == f.reader {
-					<-keeping
-					queued = (attempt.Content != nil && len(attempt.Content.Suppliers) > 0) && requested.CompareAndSwap(false, true)
-					if queued {
-						sched.OnArrival(f.supplier, true)
-					}
-				}
-				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if id == f.reader && attempt.Content == nil && out.Kind != schedule.Blocked {
-					t.Error("unbound reader skipped content classification")
-					observedOnce()
-				}
-				if queued {
-					if out.Kind != schedule.Blocked || outWait.Content == nil || len(outWait.Content.Suppliers) != 1 || outWait.Content.Suppliers[0].Observed&1 == 0 {
-						t.Errorf("queued supplier admitted absence: %v %+v", out, outWait)
-					}
-					if f.o.store.GetArtifact(f.reader) != nil {
-						t.Error("queued supplier allowed reader publication")
-					}
-					observedOnce()
-					<-releaseReader
-				}
-				return out, outWait
-			})
-			sched = schedule.New(f.o.tasks, d)
-			unsub := f.o.watchDAG(sched)
-			defer unsub()
-			sched.Seed([]schedule.NodeID{keeper, f.reader})
-			done := make(chan error, 1)
-			go func() { done <- sched.Run(ctx) }()
-			<-observed
-			assert.Equal(t, started.Load(), false)
-			info, _ := f.o.store.GetStatus(f.supplier)
-			assert.Equal(t, info.Status, store.StatusReady)
-			close(releaseReader)
-			close(releaseKeeper)
-			assert.NoError(t, <-done)
-			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "output"})
-			if output == nil || output.Data["greeting"] != "exact" {
-				t.Fatalf("queued output=%+v", output)
-			}
-			assert.Equal(t, f.o.tasks.Failures(), int64(0))
-		})
-	}
-}
-
 func TestResolve_OptionalRunningReady(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
@@ -183,80 +109,108 @@ func TestResolve_OptionalRunningReady(t *testing.T) {
 	}
 }
 
-type r4Promotion func(manifest.NamedResource) bool
-
-func (p r4Promotion) IsFileIndexed(manifest.NamedResource) bool { return false }
-func (p r4Promotion) Promote(id manifest.NamedResource) bool    { return p(id) }
-
-func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
+func TestResolve_OptionalExhaustedSuccessor(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, boundary := range []string{"between samples", "before registration"} {
-			t.Run(kind+"/"+boundary, func(t *testing.T) {
-				t.Parallel()
-				f := newR4Fixture(t, kind, "data", false)
-				f.o.configureControllers()
-				started, release := make(chan struct{}), make(chan struct{})
-				supplierDone := make(chan struct{})
-				var sched *schedule.Scheduler
-				var changed, armed atomic.Bool
-				var startOnce, doneOnce sync.Once
-				promotion := r4Promotion(func(id manifest.NamedResource) bool {
-					if id == f.target && armed.Load() && boundary == "between samples" && changed.CompareAndSwap(false, true) {
-						sched.OnArrival(f.supplier, true)
-					}
-					return false
-				})
-				opts := base.Options{Index: f.o.index, Existence: promotion}
-				f.o.ksc.Controller.Configure(opts)
-				f.o.hrc.Controller.Configure(opts)
-				var sawBound atomic.Bool
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-					if id == f.supplier {
-						startOnce.Do(func() { close(started) })
-						<-release
-					}
-					bound := id == f.reader && (attempt.Content != nil && len(attempt.Content.Suppliers) > 0) && sawBound.CompareAndSwap(false, true)
-					if bound {
-						<-started
-						armed.Store(true)
-					}
-					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-					if bound {
-						if out.Kind != schedule.Blocked || f.o.store.GetArtifact(f.reader) != nil {
-							t.Errorf("successor admitted reader before settlement: %v %+v", out, outWait)
-						}
-						if boundary == "between samples" {
-							if outWait.Content.Suppliers[0].Observed == outWait.Content.Suppliers[0].Word.Load() {
-								t.Error("first sample did not precede successor intent")
-							}
-							close(release)
-						} else {
-							close(release)
-							f.o.tasks.YieldSlot(func() { <-supplierDone })
-						}
-					} else if id == f.reader && sawBound.Load() && attempt.Drain != manifest.DrainNone {
-						t.Errorf("missed epoch recheck forced drain %v", attempt.Drain)
-					}
-					return out, outWait
-				})
-				tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
-					if name == "schedule/"+f.supplier.String() {
-						doneOnce.Do(func() { close(supplierDone) })
-					}
-				}}
-				sched = schedule.New(tasks, d)
-				unsub := f.o.watchDAG(sched)
-				defer unsub()
-				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-				assert.NoError(t, sched.Run(t.Context()))
-				output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
-				if output == nil || output.Data["greeting"] != "exact" {
-					t.Fatalf("successor output=%+v", output)
+		for _, result := range []string{"failed", "empty", "before/failed", "before/empty"} {
+			for _, required := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/required=%t", kind, result, required), func(t *testing.T) { t.Parallel(); testR4Running(t, kind, result, required) })
+			}
+		}
+	}
+}
+
+func testR4Running(t *testing.T, kind, result string, required bool) {
+	t.Helper()
+	result, before := strings.CutPrefix(result, "before/")
+	f := newR4Fixture(t, kind, result, required)
+	f.o.configureControllers()
+	started, release, supplierDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	parked := make(chan struct{}, 1)
+	var readerDispatches, publications atomic.Int64
+	var first sync.Once
+	d := fixtureDispatcher{store: f.o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		if id == f.supplier {
+			close(started)
+			if !before {
+				f.o.tasks.YieldSlot(func() { <-release })
+			}
+		}
+		if id == f.reader {
+			readerDispatches.Add(1)
+			f.o.tasks.YieldSlot(func() {
+				if before {
+					<-supplierDone
+				} else {
+					<-started
 				}
 			})
 		}
+		assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+		if id == f.reader && !before {
+			first.Do(func() {
+				if assessment.Assessment.Outcome() != schedule.Blocked || f.o.store.GetArtifact(f.reader) != nil {
+					t.Error("running Ready supplier admitted frozen absence")
+				}
+				parked <- struct{}{}
+			})
+		}
+		return assessment
+	}}
+	unsubArtifact := f.o.store.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
+		if id == f.reader {
+			publications.Add(1)
+		}
+	}, false)
+	defer unsubArtifact()
+	tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
+		if name == "schedule/"+f.supplier.String() {
+			close(supplierDone)
+		}
+	}}
+	sched := schedule.New(tasks, d)
+	unsub := f.o.watchDAG(sched)
+	defer unsub()
+	sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(t.Context()) }()
+	if !before {
+		select {
+		case <-parked:
+		case err := <-done:
+			t.Fatalf("scheduler ended while supplier was running: %v", err)
+		}
+		if f.o.store.GetArtifact(f.reader) != nil {
+			t.Error("reader published before supplier settled")
+		}
+		close(release)
 	}
+	assert.NoError(t, <-done)
+	info, _ := f.o.store.GetStatus(f.reader)
+	if required {
+		missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-vars"}
+		assert.Equal(t, info.Status, store.StatusFailed)
+		assert.Diff(t, info.BlockedBy(), []manifest.NamedResource{missing})
+	} else {
+		assert.Equal(t, info.Status, store.StatusReady)
+		output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
+		want := "fallback"
+		if result == "data" {
+			want = "exact"
+		}
+		if output == nil || output.Data["greeting"] != want {
+			t.Fatalf("output=%+v want=%s", output, want)
+		}
+	}
+	if readerDispatches.Load() > 4 || publications.Load() > 2 {
+		t.Fatalf("unbounded replay: dispatches=%d publications=%d", readerDispatches.Load(), publications.Load())
+	}
+	for _, w := range f.o.store.Warnings() {
+		if w.Resource == f.reader && slices.Contains([]string{manifest.WarnOmittedValues, manifest.WarnUnresolvedSubstitution}, w.Category) {
+			t.Errorf("optional warning=%+v", w)
+		}
+	}
+	assert.Equal(t, f.o.tasks.Failures(), int64(0))
 }
 
 func TestResolve_OptionalBindingArrival(t *testing.T) {
@@ -268,30 +222,171 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 			f.o.configureControllers()
 			var sched *schedule.Scheduler
 			var admitted atomic.Bool
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-				arrival := id == f.reader && (attempt.Content != nil && len(attempt.Content.Suppliers) > 0) && admitted.CompareAndSwap(false, true)
-				if arrival {
-					assert.Equal(t, attempt.Drain, manifest.DrainNone)
-					if attempt.Content.Suppliers[0].Observed != 0 {
-						t.Errorf("unadmitted supplier was not bound: %+v", attempt)
+			d := fixtureDispatcher{store: f.o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				if id == f.reader && admitted.CompareAndSwap(false, true) {
+					if result.Assessment.Outcome() != schedule.Blocked {
+						t.Error("unadmitted supplier did not retain a wait")
 					}
 					sched.OnArrival(f.supplier, true)
 				}
-				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if arrival && out.Kind != schedule.Blocked {
-					t.Errorf("arrival admitted absence: %v %+v", out, outWait)
-				}
-				return out, outWait
-			})
+				return result
+			}}
 			sched = schedule.New(f.o.tasks, d)
 			unsub := f.o.watchDAG(sched)
 			defer unsub()
 			sched.Seed([]schedule.NodeID{f.reader})
 			assert.NoError(t, sched.Run(t.Context()))
-			assert.Equal(t, admitted.Load(), true)
 			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
 			if output == nil || output.Data["greeting"] != "exact" {
-				t.Fatalf("binding arrival output=%+v", output)
+				t.Fatalf("arrival output=%+v", output)
+			}
+		})
+	}
+}
+
+func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			f := newR4Fixture(t, kind, "data", false)
+			f.o.configureControllers()
+			release, supplied := make(chan struct{}), make(chan struct{})
+			var first sync.Once
+			d := fixtureDispatcher{store: f.o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				if id == f.supplier {
+					f.o.tasks.YieldSlot(func() { <-release })
+				}
+				result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				if id == f.reader {
+					first.Do(func() {
+						if result.Assessment.Outcome() != schedule.Blocked {
+							t.Error("missing supplier did not park")
+						}
+						close(release)
+						f.o.tasks.YieldSlot(func() { <-supplied })
+						if result.Assessment.Valid() {
+							t.Error("publication before park retained stale absence")
+						}
+					})
+				}
+				return result
+			}}
+			tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
+				if name == "schedule/"+f.supplier.String() {
+					close(supplied)
+				}
+			}}
+			sched := schedule.New(tasks, d)
+			unsub := f.o.watchDAG(sched)
+			defer unsub()
+			sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+			assert.NoError(t, sched.Run(t.Context()))
+			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
+			if output == nil || output.Data["greeting"] != "exact" {
+				t.Fatalf("pre-registration arrival=%+v", output)
+			}
+		})
+	}
+}
+
+func TestResolve_OptionalBindingSetChange(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			f := newR4Fixture(t, kind, "data", false)
+			f.o.configureControllers()
+			var changed atomic.Bool
+			d := fixtureDispatcher{store: f.o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				if id == f.reader && changed.CompareAndSwap(false, true) {
+					switch reader := f.o.store.GetObject(id).(type) {
+					case *manifest.Kustomization:
+						fresh := reader.Clone()
+						fresh.PostBuild.SubstituteFrom = append(fresh.PostBuild.SubstituteFrom, manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "second", Optional: true})
+						f.o.store.AddObject(fresh)
+					case *manifest.HelmRelease:
+						fresh := reader.Clone()
+						fresh.ValuesFrom = append(fresh.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "second", Optional: true})
+						f.o.store.AddObject(fresh)
+					}
+					if result.Assessment.Valid() {
+						t.Error("changed reference set reused assessment")
+					}
+					f.o.store.AddObject(&manifest.Kustomization{Name: "extra", Namespace: f.reader.Namespace, Path: "empty"})
+				}
+				return result
+			}}
+			sched := schedule.New(f.o.tasks, d)
+			unsub := f.o.watchDAG(sched)
+			defer unsub()
+			sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+			assert.NoError(t, sched.Run(t.Context()))
+			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
+			if output == nil || output.Data["greeting"] != "exact" {
+				t.Fatalf("reference-set output=%+v", output)
+			}
+		})
+	}
+}
+
+func TestResolve_OptionalForceCut(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			f := newR4Fixture(t, kind, "data", false)
+			supplier, _ := f.o.store.Get[*manifest.Kustomization](f.supplier)
+			supplier = supplier.Clone()
+			supplier.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "output", Optional: true}}}
+			f.o.store.AddObject(supplier)
+			f.o.configureControllers()
+			sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
+			unsub := f.o.watchDAG(sched)
+			defer unsub()
+			sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+			assert.NoError(t, sched.Run(t.Context()))
+			for _, id := range []manifest.NamedResource{f.reader, f.supplier} {
+				info, _ := f.o.store.GetStatus(id)
+				assert.Equal(t, info.Status, store.StatusReady)
+			}
+			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
+			if output == nil || output.Data["greeting"] != "exact" {
+				t.Fatalf("cycle output=%+v", output)
+			}
+		})
+	}
+}
+
+func TestResolve_OptionalDeterminism(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			var previous []byte
+			var warnings []manifest.Warning
+			for run := range 2 {
+				f := newR4Fixture(t, kind, "empty", false)
+				f.o.configureControllers()
+				sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
+				unsub := f.o.watchDAG(sched)
+				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+				assert.NoError(t, sched.Run(t.Context()))
+				unsub()
+				art, ok := f.o.store.GetArtifact(f.reader).(*store.Emission)
+				if !ok {
+					t.Fatal("reader did not complete")
+				}
+				output, err := json.Marshal(art.Manifests)
+				assert.NoError(t, err)
+				currentWarnings := f.o.store.Warnings()
+				if run == 1 {
+					assert.Diff(t, output, previous)
+					assert.Diff(t, currentWarnings, warnings)
+				}
+				previous, warnings = output, currentWarnings
 			}
 		})
 	}
@@ -353,9 +448,10 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 					}
 					o.configureControllers()
 					d := dagDispatcher{o}
-					out, outWait := d.Dispatch(t.Context(), reader, manifest.ReconcileAttempt{})
-					if out.Kind != schedule.Blocked || outWait.Content == nil || !slices.Contains(outWait.Content.Targets, target) {
-						t.Fatalf("reader did not wait for ResourceSet: %v %+v", out, outWait)
+					assessment := d.Dispatch(t.Context(), reader, manifest.DrainNone).Assessment
+					defer assessment.Close()
+					if assessment.Outcome() != schedule.Blocked {
+						t.Fatal("reader did not wait for ResourceSet")
 					}
 					sched := schedule.New(d, d)
 					unsubscribe := o.watchDAG(sched)
@@ -402,9 +498,10 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			if !o.filter.ShouldReconcile(producer) {
 				t.Fatal("prediction owner not selected")
 			}
-			out, outWait := d.Dispatch(t.Context(), producer, manifest.ReconcileAttempt{})
-			if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() {
-				t.Fatalf("producer did not render: %v %+v", out, outWait)
+			assessment := d.Dispatch(t.Context(), producer, manifest.DrainNone).Assessment
+			defer assessment.Close()
+			if assessment.Outcome() == schedule.Blocked {
+				t.Fatal("producer did not render")
 			}
 			facts := o.store.ReferenceFacts(target, o.index)
 			if facts.Data != nil || facts.Accepted || !slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
@@ -412,694 +509,164 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			}) || o.store.GetArtifact(target) != nil {
 				t.Fatalf("source-qualified prediction supplied content or disappeared: %+v", facts)
 			}
-			out, outWait = d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.ReconcileAttempt{})
-			if out.Kind != schedule.Blocked || outWait.Content != nil || !slices.Contains(outWait.Deps, target) {
-				t.Fatalf("prediction bypassed ordinary source wait: %v %+v", out, outWait)
+			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
+			defer reader.Close()
+			if reader.Outcome() != schedule.Blocked || !slices.Contains(reader.(*base.Execution).Blocked, target) {
+				t.Fatal("prediction bypassed ordinary source wait")
 			}
 		})
-	}
-}
-
-func TestResolve_OptionalExhaustedSuccessor(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, result := range []string{"failed", "empty", "before/failed", "before/empty"} {
-			for _, required := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/%s/required=%t", kind, result, required), func(t *testing.T) { t.Parallel(); testR4Running(t, kind, result, required) })
-			}
-		}
-	}
-}
-
-func testR4Running(t *testing.T, kind, result string, required bool) {
-	t.Helper()
-	result, before := strings.CutPrefix(result, "before/")
-	f := newR4Fixture(t, kind, result, required)
-	f.o.configureControllers()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	started, release := make(chan struct{}), make(chan struct{})
-	premature := make(chan struct{})
-	supplierDone := make(chan struct{})
-	var released atomic.Bool
-	var drain atomic.Int64
-	var lastSupplier manifest.Opportunity
-	parked := make(chan struct{}, 8)
-	d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-		if id == f.supplier {
-			close(started)
-			if !before {
-				select {
-				case <-release:
-				case <-ctx.Done():
-					close(premature)
-					return schedule.Outcome{}, manifest.ReconcileWait{}
-				}
-			}
-		}
-		if id == f.reader {
-			drain.Store(int64(attempt.Drain))
-			if !before && !released.Load() && attempt.Drain != manifest.DrainNone {
-				t.Error("scheduler issued a cut while supplier body remained in flight")
-				cancel()
-				return schedule.Outcome{}, manifest.ReconcileWait{}
-			}
-			if attempt.Content != nil && len(attempt.Content.Suppliers) > 0 {
-				lastSupplier = attempt.Content.Suppliers[0]
-			}
-			if before {
-				f.o.tasks.YieldSlot(func() { <-supplierDone })
-			} else {
-				select {
-				case <-started:
-				case <-ctx.Done():
-					return schedule.Outcome{}, manifest.ReconcileWait{}
-				}
-			}
-		}
-		out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-		if id == f.reader && !before && !released.Load() && (out.Kind != schedule.Blocked || outWait.Content == nil) {
-			t.Error("running supplier admitted absence before body completion")
-			cancel()
-		}
-		return out, outWait
-	})
-	tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
-		if name == "schedule/"+f.supplier.String() {
-			close(supplierDone)
-		}
-		if name == "schedule/"+f.reader.String() {
-			select {
-			case parked <- struct{}{}:
-			default:
-				t.Error("supplier lifetime caused excessive reader redispatches")
-				cancel()
-			}
-		}
-	}}
-	sched := schedule.New(tasks, d)
-	unsub := f.o.watchDAG(sched)
-	defer unsub()
-	statusBarrier := f.o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		if id == f.supplier && result == "failed" && !before && payload.(store.StatusInfo).Status == store.StatusFailed {
-			f.o.tasks.YieldSlot(func() { <-parked })
-		}
-	}, false)
-	defer statusBarrier()
-	sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-	done := make(chan error, 1)
-	go func() { done <- sched.Run(ctx) }()
-	if !before {
-		for range 2 {
-			select {
-			case <-parked:
-			case <-premature:
-				t.Fatal("scheduler cut the running supplier opportunity before body completion")
-			case err := <-done:
-				t.Fatalf("scheduler ended while supplier body remained in flight: %v", err)
-			}
-		}
-		if f.o.store.GetArtifact(f.reader) != nil {
-			t.Error("running supplier allowed reader publication")
-		}
-		info, _ := f.o.store.GetStatus(f.supplier)
-		assert.Equal(t, info.Status, store.StatusReady)
-		released.Store(true)
-		close(release)
-	}
-	assert.NoError(t, <-done)
-	if !before && lastSupplier.Word == nil || lastSupplier.Word != nil && lastSupplier.Word.Load()&1 != 0 {
-		t.Error("completed supplier opportunity remained open")
-	}
-	if !required {
-		assert.Equal(t, manifest.DrainLevel(drain.Load()), manifest.DrainNone)
-	}
-	info, _ := f.o.store.GetStatus(f.reader)
-	if required {
-		missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-vars"}
-		assert.Equal(t, info.Status, store.StatusFailed)
-		assert.Diff(t, info.BlockedBy(), []manifest.NamedResource{missing})
-		if !strings.Contains(info.Message, "dependencies failed: ConfigMap/flux-system/cluster-vars: dependency not found") || strings.Contains(info.Message, f.supplier.Name) {
-			t.Fatalf("required-only diagnostic=%q", info.Message)
-		}
-	} else {
-		assert.Equal(t, info.Status, store.StatusReady)
-		output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "output"})
-		want := "fallback"
-		if result == "data" {
-			want = "exact"
-		}
-		if output == nil || output.Data["greeting"] != want {
-			t.Fatalf("running output=%+v, want %s", output, want)
-		}
-	}
-	for _, w := range f.o.store.Warnings() {
-		if w.Resource == f.reader && slices.Contains([]string{manifest.WarnOmittedValues, manifest.WarnUnresolvedSubstitution}, w.Category) {
-			t.Errorf("optional warning=%+v", w)
-		}
-	}
-	assert.Equal(t, f.o.tasks.Failures(), int64(0))
-}
-
-func TestResolve_OptionalForceCut(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, readerFirst := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/readerFirst=%t", kind, readerFirst), func(t *testing.T) {
-				t.Parallel()
-				f := newR4Fixture(t, kind, "data", false)
-				f.o.configureControllers()
-				supplier, _ := f.o.store.Get[*manifest.Kustomization](f.supplier)
-				supplier = supplier.Clone()
-				supplier.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "output", Optional: true}}}
-				f.o.store.AddObject(supplier)
-				first := f.supplier
-				if readerFirst {
-					first = f.reader
-				}
-				completed := make(chan struct{})
-				var cut atomic.Bool
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-					if attempt.Drain == manifest.DrainForce {
-						cut.Store(true)
-						if id != first {
-							<-completed
-						}
-					}
-					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-					if attempt.Drain == manifest.DrainForce && id == first {
-						close(completed)
-					}
-					return out, outWait
-				})
-				sched := schedule.New(f.o.tasks, d)
-				unsub := f.o.watchDAG(sched)
-				defer unsub()
-				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-				assert.NoError(t, sched.Run(t.Context()))
-				if !cut.Load() {
-					t.Fatal("cycle did not reach a structural force cut")
-				}
-				for _, id := range []manifest.NamedResource{f.reader, f.supplier} {
-					info, _ := f.o.store.GetStatus(id)
-					if info.Status != store.StatusReady || f.o.store.GetArtifact(id) == nil {
-						t.Fatalf("force continuation did not render %s: %+v", id, info)
-					}
-				}
-				assert.Equal(t, f.o.tasks.Failures(), int64(0))
-			})
-		}
 	}
 }
 
 func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, change := range []string{"successor", "declaration", "exhaustion between samples"} {
+		for _, change := range []string{"declaration", "target", "supplier"} {
 			t.Run(kind+"/"+change, func(t *testing.T) {
 				t.Parallel()
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
 				f := newR4Fixture(t, kind, "data", false)
 				f.o.configureControllers()
-				supplier, _ := f.o.store.Get[*manifest.Kustomization](f.supplier)
-				supplier = supplier.Clone()
-				supplier.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "output", Optional: true}}}
-				f.o.store.AddObject(supplier)
-				release, supplierDone := make(chan struct{}), make(chan struct{})
-				var releaseOnce, doneOnce sync.Once
-				var armed, rejected atomic.Bool
-				promotion := r4Promotion(func(id manifest.NamedResource) bool {
-					if id == f.target && armed.Load() && change == "exhaustion between samples" {
-						releaseOnce.Do(func() { close(release) })
-						f.o.tasks.YieldSlot(func() { <-supplierDone })
-					}
-					return false
-				})
-				opts := base.Options{Index: f.o.index, Existence: promotion}
-				f.o.ksc.Controller.Configure(opts)
-				f.o.hrc.Controller.Configure(opts)
-				var sched *schedule.Scheduler
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-					if id == f.supplier && attempt.Drain == manifest.DrainForce {
-						f.o.tasks.YieldSlot(func() { <-release })
-					}
-					check := id == f.reader && attempt.Drain == manifest.DrainForce && armed.CompareAndSwap(false, true)
-					if check {
-						if (attempt.Content == nil || len(attempt.Content.Suppliers) != 1) || attempt.Content.Suppliers[0].Cut == 0 {
-							t.Fatal("scheduler did not issue a real force cut")
-						}
-						switch change {
-						case "successor":
-							sched.OnArrival(f.supplier, true)
-						case "declaration":
-							switch reader := f.o.store.GetObject(f.reader).(type) {
-							case *manifest.Kustomization:
-								fresh := reader.Clone()
-								fresh.PostBuild.Substitute = map[string]string{"UNUSED": "changed"}
-								f.o.store.AddObject(fresh)
-							case *manifest.HelmRelease:
-								fresh := reader.Clone()
-								fresh.Values = map[string]any{"unused": "changed"}
-								f.o.store.AddObject(fresh)
-							}
-						}
-					}
-					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-					if check {
-						if out.Kind != schedule.Blocked || f.o.store.GetArtifact(f.reader) != nil {
-							t.Errorf("stale cut admitted reader: %v %+v", out, outWait)
-							cancel()
-						}
-						if outWait.Content != nil {
-							for _, o := range outWait.Content.Suppliers {
-								if o.Cut != 0 {
-									t.Errorf("rejected cut survived: %+v", o)
-								}
-							}
-						}
-						rejected.Store(true)
-						releaseOnce.Do(func() { close(release) })
-					}
-					return out, outWait
-				})
-				tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
-					if name == "schedule/"+f.supplier.String() && armed.Load() {
-						doneOnce.Do(func() { close(supplierDone) })
-					}
-				}}
-				sched = schedule.New(tasks, d)
-				unsub := f.o.watchDAG(sched)
-				defer unsub()
-				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-				assert.NoError(t, sched.Run(ctx))
-				assert.Equal(t, rejected.Load(), true)
-				for _, id := range []manifest.NamedResource{f.reader, f.supplier} {
-					info, _ := f.o.store.GetStatus(id)
-					assert.Equal(t, info.Status, store.StatusReady)
+				prior := (dagDispatcher{f.o}).Dispatch(t.Context(), f.reader, manifest.DrainNone).Assessment.(*base.Execution)
+				defer prior.Close()
+				if prior.Outcome() != schedule.Blocked || prior.Reads.GetObject(f.target) != nil {
+					t.Fatal("optional input did not retain absence")
 				}
-				assert.Equal(t, f.o.tasks.Failures(), int64(0))
-			})
-		}
-	}
-}
-
-func TestResolve_OptionalBindingSetChange(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		t.Run(kind, func(t *testing.T) {
-			t.Parallel()
-			f := newR4Fixture(t, kind, "data", false)
-			f.o.configureControllers()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			extra := &manifest.Kustomization{Name: "extra", Namespace: f.reader.Namespace, Path: "empty"}
-			release := make(chan struct{})
-			releaseExtra := make(chan struct{})
-			releaseSupplier := sync.OnceFunc(func() { close(release) })
-			releaseExtraSupplier := sync.OnceFunc(func() { close(releaseExtra) })
-			defer releaseSupplier()
-			defer releaseExtraSupplier()
-			extraDone := make(chan struct{})
-			registered := make(chan struct{}, 8)
-			var readerDispatches atomic.Int64
-			var changed atomic.Bool
-			var full atomic.Bool
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-				if id == f.reader {
-					readerDispatches.Add(1)
-				}
-				if id == extra.Named() {
-					f.o.tasks.YieldSlot(func() { <-releaseExtra })
-				}
-				if id == f.supplier {
-					f.o.tasks.YieldSlot(func() { <-release })
-				}
-				if id == f.reader && (attempt.Content != nil && len(attempt.Content.Suppliers) > 0) && changed.CompareAndSwap(false, true) {
+				switch change {
+				case "declaration":
 					switch reader := f.o.store.GetObject(f.reader).(type) {
 					case *manifest.Kustomization:
 						fresh := reader.Clone()
-						fresh.PostBuild.SubstituteFrom = append(fresh.PostBuild.SubstituteFrom, manifest.SubstituteReference{Kind: manifest.KindConfigMap, Name: "second", Optional: true})
+						fresh.PostBuild.Substitute = map[string]string{"UNUSED": "changed"}
 						f.o.store.AddObject(fresh)
 					case *manifest.HelmRelease:
 						fresh := reader.Clone()
-						fresh.ValuesFrom = append(fresh.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindConfigMap, Name: "second", Optional: true})
+						fresh.Values = map[string]any{"unused": "changed"}
 						f.o.store.AddObject(fresh)
 					}
-					f.o.store.AddObject(extra)
-				}
-				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if id == f.reader && changed.Load() && !full.Load() && (out.Kind != schedule.Blocked || outWait.Content == nil || len(outWait.Content.Suppliers) != 2) {
-					t.Errorf("binding lost current supplier set: %v %+v", out, outWait)
-					cancel()
-					full.Store(true)
-				}
-				if id == f.reader && (attempt.Content != nil && len(attempt.Content.Suppliers) == 2) && full.CompareAndSwap(false, true) {
-					assert.Equal(t, readerDispatches.Load(), int64(4))
-					t.Logf("complete binding reached in %d reader dispatches", readerDispatches.Load())
-					if out.Kind != schedule.Blocked || outWait.Content == nil || len(outWait.Content.Suppliers) != 2 {
-						t.Errorf("binding lost current supplier set: %v %+v", out, outWait)
+				case "target", "supplier":
+					owner := f.supplier
+					if change == "supplier" {
+						extra := &manifest.Kustomization{Name: "extra", Namespace: f.reader.Namespace, Path: "empty"}
+						f.o.store.AddObject(extra)
+						owner = extra.Named()
 					}
-				}
-				return out, outWait
-			})
-			tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
-				if name == "schedule/"+extra.Named().String() {
-					close(extraDone)
-				}
-				if name == "schedule/"+f.reader.String() {
-					registered <- struct{}{}
-				}
-			}}
-			sched := schedule.New(tasks, d)
-			unsub := f.o.watchDAG(sched)
-			defer unsub()
-			sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-			done := make(chan error, 1)
-			go func() { done <- sched.Run(ctx) }()
-			for dispatches := 0; !full.Load(); dispatches++ {
-				if dispatches == cap(registered) {
-					t.Fatal("complete supplier binding did not stabilize within the dispatch bound")
-				}
-				select {
-				case <-registered:
-				case err := <-done:
-					t.Fatalf("scheduler ended before complete supplier binding: %v", err)
-				}
-			}
-			releaseExtraSupplier()
-			select {
-			case <-extraDone:
-			case <-ctx.Done():
-				t.Fatal("complete supplier binding failed before extra supplier completion")
-			}
-			if f.o.store.GetArtifact(f.reader) != nil {
-				t.Fatal("exhausted extra supplier allowed premature reader publication")
-			}
-			releaseSupplier()
-			assert.NoError(t, <-done)
-			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
-			if output == nil || output.Data["greeting"] != "exact" {
-				t.Fatalf("binding-set output=%+v", output)
-			}
-		})
-	}
-}
-
-func TestResolve_OptionalForceCutTargets(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		t.Run(kind, func(t *testing.T) {
-			t.Parallel()
-			f := newR4Fixture(t, kind, "data", false)
-			second := &manifest.ConfigMap{Name: "second", Namespace: f.reader.Namespace, Data: map[string]any{"GREETING": "static", "values.yaml": "greeting: static"}}
-			if kind == manifest.KindKustomization {
-				delete(second.Data, "values.yaml")
-			} else {
-				delete(second.Data, "GREETING")
-			}
-			st := f.o.store
-			staticOwner := &manifest.Kustomization{Name: "data-owner", Namespace: f.reader.Namespace, Path: "empty"}
-			st.AddObject(staticOwner)
-			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				f.target:       {Productions: []manifest.Production{{Owner: f.supplier}}},
-				second.Named(): {Productions: []manifest.Production{{Owner: f.supplier}, {Owner: staticOwner.Named()}}},
-				{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"}: {Productions: []manifest.Production{{Owner: f.reader}}},
-			}}
-			switch reader := st.GetObject(f.reader).(type) {
-			case *manifest.Kustomization:
-				fresh := reader.Clone()
-				fresh.PostBuild.SubstituteFrom = append(fresh.PostBuild.SubstituteFrom, manifest.SubstituteReference{Kind: second.Named().Kind, Name: second.Name, Optional: true})
-				st.AddObject(fresh)
-			case *manifest.HelmRelease:
-				fresh := reader.Clone()
-				fresh.ValuesFrom = append(fresh.ValuesFrom, manifest.ValuesReference{Kind: second.Named().Kind, Name: second.Name, Optional: true})
-				st.AddObject(fresh)
-			}
-			supplier, _ := st.Get[*manifest.Kustomization](f.supplier)
-			supplier = supplier.Clone()
-			supplier.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "output", Optional: true}}}
-			st.AddObject(supplier)
-			f.o.index = index
-			f.o.configureControllers()
-			f.o.ksc.Emit(staticOwner.Named(), &store.Emission{Children: []store.Child{{Obj: second}}, Complete: true})
-			opts := base.Options{Index: index}
-			f.o.ksc.Controller.Configure(opts)
-			f.o.hrc.Controller.Configure(opts)
-			release := make(chan struct{})
-			var rejected atomic.Bool
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-				if id == f.supplier && attempt.Drain == manifest.DrainForce {
-					f.o.tasks.YieldSlot(func() { <-release })
-				}
-				check := id == f.reader && attempt.Drain == manifest.DrainForce && rejected.CompareAndSwap(false, true)
-				if check {
-					if (attempt.Content == nil || len(attempt.Content.Suppliers) != 1) || attempt.Content.Suppliers[0].Cut == 0 || !slices.Equal(attempt.Content.Targets, []manifest.NamedResource{f.target}) {
-						t.Errorf("unexpected scheduler cut: %+v", attempt)
+					data := map[string]any{"GREETING": "exact"}
+					if kind == manifest.KindHelmRelease {
+						data = map[string]any{"values.yaml": "greeting: exact"}
 					}
-					f.o.ksc.Emit(staticOwner.Named(), &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: second.Data}}}, Complete: true})
-					f.o.ksc.Emit(f.supplier, &store.Emission{Children: []store.Child{{Obj: &manifest.RawObject{APIVersion: "v1", Kind: second.Named().Kind, Name: second.Name, Namespace: second.Namespace}}}})
+					f.o.ksc.Emit(owner, &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: data}}}, Complete: true})
 				}
-				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if check {
-					if out.Kind != schedule.Blocked || outWait.Content == nil || !slices.Equal(outWait.Content.Targets, []manifest.NamedResource{second.Named()}) || st.GetArtifact(f.reader) != nil {
-						t.Errorf("changed target reused cut: %v %+v", out, outWait)
-					}
-					close(release)
+				if prior.Valid() {
+					t.Fatal("changed authority retained the prior assessment")
 				}
-				return out, outWait
-			})
-			sched := schedule.New(f.o.tasks, d)
-			unsub := f.o.watchDAG(sched)
-			defer unsub()
-			sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-			assert.NoError(t, sched.Run(t.Context()))
-			assert.Equal(t, rejected.Load(), true)
-			info, _ := st.GetStatus(f.reader)
-			assert.Equal(t, info.Status, store.StatusReady)
-		})
-	}
-}
-
-func TestResolve_OptionalForceCutSuppliers(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
-		for _, change := range []string{"shrink", "equal-cardinality replacement", "binding order"} {
-			t.Run(kind+"/"+change, func(t *testing.T) {
-				t.Parallel()
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				f := newR4Fixture(t, kind, "data", false)
-				extra := &manifest.Kustomization{Name: "z-extra", Namespace: f.reader.Namespace, Path: "empty", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "output", Optional: true}}}}
-				replacement := extra.Clone()
-				replacement.Name = "zz-replacement"
-				supplier, _ := f.o.store.Get[*manifest.Kustomization](f.supplier)
-				supplier = supplier.Clone()
-				supplier.PostBuild = extra.PostBuild
-				st := f.o.store
-				st.AddObject(supplier)
-				st.AddObject(extra)
-				st.AddObject(replacement)
-				makeIndex := func(owners ...manifest.NamedResource) *manifest.DiscoveryIndex {
-					var productions []manifest.Production
-					for _, owner := range owners {
-						productions = append(productions, manifest.Production{Owner: owner})
-					}
-					return &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-						f.target: {Productions: productions},
-						{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"}: {Productions: []manifest.Production{{Owner: f.reader}}},
-					}}
+				if prior.Reads.GetObject(f.target) != nil {
+					t.Fatal("successor mutated the predecessor's frozen absence")
 				}
-				f.o.index = makeIndex(f.supplier, extra.Named())
-				f.o.configureControllers()
-				opts := base.Options{Index: f.o.index}
-				f.o.ksc.Controller.Configure(opts)
-				f.o.hrc.Controller.Configure(opts)
-				release := make(chan struct{})
-				var rejected atomic.Bool
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-					if id != f.reader && attempt.Drain == manifest.DrainForce {
-						f.o.tasks.YieldSlot(func() { <-release })
-					}
-					check := id == f.reader && attempt.Drain == manifest.DrainForce && rejected.CompareAndSwap(false, true)
-					if check {
-						if (attempt.Content == nil || len(attempt.Content.Suppliers) != 2) || attempt.Content.Suppliers[0].Cut == 0 || attempt.Content.Suppliers[1].Cut == 0 {
-							t.Errorf("missing real supplier cuts: %+v", attempt)
-						} else {
-							switch change {
-							case "shrink":
-								f.o.ksc.Emit(extra.Named(), &store.Emission{Complete: true})
-							case "equal-cardinality replacement":
-								f.o.ksc.Emit(extra.Named(), &store.Emission{Complete: true})
-								f.o.ksc.Emit(replacement.Named(), &store.Emission{Children: []store.Child{{Obj: &manifest.RawObject{APIVersion: "v1", Kind: f.target.Kind, Name: f.target.Name, Namespace: f.target.Namespace}}}, Complete: true})
-							case "binding order":
-								content := *attempt.Content
-								attempt.Content = &content
-								attempt.Content.Suppliers = slices.Clone(attempt.Content.Suppliers)
-								attempt.Content.Suppliers[0], attempt.Content.Suppliers[1] = attempt.Content.Suppliers[1], attempt.Content.Suppliers[0]
-							}
-						}
-					}
-					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-					if check {
-						if out.Kind != schedule.Blocked || st.GetArtifact(f.reader) != nil {
-							t.Errorf("changed suppliers reused cut: %v %+v", out, outWait)
-							cancel()
-						}
-						if outWait.Content != nil {
-							for _, o := range outWait.Content.Suppliers {
-								if o.Cut != 0 {
-									t.Errorf("changed set retained cut: %+v", o)
-								}
-							}
-						}
-						close(release)
-					}
-					return out, outWait
-				})
-				sched := schedule.New(f.o.tasks, d)
+				prior.Settle(t.Context(), manifest.DrainForce)
+				if f.o.store.GetArtifact(f.reader) != nil {
+					t.Fatal("stale force assessment published output")
+				}
+				sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
 				unsub := f.o.watchDAG(sched)
 				defer unsub()
-				sched.Seed([]schedule.NodeID{f.reader, f.supplier, extra.Named(), replacement.Named()})
-				assert.NoError(t, sched.Run(ctx))
-				assert.Equal(t, rejected.Load(), true)
-				assert.Equal(t, f.o.tasks.Failures(), int64(0))
-				info, _ := st.GetStatus(f.reader)
-				assert.Equal(t, info.Status, store.StatusReady)
+				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+				assert.NoError(t, sched.Run(t.Context()))
+				output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
+				if output == nil || output.Data["greeting"] != "exact" {
+					t.Fatalf("successor output=%+v", output)
+				}
 			})
 		}
 	}
 }
 
-func TestResolve_OptionalDeterminism(t *testing.T) {
+func TestResolve_OptionalPairedSelection(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
-			var previous []byte
-			var warnings []manifest.Warning
-			for run := range 2 {
-				f := newR4Fixture(t, kind, "empty", false)
+			var runs []Rendered
+			var reader manifest.NamedResource
+			for _, result := range []string{"empty", "data"} {
+				f := newR4Fixture(t, kind, result, false)
+				reader = f.reader
+				f.o.index.Records[reader] = manifest.DiscoveryRecord{File: "reader.yaml", Refs: []manifest.NamedResource{f.target}}
+				f.o.index.Claims = map[string][]manifest.NamedResource{"reader/": {reader}}
+				f.o.store.SetDiscoveryIndex(f.o.index)
+				f.o.filter = change.NewFilter(change.NewSet([]string{"reader/output.yaml"}), f.o.index, f.o.store)
+				if !f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier) {
+					t.Fatal("changed-only selection lost optional materializer")
+				}
 				f.o.configureControllers()
 				sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
 				unsub := f.o.watchDAG(sched)
 				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
-				err := sched.Run(t.Context())
+				assert.NoError(t, sched.Run(t.Context()))
 				unsub()
-				assert.NoError(t, err)
-				art, ok := f.o.store.GetArtifact(f.reader).(*store.Emission)
-				if !ok {
-					t.Fatal("reader did not complete")
+				runs = append(runs, Rendered{Orchestrator: f.o, Result: &Result{Manifests: f.o.collectManifests(), Failed: f.o.store.FailedResources()}})
+			}
+			selected, err, _ := Select(runs, nil, []manifest.NamedResource{reader}, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, len(selected), 2)
+			for side, want := range []string{"fallback", "exact"} {
+				docs := selected[side].Manifests[reader]
+				if len(docs) != 1 {
+					t.Fatalf("side %d selected manifests=%v", side, docs)
 				}
-				output, err := json.Marshal(art.Manifests)
-				assert.NoError(t, err)
-				currentWarnings := f.o.store.Warnings()
-				if run == 1 {
-					assert.Diff(t, output, previous)
-					assert.Diff(t, currentWarnings, warnings)
-				}
-				previous, warnings = output, currentWarnings
+				data, _ := docs[0]["data"].(map[string]any)
+				assert.Equal(t, data["greeting"], any(want))
+				assert.Equal(t, len(selected[side].Failed), 0)
+				assert.Equal(t, len(selected[side].Blocked), 0)
 			}
 		})
 	}
 }
 
-type r4MissingFetcher struct{}
-
-func (r4MissingFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.Policy) (*store.SourceArtifact, error) {
-	return nil, source.MissingSecretErr(obj.Named(), "input", "not found")
-}
-
-func TestReconcile_TypedWait(t *testing.T) {
+func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet, manifest.KindOCIRepository} {
+	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			f := newR4Fixture(t, kind, "data", false)
 			f.o.configureControllers()
-			id := f.reader
-			switch kind {
-			case manifest.KindResourceSet:
-				rs := &manifest.ResourceSet{Name: "typed", Namespace: "flux-system", ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: noop}\n"}
-				gate := &manifest.Kustomization{Name: "gate", Namespace: rs.Namespace}
-				f.o.store.AddObject(gate)
-				f.o.store.UpdateStatus(gate.Named(), store.StatusReady, "", "")
-				rs.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: gate.Name, Namespace: gate.Namespace}}
-				manifest.KindOf(&manifest.RawObject{APIVersion: rs.DependsOn[0].APIVersion, Kind: manifest.KindKustomization}).Namespaced()
-				f.o.store.AddObject(rs)
-				var out schedule.Outcome
-				f.o.tasks.Go(t.Context(), "initial", func(ctx context.Context) {
-					out, _ = (dagDispatcher{f.o}).Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{})
-				})
-				f.o.tasks.BlockTillDone()
-				assert.Equal(t, out.Kind, schedule.Terminal)
-				f.o.store.UpdateStatus(gate.Named(), store.StatusPending, "", "successor queued")
-				if f.o.store.GetArtifact(rs.Named()) == nil {
-					t.Fatal("ResourceSet artifact was not retained")
+			keeper := testutil.KustomizationID("flux-system", "keeper")
+			keeping, releaseKeeper := make(chan struct{}), make(chan struct{})
+			var started, queued atomic.Bool
+			var sched *schedule.Scheduler
+			d := fixtureDispatcher{store: f.o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				if id == keeper {
+					close(keeping)
+					<-releaseKeeper
+					return schedule.Result{}
 				}
-				id = rs.Named()
-			case manifest.KindOCIRepository:
-				repo := &manifest.OCIRepository{Name: "typed", Namespace: "flux-system"}
-				f.o.WithFetcher(manifest.KindOCIRepository, r4MissingFetcher{})
-				f.o.store.AddObject(repo)
-				id = repo.Named()
+				if id == f.supplier {
+					started.Store(true)
+				}
+				if id == f.reader {
+					<-keeping
+				}
+				result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				if id == f.reader && queued.CompareAndSwap(false, true) {
+					if result.Assessment.Outcome() != schedule.Blocked {
+						t.Error("queued supplier did not retain optional absence")
+					}
+					sched.OnArrival(f.supplier, true)
+					if started.Load() || f.o.store.GetArtifact(f.reader) != nil {
+						t.Error("queued supplier started or admitted reader before a worker slot opened")
+					}
+					close(releaseKeeper)
+				}
+				return result
+			}}
+			sched = schedule.New(f.o.tasks, d)
+			unsub := f.o.watchDAG(sched)
+			defer unsub()
+			sched.Seed([]schedule.NodeID{keeper, f.reader})
+			assert.NoError(t, sched.Run(t.Context()))
+			output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
+			if output == nil || output.Data["greeting"] != "exact" {
+				t.Fatalf("queued successor output=%+v", output)
 			}
-			before := f.o.store.GetArtifact(id)
-			var out schedule.Outcome
-			var outWait manifest.ReconcileWait
-
-			f.o.tasks.Go(t.Context(), "typed", func(ctx context.Context) {
-				out, outWait = (dagDispatcher{f.o}).Dispatch(ctx, id, manifest.ReconcileAttempt{})
-			})
-			f.o.tasks.BlockTillDone()
-			assert.Equal(t, out.Kind, schedule.Blocked)
-			assert.Equal(t, outWait.Empty(), false)
-			if kind == manifest.KindKustomization || kind == manifest.KindHelmRelease {
-				assert.Equal(t, len(outWait.Content.Suppliers), 1)
-				assert.Diff(t, outWait.Content.Targets, []manifest.NamedResource{f.target})
-			} else {
-				assert.Equal(t, len(outWait.Deps), 1)
-			}
-			assert.Equal(t, f.o.store.GetArtifact(id), before)
-			assert.Equal(t, f.o.tasks.Failures(), int64(0))
 		})
 	}
-}
-
-func TestResolve_OptionalInvocationSnapshot(t *testing.T) {
-	t.Parallel()
-	f := newR4Fixture(t, manifest.KindKustomization, "data", false)
-	f.o.configureControllers()
-	observer := &manifest.Kustomization{Name: "observer", Namespace: f.reader.Namespace, Path: "empty", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "output", Optional: true}}}}
-	f.o.store.AddObject(observer)
-	release := make(chan struct{})
-	var checked atomic.Bool
-	var sched *schedule.Scheduler
-	d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-		if id == f.supplier {
-			f.o.tasks.YieldSlot(func() { <-release })
-		}
-		check := id == f.reader && attempt.Content != nil && checked.CompareAndSwap(false, true)
-		var before []manifest.Opportunity
-		if check {
-			defer close(release)
-			before = slices.Clone(attempt.Content.Suppliers)
-			sched.OnArrival(f.supplier, true)
-		}
-		out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-		if check {
-			assert.Equal(t, slices.Equal(attempt.Content.Suppliers, before), true)
-			assert.Equal(t, out.Kind, schedule.Blocked)
-		}
-		return out, outWait
-	})
-	sched = schedule.New(f.o.tasks, d)
-	unsub := f.o.watchDAG(sched)
-	defer unsub()
-	sched.Seed([]schedule.NodeID{f.reader, f.supplier, observer.Named()})
-	assert.NoError(t, sched.Run(t.Context()))
-	assert.Equal(t, checked.Load(), true)
-	assert.Equal(t, f.o.tasks.Failures(), int64(0))
-	info, _ := f.o.store.GetStatus(f.reader)
-	assert.Equal(t, info.Status, store.StatusReady)
 }

@@ -45,7 +45,7 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission) {
 			}
 			next.Children[i].Obj = obj
 		}
-		c.KeepEmitted(id, obj)
+		c.KeepEmitted(id, obj, next.Reads)
 	}
 	c.Store.RecordEmitted(id, next)
 }

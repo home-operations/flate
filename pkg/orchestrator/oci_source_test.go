@@ -22,7 +22,10 @@ type generatedOCIFetcher struct {
 	wantRetry sourcecache.RetryConfig
 }
 
-func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+	if reads == nil {
+		return nil, fmt.Errorf("missing captured inputs")
+	}
 	if policy.Retry != f.wantRetry {
 		return nil, fmt.Errorf("unexpected retry: %+v", policy.Retry)
 	}
@@ -85,7 +88,7 @@ spec:
 			}
 			id := testutil.KustomizationID("flux-system", "consumer")
 			if tc.fetchErr != nil {
-				o.ksc.ReconcileNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainCascade})
+				o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
 			}
 			status, _ := o.Store().GetStatus(id)
 			if tc.fetchErr != nil {
@@ -99,7 +102,7 @@ spec:
 				if name, _ := manifest.DocMetadata(res.Manifests[id][0]); name != "artifact-output" {
 					t.Fatalf("rendered %q from the working tree instead of the OCI artifact", name)
 				}
-			} else if f.fetched.Load() || status.Status != store.StatusFailed || !strings.Contains(status.Message, "unknown OCI artifact root") {
+			} else if f.fetched.Load() || status.Status != store.StatusFailed || !strings.Contains(status.Message, "unknown OCI artifact root") || len(status.BlockedBy()) != 0 {
 				t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 			}
 		})

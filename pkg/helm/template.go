@@ -37,8 +37,9 @@ var envSettings = sync.OnceValue(cli.New)
 // single YAML string (multiple documents separated by "---" lines).
 // Completed output is persisted through the borrowed cache owner. A hit skips
 // chart cloning and Helm action construction; the key includes all render inputs.
-func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, opts Options) (string, error) {
-	loaded, err := c.describeChart(ctx, hr)
+func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) (string, error) {
+	opts := input.Options
+	loaded, err := c.describeChart(ctx, hr, input.Sources)
 	if err != nil {
 		return "", err
 	}
@@ -53,6 +54,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		hrValues = map[string]any{}
 	}
 	key := computeTemplateKey(loaded, hrValues, opts, hr)
+	if input.Admit != nil {
+		if handled, err := input.Admit(key); handled || err != nil {
+			return "", err
+		}
+	}
 	blobKey := cache.BlobKey{Content: key, PersistOnly: true}
 	var cacheErr error
 	if key != "" && loaded.valuesErr == nil {

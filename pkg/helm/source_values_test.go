@@ -61,7 +61,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 				st := store.New()
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: "charts/demo", Source: manifest.NamedResource{Kind: kind, Group: manifest.SourceDomain, Name: "repo", Namespace: "apps"}}, IgnoreMissingValuesFiles: ignore}
 				st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
+				cliSources := NewSources(st)
 				for _, tc := range []struct {
 					name      string
 					files     []string
@@ -92,12 +92,12 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 							selected.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "standalone"}
 							selected.Chart.Source.Kind, selected.Chart.Source.Name = manifest.KindHelmChart, "standalone"
 							var err error
-							selected, err = Prepare(selected, func(id manifest.NamedResource) *manifest.HelmChartSource {
+							selected, _, err = Prepare(selected, func(id manifest.NamedResource) *manifest.HelmChartSource {
 								return &manifest.HelmChartSource{Name: id.Name, Namespace: id.Namespace, Chart: "charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: kind, Name: "repo"}, ValuesFiles: tc.files, IgnoreMissingValuesFiles: ignore}
 							}, nil, nil)
 							assert.NoError(t, err)
 						}
-						first, err := cli.Template(t.Context(), selected, tc.overrides, Options{})
+						first, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
 						if !ignore && (tc.name == "missing" || tc.name == "no chart fallback") {
 							if !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) {
 								t.Fatalf("missing source values: %v", err)
@@ -110,7 +110,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 						if !strings.Contains(first, `marker: "`+tc.want+`"`) || !strings.Contains(first, `kept: "default"`) {
 							t.Fatal(first)
 						}
-						second, err := cli.Template(t.Context(), selected, tc.overrides, Options{})
+						second, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
 						assert.NoError(t, err)
 						assert.Equal(t, second, first)
 					})
@@ -144,7 +144,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, artifact), Revision: "1.0.0"})
 			cli, err := NewClient(owner)
 			assert.NoError(t, err)
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
+			cliSources := NewSources(st)
 			for _, tc := range []struct {
 				name  string
 				files []string
@@ -158,7 +158,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 					t.Parallel()
 					selected := hr.Clone()
 					selected.ChartValuesFiles = tc.files
-					out, err := cli.Template(t.Context(), selected, nil, Options{})
+					out, err := cli.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
 					if !strings.Contains(out, `marker: "`+tc.want+`"`) {
 						t.Fatal(out)
@@ -285,8 +285,8 @@ func TestObserveValuesFiles_PinnedReuse(t *testing.T) {
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 			cli, err := NewClient(owner)
 			assert.NoError(t, err)
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			d, err := cli.describeChart(t.Context(), hr)
+			cliSources := NewSources(st)
+			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
 			if d.valuesPin == "" {
 				t.Fatal("fixture has no acquired values pin")
@@ -354,8 +354,8 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 	owner := cachetest.New(t, "", cache.New)
 	cli, err := NewClient(owner)
 	assert.NoError(t, err)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	d, err := cli.describeChart(t.Context(), hr)
+	cliSources := NewSources(st)
+	d, err := cli.describeChart(t.Context(), hr, cliSources)
 	assert.NoError(t, err)
 	assert.Equal(t, d.valuesPin, "")
 	reads := 0
@@ -388,7 +388,7 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 			assert.Equal(t, merged["marker"], any(marker))
 		}
 	}
-	assertSourceValuesChanges(t, cli, hr, root)
+	cli.assertSourceValuesChanges(t, hr, root, cliSources)
 }
 
 func TestObserveValuesFiles_RetryFailures(t *testing.T) {
@@ -401,8 +401,8 @@ func TestObserveValuesFiles_RetryFailures(t *testing.T) {
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 			cli, err := NewClient(owner)
 			assert.NoError(t, err)
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			d, err := cli.describeChart(t.Context(), hr)
+			cliSources := NewSources(st)
+			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
 			input := d.valuesFS
 			ctx, cancel := context.WithCancel(t.Context())
@@ -454,8 +454,8 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli, err := NewClient(owner)
 	assert.NoError(t, err)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	d, err := cli.describeChart(t.Context(), hr)
+	cliSources := NewSources(st)
+	d, err := cli.describeChart(t.Context(), hr, cliSources)
 	assert.NoError(t, err)
 	input := d.valuesFS
 	blocked, resume := make(chan struct{}), make(chan struct{})
@@ -512,7 +512,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 	root, st, hr := sourceValuesCacheFixture(t)
 	cli, err := NewClient(cachetest.New(t, "", cache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	cliSources := NewSources(st)
 	var previousPin, chartFingerprint string
 	for _, marker := range []string{"first", "changed", ""} {
 		if marker == "" {
@@ -522,7 +522,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 		}
 		acquired := acquireChartFS(t, cachetest.New(t, "", cache.New), os.DirFS(root))
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquired})
-		d, err := cli.describeChart(t.Context(), hr)
+		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
 		if d.valuesPin == "" || d.valuesPin == previousPin {
 			t.Fatal("changed acquisition did not change its pin")
@@ -548,7 +548,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, merged["marker"], any(marker))
 		}
-		first, err := cli.Template(t.Context(), hr, nil, Options{})
+		first, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		want := marker
 		if want == "" {

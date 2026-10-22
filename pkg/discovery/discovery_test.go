@@ -1151,7 +1151,7 @@ spec:
 						assert.Equal(t, filter.ShouldReconcile(id), true)
 					}
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
-					assert.Equal(t, len(filter.AddEmitted(owner, &manifest.HelmRelease{Name: "sibling", Namespace: "apps"})), 0)
+					assert.Equal(t, len(filter.AddEmitted(owner, &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}, st)), 0)
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
 					assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 					if previous != nil {

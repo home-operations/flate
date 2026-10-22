@@ -2,6 +2,7 @@ package store
 
 import (
 	"io/fs"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -112,4 +113,33 @@ func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 	if events != 2 {
 		t.Fatalf("dropped payload did not fire the artifact event: %d", events)
 	}
+}
+
+func TestSetArtifact_EmissionAuthority(t *testing.T) {
+	t.Parallel()
+	s := New()
+	id := ownerID("artifact")
+	events := 0
+	s.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { events++ }, false)
+	first := &Emission{Manifests: []map[string]any{{"value": "same"}}, inputHead: inputStamp{generation: 1}}
+	s.SetArtifact(id, first)
+	equal := *first
+	equal.revision = 2
+	equal.validated = new(atomic.Pointer[manifest.BaseManifest])
+	s.SetArtifact(id, &equal)
+	assert.Equal(t, events, 1)
+	assert.Equal(t, s.GetArtifact(id), Artifact(first))
+	changed := equal
+	changed.inputHead.generation++
+	s.SetArtifact(id, &changed)
+	assert.Equal(t, events, 2)
+	assert.Equal(t, s.GetArtifact(id), Artifact(&changed))
+	complete := changed
+	complete.Complete = true
+	s.SetArtifact(id, &complete)
+	assert.Equal(t, events, 3)
+	child := complete
+	child.Children = []Child{emissionChild("artifact-child", "new")}
+	s.SetArtifact(id, &child)
+	assert.Equal(t, events, 4)
 }

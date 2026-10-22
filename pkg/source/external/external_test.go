@@ -40,7 +40,7 @@ func TestFetcher_FileURL(t *testing.T) {
 				Name: "ea", Namespace: "apps", ArtifactURL: "file://" + label,
 				Revision: "v1@sha256:abc", Digest: "sha256:abc",
 			}
-			art, err := f.Fetch(t.Context(), ea, sourcecache.Policy{})
+			art, err := f.Fetch(t.Context(), ea, testReadSet(ea), sourcecache.Policy{})
 			if err != nil {
 				t.Fatalf("Fetch: %v", err)
 			}
@@ -103,7 +103,7 @@ func TestFetcher_NoArtifact(t *testing.T) {
 			if s.GetObject(ea.Named()) != nil || s.GetArtifact(ea.Named()) != nil {
 				t.Fatal("prediction supplied source content")
 			}
-			_, err := f.Fetch(t.Context(), ea, sourcecache.Policy{})
+			_, err := f.Fetch(t.Context(), ea, testReadSet(ea), sourcecache.Policy{})
 			if err == nil || !strings.Contains(err.Error(), "offline use") {
 				t.Fatalf("missing-content error = %v", err)
 			}
@@ -118,7 +118,7 @@ func TestFetcher_NonFileURL(t *testing.T) {
 		Name: "ea", Namespace: "apps",
 		ArtifactURL: "http://source-controller.flux-system.svc/x.tar.gz",
 	}
-	_, err := f.Fetch(context.Background(), ea, sourcecache.Policy{})
+	_, err := f.Fetch(context.Background(), ea, testReadSet(ea), sourcecache.Policy{})
 	if err == nil {
 		t.Fatalf("expected error for non-file:// URL")
 	}

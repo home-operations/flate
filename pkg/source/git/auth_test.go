@@ -101,9 +101,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 					}
 				}
 			}
+			fInputs := testInputs{}
 			f := &Fetcher{}
 			if !tc.unwired {
-				f.Secrets = func(_, _ string) *manifest.Secret { return sec }
+				fInputs.secrets = func(_, _ string) *manifest.Secret { return sec }
 			}
 			repo := gitRepoWithSecret("g", "https://host/repo", "creds")
 			if tc.ssh {
@@ -115,12 +116,12 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			if tc.proxy {
 				repo.Name, repo.SecretRef = "repo", nil
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
-				_, err = f.resolveTransport(repo)
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
 				owner.Name, secretName = "repo", "missing"
 			} else if tc.field == "tls.crt" {
-				_, err = f.resolveTransport(repo)
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
 			} else {
-				auth, err = f.resolveAuth(repo, sec)
+				auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, sec)
 			}
 			if err != nil {
 				assert.Equal(t, auth == nil, true)
@@ -167,7 +168,7 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 		URL:      "https://github.com/x/y.git",
 		Provider: sourcev1.GitProviderGitHub,
 	}
-	_, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := f.Fetch(context.Background(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
@@ -178,16 +179,15 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 
 func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{
-				StringData: map[string]any{
-					"username": "alice",
-					"password": "hunter2",
-				},
-			}
-		},
-	}
+	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{
+			StringData: map[string]any{
+				"username": "alice",
+				"password": "hunter2",
+			},
+		}
+	}}
+	f := &Fetcher{}
 	for _, url := range []string{
 		"https://github.com/x/y.git",
 		"http://example.com/x@y",
@@ -195,7 +195,7 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	} {
 		t.Run(url, func(t *testing.T) {
 			t.Parallel()
-			auth, err := f.resolveAuth(gitRepoWithSecret("g", url, "creds"), f.Secrets("ns", "creds"))
+			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", url, "creds"))}).resolveAuth(gitRepoWithSecret("g", url, "creds"), fInputs.secrets("ns", "creds"))
 			if err != nil {
 				t.Fatalf("resolveAuth: %v", err)
 			}
@@ -212,23 +212,22 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 
 func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{
-		Secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{
-				StringData: map[string]any{
-					"username":    "alice",
-					"password":    "ignored",
-					"bearerToken": "tkn_abc",
-				},
-			}
-		},
-	}
+	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+		return &manifest.Secret{
+			StringData: map[string]any{
+				"username":    "alice",
+				"password":    "ignored",
+				"bearerToken": "tkn_abc",
+			},
+		}
+	}}
+	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
 		URL:       "https://github.com/x/y.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	auth, err := f.resolveAuth(repo, f.Secrets(repo.Namespace, repo.SecretRef.Name))
+	auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, fInputs.secrets(repo.Namespace, repo.SecretRef.Name))
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -248,7 +247,7 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 		Name: "g", Namespace: "ns",
 		URL: "https://github.com/x/y.git",
 	}
-	auth, err := f.resolveAuth(repo, nil)
+	auth, err := (&operation{Fetcher: f}).resolveAuth(repo, nil)
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -267,9 +266,10 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 		return &manifest.Secret{StringData: map[string]any{"identity": string(pem.EncodeToMemory(block))}}
 	}}
+	f := &Fetcher{}
 	for _, tc := range []struct{ url, user string }{
 		{"git@github.com:owner/repo.git", "git"},
 		{"ssh://buildbot@example.com/r.git", "buildbot"},
@@ -277,7 +277,7 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 	} {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			auth, err := f.resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), f.Secrets("ns", "creds"))
+			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", tc.url, "creds"))}).resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), fInputs.secrets("ns", "creds"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,9 +295,9 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 func TestFetcher_ForceGenericProvider(t *testing.T) {
 	t.Parallel()
 	// Gate bypassed: the generic path runs and fails on the absent secret.
+	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
 	f := &Fetcher{
 		ForceGeneric: true,
-		Secrets:      func(_, _ string) *manifest.Secret { return nil },
 	}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
@@ -305,7 +305,7 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), repo, sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := f.Fetch(context.Background(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
 	}

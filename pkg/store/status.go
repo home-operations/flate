@@ -34,10 +34,9 @@ type StatusReason string
 
 // Special Ready condition reasons.
 const (
-	ReasonSkipped    StatusReason = "Skipped"
-	ReasonUnchanged  StatusReason = "Unchanged"
-	ReasonSuspended  StatusReason = "Suspended"
-	ReasonRefetching StatusReason = "Refetching"
+	ReasonSkipped   StatusReason = "Skipped"
+	ReasonUnchanged StatusReason = "Unchanged"
+	ReasonSuspended StatusReason = "Suspended"
 )
 
 // Outcome classifies a resource's readiness and failure provenance.
@@ -103,8 +102,29 @@ func (i StatusInfo) BlockedBy() []manifest.NamedResource {
 
 // Failure IDs are immutable so StatusInfo can retain them after the shard unlocks.
 type conditionRecord struct {
+	state      *conditionState
 	conditions []Condition
 	failure    *dependencyFailure
+}
+
+type conditionState struct {
+	authority
+	first [1]Condition
+}
+
+func (r conditionRecord) stamp() authority {
+	if r.state == nil {
+		return authority{}
+	}
+	return r.state.authority
+}
+
+func (r conditionRecord) advanceLocked(sh *shard) {
+	if r.state.generation == ^uint64(0) {
+		sh.mu.Unlock()
+		panic("store: authority generation exhausted")
+	}
+	r.state.authority = sh.advanceLocked(r.state.authority)
 }
 
 type dependencyFailure struct {
@@ -197,6 +217,15 @@ func (s *Store) UpdateStatus(id manifest.NamedResource, status Status, reason St
 	s.SetCondition(id, readyCondition(status, reason, message))
 }
 
+// ReportProgress dispatches transient phase text without changing Ready conditions.
+func (s *Store) ReportProgress(id manifest.NamedResource, message string) {
+	dispatch := fireUnderLock(s, EventStatusUpdated, id)
+	if dispatch.listeners != nil {
+		dispatch.payload = StatusInfo{Status: StatusPending, Reason: ReasonReconciling, Message: message}
+	}
+	dispatch.run()
+}
+
 // UpdateFailure atomically records a terminal error and its immediate failed dependencies.
 func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 	s.setCondition(id, readyCondition(StatusFailed, "", err.Error()), newDependencyFailure(err))
@@ -228,14 +257,17 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 		sh.mu.Unlock()
 		return
 	}
-	if sh.hidden[id] {
+	if sh.derived && sh.cells[id].hidden {
 		sh.mu.Unlock()
 		return
 	}
-	newInfo, _ := updated.statusInfo()
-	dispatch := fireUnderLock(s, EventStatusUpdated, id, newInfo)
+	dispatch := fireUnderLock(s, EventStatusUpdated, id)
+	if dispatch.listeners != nil {
+		newInfo, _ := updated.statusInfo()
+		dispatch.payload = newInfo
+	}
 	sh.mu.Unlock()
-	dispatch()
+	dispatch.run()
 }
 
 // Caller MUST hold sh.mu and project conditions before unlocking: the returned
@@ -245,21 +277,35 @@ func (s *Store) setCondition(id manifest.NamedResource, cond Condition, failure 
 func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, failure *dependencyFailure) (conditionRecord, bool) {
 	record := sh.conditions[id]
 	failureChanged := cond.Type == ConditionReady && !record.failure.same(failure)
-	if failureChanged {
-		record.failure = failure
-	}
 	for i := range record.conditions {
 		if record.conditions[i].Type != cond.Type {
 			continue
 		}
 		changed := !conditionEqual(record.conditions[i], cond)
+		if changed || failureChanged {
+			record.advanceLocked(sh)
+		}
 		if changed {
 			record.conditions[i] = cond
 		}
 		if failureChanged {
+			record.failure = failure
 			sh.conditions[id] = record
 		}
 		return record, changed || failureChanged
+	}
+	if record.state == nil {
+		if !sh.canAdmit(1) {
+			sh.mu.Unlock()
+			panic("store: authority generation exhausted")
+		}
+		sh.admitAbsenceLocked(id, conditionFacet)
+		record.state = &conditionState{}
+		record.conditions = record.state.first[:0]
+	}
+	record.advanceLocked(sh)
+	if failureChanged {
+		record.failure = failure
 	}
 	record.conditions = append(record.conditions, cond)
 	sh.conditions[id] = record
@@ -272,7 +318,7 @@ func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	if sh.hidden[id] {
+	if sh.derived && sh.cells[id].hidden {
 		return StatusInfo{}, false
 	}
 	return sh.conditions[id].statusInfo()

@@ -10,35 +10,35 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestSnapshotSecrets_References(t *testing.T) {
+func TestSecretLookup_References(t *testing.T) {
 	t.Parallel()
-	if SnapshotSecrets(nil) != nil {
-		t.Fatal("unwired getter became wired")
+	if SecretLookup(nil) != nil {
+		t.Fatal("unwired capture became wired")
 	}
 	ca := testutil.SelfSignedCA(t)
-	first := &manifest.Secret{StringData: map[string]any{
+	first := &manifest.Secret{Name: "shared", Namespace: "ns", StringData: map[string]any{
 		"username": "alice", "password": "first", "ca.crt": ca, "address": "http://proxy.invalid",
 	}}
-	current := first
-	absent := true
-	calls := make(map[[2]string]int)
-	secrets := SnapshotSecrets(func(namespace, name string) *manifest.Secret {
-		calls[[2]string{namespace, name}]++
-		if name == "missing" && absent {
-			return nil
-		}
-		return current
-	})
-	assert.Equal(t, secrets("ns", "shared"), first)
-	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
-	current = &manifest.Secret{StringData: map[string]any{"username": "rotated"}}
-	absent = false
-	assert.Equal(t, secrets("ns", "shared"), first)
-	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
-	assert.Equal(t, secrets("other", "shared"), current)
+	s := store.New()
+	s.AddObject(first)
+	var reads store.ReadSet
 	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
+	reads.Init(s, owner, nil)
+	secrets := SecretLookup(&reads)
+	assert.Equal(t, secrets("ns", "shared"), first)
+	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
+	current := &manifest.Secret{Name: "shared", Namespace: "ns", StringData: map[string]any{"username": "rotated"}}
+	s.AddObject(current)
+	s.AddObject(&manifest.Secret{Name: "missing", Namespace: "ns"})
+	assert.Equal(t, secrets("ns", "shared"), first)
+	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
+	other := *current
+	other.Namespace = "other"
+	s.AddObject(&other)
+	assert.Equal(t, secrets("other", "shared"), &other)
 	username, password, err := BasicAuthFromSecret(secrets("ns", "shared"), owner, "shared")
 	assert.NoError(t, err)
 	assert.Equal(t, username, "alice")
@@ -49,7 +49,12 @@ func TestSnapshotSecrets_References(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, material.Certificate()[2], ca)
-	assert.Diff(t, calls, map[[2]string]int{{"ns", "shared"}: 1, {"ns", "missing"}: 1, {"other", "shared"}: 1})
+	var next store.ReadSet
+	next.Init(s, owner, nil)
+	assert.Equal(t, SecretLookup(&next)("ns", "shared"), current)
+	if SecretLookup(&next)("ns", "missing") == nil {
+		t.Fatal("next execution retained the preceding absence")
+	}
 }
 
 func TestMissingSecretErr(t *testing.T) {

@@ -47,14 +47,15 @@ func TestFetcher_ResolveTransport(t *testing.T) {
 				srv = httptest.NewServer(handler)
 			}
 			t.Cleanup(srv.Close)
+			fInputs := testInputs{}
 			f := &Fetcher{Network: newTestNetwork(t)}
 			b := &manifest.Bucket{Name: "b", Namespace: "ns", Endpoint: srv.URL, BucketName: "fixture", Region: "us-east-1", Insecure: !cert}
 			if cert {
 				b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 				ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
-				f.Secrets = func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}} }
+				fInputs.secrets = func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}} }
 			}
-			client, _, err := f.newMinioClient(b)
+			client, _, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).newMinioClient(b)
 			assert.NoError(t, err)
 			exists, err := client.BucketExists(t.Context(), "fixture")
 			assert.NoError(t, err)
@@ -95,9 +96,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			fInputs := testInputs{}
 			f := &Fetcher{Network: newTestNetwork(t)}
 			if !tc.unwired {
-				f.Secrets = func(_, _ string) *manifest.Secret {
+				fInputs.secrets = func(_, _ string) *manifest.Secret {
 					if tc.data == nil && tc.rawData == nil {
 						return nil
 					}
@@ -117,21 +119,25 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			switch tc.ref {
 			case "auth":
 				b.SecretRef = ref
-				creds, credentialErr := f.resolveCredentials(b)
+				creds, credentialErr := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
 				if creds != nil || credentialErr == nil {
 					t.Fatal("credential failure returned credentials or no error")
 				}
-				artifact, fetchErr := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval()})
+				reads := fInputs.readSet(b)
+				if tc.unwired {
+					reads = nil
+				}
+				artifact, fetchErr := f.Fetch(t.Context(), b, reads, cache.Policy{MaxAge: b.SourceInterval()})
 				if artifact != nil {
 					t.Fatal("credential failure returned an acquired artifact")
 				}
 				err = fetchErr
 			case "cert":
 				b.CertSecretRef = ref
-				_, _, err = f.newMinioClient(b)
+				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).newMinioClient(b)
 			case "proxy":
 				b.ProxySecretRef = ref
-				_, _, err = f.newMinioClient(b)
+				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).newMinioClient(b)
 			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
@@ -181,13 +187,14 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				if tc.auth {
 					b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				}
-				f := &Fetcher{Secrets: func(_, _ string) *manifest.Secret {
+				fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 					if !tc.auth {
 						t.Error("anonymous credentials consulted a Secret")
 					}
 					return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": "secret"}}
 				}}
-				creds, err := f.resolveCredentials(b)
+				f := &Fetcher{}
+				creds, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
 				assert.NoError(t, err)
 				value, err := creds.GetWithContext(nil)
 				assert.NoError(t, err)
@@ -223,7 +230,7 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, "", cache.New)
 		start := time.Now()
-		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
+		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(t.Context(), &manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}, (testInputs{}).readSet(&manifest.Bucket{Name: "network", Namespace: "test", BucketName: "data", Endpoint: "bucket.test", Insecure: true, Region: "us-east-1"}), cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}})
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		if !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before || time.Since(start) > minio.DefaultRetryUnit {
 			t.Fatalf("suppression: %v calls=%d elapsed=%v", err, calls.Load(), time.Since(start))
@@ -290,12 +297,13 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 				t.Setenv("no_proxy", "*")
 			}
 			c := cachetest.New(t, root, cache.New)
-			f := &Fetcher{Network: newTestNetwork(t), Cache: c, Secrets: func(_, _ string) *manifest.Secret {
+			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
 				lookups.Add(1)
 				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": password, "ca.crt": ca}}
 			}}
+			f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 			before := requests.Load()
-			art, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}})
+			art, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,13 +312,13 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 			}
 			previous = art.Key
 			before = requests.Load()
-			if _, err := f.Fetch(t.Context(), b, cache.Policy{MaxAge: b.SourceInterval()}); err != nil || requests.Load() != before {
+			if _, err := f.Fetch(t.Context(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval()}); err != nil || requests.Load() != before {
 				t.Fatalf("warm snapshot missed: %v", err)
 			}
 			fail.Store(true)
 			failed := *b
 			failed.Interval.Duration = 0
-			_, err = f.Fetch(t.Context(), &failed, cache.Policy{MaxAge: failed.SourceInterval()})
+			_, err = f.Fetch(t.Context(), &failed, fInputs.readSet(&failed), cache.Policy{MaxAge: failed.SourceInterval()})
 			terminal, ok := errors.AsType[*cache.TerminalError](err)
 			if !ok || !terminal.Attempted {
 				t.Fatalf("failed snapshot: %v", err)

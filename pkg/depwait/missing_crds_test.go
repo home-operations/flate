@@ -1,15 +1,17 @@
 package depwait
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/schedule"
 
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -20,7 +22,7 @@ type crdPromotion struct {
 }
 
 func (e *crdPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (e *crdPromotion) Promote(id manifest.NamedResource) bool {
+func (e *crdPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) bool {
 	e.calls = append(e.calls, id)
 	if !e.materialize {
 		return false
@@ -95,7 +97,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 					if e != nil {
 						w.Existence = e
 					}
-					got := w.classify(ref, drain, w.Existence)
+					got := w.Classify(t.Context(), ref, drain)
 					assert.Equal(t, got.Kind, want)
 					if state == "invalid expression" {
 						if !strings.HasPrefix(got.Message, "readyExpr:") {
@@ -125,7 +127,7 @@ func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 	ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
 	for _, enabled := range []bool{false, true} {
 		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
-		if got := testing.AllocsPerRun(100, func() { w.classify(ref, manifest.DrainCascade, w.Existence) }); got != 0 {
+		if got := testing.AllocsPerRun(100, func() { w.Classify(t.Context(), ref, manifest.DrainCascade) }); got != 0 {
 			t.Fatalf("enabled=%t allocations=%v", enabled, got)
 		}
 	}

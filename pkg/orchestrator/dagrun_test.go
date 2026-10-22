@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -74,15 +75,13 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					o.store.UpdateStatus(gate, store.StatusReady, store.ReasonSuspended, "suspended")
 					o.store.UpdateStatus(child, store.StatusPending, "", "queued")
 					o.configureControllers()
-					var outcome schedule.Outcome
-					var outcomeWait manifest.ReconcileWait
-
+					var result schedule.Result
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
-						outcome, outcomeWait = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+						result = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.DrainNone)
 					})
 					o.tasks.BlockTillDone()
-					if outcome.Kind != schedule.Blocked || !slices.Contains(outcomeWait.Deps, child) {
-						t.Fatalf("dependent must first wait on child: outcome=%v blocked=%v", outcome, outcomeWait)
+					if result.Assessment.Outcome() != schedule.Blocked || !slices.Contains(result.Assessment.(*base.Execution).Blocked, child) {
+						t.Fatalf("dependent must first wait on child: %+v", result.Assessment)
 					}
 					retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: "retained"}
 					var artifact *store.Emission

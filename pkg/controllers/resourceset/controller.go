@@ -1,10 +1,7 @@
 // Package resourceset reconciles flux-operator ResourceSets as
 // first-class DAG nodes: wait on dependsOn / inputsFrom RSIPs / the
 // structural parent KS, render the RS via the resourceset package, and
-// emit every child through the shared emission transaction. A RS with a
-// selector-only inputsFrom (no nameable RSIP to park on) asks the
-// scheduler to re-run it at the structural fixpoint so it expands
-// against the now-complete RSIP set.
+// emit every child through the shared emission transaction.
 package resourceset
 
 import (
@@ -13,7 +10,6 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -30,6 +26,17 @@ type Controller struct {
 	WipeSecrets bool
 }
 
+type execution struct {
+	*Controller
+	run base.Execution
+}
+
+func (c *Controller) newExecution(id manifest.NamedResource) *execution {
+	execution := &execution{Controller: c}
+	execution.run.Init(c.Controller, id)
+	return execution
+}
+
 // New constructs a ResourceSet controller.
 func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	return &Controller{
@@ -38,47 +45,29 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	}
 }
 
-// ReconcileNode runs one ResourceSet invocation and returns owner scheduling facts.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return c.DispatchNode(ctx, id, attempt, c.reconcile)
+// ReconcileNode captures one ResourceSet execution for the scheduler.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+	execution := c.newExecution(id)
+	execution.run.Dispatch(ctx, level, execution.reconcile)
+	return &execution.run
 }
 
-func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
-	out := schedule.Outcome{Rerun: selectorIntent(rs)}
-	if gated {
-		return out, nil
-	}
-	level := invocation.Drain
+func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {
 	id := rs.Named()
-	if err := c.PreflightError(id); err != nil {
-		return out, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
-	// SetPendingUnlessReady (not a raw UpdateStatus): a no-op re-reconcile of
-	// an already-Ready RS (re-emitted by its structural parent / a drain-rerun
-	// that converged) must not transiently downgrade Ready→Pending, mirroring
-	// the KS/HR pre-render progress writes (#657).
 	c.SetPendingUnlessReady(id, "resolving inputs")
 
 	deps := c.collectDeps(rs)
 	if len(deps) > 0 {
-		// RequireRefresh fuses the gate with the load-bearing re-read: the
-		// structural parent may have re-emitted us with a substituted
-		// name/namespace while we were waiting (a KS render baking
-		// targetNamespace into a duplicate copy). Without the refresh the
-		// first render would use the stale-spec snapshot. Mirrors the KS
-		// controller (#102).
-		fresh, ok, err := c.RequireRefresh[*manifest.ResourceSet](
-			ctx, id, deps, level)
-		if ok {
-			rs = fresh
-			out.Rerun = selectorIntent(rs)
-		}
+		err := c.run.Require(ctx, deps, level)
 		if err != nil {
-			return out, err
+			return err
 		}
 	}
-	if err := c.PreflightError(id); err != nil {
-		return out, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
 	var attempt *store.Emission
@@ -88,26 +77,26 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 		}
 	}()
 	handled := false
-	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(c.Store), func(content any) (bool, error) {
-		fp, hit, noop, err := c.FingerprintDedup(id, content)
-		handled, out.Noop = hit, noop && err == nil
+	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&c.run.Reads), func(content any) (bool, error) {
+		fp, hit, err := c.run.FingerprintDedup(id, content)
+		handled = hit
 		if hit || err != nil {
 			return hit, err
 		}
-		_, bound := c.Store.GetEmission(id)
+		_, bound := c.run.Reads.GetEmission(id)
 		attempt = &bound
 		attempt.Fingerprint = fp
 		return false, nil
 	})
 	for _, warning := range warnings {
-		c.Store.AddWarning(id, warning)
+		c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
 	}
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, "", err.Error())
-		return out, err
+		return err
 	}
 	if handled {
-		return out, nil
+		return nil
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	for i, child := range attempt.Children {
@@ -116,15 +105,14 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 		}
 	}
 	attempt.Complete = true
-	c.Emit(id, attempt)
-	return out, nil
+	c.run.Emit(id, attempt)
+	return nil
 }
 
 // collectDeps gates explicit dependencies, named inputs and the structural parent.
-// Authored dependsOn Ready=false still requests readiness here. Selector-only inputs
-// use the drain rerun because their producers have no nameable gate.
-func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
-	parents := c.Store.Productions(rs.Named(), nil)
+// Authored dependsOn Ready=false still requests readiness here.
+func (c *execution) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
+	parents := c.run.Reads.Productions(rs.Named(), nil)
 	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
 	for _, p := range parents {
 		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
@@ -146,16 +134,4 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 		}
 	}
 	return deps
-}
-
-func selectorIntent(rs *manifest.ResourceSet) bool {
-	if rs.Suspend {
-		return false
-	}
-	for ref := range manifest.References(rs) {
-		if ref.Use == "inputsFrom" && ref.Name == "" {
-			return true
-		}
-	}
-	return false
 }

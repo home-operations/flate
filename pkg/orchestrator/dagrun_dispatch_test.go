@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,9 +17,11 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/resourceset"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -48,25 +49,40 @@ data: {key: value}
 	unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 	t.Cleanup(unsub)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	out, outWait := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() || arrivals.Load() != 1 {
-		t.Fatalf("fresh result=%v blocked=%v arrivals=%d", out, outWait, arrivals.Load())
+	first := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	defer first.Assessment.Close()
+	if first.Assessment.Outcome() == schedule.Blocked || !first.Assessment.Valid() || arrivals.Load() != 1 {
+		t.Fatalf("fresh assessment=%+v arrivals=%d", first.Assessment, arrivals.Load())
 	}
-	before := s.GetArtifact(rs.Named())
-	out, outWait = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	if (out.Kind != schedule.Terminal || !out.Noop) || !outWait.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
-		t.Fatalf("dedup result=%v blocked=%v arrivals=%d artifact changed=%v", out, outWait, arrivals.Load(), s.GetArtifact(rs.Named()) != before)
+	before := s.GetArtifact(rs.Named()).(*store.Emission)
+	var reader store.ReadSet
+	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
+	defer reader.Retire()
+	reader.GetArtifact(rs.Named())
+	var statusEvents, artifactEvents atomic.Int64
+	unsubStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statusEvents.Add(1) }, false)
+	defer unsubStatus()
+	unsubArtifact := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { artifactEvents.Add(1) }, false)
+	defer unsubArtifact()
+	second := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	defer second.Assessment.Close()
+	after := s.GetArtifact(rs.Named()).(*store.Emission)
+	if second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() || arrivals.Load() != 1 || statusEvents.Load() != 0 || artifactEvents.Load() != 0 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+		t.Fatalf("dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d", second.Assessment, reader.Valid(), arrivals.Load()-1, statusEvents.Load(), artifactEvents.Load())
 	}
 	s.UpdateStatus(rs.Named(), store.StatusReady, store.ReasonSkipped, "")
-	out, outWait = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
-		t.Fatalf("typed skip became a dedup no-op: outcome=%v blocked=%v arrivals=%d", out, outWait, arrivals.Load())
+	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	defer skipped.Assessment.Close()
+	info, _ := s.GetStatus(rs.Named())
+	after = s.GetArtifact(rs.Named()).(*store.Emission)
+	if skipped.Assessment.Outcome() == schedule.Blocked || info.Outcome() != store.OutcomeSkipped || info.Message != "" || !reader.Valid() || arrivals.Load() != 1 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+		t.Fatalf("typed skip lost its outcome: status=%+v arrivals=%d", info, arrivals.Load())
 	}
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"dedup", "informative ready", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended", "refresh suspended", "refresh selector"} {
+	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended", "refresh suspended"} {
 		for _, selector := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/selector_%v", name, selector), func(t *testing.T) {
 				t.Parallel()
@@ -85,19 +101,17 @@ data: {key: fixed}
 				}
 				s.AddObject(rs)
 				d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-				if out, outWait := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); out.Rerun != selector || (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() {
-					t.Fatalf("fresh setup failed: %v %v", out, outWait)
+				initial := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+				defer initial.Assessment.Close()
+				if initial.Assessment.Outcome() == schedule.Blocked || !initial.Assessment.Valid() {
+					t.Fatalf("fresh setup failed: %+v", initial.Assessment)
 				}
 				before := s.GetArtifact(rs.Named()).(*store.Emission)
 				c.Close()
 				opts := base.Options{}
-				want := schedule.Outcome{}
+				wantUnresolved := false
 				fresh := *rs
 				switch name {
-				case "dedup":
-					want = schedule.Outcome{Noop: true}
-				case "informative ready":
-					s.UpdateStatus(rs.Named(), store.StatusReady, "", "retained explanation")
 				case "fresh fingerprint identical docs":
 					fresh.Inputs = []fluxopv1.ResourceSetInput{{"unused": &apiextensionsv1.JSON{Raw: []byte(`"new"`)}}}
 					s.AddObject(&fresh)
@@ -112,12 +126,12 @@ data: {key: fixed}
 						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 					}
 					s.AddObject(&fresh)
-					want = schedule.Outcome{Kind: schedule.Blocked}
+					wantUnresolved = true
 					if name == "failed gate" {
 						gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns"}
 						s.AddObject(gate)
 						s.UpdateStatus(gate.Named(), store.StatusFailed, "", "gate failed")
-						want = schedule.Outcome{}
+						wantUnresolved = false
 					}
 				case "preflight failure":
 					opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
@@ -129,7 +143,7 @@ data: {key: fixed}
 				case "suspended":
 					fresh.Suspend = true
 					s.AddObject(&fresh)
-				case "refresh suspended", "refresh selector":
+				case "refresh suspended":
 					gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns", Suspend: true}
 					s.AddObject(gate)
 					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
@@ -143,15 +157,9 @@ data: {key: fixed}
 					unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
 						if id == rs.Named() && ok && info.Message == "resolving inputs" && !published.Swap(true) {
-							replacement := fresh
-							if name == "refresh suspended" {
-								replacement.Suspend = true
-							} else if selector {
-								replacement.InputsFrom = nil
-							} else {
-								replacement.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{}}}
-							}
-							s.AddObject(&replacement)
+							suspended := fresh
+							suspended.Suspend = true
+							s.AddObject(&suspended)
 						}
 					}, false)
 					t.Cleanup(unsub)
@@ -164,28 +172,39 @@ data: {key: fixed}
 				c.StartLifecycle()
 				t.Cleanup(c.Close)
 				d.o.rsc = c
-				var arrivals, outputArrivals atomic.Int64
-				unsub := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+				var arrivals, outputArrivals, outputWithdrawals atomic.Int64
+				unsub := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 					arrivals.Add(1)
 					if id == (manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: rs.Namespace, Name: "output"}) {
-						outputArrivals.Add(1)
+						if payload == nil {
+							outputWithdrawals.Add(1)
+						} else {
+							outputArrivals.Add(1)
+						}
 					}
 				}, false)
 				t.Cleanup(unsub)
-				out, outWait := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-				wantRerun := selector && name != "vanished" && name != "suspended" && name != "refresh suspended"
-				if name == "refresh selector" {
-					wantRerun = !selector
+				var result schedule.Result
+				if name == "refresh suspended" {
+					scheduler := schedule.New(tasks, fixtureDispatcher{store: s, dispatch: d.Dispatch})
+					scheduler.Seed([]schedule.NodeID{rs.Named()})
+					if err := scheduler.Run(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+					result = scheduler.Results()[rs.Named()]
+				} else {
+					result = d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+					defer result.Assessment.Close()
 				}
-				if out.Rerun != wantRerun || (out.Kind != want.Kind || out.Noop != want.Noop) || (!outWait.Empty()) != (want.Kind == schedule.Blocked) {
-					t.Fatalf("outcome=%v blocked=%v; want %v", out, outWait, want)
+				if result.Assessment == nil || result.Assessment.Outcome() == schedule.Blocked != wantUnresolved {
+					t.Fatalf("assessment=%+v, want unresolved=%t", result.Assessment, wantUnresolved)
 				}
-				if (want.Kind == schedule.Terminal && want.Noop) && arrivals.Load() != 0 {
+				if name == "dedup" && arrivals.Load() != 0 {
 					t.Fatalf("no-op emitted %d arrivals", arrivals.Load())
 				}
 				if name == "fresh fingerprint identical docs" {
 					after := s.GetArtifact(rs.Named()).(*store.Emission)
-					if before == after || before.Fingerprint == after.Fingerprint {
+					if before.Fingerprint == after.Fingerprint {
 						t.Fatal("fresh fingerprint must replace artifact identity")
 					}
 					if diff := cmp.Diff(before.Manifests, after.Manifests); diff != "" {
@@ -194,15 +213,17 @@ data: {key: fixed}
 				}
 				if name == "filter skip" {
 					info, ok := s.GetStatus(rs.Named())
-					if !ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || s.GetArtifact(rs.Named()) != before {
-						t.Fatalf("filter must preserve artifact with Ready/unchanged: %+v", info)
+					_, retained := s.GetEmission(rs.Named())
+					if !ok || info.Outcome() != store.OutcomeUnchanged || info.Message != "unchanged" || len(retained.Children) != 0 || len(retained.Manifests) != 0 {
+						t.Fatalf("filter retained invalid output: %+v", info)
 					}
 				}
 				if name == "suspended" || name == "refresh suspended" {
 					info, _ := s.GetStatus(rs.Named())
 					_, retained := s.GetEmission(rs.Named())
-					if info.Outcome() != store.OutcomeSuspended || s.GetArtifact(rs.Named()) != nil || !slices.EqualFunc(retained.Manifests, before.Manifests, func(a, b map[string]any) bool { return cmp.Equal(a, b) }) || outputArrivals.Load() != 0 {
-						t.Fatalf("suspension replayed or pruned output: status=%+v arrivals=%d", info, outputArrivals.Load())
+					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: rs.Namespace, Name: "output"}
+					if info.Outcome() != store.OutcomeSuspended || len(retained.Manifests) != 0 || len(retained.Children) != 0 || s.GetObject(output) != nil || outputArrivals.Load() != 0 || outputWithdrawals.Load() != 1 {
+						t.Fatalf("suspension retained or replayed stale output: status=%+v arrivals=%d withdrawals=%d", info, outputArrivals.Load(), outputWithdrawals.Load())
 					}
 				}
 			})
@@ -226,7 +247,7 @@ data: {key: initial}
 `}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	s.UpdateStatus(rs.Named(), store.StatusPending, "", "queued")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -245,14 +266,18 @@ data: {key: initial}
 	fresh := *rs
 	fresh.ResourcesTemplate = strings.ReplaceAll(rs.ResourcesTemplate, "initial", "changed")
 	s.AddObject(&fresh)
-	done := make(chan schedule.Outcome, 1)
-	tasks.Go(ctx, "dispatch", func(ctx context.Context) {
-		out, _ := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-		if out.Rerun {
-			t.Error("invocation used selector intent from a different declaration")
+	var dispatches atomic.Int64
+	dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		result := d.Dispatch(ctx, id, level)
+		if dispatches.Add(1) == 1 && result.Assessment.Valid() {
+			t.Error("superseded declaration retained a valid assessment")
 		}
-		done <- out
-	})
+		return result
+	}}
+	scheduler := schedule.New(tasks, dispatch)
+	scheduler.Seed([]schedule.NodeID{rs.Named()})
+	done := make(chan error, 1)
+	go func() { done <- scheduler.Run(ctx) }()
 	select {
 	case <-entered:
 	case <-ctx.Done():
@@ -265,26 +290,27 @@ data: {key: initial}
 		s.AddObject(&newest)
 		close(release)
 	})
-	if out := <-done; out.Kind != schedule.Terminal || out.Noop {
-		t.Fatalf("concurrent fresh render classified as %v", out)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
-	tasks.BlockTillDone()
-	if out, _ := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); out.Kind != schedule.Terminal || out.Noop {
-		t.Fatalf("newest content must render conservatively: %v", out)
+	if dispatches.Load() != 2 {
+		t.Fatalf("captured attempts=%d, want 2", dispatches.Load())
 	}
-	if out, _ := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !out.Rerun || (out.Kind != schedule.Terminal || !out.Noop) {
-		t.Fatalf("settled newest content must dedup: %v", out)
+	before := s.GetArtifact(rs.Named()).(*store.Emission)
+	var reader store.ReadSet
+	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
+	defer reader.Retire()
+	reader.GetArtifact(rs.Named())
+	settled := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	defer settled.Assessment.Close()
+	after := s.GetArtifact(rs.Named()).(*store.Emission)
+	if settled.Assessment.Outcome() == schedule.Blocked || !settled.Assessment.Valid() || !reader.Valid() || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+		t.Fatalf("settled newest content did not deduplicate: %+v", settled.Assessment)
 	}
 	cm, ok := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})
 	if !ok || cm.Data["key"] != "newest" {
 		t.Fatalf("latest concurrent content was lost: %+v", cm)
 	}
-}
-
-type withdrawalDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait)
-
-func (d withdrawalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return d(ctx, id, attempt)
 }
 
 func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
@@ -308,17 +334,26 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					publishLate := func() {
 						s.RecordEmitted(k, &late)
 					}
-					dispatch := withdrawalDispatcher(func(_ context.Context, id schedule.NodeID, _ manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+					s.AddObject(&manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace})
+					releasePublication := sync.OnceFunc(func() { close(publishRelease) })
+					releaseDelivery := sync.OnceFunc(func() { close(deliveryRelease) })
+					defer releasePublication()
+					defer releaseDelivery()
+					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 						if id == consumer {
-							if calls.Add(1) == 1 {
-								close(consumerStarted)
-								return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: []schedule.NodeID{k}}
-							}
-							if s.GetObject(k) != nil {
-								t.Error("withdrawal wake observed child still live")
-							}
-							close(woken)
-							return schedule.Outcome{}, manifest.ReconcileWait{}
+							execution := controllertest.NewExecution(base.New(s, tasks, "fixture"), id)
+							execution.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+								if calls.Add(1) == 1 {
+									close(consumerStarted)
+									return execution.Require(ctx, []manifest.DependencyRef{{NamedResource: k}}, level)
+								}
+								if execution.Reads.GetObject(k) != nil {
+									t.Error("withdrawal wake observed child still live")
+								}
+								close(woken)
+								return nil
+							})
+							return schedule.Result{Assessment: execution}
 						}
 						tasks.YieldSlot(func() { <-publishRelease })
 						if lateFirst {
@@ -328,8 +363,8 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 						if !lateFirst {
 							publishLate()
 						}
-						return schedule.Outcome{}, manifest.ReconcileWait{}
-					})
+						return schedule.Result{}
+					}}
 					scheduler := schedule.New(tasks, dispatch)
 					o := &Orchestrator{store: s}
 					unsubscribe := o.watchDAG(scheduler)
@@ -346,18 +381,25 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					go func() { done <- scheduler.Run(t.Context()) }()
 					<-consumerStarted
 					synctest.Wait()
-					close(publishRelease)
+					releasePublication()
 					<-entered
-					<-woken
 					synctest.Wait()
 					select {
 					case err := <-done:
 						t.Fatalf("drain sealed while notification was outstanding: %v", err)
 					default:
 					}
-					close(deliveryRelease)
+					if calls.Load() > 2 {
+						t.Fatal("outstanding publication queued duplicate successors")
+					}
+					releaseDelivery()
 					if err := <-done; err != nil {
 						t.Fatal(err)
+					}
+					select {
+					case <-woken:
+					default:
+						t.Fatal("withdrawal did not wake the captured consumer")
 					}
 					if calls.Load() != 2 || tasks.Failures() != 0 || s.GetObject(k) != nil || s.GetObject(late.Children[0].Obj.Named()) != nil {
 						t.Fatal("withdrawal lost wake or late publication manufactured support")
@@ -379,7 +421,9 @@ kind: ConfigMap
 metadata: {name: withdrawn-output}
 data: {value: rendered}
 `}
-			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace}, l})
+			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: l.Namespace, Type: fluxopv1.InputProviderGitHubBranch}
+			l.InputsFrom = []fluxopv1.InputProviderReference{{Name: provider.Name}}
+			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace}, l, provider})
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				l.Named(): {Productions: []manifest.Production{{Owner: k, Source: manifest.BootstrapSourceID}}},
 			}})
@@ -395,14 +439,9 @@ data: {value: rendered}
 			if s.GetArtifact(k) != nil {
 				t.Fatal("fixture K unexpectedly emitted")
 			}
-			var bodies, publications atomic.Int64
+			var publications atomic.Int64
 			c := resourceset.New(s, tasks, true)
-			c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
-				if id == l.Named() {
-					bodies.Add(1)
-				}
-				return "", false
-			}})
+			c.Configure(base.Options{})
 			c.StartLifecycle()
 			t.Cleanup(c.Close)
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
@@ -419,22 +458,23 @@ data: {value: rendered}
 			})
 			tasks.Go(t.Context(), "dispatch-withdrawn", func(ctx context.Context) {
 				tasks.YieldSlot(func() { <-withdrawn })
-				out, outWait := d.Dispatch(ctx, l.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-				if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() {
-					t.Errorf("withdrawn dispatch = %v, blocked = %v", out, outWait)
+				result := d.Dispatch(ctx, l.Named(), manifest.DrainNone)
+				defer result.Assessment.Close()
+				if result.Assessment.Outcome() == schedule.Blocked {
+					t.Errorf("withdrawn dispatch blocked: %+v", result.Assessment)
 				}
 			})
 			tasks.BlockTillDone()
 			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: l.Namespace, Name: "withdrawn-output"}
-			if tasks.Failures() != 0 || bodies.Load() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil || s.GetArtifact(l.Named()) != nil || s.GetObject(output) != nil {
-				t.Fatalf("withdrawn body/artifact leaked: bodies=%d publications=%d", bodies.Load(), publications.Load())
+			if tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil || s.GetArtifact(l.Named()) != nil || s.GetObject(output) != nil {
+				t.Fatalf("withdrawn body/artifact leaked: publications=%d", publications.Load())
 			}
 			s.AddObject(l)
 			tasks.Go(t.Context(), "dispatch-restored", func(ctx context.Context) {
-				d.Dispatch(ctx, l.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+				d.Dispatch(ctx, l.Named(), manifest.DrainNone)
 			})
 			tasks.BlockTillDone()
-			if tasks.Failures() != 0 || bodies.Load() == 0 || publications.Load() == 0 || s.GetObject(output) == nil {
+			if tasks.Failures() != 0 || publications.Load() != 1 || s.GetObject(output) == nil {
 				t.Fatal("restored control did not execute the real render body")
 			}
 		})
@@ -446,7 +486,7 @@ type sharedRepositoryFetcher struct {
 	calls map[manifest.NamedResource]int
 }
 
-func (f *sharedRepositoryFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *sharedRepositoryFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.mu.Lock()
 	f.calls[obj.Named()]++
 	f.mu.Unlock()
@@ -504,8 +544,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 				o.src.StartLifecycle()
 				o.ksc.StartLifecycle()
 				o.hrc.Start(t.Context())
-				acquired, withdrawn, published := make(chan struct{}), make(chan struct{}), make(chan struct{})
-				var withdrew sync.Once
+				acquired, published := make(chan struct{}), make(chan struct{})
 				var once sync.Once
 				unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 					if info, ok := payload.(store.StatusInfo); id == repo && ok && info.Status == store.StatusReady {
@@ -513,10 +552,25 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					}
 				}, false)
 				defer unsub()
+				publish := sync.OnceFunc(func() {
+					nextDoc := manifest.DeepCopyMap(doc)
+					nextDoc["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": p.Name}
+					if scenario == "effective_input_change" {
+						nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
+					}
+					_, next := s.GetEmission(p)
+					next.Children, next.Manifests = base.ParseChildren(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
+					next.Complete = true
+					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, s.Productions(repo, nil))
+					o.ksc.Emit(p, &next)
+					next.Finish()
+					s.UpdateStatus(p, store.StatusReady, "", "")
+					close(published)
+				})
 				d := dagDispatcher{o}
-				dispatch := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+				dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 					if id != p {
-						if id.Kind == manifest.KindHelmRelease && scenario != "unchanged" {
+						if id.Kind == manifest.KindHelmRelease && scenario == "effective_input_change" {
 							o.tasks.YieldSlot(func() {
 								select {
 								case <-published:
@@ -525,11 +579,11 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							})
 						}
 						hidden := id == repo && s.GetObject(id) == nil
-						out, outWait := d.Dispatch(ctx, id, level)
-						if hidden {
-							withdrew.Do(func() { close(withdrawn) })
+						result := d.Dispatch(ctx, id, level)
+						if hidden && scenario == "withdrawal_reanchor" {
+							publish()
 						}
-						return out, outWait
+						return result
 					}
 					o.tasks.YieldSlot(func() {
 						select {
@@ -547,28 +601,11 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						if _, ok := s.GetStatus(repo); ok {
 							t.Error("withdrawal retained Ready")
 						}
-						o.tasks.YieldSlot(func() {
-							select {
-							case <-withdrawn:
-							case <-ctx.Done():
-							}
-						})
+						return schedule.Result{}
 					}
-					nextDoc := manifest.DeepCopyMap(doc)
-					nextDoc["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": p.Name}
-					if scenario == "effective_input_change" {
-						nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
-					}
-					_, next := s.GetEmission(p)
-					next.Children, next.Manifests = base.ParseChildren(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
-					next.Complete = true
-					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, s.Productions(repo, nil))
-					o.ksc.Emit(p, &next)
-					next.Finish()
-					s.UpdateStatus(p, store.StatusReady, "", "")
-					close(published)
-					return schedule.Outcome{}, manifest.ReconcileWait{}
-				})
+					publish()
+					return schedule.Result{}
+				}}
 				sched := schedule.New(o.tasks, dispatch)
 				unwatch := o.watchDAG(sched)
 				defer unwatch()
@@ -604,7 +641,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					t.Errorf("existence-only repository fetched: acquisitions=%d completions=%d", f.calls[repo], completions[repo])
 				}
 				for id, calls := range f.calls {
-					if completions[id] != calls {
+					if completions[id] > 1 || completions[id] > calls || calls > 2 {
 						t.Errorf("%s calls=%d completions=%d", id, calls, completions[id])
 					}
 				}
@@ -619,5 +656,76 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "consumer.yaml", ksYAML("consumer", "consumer", "")+`  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: bridge-settings, optional: true}]
+`)
+	testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [../shared/consumer.yaml]\n")
+	testutil.WriteFile(t, root, "shared/consumer.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer, namespace: flux-system}\ndata: {value: '${value}', mode: dirty}\n")
+	testutil.WriteFile(t, root, "bridge.yaml", ksYAML("bridge", "bridge", "")+`  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: hello, optional: true}]
+`)
+	testutil.WriteFile(t, root, "bridge/kustomization.yaml", "resources: [settings.yaml]\n")
+	testutil.WriteFile(t, root, "bridge/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bridge-settings, namespace: flux-system}\ndata: {value: '${value}'}\n")
+	testutil.WriteFile(t, root, "pin.yaml", ksYAML("pin", "pin", ""))
+	testutil.WriteFile(t, root, "pin/kustomization.yaml", "resources: [hello.yaml]\n")
+	testutil.WriteFile(t, root, "pin/hello.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: flux-system}\ndata: {value: provisional}\n")
+	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, ExternalChanges: change.NewSet([]string{"shared/consumer.yaml"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := o.Bootstrap(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	o.configureControllers()
+	o.src.StartLifecycle()
+	o.ksc.StartLifecycle()
+	o.hrc.Start(t.Context())
+	o.rsc.StartLifecycle()
+	consumer, pin := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "pin")
+	var blocked, settled atomic.Bool
+	dispatch := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		if id != pin {
+			result := (dagDispatcher{o}).Dispatch(ctx, id, level)
+			if id == consumer && result.Assessment.Outcome() == schedule.Blocked {
+				blocked.Store(true)
+			}
+			return result
+		}
+		run := controllertest.NewExecution(o.ksc.Controller, id)
+		run.Dispatch(ctx, level, func(_ context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+			if level == manifest.DrainNone {
+				return &depwait.ErrBlocked{Deps: []manifest.NamedResource{consumer}}
+			}
+			if !blocked.Load() {
+				t.Error("producer settled before the transitive consumer parked")
+			}
+			settled.Store(true)
+			obj := &manifest.ConfigMap{Name: "hello", Namespace: "flux-system", Data: map[string]any{"value": "pinned"}}
+			run.Emit(id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}, Complete: true})
+			return nil
+		})
+		return schedule.Result{Assessment: run}
+	}}
+	scheduler := schedule.New(o.tasks, dispatch)
+	unsubscribe := o.watchDAG(scheduler)
+	defer unsubscribe()
+	scheduler.Seed(o.seedNodes())
+	if err := scheduler.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	output, ok := o.store.GetArtifact(consumer).(*store.Emission)
+	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 || output.Manifests[0]["data"].(map[string]any)["value"] != "pinned" {
+		t.Fatalf("after-drain transitive output: blocked=%t settled=%t output=%+v", blocked.Load(), settled.Load(), output)
 	}
 }

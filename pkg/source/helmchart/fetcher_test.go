@@ -34,12 +34,14 @@ func helmChart(repoName, chart, version string) *manifest.HelmChartSource {
 type stubOCI struct {
 	got    *manifest.OCIRepository
 	policy cache.Policy
+	reads  *store.ReadSet
 	art    *store.SourceArtifact
 	err    error
 }
 
-func (s *stubOCI) Fetch(_ context.Context, r *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
+func (s *stubOCI) Fetch(_ context.Context, r *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
 	s.got = r
+	s.reads = reads
 	s.policy = policy
 	return s.art, s.err
 }
@@ -122,10 +124,16 @@ func TestFetch_OCIBranch(t *testing.T) {
 	repo := ociRepo("oci://oci.trueforge.org/truecharts")
 	repo.Interval = metav1.Duration{Duration: time.Hour}
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot"}}
-	f := &Fetcher{network: newTestNetwork(t), repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub}
+	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}
+	f := &Fetcher{network: newTestNetwork(t), oci: stub}
 
 	retry := cache.RetryConfig{Attempts: 3}
-	art, err := f.Fetch(context.Background(), helmChart("truecharts", "kromgo", "3.0.0"), cache.Policy{MaxAge: time.Minute, Retry: retry})
+	hc := helmChart("truecharts", "kromgo", "3.0.0")
+	reads := fInputs.readSet(hc)
+	art, err := f.Fetch(t.Context(), hc, reads, cache.Policy{MaxAge: time.Minute, Retry: retry})
+	if stub.reads != reads {
+		t.Fatal("nested OCI fetch did not receive execution inputs")
+	}
 	if stub.policy != (cache.Policy{MaxAge: time.Hour, Retry: retry}) {
 		t.Fatalf("nested policy=%+v, want %+v", stub.policy, retry)
 	}
@@ -148,8 +156,9 @@ func TestFetch_OCIBranch(t *testing.T) {
 
 func TestFetch_RepoNotFound(t *testing.T) {
 	t.Parallel()
-	f := &Fetcher{network: newTestNetwork(t), repos: func(_, _ string) *manifest.HelmRepository { return nil }}
-	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"), cache.Policy{})
+	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
+	f := &Fetcher{network: newTestNetwork(t)}
+	_, err := f.Fetch(context.Background(), helmChart("missing", "kromgo", "3.0.0"), fInputs.readSet(helmChart("missing", "kromgo", "3.0.0")), cache.Policy{})
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound", err)
 	}
@@ -159,8 +168,9 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 	t.Parallel()
 	repo := ociRepo("oci://example.test/charts")
 	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository}}
-	f := &Fetcher{network: newTestNetwork(t), repos: func(_, _ string) *manifest.HelmRepository { return repo }, oci: stub, disableChartDigestTracking: true}
-	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0"), cache.Policy{}); err != nil {
+	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}
+	f := &Fetcher{network: newTestNetwork(t), oci: stub, disableChartDigestTracking: true}
+	if _, err := f.Fetch(t.Context(), helmChart(repo.Name, "chart", "1.0.0"), fInputs.readSet(helmChart(repo.Name, "chart", "1.0.0")), cache.Policy{}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.policy.MaxAge != cache.Forever || stub.got.Interval != repo.Interval {

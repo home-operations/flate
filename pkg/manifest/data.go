@@ -8,6 +8,7 @@ import (
 
 // Data provides lazy ConfigMap/Secret variables and owned snapshot documents.
 type Data interface {
+	HasKeys() bool
 	Value(string) (string, bool, error)
 	Keys() iter.Seq[string]
 	Snapshot() map[string]any

@@ -114,8 +114,8 @@ func TestDescription_SourceObservation(t *testing.T) {
 	hr.ChartValuesFiles = []string{"config/prod.yaml", "config/../config/prod.yaml"}
 	cli, err := NewClient(cachetest.New(t, "", cache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
-	out, err := cli.Template(t.Context(), hr, nil, Options{})
+	cliSources := NewSources(st)
+	out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Equal(t, reads, 1)
 	if !strings.Contains(out, `marker: "first"`) {
@@ -140,14 +140,14 @@ func TestDescription_HitHydration(t *testing.T) {
 			for i := range 2 {
 				cli, err := NewClient(cachetest.New(t, root, cache.New))
 				assert.NoError(t, err)
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
-				out, err := cli.Template(t.Context(), hr, nil, Options{})
+				cliSources := NewSources(st)
+				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
 				if i == 0 {
 					want = out
 				}
 				assert.Equal(t, out, want)
-				d, err := cli.describeChart(t.Context(), hr)
+				d, err := cli.describeChart(t.Context(), hr, cliSources)
 				assert.NoError(t, err)
 				assert.Equal(t, d.chart == nil, persistent && i == 1)
 				if !persistent || i == 0 {
@@ -155,15 +155,15 @@ func TestDescription_HitHydration(t *testing.T) {
 						t.Fatal("decoded miss retained captured input or derived analysis")
 					}
 				}
-				assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}), []string{"unused"})
+				assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources), []string{"unused"})
 				if persistent {
-					_, err = cli.Template(t.Context(), hr, nil, Options{})
+					_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
-					hit, err := cli.describeChart(t.Context(), hr)
+					hit, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
-					_, err = cli.Template(t.Context(), hr, nil, Options{})
+					_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
-					repeated, err := cli.describeChart(t.Context(), hr)
+					repeated, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
 					if hit.record == nil || hit.record != repeated.record || hit.record.Analysis != repeated.record.Analysis {
 						t.Fatal("same record did not share its immutable typed projection")
@@ -177,7 +177,7 @@ func TestDescription_HitHydration(t *testing.T) {
 				} else if d.record != nil {
 					t.Fatal("disabled persistence retained a render record")
 				}
-				after, err := cli.describeChart(t.Context(), hr)
+				after, err := cli.describeChart(t.Context(), hr, cliSources)
 				assert.NoError(t, err)
 				assert.Equal(t, after.chart == d.chart, true)
 			}
@@ -200,8 +200,8 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			}
 			cli, err := NewClient(cachetest.New(t, "", cache.New))
 			assert.NoError(t, err)
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			d, err := cli.describeChart(t.Context(), hr)
+			cliSources := NewSources(st)
+			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
 			ch, err := d.captured.load()
 			assert.NoError(t, err)
@@ -221,7 +221,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			late := &renderRecord{Output: "late", Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
 			cli.rememberDescription(d, late)
 			cli.rememberDescription(d, nil)
-			current, err := cli.describeChart(t.Context(), hr)
+			current, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
 			assert.Equal(t, current.chart != nil && current.chart == decoded.chart, true)
 			assert.Equal(t, current.record == late, true)
@@ -281,15 +281,15 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		owner := cachetest.New(t, root, cache.New)
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
-		out, err := cli.Template(t.Context(), hr, nil, Options{})
+		cliSources := NewSources(st)
+		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		if i == 0 {
 			want = out
 		}
 		assert.Equal(t, out, want)
 		assert.Equal(t, utf8.ValidString(out), validOutput)
-		d, err := cli.describeChart(t.Context(), hr)
+		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
 		if d.chart == nil {
 			t.Fatal("ineligible input hydrated without a real decode")
@@ -328,19 +328,19 @@ func TestReview_NestedWarnings(t *testing.T) {
 				diagnostics.Reset()
 				cli, err := NewClient(cachetest.New(t, cacheRoot, cache.New))
 				assert.NoError(t, err)
-				cli.SetSourceResolver(NewStoreSourceResolver(st))
-				_, err = cli.Template(t.Context(), hr, nil, Options{})
+				cliSources := NewSources(st)
+				_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
 				if !strings.Contains(diagnostics.String(), "Warning:") {
 					t.Fatal("real nested loader diagnostics were suppressed")
 				}
-				d, err := cli.describeChart(t.Context(), hr)
+				d, err := cli.describeChart(t.Context(), hr, cliSources)
 				assert.NoError(t, err)
 				if d.chart == nil || !requiresChartLoader(d.chart) {
 					t.Fatal("nested warning did not require the real loader")
 				}
 				diagnostics.Reset()
-				_, err = cli.Template(t.Context(), hr, nil, Options{})
+				_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				assert.NoError(t, err)
 				assert.Equal(t, diagnostics.Len(), 0)
 			}
@@ -359,8 +359,8 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		hr.IgnoreMissingValuesFiles = false
 		cli, err := NewClient(cachetest.New(t, "", cache.New))
 		assert.NoError(t, err)
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
-		_, err = cli.Template(t.Context(), hr, nil, Options{KubeVersion: "invalid"})
+		cliSources := NewSources(st)
+		_, err = cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources})
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "load chart") {
 			t.Fatalf("chart validation lost precedence: %v", err)
 		}
@@ -372,8 +372,8 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: os.DirFS(dir), Revision: "invalid"})
 			cli, err := NewClient(cachetest.New(t, "", cache.New))
 			assert.NoError(t, err)
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			_, err = cli.Template(t.Context(), hr, nil, Options{KubeVersion: "invalid", DisableChartDigestTracking: disabled})
+			cliSources := NewSources(st)
+			_, err = cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources})
 			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version") {
 				t.Fatalf("OCI validation lost precedence: %v", err)
 			}
@@ -414,8 +414,8 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			owner := cachetest.New(t, root, cache.New)
 			cli, err := NewClient(owner)
 			assert.NoError(t, err)
-			cli.SetSourceResolver(NewStoreSourceResolver(st))
-			d, err := cli.describeChart(t.Context(), hr)
+			cliSources := NewSources(st)
+			d, err := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, err)
 			if hr.UsesDirectOCIRepository() {
 				d.oci = &ociChartContent{Digest: art.Digest, Revision: art.Revision, DisableTracking: opts.DisableChartDigestTracking}
@@ -447,7 +447,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 					t.Fatal("fixture did not reach malformed persisted record")
 				}
 			}
-			_, err = cli.Template(t.Context(), hr, nil, opts)
+			_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), want) {
 				t.Fatalf("preparation lost precedence over persisted fault: %v", err)
 			}
@@ -477,8 +477,8 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		owner := cachetest.New(t, t.TempDir(), cache.New)
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
-		cli.SetSourceResolver(NewStoreSourceResolver(st))
-		d, err := cli.describeChart(t.Context(), hr)
+		cliSources := NewSources(st)
+		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
 		assert.NoError(t, d.valuesErr)
@@ -492,7 +492,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		previous := log.Writer()
 		log.SetOutput(&diagnostics)
 		defer log.SetOutput(previous)
-		_, err = cli.Template(t.Context(), hr, nil, Options{})
+		_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		_, syntax := errors.AsType[*json.SyntaxError](err)
 		if !errors.Is(err, manifest.ErrFlux) || !syntax || strings.Contains(err.Error(), "action must wait") || !strings.Contains(diagnostics.String(), "Warning:") {
 			t.Fatalf("deferred cache error lost precedence: %v", err)
@@ -512,11 +512,11 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
 	cli, err := NewClient(cachetest.New(t, "", cache.New))
 	assert.NoError(t, err)
-	cli.SetSourceResolver(NewStoreSourceResolver(st))
+	cliSources := NewSources(st)
 	for _, location := range []string{"first", "second"} {
 		request := hr.Clone()
 		request.Chart.Name = location
-		_, err := cli.Template(t.Context(), request, nil, Options{})
+		_, err := cli.Template(t.Context(), request, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "load chart "+location+":") {
 			t.Fatalf("location %q: got %v", location, err)
 		}

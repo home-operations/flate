@@ -755,6 +755,43 @@ data:
 
 }
 
+func TestStoreResolver_CollectionAssessmentTotal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		provider  bool
+		selector  *metav1.LabelSelector
+		wantError bool
+		wantDocs  int
+	}{
+		{name: "empty", selector: &metav1.LabelSelector{}},
+		{name: "null values", provider: true, selector: &metav1.LabelSelector{}, wantDocs: 1},
+		{name: "selector error", selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			if tc.provider {
+				st.AddObject(&manifest.ResourceSetInputProvider{Name: "provider", Namespace: "apps", DefaultValues: fluxopv1.ResourceSetInput{"value": nil}})
+			}
+			rs := &manifest.ResourceSet{Name: "reader", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Selector: tc.selector}}, ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n"}
+			var reads store.ReadSet
+			reads.Init(st, rs.Named(), nil)
+			defer reads.Retire()
+			docs, _, err := resourceset.Render(rs, resourceset.StoreResolver(&reads), nil)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("prepare error=%v, want error=%t", err, tc.wantError)
+			}
+			if tc.wantError {
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, len(docs), tc.wantDocs)
+			assert.Equal(t, reads.Valid(), true)
+		})
+	}
+}
+
 func TestStoreResolver_SelectorInputs(t *testing.T) {
 	t.Parallel()
 	db := &manifest.ResourceSetInputProvider{Name: "db", Namespace: "apps", Labels: map[string]string{"role": "db"}, DefaultValues: fluxopv1.ResourceSetInput{"value": jsonTmpl(t, `"first"`)}}
@@ -776,15 +813,15 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 		{"success", []manifest.BaseManifest{db, &web}, fluxopv1.InputProviderReference{Selector: selected}, scope, []string{"db"}, false},
 		{"empty selector", []manifest.BaseManifest{db, &web}, fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{}}, scope, []string{"db", "web"}, false},
 		{"invalid eligible", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, true},
-		{"invalid empty", nil, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, false},
-		{"invalid other namespace", []manifest.BaseManifest{&other}, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, false},
-		{"invalid foreign group", []manifest.BaseManifest{db, &manifest.RawObject{APIVersion: "other.example/v1", Kind: scope.Kind, Namespace: scope.Namespace, Name: db.Name}}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: "other.example", Kind: scope.Kind, Namespace: scope.Namespace}, nil, false},
-		{"invalid foreign kind", []manifest.BaseManifest{db, &manifest.ResourceSet{Name: db.Name, Namespace: scope.Namespace}}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Kind: manifest.KindResourceSet, Namespace: scope.Namespace}, nil, false},
+		{"invalid empty", nil, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, true},
+		{"invalid other namespace", []manifest.BaseManifest{&other}, fluxopv1.InputProviderReference{Selector: invalid}, scope, nil, true},
+		{"invalid foreign group", []manifest.BaseManifest{db, &manifest.RawObject{APIVersion: "other.example/v1", Kind: scope.Kind, Namespace: scope.Namespace, Name: db.Name}}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: "other.example", Kind: scope.Kind, Namespace: scope.Namespace}, nil, true},
+		{"invalid foreign kind", []manifest.BaseManifest{db, &manifest.ResourceSet{Name: db.Name, Namespace: scope.Namespace}}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Kind: manifest.KindResourceSet, Namespace: scope.Namespace}, nil, true},
 		{"named invalid selector", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, db.Named(), []string{"db"}, false},
 		{"unnamed nil selector", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{}, scope, nil, false},
 		{"omitted group and kind", []manifest.BaseManifest{db, &web}, fluxopv1.InputProviderReference{Selector: selected}, manifest.NamedResource{Namespace: scope.Namespace}, []string{"db"}, false},
-		{"omitted group", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Kind: scope.Kind, Namespace: scope.Namespace}, nil, false},
-		{"omitted kind", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Namespace: scope.Namespace}, nil, false},
+		{"omitted group", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Kind: scope.Kind, Namespace: scope.Namespace}, nil, true},
+		{"omitted kind", []manifest.BaseManifest{db}, fluxopv1.InputProviderReference{Selector: invalid}, manifest.NamedResource{Group: scope.Group, Namespace: scope.Namespace}, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -831,8 +868,9 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 					t.Fatal("invalid selector accepted with an eligible provider")
 				}
 				got, err := resolve(ref, empty)
-				assert.NoError(t, err)
-				assert.Equal(t, len(got), 0)
+				if err == nil || len(got) != 0 {
+					t.Fatalf("empty scope query = %v, %v; want selector error", got, err)
+				}
 			}
 		})
 	}
@@ -1306,5 +1344,30 @@ func TestRender_Admission(t *testing.T) {
 	_, _, err := resourceset.Render(invalid, nil, func(any) (bool, error) { called = true; return true, nil })
 	if !errors.Is(err, manifest.ErrInput) || called {
 		t.Fatalf("invalid steps reached admission: called=%v error=%v", called, err)
+	}
+}
+
+func TestRender_UsesOneProviderQuery(t *testing.T) {
+	t.Parallel()
+	rs := &manifest.ResourceSet{
+		Name: "apps", Namespace: "apps",
+		InputsFrom:        []fluxopv1.InputProviderReference{{Name: "provider"}},
+		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.value >>'}\n",
+	}
+	provider := &manifest.ResourceSetInputProvider{
+		Name: "provider", Namespace: "apps",
+		DefaultValues: fluxopv1.ResourceSetInput{"value": jsonTmpl(t, `"captured"`)},
+	}
+	calls := 0
+	docs, _, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+		calls++
+		if calls != 1 {
+			t.Fatal("provider query repeated")
+		}
+		return []*manifest.ResourceSetInputProvider{provider}, nil
+	}, nil)
+	assert.NoError(t, err)
+	if calls != 1 || len(docs) != 1 || docs[0]["metadata"].(map[string]any)["name"] != "captured" {
+		t.Fatalf("query calls=%d output=%v", calls, docs)
 	}
 }

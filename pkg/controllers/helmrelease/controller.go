@@ -1,10 +1,4 @@
 // Package helmrelease implements the HelmReleaseController.
-//
-// It listens for new HelmRelease objects and renders them via the helm
-// SDK. The controller also maintains a chart-source index by listening
-// for HelmRepository, OCIRepository, and GitRepository events: when an
-// upstream source becomes Ready the helm client is told about it so
-// subsequent template calls can resolve charts.
 package helmrelease
 
 import (
@@ -16,7 +10,6 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -47,7 +40,7 @@ type Controller struct {
 // controller (Filter / ParentOf — here resolving each HR to its enclosing KS,
 // which reconcile depwaits on so cluster-KS spec patches land before the first
 // helm.Template call — Existence / PreflightFailure);
-// AllowMissingSecrets, Producers and SubstituteFrom are HelmRelease-specific.
+// AllowMissingSecrets and SubstituteFrom are HelmRelease-specific.
 type ReconcileOptions struct {
 	base.Options
 	// AllowMissingSecrets omits non-optional valuesFrom refs that point
@@ -55,6 +48,22 @@ type ReconcileOptions struct {
 	AllowMissingSecrets bool
 	// SubstituteFrom is the immutable bootstrap-approved postBuild source snapshot.
 	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
+}
+
+type execution struct {
+	*Controller
+	run  base.Execution
+	data interface {
+		values.Provider
+		Lookup(manifest.NamedResource) values.Input
+	}
+}
+
+func (c *Controller) newExecution(id manifest.NamedResource) *execution {
+	execution := &execution{Controller: c}
+	execution.run.Init(c.Controller, id)
+	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, nil)
+	return execution
 }
 
 // New constructs a HelmRelease controller.
@@ -76,125 +85,77 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.substitutionSources = opts.SubstituteFrom
 }
 
-// Start registers the listeners. The controller runs until Close.
-// The HR controller only listens for HelmRelease and HelmChartSource
-// (the chart-ref index) — source-kind events (HelmRepository,
-// OCIRepository, GitRepository, Bucket, ExternalArtifact) are now
-// consumed lazily by helm.Client through its SourceResolver against
-// the canonical Store. One fewer push-registry to keep in sync.
+// Start starts the common controller lifecycle.
 func (c *Controller) Start(_ context.Context) {
 	c.StartLifecycle()
 }
 
-// ReconcileNode runs one HelmRelease invocation and returns its dependency classification.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return c.DispatchNode(ctx, id, attempt, c.reconcile)
+// ReconcileNode runs id's reconcile under the dag engine, returning the blocked
+// dependency set (nil = terminalized). The
+// orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+	execution := c.newExecution(id)
+	execution.run.Dispatch(ctx, level, execution.reconcile)
+	return &execution.run
 }
 
-func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
-	if gated {
-		return schedule.Outcome{}, nil
-	}
-	level := invocation.Drain
+func (c *execution) reconcile(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 	id := hr.Named()
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
-	// Parent gate: if this HR was file-loaded under a Flux KS's
-	// spec.path, wait for that KS to finish reconciling before
-	// rendering. The KS may apply patches / replacements / postBuild
-	// substitutions that mutate spec — without the wait, the first
-	// render uses stale (pre-patch) values and a second render
-	// follows once the KS controller emits the patched copy via
-	// AddObject, doubling helm-template work for every HR under a
-	// parent-patching chain (tholinka/home-ops's cluster KS applies
-	// driftDetection / install.crds / upgrade strategy / rollback to
-	// every HR, so all of them were hit by this).
-	for _, production := range c.Store.Productions(id, nil) {
+	for _, production := range c.run.Reads.Productions(id, nil) {
 		parent := production.Owner
 		if parent == (manifest.NamedResource{}) || parent == id {
 			continue
 		}
-		c.Store.UpdateStatus(id, store.StatusPending, "", "waiting for parent KS")
-		// The parent's render may have replaced this HR in the store
-		// with a patched copy; re-read so the rest of reconcile uses
-		// the canonical spec instead of the pre-patch snapshot we
-		// were dispatched with.
-		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
-			ctx, id, []manifest.DependencyRef{{NamedResource: parent}}, level)
+		c.SetPendingUnlessReady(id, "waiting for parent KS")
+		err := c.run.Require(ctx, []manifest.DependencyRef{{NamedResource: parent}}, level)
 		if err != nil {
-			return schedule.Outcome{}, err
-		}
-		if ok {
-			hr = fresh
+			return err
 		}
 	}
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
-	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
-	// each dependency reaching Ready before this HR reconciles.
 	if deps := c.collectDeps(hr); len(deps) > 0 {
-		c.Store.UpdateStatus(id, store.StatusPending, "", "resolving dependencies")
-		// RequireRefresh fuses the dependsOn gate with the load-bearing
-		// re-read: the parent KS may have re-rendered (e.g. its own
-		// dependsOn cleared in the meantime, freeing up parent-render-time
-		// substitutions that mutate our spec). Without that refresh, an HR
-		// with explicit spec.dependsOn but no structural parent — or one
-		// whose parent re-emitted us after the parent-gate cleared — keeps
-		// the pre-mutation snapshot through chart resolution.
-		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
-			ctx, id, deps, level)
+		c.SetPendingUnlessReady(id, "resolving dependencies")
+		err := c.run.Require(ctx, deps, level)
 		if err != nil {
-			return schedule.Outcome{}, err
-		}
-		if ok {
-			hr = fresh
+			return err
 		}
 	}
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
-	c.SetPendingUnlessReady(id, "resolving pre-render references")
-	fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](ctx, id, nil, level)
-	if err != nil {
-		return schedule.Outcome{}, err
-	}
-	if ok {
-		hr = fresh
-	}
-	var resolved depwait.Resolution
-	if err := c.Require(&depwait.Waiter{Parent: id, Dependencies: preparePrereqs(hr), Declaration: hr, WipeSecrets: c.WipeSecrets, AllowMissingSecrets: c.allowMissingSecrets}, invocation, &resolved); err != nil {
-		return schedule.Outcome{}, err
-	}
-	hr, omitted := applyValuesFrom(hr, resolved.Omitted)
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	return c.resolvePreRenderValuesFrom(ctx, hr, level)
+}
+
+func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel, omitted []manifest.NamedResource) error {
+	id := hr.Named()
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
-	// SetPendingUnlessReady, not a raw UpdateStatus: this pre-dedup progress
-	// write must not transiently downgrade an already-Ready HR on a no-op
-	// re-run (re-emitted by its parent KS render — HR retains labels, so a
-	// stamped re-emit re-runs). An HR that dependsOn this one has a
-	// quiescence-bound wait that could re-read the transient Pending at a
-	// transient pool drain and drop. The genuine-render downgrade at "rendering
-	// chart" below (after the fingerprint dedup) stays unconditional. See
-	// base.SetPendingUnlessReady (#657/#658).
 	c.SetPendingUnlessReady(id, "resolving chart")
-	hr, err = helm.Prepare(hr, c.Helm.Resolver().HelmChart, resolved.Inputs, c.Helm.ValuesCache())
+	hr, unavailable, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).HelmChart, c.data, c.Helm.ValuesCache())
+	omitted = append(omitted, unavailable...)
+	slices.SortFunc(omitted, manifest.NamedResource.Compare)
+	omitted = slices.Compact(omitted)
+	c.recordOmittedValues(id, omitted)
 	if err != nil {
-		return schedule.Outcome{}, err
+		return err
 	}
 
 	// Wait for the declared chart source to be Ready, BEFORE the fingerprint
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-secrets).
-	if err := c.awaitChartSource(hr, level); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.awaitChartSource(ctx, hr, level); err != nil {
+		return err
 	}
 	// A HelmRepository is just a registry/index base — its chart has no
 	// standalone source CR. Now that the declared source is Ready (so the
@@ -206,35 +167,42 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	// dance.
 	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
-		if err := c.awaitChartSource(hr, level); err != nil {
-			return schedule.Outcome{}, err
+		if err := c.awaitChartSource(ctx, hr, level); err != nil {
+			return err
 		}
 	}
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 
-	var sourceContent any
-	if hr.UsesDirectOCIRepository() {
-		source := c.Helm.Resolver().LocalSourceArtifact(hr.ChartSource())
-		if source == nil {
-			return schedule.Outcome{}, fmt.Errorf("resolve oci chart identity: %w: OCIRepository %s artifact not available",
-				manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
-		}
-		sourceContent = struct{ Digest, Revision string }{source.Digest, source.Revision}
-	}
-	fp, handled, _, err := c.FingerprintDedup(id, hr.Content(sourceContent, omitted))
-	if handled {
-		return schedule.Outcome{}, err
-	}
-
-	_, attempt := c.Store.GetEmission(id)
+	var fp string
+	var attempt store.Emission
 	defer attempt.Finish()
-	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering chart")
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	handled := false
+	input := helm.RenderOptions{Options: c.Options, Sources: helm.NewSources(&c.run.Reads)}
+	input.Admit = func(key string) (bool, error) {
+		var content any
+		if key != "" {
+			content = hr.Content(key, omitted)
+		}
+		var err error
+		fp, handled, err = c.run.FingerprintDedup(id, content)
+		if handled || err != nil {
+			return handled, err
+		}
+		attempt.Finish()
+		_, attempt = c.run.Reads.GetEmission(id)
+		c.Store.UpdateStatus(id, store.StatusPending, "", "rendering chart")
+		if err := c.run.PreflightError(id); err != nil {
+			handled = true
+			return true, err
+		}
+		return false, nil
 	}
-	raw, err := c.Helm.Template(ctx, hr, hr.Values, c.Options)
+	raw, err := c.Helm.Template(ctx, hr, hr.Values, input)
+	if handled {
+		return err
+	}
 	var docs []map[string]any
 	if err == nil {
 		docs, err = manifest.SplitDocs([]byte(raw))
@@ -248,9 +216,12 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 		// gate. Bounded: only failing HRs are touched, and only adopted if the
 		// retry actually renders — a failure with a different cause (missing
 		// container, chart 404) re-fails and falls through to the error below.
-		if rescued, paths, ok := c.renderBestEffort(ctx, id, hr); ok {
+		if rescued, paths, ok := c.renderBestEffort(ctx, id, hr, input); ok {
+			if handled {
+				return nil
+			}
 			docs, err = rescued, nil
-			c.Store.AddWarning(id, manifest.Warning{
+			c.run.Reads.AddWarning(id, manifest.Warning{
 				Resource: id,
 				Category: manifest.WarnUnresolvedSubstitution,
 				Message:  "rendered best-effort: unresolved substitution values replaced with placeholders",
@@ -259,14 +230,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 		}
 	}
 	if err != nil {
-		return schedule.Outcome{}, err
+		return err
 	}
 	// #744: flag top-level release values no chart template references — a key
 	// renamed/removed when the chart was upgraded silently does nothing, so the
 	// override is a stale no-op. Advisory only; rides Result.Warnings to the
 	// footer + konflate. See StaleValuePaths.
-	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values); len(stale) > 0 {
-		c.Store.AddWarning(id, manifest.Warning{
+	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, input.Sources); len(stale) > 0 {
+		c.run.Reads.AddWarning(id, manifest.Warning{
 			Resource: id,
 			Category: manifest.WarnStaleValues,
 			Message:  "values not used by the chart",
@@ -283,8 +254,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	docs = manifest.DropKinds(docs, c.Options.SkipResourceKinds())
 
 	c.Store.UpdateStatus(id, store.StatusPending, "", fmt.Sprintf("applying %d objects", len(docs)))
-	if err := c.PreflightError(id); err != nil {
-		return schedule.Outcome{}, err
+	if err := c.run.PreflightError(id); err != nil {
+		return err
 	}
 	var synthetic []store.Child
 	for _, child := range attempt.Children {
@@ -295,9 +266,8 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: hr.ReleaseNamespace()})
 	attempt.Children = append(attempt.Children, synthetic...)
 	attempt.Fingerprint, attempt.Complete = fp, true
-	c.Emit(id, &attempt)
-	c.recordOmittedValues(id, omitted)
-	return schedule.Outcome{}, nil
+	c.run.Emit(id, &attempt)
+	return nil
 }
 
 // renderBestEffort retries a failed chart render with empty values replaced by
@@ -309,7 +279,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 // parent secret, no empty leaves) or the retry still fails — the caller then
 // surfaces the original error and the HR fails as before, so a non-empty cause
 // (missing container, chart 404) is never masked.
-func (c *Controller) renderBestEffort(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease) ([]map[string]any, []string, bool) {
+func (c *execution) renderBestEffort(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, input helm.RenderOptions) ([]map[string]any, []string, bool) {
 	if !c.parentReadsUnreadableSecret(id) {
 		return nil, nil, false
 	}
@@ -317,7 +287,7 @@ func (c *Controller) renderBestEffort(ctx context.Context, id manifest.NamedReso
 	if len(paths) == 0 {
 		return nil, nil, false
 	}
-	raw, err := c.Helm.Template(ctx, hr, filled, c.Options)
+	raw, err := c.Helm.Template(ctx, hr, filled, input)
 	if err != nil {
 		return nil, nil, false
 	}
@@ -328,50 +298,32 @@ func (c *Controller) renderBestEffort(ctx context.Context, id manifest.NamedReso
 	return docs, paths, true
 }
 
-// parentReadsUnreadableSecret checks each contributing Kustomization for a
-// substituteFrom Secret flate could not read offline — the
-// signal that an empty value in id's render likely came from an unresolved
-// ${VAR} rather than a genuine empty-field mistake.
-func (c *Controller) parentReadsUnreadableSecret(id manifest.NamedResource) bool {
-	provider := values.NewStoreProvider(c.Store, c.WipeSecrets)
-	for _, p := range c.Store.Productions(id, nil) {
+func (c *execution) parentReadsUnreadableSecret(id manifest.NamedResource) bool {
+	for _, p := range c.run.Reads.Productions(id, nil) {
 		if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
 			continue
 		}
-		ks, ok := c.Store.GetObject(p.Owner).(*manifest.Kustomization)
-		if !ok {
+		emission, _ := c.run.Reads.GetArtifact(p.Owner).(*store.Emission)
+		if emission == nil {
 			continue
 		}
-		if len(c.substitutionSources) > 0 && ks.PostBuild != nil {
-			var positions []int
-			for ref := range manifest.References(ks) {
-				if ref.Use == "substituteFrom" && c.substitutionSources[ref.NamedResource] != nil {
-					positions = append(positions, ref.Position)
-				}
+		for _, ref := range emission.Unreadable {
+			if c.substitutionSources[ref] == nil {
+				return true
 			}
-			if len(positions) > 0 {
-				owned := ks.Clone()
-				for _, position := range slices.Backward(positions) {
-					owned.PostBuild.SubstituteFrom = slices.Delete(owned.PostBuild.SubstituteFrom, position, position+1)
-				}
-				ks = owned
-			}
-		}
-		if len(values.UnreadableSubstituteSecrets(ks, provider)) > 0 {
-			return true
 		}
 	}
 	return false
 }
 
 // collectDeps selects ordering gates in one walk, pruning only known unchanged refs.
-func (c *Controller) collectDeps(hr *manifest.HelmRelease) []manifest.DependencyRef {
+func (c *execution) collectDeps(hr *manifest.HelmRelease) []manifest.DependencyRef {
 	var deps []manifest.DependencyRef
 	if len(hr.DependsOn) > 0 {
 		deps = make([]manifest.DependencyRef, 0, len(hr.DependsOn))
 	}
 	manifest.References(hr)(func(ref manifest.Reference) bool {
-		if ref.Use == "dependsOn" && c.KeepOrderingDep(ref.NamedResource) {
+		if ref.Use == "dependsOn" && c.run.KeepOrderingDep(ref.NamedResource) {
 			deps = append(deps, ref.DependencyRef)
 		}
 		return true
@@ -381,7 +333,7 @@ func (c *Controller) collectDeps(hr *manifest.HelmRelease) []manifest.Dependency
 
 // awaitChartSource prefers the resolved source to the authored chart and propagates
 // source soft skips. Require parks on fetch completion before chart lookup.
-func (c *Controller) awaitChartSource(hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+func (c *execution) awaitChartSource(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 	var deps []manifest.DependencyRef
 	var chart manifest.DependencyRef
 	for ref := range manifest.References(hr) {
@@ -395,12 +347,11 @@ func (c *Controller) awaitChartSource(hr *manifest.HelmRelease, level manifest.D
 	if len(deps) == 0 {
 		deps = append(deps, chart)
 	}
-	var result depwait.Resolution
-	if err := c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: deps}, manifest.ReconcileAttempt{Drain: level}, &result); err != nil {
+	if err := c.run.Require(ctx, deps, level); err != nil {
 		return err
 	}
 	for _, dep := range deps {
-		if err := c.SourceSkipped(dep.NamedResource, "chart source"); err != nil {
+		if err := c.run.SourceSkipped(dep.NamedResource, "chart source"); err != nil {
 			return err
 		}
 	}
@@ -408,7 +359,7 @@ func (c *Controller) awaitChartSource(hr *manifest.HelmRelease, level manifest.D
 		if dep.Group == manifest.SourceDomain && dep.Kind == manifest.KindHelmRepository {
 			continue
 		}
-		art, _ := c.Store.GetArtifact(dep.NamedResource).(*store.SourceArtifact)
+		art, _ := c.run.Reads.GetArtifact(dep.NamedResource).(*store.SourceArtifact)
 		if art == nil || art.FS == nil {
 			if level == manifest.DrainNone {
 				return &depwait.ErrBlocked{Deps: []manifest.NamedResource{dep.NamedResource}}
@@ -435,36 +386,21 @@ func (c *Controller) awaitChartSource(hr *manifest.HelmRelease, level manifest.D
 // a later reconcile is idempotent: the source controller short-circuits an
 // already-fetched artifact and AddObject of the same synthetic id is a no-op
 // re-emit.
-func (c *Controller) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
-	// An empty source kind uses HelmRepository acquisition.
+func (c *execution) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool) {
+	// RepoKind "" defaults to HelmRepository (see chart source dispatch).
 	if hr.Chart.Source.Group != manifest.SourceDomain || hr.Chart.Source.Kind != "" && hr.Chart.Source.Kind != manifest.KindHelmRepository {
 		return hr, false
 	}
-	r := c.Helm.Resolver().HelmRepository(hr.Chart.Source.Namespace, hr.Chart.Source.Name)
+	r := helm.NewSources(&c.run.Reads).HelmRepository(hr.Chart.Source.Namespace, hr.Chart.Source.Name)
 	if r == nil {
 		return hr, false
 	}
 	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
 	// The incomplete generic publication makes C available before H waits for acquisition.
-	_, attempt := c.Store.GetEmission(id)
+	_, attempt := c.run.Reads.GetEmission(id)
 	attempt.Children = []store.Child{{Obj: syn}}
-	c.Emit(id, &attempt)
+	c.run.Emit(id, &attempt)
 	attempt.Finish()
 	hr.Chart.Source = syn.Named()
 	return hr, true
-}
-
-// preparePrereqs gates synchronous Prepare lookups against concurrent parent emits.
-// Optional values are excluded; chart sources needing fetch readiness are gated later.
-func preparePrereqs(hr *manifest.HelmRelease) []manifest.DependencyRef {
-	var out []manifest.DependencyRef
-	for ref := range manifest.References(hr) {
-		switch ref.Use {
-		case "chart", "source":
-			if ref.Kind == manifest.KindHelmChart && hr.Chart.Version == "" {
-				out = append(out, ref.DependencyRef)
-			}
-		}
-	}
-	return out
 }

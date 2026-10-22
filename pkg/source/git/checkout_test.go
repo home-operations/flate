@@ -126,7 +126,9 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
 				Name: "pin", URL: "pin://" + parent, Reference: &sourcev1.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
-			}, sourcecache.Policy{})
+			}, (testInputs{}).readSet(&manifest.GitRepository{
+				Name: "pin", URL: "pin://" + parent, Reference: &sourcev1.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
+			}), sourcecache.Policy{})
 			if len(counter.requests) != tc.calls {
 				t.Fatalf("parent requests=%d, want %d; %v", len(counter.requests), tc.calls, err)
 			}

@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -245,13 +246,15 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, previous string) ([]map[string]any, string, error) {
 	s := store.New()
 	s.AddObject(rs)
-	s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: previous})
+	s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: previous, Complete: true})
 	c := base.New(s, nil, "test")
+	run := controllertest.NewExecution(c, rs.Named())
+	defer run.Close()
 	var fp string
 	docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 		var hit bool
 		var err error
-		fp, hit, _, err = c.FingerprintDedup(rs.Named(), content)
+		fp, hit, err = run.FingerprintDedup(rs.Named(), content)
 		return hit, err
 	})
 	return docs, fp, err

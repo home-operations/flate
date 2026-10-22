@@ -1,8 +1,11 @@
 package base
 
 import (
+	"context"
 	"fmt"
+	"runtime"
 	"testing"
+	"weak"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
@@ -13,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -81,9 +85,17 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 			t.Error("provenance follows visibility")
 		}
 	}, false)
-	c.Emit(parent.Named(), &store.Emission{Children: children, Manifests: retained, Complete: true})
+	execution := newExecution(c, parent.Named())
+	defer execution.Close()
+	_, next := execution.Reads.GetEmission(parent.Named())
+	defer next.Finish()
+	next.Children, next.Manifests, next.Complete = children, retained, true
+	execution.Emit(parent.Named(), &next)
 	if arrivals != 2 {
 		t.Fatalf("arrivals=%d", arrivals)
+	}
+	if !execution.Reads.Valid() {
+		t.Fatal("selection registered prospective children as inputs to their own publication")
 	}
 }
 
@@ -133,7 +145,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 				if s.GetObject(target) != nil {
 					t.Fatal("runtime placeholder has a store writer")
 				}
-				data := values.NewStoreProvider(s, wipe).Data(target)
+				data := values.NewStoreProvider(s, wipe, nil).Data(target)
 				if !wipe {
 					if data != nil {
 						t.Fatal("wiping disabled synthesized placeholder")
@@ -151,7 +163,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 				}
 			}
 			c.Emit(parent.Named(), &store.Emission{Complete: true})
-			if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
+			if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe, nil).Data(target) != nil {
 				t.Fatal("omitted declaration retained")
 			}
 			if invalidations != 3 {
@@ -199,7 +211,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 					if got := s.Productions(target, nil); len(got) != 1 || got[0].Declaration.Kind != tc.kind {
 						t.Fatalf("runtime declaration evidence: %v", got)
 					}
-					data := values.NewStoreProvider(s, wipe).Data(target)
+					data := values.NewStoreProvider(s, wipe, nil).Data(target)
 					known := wipe && tc.name != "bucket" && target.Kind == manifest.KindSecret
 					if (data != nil) != known {
 						t.Fatalf("known-key availability=%t want %t", data != nil, known)
@@ -237,7 +249,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 					if len(s.Productions(target, nil)) != 1 {
 						t.Fatal("target rename lost new contribution")
 					}
-					data := values.NewStoreProvider(s, wipe).Data(target)
+					data := values.NewStoreProvider(s, wipe, nil).Data(target)
 					if !wipe || tc.name == "bucket" {
 						if data != nil {
 							t.Fatal("unknown or wipe-disabled keys synthesized data")
@@ -266,7 +278,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				c.Emit(supporter.Named(), &store.Emission{Complete: true})
 				for _, target := range tc.targets {
-					if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
+					if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe, nil).Data(target) != nil {
 						t.Fatal("last supporter withdrawal retained target data")
 					}
 				}
@@ -305,7 +317,7 @@ func TestEmit_RuntimeProducerDataPrecedence(t *testing.T) {
 				if actual {
 					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"X": "actual"}})
 				}
-				data := values.NewStoreProvider(s, true).Data(target)
+				data := values.NewStoreProvider(s, true, nil).Data(target)
 				if pending != "none" && !actual {
 					if data != nil {
 						t.Fatal("declaration placeholder outranked pending materializer")
@@ -347,7 +359,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	}
 	publish("first", "app")
 	_, next := s.GetEmission(childID)
-	fingerprint, _, _, _ := c.FingerprintDedup(childID, "effective-owner-input")
+	fingerprint, _, _ := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input")
 	next.Fingerprint, next.Complete = fingerprint, true
 	s.RecordEmitted(childID, &next)
 	next.Finish()
@@ -359,16 +371,52 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	defer stopObjects()
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
-	if _, handled, _, err := c.FingerprintDedup(childID, "effective-owner-input"); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
+	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input"); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
 		t.Fatalf("metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d", handled, err, arrivals, statuses)
 	}
 	publish("third", "different")
 	if s.GetArtifact(childID) != nil {
 		t.Fatal("changed effective input exposed stale current artifact")
 	}
-	if obj, accepted := s.GetEmission(childID); obj == nil || accepted.Fingerprint != fingerprint {
-		t.Fatal("failed successor lost accepted inventory")
+	obj, accepted := s.GetEmission(childID)
+	_, replayable := accepted.Replay(fingerprint)
+	accepted.Finish()
+	if obj == nil || !replayable {
+		t.Fatal("failed successor lost accepted render identity")
 	}
+}
+
+func TestFingerprintDedup_WarningsRebind(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	c := New(s, nil, "test")
+	obj := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
+	s.AddObject(obj)
+	first := newExecution(c, obj.Named())
+	first.Reads.GetObject(obj.Named())
+	warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
+	first.Reads.AddWarning(obj.Named(), warning)
+	_, next := first.Reads.GetEmission(obj.Named())
+	next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true
+	first.Emit(obj.Named(), &next)
+	next.Finish()
+	first.Reads.Accept()
+	defer first.Close()
+	changed := obj.Clone()
+	changed.Labels = map[string]string{"kustomize.toolkit.fluxcd.io/name": "parent"}
+	s.AddObject(changed)
+	if first.Valid() {
+		t.Fatal("metadata publication did not invalidate the old assessment")
+	}
+	second := newExecution(c, obj.Named())
+	if _, handled, err := second.FingerprintDedup(obj.Named(), "equal projection"); !handled || err != nil {
+		t.Fatalf("projection replay: handled=%t error=%v", handled, err)
+	}
+	second.Reads.Accept()
+	defer second.Close()
+	warning.Count = 1
+	assert.Diff(t, s.Warnings(), []manifest.Warning{warning})
+	assert.Equal(t, second.Valid(), true)
 }
 
 func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
@@ -489,7 +537,7 @@ func TestEmit_DefaultsNamespace(t *testing.T) {
 	}
 }
 
-func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
+func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	c := New(s, nil, "test")
@@ -519,52 +567,214 @@ func TestKeepEmitted_RefiresSourcesAndKustomizationsOnly(t *testing.T) {
 	}
 	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s), Index: index})
 
-	c.KeepEmitted(parent, consumer)
-	c.KeepEmitted(parent, release)
+	captured := make(map[manifest.NamedResource]*Execution)
+	for _, obj := range []manifest.BaseManifest{producer, chart, foreignProducer} {
+		s.SetIncluded(obj.Named(), false)
+		execution := newExecution(c, obj.Named())
+		t.Cleanup(execution.Close)
+		if execution.Reads.Admitted() {
+			t.Fatalf("%s was admitted before its consumer", obj.Named())
+		}
+		captured[obj.Named()] = execution
+	}
+
+	c.KeepEmitted(parent, consumer, nil)
+	c.KeepEmitted(parent, release, nil)
 
 	for _, tc := range []struct {
-		obj  manifest.BaseManifest
-		want store.Status
-	}{{producer, store.StatusPending}, {chart, store.StatusReady}, {foreignProducer, store.StatusReady}} {
-		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != tc.want {
-			t.Errorf("%s status = %s, want %s", tc.obj.Named(), info.Status, tc.want)
+		obj      manifest.BaseManifest
+		included bool
+	}{{producer, true}, {chart, true}, {foreignProducer, false}} {
+		if captured[tc.obj.Named()].Reads.Valid() == tc.included {
+			t.Errorf("%s captured exclusion invalidation does not match inclusion=%t", tc.obj.Named(), tc.included)
+		}
+		next := newExecution(c, tc.obj.Named())
+		t.Cleanup(next.Close)
+		if next.Reads.Admitted() != tc.included {
+			t.Errorf("%s successor admission does not match inclusion=%t", tc.obj.Named(), tc.included)
+		}
+		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != store.StatusReady {
+			t.Errorf("%s terminal status changed: %+v", tc.obj.Named(), info)
 		}
 	}
-	for _, tc := range []struct {
-		obj    manifest.BaseManifest
-		refire bool
-	}{
-		{&manifest.GitRepository{Name: "child"}, true},
-		{&manifest.OCIRepository{Name: "child"}, true},
-		{&manifest.HelmRepository{Name: "child"}, true},
-		{&manifest.Bucket{Name: "child"}, true},
-		{&manifest.ExternalArtifact{Name: "child"}, true},
-		{&manifest.Kustomization{Name: "child"}, true},
-		{&manifest.HelmChartSource{Name: "child"}, false},
-		{&manifest.HelmRelease{Name: "child"}, false},
-		{&manifest.ResourceSet{Name: "child"}, false},
-		{&manifest.ResourceSetInputProvider{Name: "child"}, false},
-		{&manifest.ConfigMap{Name: "child"}, false},
-		{&manifest.Secret{Name: "child"}, false},
+
+	for _, obj := range []manifest.BaseManifest{
+		&manifest.GitRepository{Name: "child"},
+		&manifest.OCIRepository{Name: "child"},
+		&manifest.HelmRepository{Name: "child"},
+		&manifest.Bucket{Name: "child"},
+		&manifest.ExternalArtifact{Name: "child"},
+		&manifest.Kustomization{Name: "child"},
+		&manifest.HelmChartSource{Name: "child"},
+		&manifest.HelmRelease{Name: "child"},
+		&manifest.ResourceSet{Name: "child"},
+		&manifest.ResourceSetInputProvider{Name: "child"},
+		&manifest.ConfigMap{Name: "child"},
+		&manifest.Secret{Name: "child"},
 	} {
-		t.Run(tc.obj.Named().Kind, func(t *testing.T) {
+		t.Run(obj.Named().Kind, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			c := New(s, nil, "test")
-			obj := tc.obj.WithNamespace("apps")
+			obj := obj.WithNamespace("apps")
 			s.AddObject(obj)
 			s.UpdateStatus(obj.Named(), store.StatusReady, store.ReasonUnchanged, "unchanged")
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 			}
 			c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s), Index: index})
-			c.KeepEmitted(parent, obj)
-			want := store.StatusReady
-			if tc.refire {
-				want = store.StatusPending
+			s.SetIncluded(obj.Named(), false)
+			execution := newExecution(c, obj.Named())
+			t.Cleanup(execution.Close)
+			if execution.Reads.Admitted() {
+				t.Fatal("child admitted before publication")
 			}
+			c.KeepEmitted(parent, obj, nil)
+			assert.Equal(t, execution.Reads.Valid(), false)
+			next := newExecution(c, obj.Named())
+			t.Cleanup(next.Close)
+			assert.Equal(t, next.Reads.Admitted(), true)
 			info, _ := s.GetStatus(obj.Named())
-			assert.Equal(t, info.Status, want)
+			assert.Equal(t, info.Status, store.StatusReady)
+			assert.Equal(t, info.Outcome(), store.OutcomeUnchanged)
+			assert.Equal(t, info.Message, "unchanged")
+		})
+	}
+}
+
+func newExecution(c *Controller, id manifest.NamedResource) *Execution {
+	e := new(Execution)
+	e.Init(c, id)
+	return e
+}
+
+func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	c := New(s, nil, "test")
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	s.AddObject(parent)
+	first := newExecution(c, parent.Named())
+	defer first.Close()
+	_, initial := first.Reads.GetEmission(parent.Named())
+	doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "output", "namespace": "apps"}, "data": map[string]any{"value": "one"}}
+	initial.Children, initial.Manifests = ParseChildren(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+	initial.Fingerprint, initial.Complete = manifest.Fingerprint("rendered input"), true
+	first.Emit(parent.Named(), &initial)
+	initial.Finish()
+	if !s.GetArtifact(parent.Named()).(*store.Emission).OutputReads.Valid() {
+		t.Fatal("initial output is not valid")
+	}
+	changed := manifest.DeepCopyMap(doc)
+	changed["data"].(map[string]any)["value"] = "two"
+	_, next := s.GetEmission(parent.Named())
+	next.Children, next.Manifests = ParseChildren(parent.Named(), []map[string]any{changed}, manifest.ParseDocOptions{})
+	next.Complete = true
+	c.Emit(parent.Named(), &next)
+	next.Finish()
+	accepted := s.GetArtifact(parent.Named()).(*store.Emission)
+	if accepted.Fingerprint != "" {
+		t.Errorf("changed complete output inherited key %q", accepted.Fingerprint)
+	}
+	if _, found := accepted.Replay(initial.Fingerprint); found {
+		t.Error("changed complete output retained a false render mapping")
+	}
+	if diff := cmp.Diff([]map[string]any{changed}, accepted.Manifests); diff != "" {
+		t.Fatalf("changed payload was not published (-want +got): %s", diff)
+	}
+	second := newExecution(c, parent.Named())
+	defer second.Close()
+	if _, handled, err := second.FingerprintDedup(parent.Named(), "rendered input"); handled || err != nil {
+		t.Fatalf("old render input reused changed bytes: handled=%t error=%v", handled, err)
+	}
+}
+
+func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
+	t.Parallel()
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprint(replacement), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			declaration := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "old"}
+			st.AddObject(parent)
+			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+			publish := func(obj *manifest.Kustomization) {
+				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true})
+			}
+			publish(declaration)
+			tasks := task.NewBounded(2)
+			controller := New(st, tasks, "test")
+			borrowed := make(chan weak.Pointer[store.ReadSet], 1)
+			replaced := make(chan struct{})
+			var previous weak.Pointer[store.ReadSet]
+			var current *Execution
+			tasks.Go(t.Context(), "predecessor", func(context.Context) {
+				defer close(borrowed)
+				first := new(Execution)
+				first.Init(controller, declaration.Named())
+				first.Reads.GetObject(declaration.Named())
+				first.Reads.GetStatus(parent.Named())
+				_, attempt := first.Reads.GetEmission(declaration.Named())
+				attempt.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "output", Namespace: "apps", Data: map[string]any{"value": "old"}}}}
+				attempt.Complete = true
+				first.Emit(declaration.Named(), &attempt)
+				attempt.Finish()
+				first.Reads.Accept()
+				first.Retire()
+				if output, ok := st.GetArtifact(declaration.Named()).(*store.Emission); !ok || output.OutputReads != &first.Reads {
+					t.Error("predecessor lost its borrowed output")
+					return
+				}
+				borrowed <- weak.Make(&first.Reads)
+				tasks.YieldSlot(func() { <-replaced })
+			})
+			tasks.Go(t.Context(), "successor", func(context.Context) {
+				defer close(replaced)
+				var old weak.Pointer[store.ReadSet]
+				var ok bool
+				tasks.YieldSlot(func() { old, ok = <-borrowed })
+				if !ok {
+					return
+				}
+				previous = old
+				changed := *declaration
+				changed.Path = "new"
+				publish(&changed)
+				if st.GetArtifact(declaration.Named()) != nil {
+					t.Error("changed parent input left the predecessor artifact visible")
+					return
+				}
+				current = new(Execution)
+				current.Init(controller, declaration.Named())
+				current.Reads.GetObject(declaration.Named())
+				_, attempt := current.Reads.GetEmission(declaration.Named())
+				name := "output"
+				if replacement {
+					name = "replacement"
+				}
+				attempt.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: name, Namespace: "apps", Data: map[string]any{"value": "new"}}}}
+				attempt.Complete = true
+				current.Emit(declaration.Named(), &attempt)
+				attempt.Finish()
+				current.Reads.Accept()
+			})
+			tasks.BlockTillDone()
+			if tasks.Failures() != 0 || current == nil {
+				t.Fatal("replacement did not complete")
+			}
+			defer current.Close()
+			for range st.Sweep() {
+			}
+			runtime.GC()
+			if previous.Value() != nil {
+				t.Fatal("accepted replacement retained predecessor registration storage")
+			}
+			if !current.Valid() {
+				t.Fatal("replacement retired current output provenance")
+			}
+			runtime.KeepAlive(st)
+			runtime.KeepAlive(current)
 		})
 	}
 }

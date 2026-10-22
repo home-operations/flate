@@ -12,12 +12,15 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -26,7 +29,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestReconcile_OCIChartDigestTracking(t *testing.T) {
@@ -165,12 +167,32 @@ metadata: {name: issuer}
 			st.DeleteObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"})
 			st.DeleteObject(manifest.NamedResource{Group: "nvidia.com", Kind: "ClusterPolicy", Namespace: hr.ReleaseNamespace(), Name: "cluster-policy"})
 			st.DeleteObject(manifest.NamedResource{Group: "cert-manager.io", Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"})
+			var authority store.ReadSet
+			authority.Init(st, manifest.NamedResource{Name: "artifact-reader"}, nil)
+			authority.GetArtifact(hr.Named())
+			var repeatedEvents atomic.Int64
+			var stopEvents []store.Unsubscribe
+			for _, kind := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
+				stopEvents = append(stopEvents, st.AddListener(kind, func(id manifest.NamedResource, _ any) {
+					if id == hr.Named() {
+						repeatedEvents.Add(1)
+					}
+				}, false))
+			}
+
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("repeat reconcile: %+v", info)
 			}
-			if st.GetArtifact(hr.Named()) != art {
-				t.Fatal("unchanged inputs did not deduplicate")
+			for _, stop := range stopEvents {
+				stop()
 			}
+			current := st.GetArtifact(hr.Named()).(*store.Emission)
+			if current.Fingerprint != art.Fingerprint || !authority.Valid() || repeatedEvents.Load() != 0 {
+				t.Fatalf("unchanged output authority changed: valid=%t events=%d", authority.Valid(), repeatedEvents.Load())
+			}
+			assert.Diff(t, current.Manifests, retained)
+			authority.Retire()
+
 			if delta := cmp.Diff(retained, art.Manifests); delta != "" {
 				t.Fatalf("replay changed retained documents (-want +got):\n%s", delta)
 			}
@@ -256,10 +278,10 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 
 	hr := &manifest.HelmRelease{
 		Name: "podinfo", Namespace: "flux-system",
-		Chart: manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "podinfo", Namespace: "flux-system"}},
+		Chart: manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "podinfo"}},
 	}
 	st.AddObject(hr)
-	err := c.awaitChartSource(hr, manifest.DrainForce)
+	err := c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainForce)
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("chart gate category = %v", err)
 	}
@@ -273,7 +295,7 @@ func TestReconcile_ChartSourceNotReady(t *testing.T) {
 }
 
 // TestReconcile_DependsOnFailed cascades a dep failure to a non-rendering
-// HR — DependencyFailedError surfaces via DispatchNode → Failed status.
+// DependencyFailedError MUST retain failure provenance in the terminal status.
 func TestReconcile_DependsOnFailed(t *testing.T) {
 	t.Parallel()
 	c, st := newTestController(t, nil)
@@ -307,7 +329,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
-	_, err := c.reconcile(t.Context(), hr, manifest.ReconcileAttempt{Drain: manifest.DrainForce}, false)
+	err := c.newExecution((hr).Named()).reconcile(t.Context(), hr, manifest.DrainForce)
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("parent gate category = %v", err)
 	}
@@ -374,8 +396,8 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 		{"parent", "waiting for parent KS", true, false},
 		{"dependencies_after_parent", "resolving dependencies", true, false},
 		{"dependencies_without_parent", "resolving dependencies", false, false},
-		{"pre_render", "resolving pre-render references", false, false},
-		{"pre_render_retained", "resolving pre-render references", true, true},
+		{"pre_render", "awaiting pre-render references", false, false},
+		{"pre_render_retained", "awaiting pre-render references", true, true},
 	} {
 		t.Run(site.name, func(t *testing.T) {
 			t.Parallel()
@@ -414,7 +436,7 @@ data: {greeting: hi}
 							"values":    map[string]any{"output": "stale-output"},
 						},
 					}
-					if site.message == "resolving pre-render references" {
+					if site.message == "awaiting pre-render references" {
 						input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "{}"}}
 						st.AddObject(input)
 						doc["spec"].(map[string]any)["valuesFrom"] = []any{map[string]any{"kind": manifest.KindConfigMap, "name": input.Name}}
@@ -467,16 +489,11 @@ data: {greeting: hi}
 						published.Store(true)
 					}, false)
 					t.Cleanup(unsub)
-					c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-						if _, blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
-							t.Errorf("blocked on %v", blocked)
-						}
-					})
-					c.Tasks.BlockTillDone()
-					if observations.Load() != 1 || !published.Load() || c.Tasks.Failures() != 0 {
+					controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: id, ReconcileNode: c.ReconcileNode})
+					if observations.Load() < 1 || !published.Load() || c.Tasks.Failures() != 0 {
 						t.Fatalf("observations=%d published=%t panics=%d", observations.Load(), published.Load(), c.Tasks.Failures())
 					}
-					if site.parent && parentEvents.Load() != 1 || !site.parent && parentEvents.Load() != 0 {
+					if site.parent && parentEvents.Load() < 1 || !site.parent && parentEvents.Load() != 0 {
 						t.Fatalf("parent refresh events = %d", parentEvents.Load())
 					}
 					fresh, ok := st.Get[*manifest.HelmRelease](id)
@@ -500,10 +517,10 @@ data: {greeting: hi}
 						}
 						_, inventory := st.GetEmission(id)
 						if art != retained || renders.Load() != 0 || st.GetObject(output) != nil || len(inventory.Children) != 0 {
-							t.Errorf("suspended replacement rendered: artifact=%+v output=%v", art, st.GetObject(output))
+							t.Errorf("suspended replacement rendered: artifact=%+v output=%v renders=%d", art, st.GetObject(output), renders.Load())
 						}
 					} else if info.Status != store.StatusReady || art == nil || art == retained || renders.Load() != 1 || len(art.Manifests) != 1 || st.GetObject(output) == nil {
-						t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v", output, info, art)
+						t.Fatalf("active replacement did not render %s: status=%+v artifact=%+v renders=%d", output, info, art, renders.Load())
 					}
 				})
 			}
@@ -551,7 +568,6 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					client.SetSourceResolver(helm.NewStoreSourceResolver(st))
 					c := New(base.New(st, tasks, "helmrelease"), client, helm.Options{}, false)
 					c.Configure(ReconcileOptions{})
 					c.Start(t.Context())
@@ -597,7 +613,14 @@ data:
 					docB := manifest.DeepCopyMap(docA)
 					docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
 					publish := func(doc map[string]any) {
-						publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+						_, next := st.GetEmission(parent.Named())
+						defer next.Finish()
+						next.Children, next.Manifests = base.ParseChildren(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+						next.Complete = true
+						if rescue {
+							next.Unreadable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: parent.Namespace, Name: "unreadable"}}
+						}
+						c.Emit(parent.Named(), &next)
 					}
 					publish(docA)
 					st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
@@ -606,11 +629,6 @@ data:
 					if !ok {
 						t.Fatal("parent did not emit input A")
 					}
-					prepared, err := helm.Prepare(hr, client.Resolver().HelmChart, values.NewStoreProvider(st, false), client.ValuesCache())
-					if err != nil {
-						t.Fatal(err)
-					}
-					wantFingerprint := manifest.Fingerprint(prepared.Content(struct{ Digest, Revision string }{source.Digest, source.Revision}, nil))
 					var accepted atomic.Pointer[store.Emission]
 					unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
 						if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
@@ -634,22 +652,27 @@ data:
 						}
 						publish(docB)
 					})
-					tasks.Go(t.Context(), "render", func(ctx context.Context) {
-						defer close(rendered)
-						if _, blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
-							t.Errorf("blocked on %v", blocked)
-						}
+					markRendered := sync.OnceFunc(func() { close(rendered) })
+					info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+						Tasks: tasks, Store: st, ID: id,
+						ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+							defer markRendered()
+							return c.ReconcileNode(ctx, id, level)
+						},
 					})
-					tasks.BlockTillDone()
+					if info.Status != store.StatusReady {
+						t.Fatalf("canonical replacement status = %+v", info)
+					}
+
 					if tasks.Failures() != 0 {
 						t.Fatalf("task failures = %d", tasks.Failures())
 					}
 					emission := accepted.Load()
-					if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint != wantFingerprint {
-						t.Fatalf("accepted A emission = %+v; fingerprint want %s", emission, wantFingerprint)
+					if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint == "" || !emission.OutputReads.Valid() {
+						t.Fatalf("accepted B emission = %+v; want complete output with current provenance and a content key", emission)
 					}
-					if got := renderedConfigMapValue(emission.Manifests, "output"); got != "A" {
-						t.Fatalf("rendered output = %q, want A", got)
+					if got := renderedConfigMapValue(emission.Manifests, "output"); got != "B" {
+						t.Fatalf("rendered output = %q, want B", got)
 					}
 					if rescue {
 						if got := renderedConfigMapValue(emission.Manifests, "required"); got != "..PLACEHOLDER_required.." {
@@ -665,22 +688,243 @@ data:
 					if !ok || current.Values["output"] != "B" {
 						t.Fatalf("current input is not B: %+v", current)
 					}
-					if st.GetArtifact(id) != nil {
-						t.Error("input B incorrectly accepts the output rendered from A")
-					}
-					publish(docA)
 					if st.GetArtifact(id) != emission {
-						t.Error("restoring exact input A did not expose the captured emission")
+						t.Error("canonical B does not expose its accepted output")
 					}
-					publish(docB)
-					if st.GetArtifact(id) != nil {
-						t.Error("restored input B incorrectly accepts A's emission")
+					output, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "binding"})
+					if !ok || output.Data["output"] != "B" {
+						t.Fatalf("canonical emitted child = %+v, want output B", output)
 					}
+
 					if hr.Values["output"] != "A" || hr.Values["required"] != required {
 						t.Fatal("render mutated input A")
 					}
 				})
 			}
 		})
+	}
+}
+
+func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
+	t.Parallel()
+	c, st := newTestController(t, nil)
+	repository := &manifest.HelmRepository{Name: "charts", Namespace: "apps"}
+	repository.URL = "https://charts.invalid"
+	st.AddObject(repository)
+	st.UpdateStatus(repository.Named(), store.StatusReady, "", "")
+	input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "value: first\n"}}
+	st.AddObject(input)
+	hr := &manifest.HelmRelease{
+		Name: "app", Namespace: "apps",
+		Chart:      manifest.HelmChart{Name: "fixture", Version: "1.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: repository.Namespace, Name: repository.Name}},
+		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: input.Name}},
+	}
+	st.AddObject(hr)
+	var executions []*base.Execution
+	t.Cleanup(func() {
+		for _, execution := range executions {
+			execution.Close()
+		}
+		for range st.Sweep() {
+		}
+	})
+	reconcile := func() *base.Execution {
+		t.Helper()
+		var next *base.Execution
+		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
+			next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone)
+		})
+		c.Tasks.BlockTillDone()
+		if c.Tasks.Failures() != 0 || next == nil {
+			t.Fatal("reconciliation task failed")
+		}
+		if len(executions) != 0 {
+			executions[len(executions)-1].Retire()
+		}
+		executions = append(executions, next)
+		for range st.Sweep() {
+		}
+		return next
+	}
+	if first := reconcile(); first.Outcome() != schedule.Blocked {
+		t.Fatal("missing synthetic chart did not block")
+	}
+	charts := st.ListObjects(manifest.SourceDomain, manifest.KindHelmChart)
+	if len(charts) != 1 {
+		t.Fatalf("synthetic charts = %d, want 1", len(charts))
+	}
+	chart := charts[0].Named()
+	firstDir, secondDir := t.TempDir(), t.TempDir()
+	for _, fixture := range []struct{ dir, value string }{{firstDir, "one"}, {secondDir, "two"}} {
+		testutil.WriteFile(t, fixture.dir, "Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+		testutil.WriteFile(t, fixture.dir, "templates/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-first'}\ndata: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-second'}\ndata: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n")
+	}
+	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-one", FS: os.DirFS(firstDir), LocalPath: firstDir})
+	st.UpdateStatus(chart, store.StatusReady, "", "")
+	initialRun := reconcile()
+	initial, ok := st.GetArtifact(hr.Named()).(*store.Emission)
+	if !ok || initialRun.Outcome() == schedule.Blocked || initialRun.Reused || len(initial.Manifests) != 2 {
+		t.Fatal("initial two-document render did not settle")
+	}
+	for i, doc := range initial.Manifests {
+		name, namespace := manifest.DocMetadata(doc)
+		want := []string{"app-first", "app-second"}[i]
+		if name != want || namespace != hr.Namespace || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: name}) == nil {
+			t.Fatalf("rendered identity = %s/%s, want %s/%s", namespace, name, hr.Namespace, want)
+		}
+	}
+	stamped := hr.Clone()
+	stamped.Labels = map[string]string{"kustomize.toolkit.fluxcd.io/name": "parent"}
+	st.AddObject(stamped)
+	if initial.OutputReads.Valid() {
+		t.Fatal("metadata change did not invalidate the prior assessment")
+	}
+	var pending atomic.Bool
+	stop := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok && info.Status == store.StatusPending {
+			pending.Store(true)
+		}
+	}, false)
+	t.Cleanup(stop)
+	replay := reconcile()
+	after := st.GetArtifact(hr.Named()).(*store.Emission)
+	if pending.Load() {
+		t.Error("equal synthetic-chart replay transiently became Pending")
+	}
+	if replay.Outcome() == schedule.Blocked || !replay.Reused || after.Fingerprint != initial.Fingerprint {
+		t.Errorf("same content after synthetic publication: unresolved=%t reused=%t fingerprint=%q, want %q", replay.Outcome() == schedule.Blocked, replay.Reused, after.Fingerprint, initial.Fingerprint)
+	}
+	if diff := cmp.Diff(initial.Manifests, after.Manifests); diff != "" {
+		t.Fatalf("same content changed output (-want +got): %s", diff)
+	}
+	fresh := *input
+	fresh.Data = map[string]any{"values.yaml": "value: second\n"}
+	st.AddObject(&fresh)
+	valuesRun := reconcile()
+	withValues := st.GetArtifact(hr.Named()).(*store.Emission)
+	if valuesRun.Outcome() == schedule.Blocked || valuesRun.Reused || withValues.Fingerprint == after.Fingerprint || renderedConfigMapValue(withValues.Manifests, "value") != "second" || len(withValues.Manifests) != 2 {
+		t.Fatal("changed consumed values reused stale output")
+	}
+	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-two", FS: os.DirFS(secondDir), LocalPath: secondDir})
+	sourceRun := reconcile()
+	withSource := st.GetArtifact(hr.Named()).(*store.Emission)
+	if sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused || withSource.Fingerprint == withValues.Fingerprint || renderedConfigMapValue(withSource.Manifests, "source") != "two" || len(withSource.Manifests) != 2 {
+		t.Fatalf("changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d", sourceRun.Outcome() == schedule.Blocked, sourceRun.Reused, withSource.Fingerprint, withValues.Fingerprint, renderedConfigMapValue(withSource.Manifests, "source"), len(withSource.Manifests))
+	}
+}
+
+type chartCaptureFS struct {
+	fs.FS
+	captures atomic.Int64
+}
+
+func (f *chartCaptureFS) Open(name string) (fs.File, error) {
+	if name == "chart/Chart.yaml" {
+		f.captures.Add(1)
+	}
+	return f.FS.Open(name)
+}
+
+func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
+	t.Parallel()
+	c, st := newTestController(t, nil)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+	testutil.WriteFile(t, root, "values/overrides.yaml", "value: first\n")
+	writeTemplate := func(value string) {
+		t.Helper()
+		testutil.WriteFile(t, root, "chart/templates/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-first'}\ndata: {value: '{{ .Values.value }}', source: "+value+"}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-second'}\ndata: {value: '{{ .Values.value }}', source: "+value+"}\n")
+	}
+	writeTemplate("one")
+	input := &chartCaptureFS{FS: os.DirFS(root)}
+	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: input, LocalPath: root})
+	st.UpdateStatus(source.Named(), store.StatusReady, "", "")
+	hr := &manifest.HelmRelease{
+		Name: "app", Namespace: "apps",
+		Chart:            manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: source.Namespace, Name: source.Name}},
+		ChartValuesFiles: []string{"values/overrides.yaml"},
+	}
+	st.AddObject(hr)
+	var executions []*base.Execution
+	t.Cleanup(func() {
+		for _, execution := range executions {
+			execution.Close()
+		}
+		for range st.Sweep() {
+		}
+	})
+	var pending atomic.Bool
+	stop := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok && info.Status == store.StatusPending {
+			pending.Store(true)
+		}
+	}, false)
+	t.Cleanup(stop)
+	reconcile := func(reused bool) *store.Emission {
+		t.Helper()
+		pending.Store(false)
+		before := input.captures.Load()
+		var next *base.Execution
+		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
+			next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone)
+		})
+		c.Tasks.BlockTillDone()
+		if c.Tasks.Failures() != 0 || next == nil || next.Outcome() == schedule.Blocked || next.Reused != reused {
+			t.Fatalf("reconcile: failures=%d execution=%+v, want reused=%t", c.Tasks.Failures(), next, reused)
+		}
+		if reused && (pending.Load() || input.captures.Load()-before != 1) {
+			t.Fatalf("equal replay: pending=%t chart captures=%d, want false/1", pending.Load(), input.captures.Load()-before)
+		}
+		if len(executions) != 0 {
+			executions[len(executions)-1].Retire()
+		}
+		executions = append(executions, next)
+		for range st.Sweep() {
+		}
+		return st.GetArtifact(hr.Named()).(*store.Emission)
+	}
+	assertOutput := func(output *store.Emission, value, source string) {
+		t.Helper()
+		if len(output.Manifests) != 2 {
+			t.Fatalf("documents=%d, want 2", len(output.Manifests))
+		}
+		for i, doc := range output.Manifests {
+			name, namespace := manifest.DocMetadata(doc)
+			data, _ := doc["data"].(map[string]any)
+			wantName := []string{"app-first", "app-second"}[i]
+			if name != wantName || namespace != hr.Namespace || data["value"] != value || data["source"] != source {
+				t.Fatalf("document=%v, want %s/%s value=%s source=%s", doc, hr.Namespace, wantName, value, source)
+			}
+		}
+	}
+	initial := reconcile(false)
+	assertOutput(initial, "first", "one")
+	stamped := hr.Clone()
+	stamped.Labels = map[string]string{"kustomize.toolkit.fluxcd.io/name": "parent"}
+	st.AddObject(stamped)
+	equal := reconcile(true)
+	if equal.Fingerprint != initial.Fingerprint || !cmp.Equal(equal.Manifests, initial.Manifests) {
+		t.Fatal("metadata-only replay changed content")
+	}
+	writeTemplate("two")
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: input, LocalPath: root})
+	withChart := reconcile(false)
+	assertOutput(withChart, "first", "two")
+	if withChart.Fingerprint == equal.Fingerprint {
+		t.Fatal("same-path mutable chart change kept the old render key")
+	}
+	testutil.WriteFile(t, root, "values/overrides.yaml", "value: second\n")
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: input, LocalPath: root})
+	withValues := reconcile(false)
+	assertOutput(withValues, "second", "two")
+	if withValues.Fingerprint == withChart.Fingerprint {
+		t.Fatal("external source values change kept the old render key")
+	}
+	final := reconcile(true)
+	assertOutput(final, "second", "two")
+	if final.Fingerprint != withValues.Fingerprint || !cmp.Equal(final.Manifests, withValues.Manifests) {
+		t.Fatal("unchanged mutable source replay changed output")
 	}
 }

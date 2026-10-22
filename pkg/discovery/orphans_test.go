@@ -44,12 +44,12 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			}
 			d := &discoverer{cfg: Config{Store: st}, loader: l}
 			if tc.order == nil {
-				d.promoteOrphans(nil)
+				d.promoteOrphans(t.Context(), nil)
 			} else {
 				for _, id := range tc.order {
 					record, _ := l.Index.Lookup(id)
 					admit := func(obj manifest.BaseManifest) bool { return d.admitOrphan(obj.Named(), record.Path) }
-					if !loader.Promote(st, id, manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, loader.PromoteOptions{Admit: admit}) {
+					if !loader.Promote(t.Context(), st, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, Admit: admit}) {
 						t.Fatalf("promotion failed for %s", id)
 					}
 				}
@@ -99,7 +99,7 @@ spec:
 		cfg: Config{Store: st, WipeSecrets: true}, loader: l,
 	}
 	l.Index.Claims = map[string][]manifest.NamedResource{"apps/": {self}}
-	d.promoteOrphans(nil)
+	d.promoteOrphans(t.Context(), nil)
 	if st.GetObject(self) == nil {
 		t.Error("self-excluded orphan must be admitted")
 	}
@@ -145,7 +145,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 		l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 	}
 	d := &discoverer{cfg: Config{Store: st}, loader: l}
-	d.promoteOrphans(nil)
+	d.promoteOrphans(t.Context(), nil)
 	if st.GetObject(self) == nil {
 		t.Error("self-owned Kustomization must be admitted")
 	}
@@ -221,7 +221,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			if scenario == "preexisting" || scenario == "unknown-file" {
 				candidates = nil
 			}
-			d.promoteOrphans(candidates)
+			d.promoteOrphans(t.Context(), candidates)
 			for i, id := range ids {
 				got, ok := st.GetObject(id).(*manifest.Secret)
 				if scenario == "unknown-file" {

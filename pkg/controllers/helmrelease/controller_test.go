@@ -10,10 +10,12 @@ import (
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
+
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -21,6 +23,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
@@ -40,7 +43,9 @@ func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store
 type indexedOrderingDeps map[manifest.NamedResource]bool
 
 func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
-func (indexedOrderingDeps) Promote(manifest.NamedResource) bool            { return false }
+func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.NamedResource) bool {
+	return false
+}
 
 func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 	t.Parallel()
@@ -81,7 +86,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 			if tc.retain {
 				want = []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: "dep.spec.suspend == false"}}
 			}
-			assert.Diff(t, c.collectDeps(hr), want)
+			assert.Diff(t, c.newExecution(hr.Named()).collectDeps(hr), want)
 			if len(filter.KeepNames()) != size || len(hr.DependsOn) != 1 {
 				t.Error("ordering collection must preserve keep and input edges")
 			}
@@ -106,7 +111,6 @@ func newTestControllerWithOptions(t *testing.T, opts ReconcileOptions) (*Control
 	// Mirror the orchestrator's production wiring: the HR controller
 	// resolves source CRs (HelmRepository, OCIRepository, HelmChart)
 	// through the Store via the helm client's SourceResolver.
-	hc.SetSourceResolver(helm.NewStoreSourceResolver(st))
 	controller := base.New(st, ts, "helmrelease")
 	c := New(controller, hc, helm.Options{}, false)
 	if c.Controller != controller {
@@ -146,24 +150,24 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 		t.Run("group="+group, func(t *testing.T) {
 			foreign := hr.Clone()
 			foreign.Chart.Source.Group = group
-			if _, repointed := c.materializeHelmChartSource(foreign.Named(), foreign); repointed {
+			if _, repointed := c.newExecution(foreign.Named()).materializeHelmChartSource(foreign.Named(), foreign); repointed {
 				t.Fatal("foreign chart source borrowed the real HelmRepository")
 			}
 		})
 	}
 
 	st.AddObject(hr)
-	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
+	got, repointed := c.newExecution(hr.Named()).materializeHelmChartSource(hr.Named(), hr)
 	if !repointed {
 		t.Fatal("materialize did not report a repoint for a HelmRepository-sourced chart")
 	}
 
 	// Chart repointed to a synthetic HelmChart; name/version kept.
 	if got.Chart.Source.Kind != manifest.KindHelmChart {
-		t.Fatalf("Source.Kind = %q, want HelmChart", got.Chart.Source.Kind)
+		t.Fatalf("RepoKind = %q, want HelmChart", got.Chart.Source.Kind)
 	}
 	if got.Chart.Source.Namespace != "flux-system" {
-		t.Errorf("Source.Namespace = %q, want flux-system", got.Chart.Source.Namespace)
+		t.Errorf("RepoNamespace = %q, want flux-system", got.Chart.Source.Namespace)
 	}
 	if got.Chart.Name != "kromgo" || got.Chart.Version != "3.0.0" {
 		t.Errorf("chart name/version = %q/%q, want kromgo/3.0.0", got.Chart.Name, got.Chart.Version)
@@ -188,10 +192,17 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	}
 }
 
-type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, manifest.ReconcileWait)
+type chartSourceDispatcher struct {
+	store    *store.Store
+	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result
+}
 
-func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
-	return d(ctx, id, attempt.Drain)
+func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+	return d.dispatch(ctx, id, level)
+}
+
+func (d chartSourceDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
+	return slices.Collect(d.store.Sweep())
 }
 
 func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
@@ -224,13 +235,15 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 						hr.Chart = chart
 						st.AddObject(hr)
 					}
-					first := *consumers[0]
-					c.materializeHelmChartSource(first.Named(), &first)
+					first := consumers[0].Clone()
+					first, _ = c.newExecution(first.Named()).materializeHelmChartSource(first.Named(), first)
 					source := (first.ChartSource())
 					sourceStarted := make(chan struct{})
 					sourceRelease := make(chan struct{})
+					releaseSource := sync.OnceFunc(func() { close(sourceRelease) })
+					defer releaseSource()
 					parked := make(chan manifest.NamedResource, len(consumers))
-					dispatch := chartSourceDispatcher(func(_ context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, manifest.ReconcileWait) {
+					dispatch := chartSourceDispatcher{store: st, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 						if id == source {
 							close(sourceStarted)
 							tasks.YieldSlot(func() { <-sourceRelease })
@@ -242,22 +255,20 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 								}})
 							}
 							st.UpdateStatus(id, tc.status, "", "source finished")
-							return schedule.Outcome{}, manifest.ReconcileWait{}
+							return schedule.Result{}
 						}
-						hr := *st.GetObject(id).(*manifest.HelmRelease)
-						c.materializeHelmChartSource(id, &hr)
-						err := c.awaitChartSource(&hr, level)
-						if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
-							parked <- id
-							return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: blocked.Deps}
-						}
-						if err != nil {
-							st.UpdateStatus(id, store.StatusFailed, "", err.Error())
-							return schedule.Outcome{Kind: schedule.DependencyFailed}, manifest.ReconcileWait{Deps: []schedule.NodeID{source}}
-						}
-						st.UpdateStatus(id, store.StatusReady, "", "")
-						return schedule.Outcome{}, manifest.ReconcileWait{}
-					})
+						execution := c.newExecution(id)
+						execution.run.Dispatch(ctx, level, func(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+							hr, _ = execution.materializeHelmChartSource(id, hr.Clone())
+							err := execution.awaitChartSource(ctx, hr, level)
+							if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+								parked <- id
+							}
+							return err
+						})
+						return schedule.Result{Assessment: &execution.run}
+					}}
+
 					s := schedule.New(tasks, dispatch)
 					unsub := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 						if id == source {
@@ -272,8 +283,8 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					for _, hr := range consumers {
 						s.OnArrival(hr.Named(), true)
 					}
-					second := *consumers[1]
-					c.materializeHelmChartSource(second.Named(), &second)
+					second := consumers[1].Clone()
+					second, _ = c.newExecution(second.Named()).materializeHelmChartSource(second.Named(), second)
 					if (second.ChartSource()) != source {
 						t.Errorf("second source = %s, want shared %s", (second.ChartSource()), source)
 					}
@@ -290,10 +301,10 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					for _, hr := range consumers {
 						_, partial := st.GetEmission(hr.Named())
 						if len(partial.Children) != 1 || partial.Children[0].Doc != nil || len(partial.Manifests) != 0 {
-							t.Fatal("synthetic child lost incomplete inventory semantics")
+							t.Fatalf("synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v", hr.Named(), partial.Children, partial.Manifests)
 						}
 					}
-					close(sourceRelease)
+					releaseSource()
 					if err := <-done; err != nil {
 						t.Fatal(err)
 					}
@@ -302,19 +313,47 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					}
 					for _, hr := range consumers {
 						if tc.status == store.StatusReady {
-							for iteration := range 2 {
-								var arrivals int
-								stop := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
-								if _, blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
-									t.Fatal(blocked)
+							var renders int
+							stopRender := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+								if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok && info.Message == "rendering chart" {
+									renders++
 								}
-								stop()
-								if iteration == 1 && arrivals != 0 {
-									t.Fatalf("equal H rerun replayed %d arrivals", arrivals)
+							}, false)
+							initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
+							if initialRun.Outcome() == schedule.Blocked {
+								t.Fatal(initialRun.Blocked)
+							}
+							before := st.GetArtifact(hr.Named()).(*store.Emission)
+							var reader store.ReadSet
+							reader.Init(st, manifest.NamedResource{Kind: "Observer", Name: hr.Name}, nil)
+							reader.GetArtifact(hr.Named())
+							var arrivals, artifacts, statuses int
+							stopObjects := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
+							stopArtifacts := st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
+								if id == hr.Named() {
+									artifacts++
 								}
-								if accepted := st.GetArtifact(hr.Named()).(*store.Emission); !accepted.Complete {
-									t.Fatal("H completion lost complete inventory")
+							}, false)
+							stopStatus := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, _ any) {
+								if id == hr.Named() {
+									statuses++
 								}
+							}, false)
+							rerun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
+							initialRun.Retire()
+							stopObjects()
+							stopArtifacts()
+							stopStatus()
+							stopRender()
+							after := st.GetArtifact(hr.Named()).(*store.Emission)
+							valid := reader.Valid()
+							reader.Retire()
+							defer rerun.Close()
+							if rerun.Outcome() == schedule.Blocked || !valid || arrivals != 0 || artifacts != 0 || statuses != 0 || renders != 1 {
+								t.Fatalf("equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d", rerun.Outcome() == schedule.Blocked, valid, arrivals, artifacts, statuses, renders)
+							}
+							if !after.Complete || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
+								t.Fatal("equal H rerun changed accepted content or completeness")
 							}
 						} else {
 							st.UpdateFailure(hr.Named(), fmt.Errorf("%w: H failed after partial work", manifest.ErrInput))
@@ -380,7 +419,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 	}
 
 	// Pass 1: HelmRepository not in the Store yet — must not repoint.
-	if _, repointed := c.materializeHelmChartSource(hr.Named(), hr); repointed {
+	if _, repointed := c.newExecution(hr.Named()).materializeHelmChartSource(hr.Named(), hr); repointed {
 		t.Fatal("repointed while the HelmRepository was absent (must be a no-op)")
 	}
 
@@ -393,7 +432,7 @@ func TestMaterializeHelmChartSource_LateArrival(t *testing.T) {
 
 	// Pass 2: now present — must repoint to the synthetic HelmChart.
 	st.AddObject(hr)
-	if _, repointed := c.materializeHelmChartSource(hr.Named(), hr); !repointed {
+	if _, repointed := c.newExecution(hr.Named()).materializeHelmChartSource(hr.Named(), hr); !repointed {
 		t.Fatal("did not repoint once the HelmRepository was present")
 	}
 }
@@ -414,7 +453,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 		Chart: manifest.HelmChart{Name: "redis", Version: "1.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "bitnami"}},
 	}
 	st.AddObject(hr)
-	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
+	got, repointed := c.newExecution(hr.Named()).materializeHelmChartSource(hr.Named(), hr)
 	if !repointed || got.Chart.Source.Kind != manifest.KindHelmChart {
 		t.Fatalf("HTTP HelmRepository was not materialized: %+v (repointed=%v)", got.Chart, repointed)
 	}
@@ -423,7 +462,7 @@ func TestMaterializeHelmChartSource_HTTPRepoMaterializes(t *testing.T) {
 	}
 }
 
-// TestMaterializeHelmChartSource_EmptyVersion guards the preparePrereqs
+// TestMaterializeHelmChartSource_EmptyVersion guards the HelmChart prerequisite
 // placeholder gotcha: a HelmRepository chart with no version still
 // materializes into a (versionless) HelmChart rather than being mistaken for
 // an unresolved chartRef:HelmChart placeholder.
@@ -439,7 +478,7 @@ func TestMaterializeHelmChartSource_EmptyVersion(t *testing.T) {
 		Chart: manifest.HelmChart{Name: "redis", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "bitnami"}},
 	}
 	st.AddObject(hr)
-	got, repointed := c.materializeHelmChartSource(hr.Named(), hr)
+	got, repointed := c.newExecution(hr.Named()).materializeHelmChartSource(hr.Named(), hr)
 	if !repointed || got.Chart.Source.Kind != manifest.KindHelmChart {
 		t.Fatalf("empty-version HelmRepository chart not materialized: %+v (repointed=%v)", got.Chart, repointed)
 	}
@@ -463,7 +502,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			c, st := newTestController(t, filter)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}
 			st.AddObject(hr)
-			info := runValuesFixture(t, c, hr)
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 			if info.Status != store.StatusReady || info.Message != tc.name {
 				t.Fatalf("status = %+v, want Ready/%s", info, tc.name)
 			}
@@ -516,11 +555,11 @@ data:
 			{Kind: manifest.KindSecret, Name: "app-values"},
 			{Kind: manifest.KindConfigMap, Name: "runtime-values"},
 		},
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}},
 	}
 	st.AddObject(hr)
 
-	info := runValuesFixture(t, c, hr)
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
@@ -545,7 +584,7 @@ data:
 	hr = hr.Clone()
 	hr.Labels = map[string]string{"owner": "re-emitted"}
 	st.AddObject(hr)
-	assert.Equal(t, runValuesFixture(t, c, hr).Status, store.StatusReady)
+	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
 	latest, _ := st.GetArtifact(hr.Named()).(*store.Emission)
 	if latest == nil || latest.Fingerprint != art.Fingerprint {
 		t.Fatal("metadata-only update rendered different effective inputs")
@@ -554,7 +593,7 @@ data:
 	hr = hr.Clone()
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
 	st.AddObject(hr)
-	assert.Equal(t, runValuesFixture(t, c, hr).Status, store.StatusReady)
+	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
 	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render" && w.Count == 1
 	}) {
@@ -562,7 +601,7 @@ data:
 	}
 }
 
-func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
+func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	t.Parallel()
 	c, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
@@ -575,16 +614,14 @@ func TestController_ValuesOmissionWaitsForBlockedReferences(t *testing.T) {
 	}
 	st.AddObject(hr)
 	values := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
-	err := c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: preparePrereqs(hr), Declaration: hr, AllowMissingSecrets: true}, manifest.ReconcileAttempt{}, &depwait.Resolution{})
-	blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
-	if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{values}) {
-		t.Fatalf("mixed gate = %v, want blocked values reference", err)
+	for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade} {
+		err := c.newExecution(hr.Named()).resolvePreRenderValuesFrom(t.Context(), hr, level)
+		failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+		if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) || failed.Reasons[chart.Named()] != "chart failed" {
+			t.Fatalf("required chart failure changed: %v", err)
+		}
 	}
-	err = c.Require(&depwait.Waiter{Parent: hr.Named(), Dependencies: preparePrereqs(hr), Declaration: hr, AllowMissingSecrets: true}, manifest.ReconcileAttempt{Drain: manifest.DrainCascade}, &depwait.Resolution{})
-	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-	if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{chart.Named()}) || failed.Reasons[chart.Named()] != "chart failed" {
-		t.Fatalf("drained gate = %v, want chart failure after values omission", err)
-	}
+
 	if len(hr.ValuesFrom) != 1 || hr.ValuesFrom[0].Name != values.Name {
 		t.Fatal("omission mutated stored valuesFrom")
 	}
@@ -633,11 +670,11 @@ data:
 			{Kind: manifest.KindConfigMap, Name: "present-values"},
 			{Kind: manifest.KindSecret, Name: "app-values"},
 		},
-		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}},
 	}
 	st.AddObject(hr)
 
-	info := runValuesFixture(t, c, hr)
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 		t.Fatalf("status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)", info)
 	}
@@ -674,11 +711,11 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 		Name: "demo", Namespace: "default",
 		Interval:   metav1Duration(time.Hour),
 		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "no-producer"}},
-		Chart:      manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Chart:      manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}},
 	}
 	st.AddObject(hr)
 
-	info := runValuesFixture(t, c, hr)
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status == store.StatusReady {
 		t.Fatalf("status = %+v, want failure (missing no-producer Secret must not be silently omitted)", info)
 	}
@@ -701,10 +738,7 @@ func TestController_HelmChartSourceResolvedViaResolver(t *testing.T) {
 	}
 	st.AddObject(src)
 
-	resolver := c.Helm.Resolver()
-	if resolver == nil {
-		t.Fatal("HelmClient has no resolver wired")
-	}
+	resolver := helm.NewSources(c.Store)
 	got := resolver.HelmChart(src.Named())
 	if got == nil {
 		t.Fatalf("resolver.HelmChart(%q, %q) returned nil; expected the just-added source", src.Namespace, src.Name)
@@ -725,7 +759,7 @@ func TestHelmReleaseFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	base := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Chart:    manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Name: "podinfo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository}},
+		Chart:    manifest.HelmChart{Name: "podinfo", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "flux-system", Name: "podinfo"}},
 		Values:   map[string]any{"replicas": 2},
 	}
 	stamped := base.Clone()
@@ -805,8 +839,10 @@ func renderedConfigMapValue(docs []map[string]any, key string) string {
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
-	assert.Equal(t, testing.AllocsPerRun(100, func() { c.collectDeps(hr) }), float64(1))
-	got := c.collectDeps(hr)
+	execution := c.newExecution(hr.Named())
+	defer execution.run.Close()
+	assert.Equal(t, testing.AllocsPerRun(100, func() { execution.collectDeps(hr) }), float64(1))
+	got := execution.collectDeps(hr)
 	assert.Diff(t, got, []manifest.DependencyRef{{NamedResource: testutil.HelmReleaseID("default", "other")}, {NamedResource: testutil.HelmReleaseID("default", "second")}, {NamedResource: testutil.HelmReleaseID("default", "third")}})
 	got[0].Name = "mutated"
 	assert.Equal(t, hr.DependsOn[0].Name, "other")
@@ -840,10 +876,10 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		Interval: metav1Duration(time.Hour),
-		Chart:    manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "charts", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
+		Chart:    manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "charts"}},
 	}
 	st.AddObject(hr)
-	if info := runValuesFixture(t, c, hr); info.Status != store.StatusReady {
+	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
 
@@ -869,7 +905,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	st.AddObject(stamped)
-	c.ReconcileNode(context.Background(), hr.Named(), manifest.ReconcileAttempt{Drain: 0})
+	c.ReconcileNode(context.Background(), hr.Named(), 0)
 
 	mu.Lock()
 	pending := sawPending
@@ -900,16 +936,20 @@ func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T)
 				slices.Reverse(parents)
 			}
 			for _, parent := range parents {
-				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true})
+				var unavailable []manifest.NamedResource
+				if parent == unreadable {
+					unavailable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}, {Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}
+				}
+				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: unavailable})
 			}
-			if !c.parentReadsUnreadableSecret(hr.Named()) {
+			if !c.newExecution(hr.Named()).parentReadsUnreadableSecret(hr.Named()) {
 				t.Fatal("later contributor's unreadable Secret was ignored")
 			}
 			c.substitutionSources = map[manifest.NamedResource]manifest.BaseManifest{
 				{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}:      &manifest.Secret{},
 				{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}: &manifest.Secret{},
 			}
-			if c.parentReadsUnreadableSecret(hr.Named()) {
+			if c.newExecution(hr.Named()).parentReadsUnreadableSecret(hr.Named()) {
 				t.Fatal("accepted substitutions were not excluded for each contributor")
 			}
 			assert.Equal(t, len(unreadable.PostBuild.SubstituteFrom), 3)
@@ -930,10 +970,10 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 			HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{
 				Spec: helmv2.HelmChartTemplateSpec{Chart: "app", SourceRef: helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: repo.Name}},
 			}},
-			Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace}},
+			Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: repo.Namespace, Name: repo.Name}},
 		}
 		for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainForce} {
-			if err := c.awaitChartSource(hr, level); err != nil {
+			if err := c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, level); err != nil {
 				t.Fatalf("repository required content: %v", err)
 			}
 		}
@@ -943,8 +983,8 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 				apiVersion = group + "/v1"
 			}
 			publishRawFixture(t, c, &manifest.RawObject{APIVersion: apiVersion, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace})
-			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: group, Kind: manifest.KindHelmRepository, Name: repo.Name, Namespace: repo.Namespace}}}
-			if err := c.awaitChartSource(foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+			foreign := &manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace, Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: group, Kind: manifest.KindHelmRepository, Namespace: repo.Namespace, Name: repo.Name}}}
+			if err := c.newExecution((foreign).Named()).awaitChartSource(t.Context(), foreign, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 				t.Fatalf("foreign repository bypassed content gate: %v", err)
 			}
 		}
@@ -956,35 +996,40 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}
 	st.UpdateStatus(id, store.StatusReady, "", "released")
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin"})
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
+	if blocked, ok := errors.AsType[*depwait.ErrBlocked](c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainNone)); !ok || len(blocked.Deps) != 1 || blocked.Deps[0] != id {
 		t.Fatalf("released source did not block on acquisition: %v", blocked)
 	}
-	if err := c.awaitChartSource(hr, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
+	if err := c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainForce); !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("released source at fixpoint: %v", err)
 	}
 	st.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "missing credentials")
-	assert.Equal(t, errors.Is(c.awaitChartSource(hr, manifest.DrainNone), manifest.ErrSourceSkipped), true)
+	assert.Equal(t, errors.Is(c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainNone), manifest.ErrSourceSkipped), true)
 	st.SetArtifact(id, &store.SourceArtifact{Key: "pin", FS: fstest.MapFS{}})
 	st.UpdateStatus(id, store.StatusReady, "", "reacquired")
-	assert.Equal(t, c.awaitChartSource(hr, manifest.DrainNone), nil)
+	assert.Equal(t, c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainNone), nil)
 	st.UpdateStatus(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, store.StatusPending, "", "fetching")
-	_, blocked := errors.AsType[*depwait.ErrBlocked](c.awaitChartSource(hr, manifest.DrainNone))
+	_, blocked := errors.AsType[*depwait.ErrBlocked](c.newExecution((hr).Named()).awaitChartSource(t.Context(), hr, manifest.DrainNone))
 	assert.Equal(t, blocked, true)
 	hr.ChartRef.Kind = manifest.KindHelmChart
 	hr.ValuesFrom = []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}, {Kind: manifest.KindSecret, Name: "required"}}
 	for _, version := range []string{"", "1.0.0"} {
 		hr.Chart.Version = version
-		var want []manifest.DependencyRef
+		want := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "required"}}
 		if version == "" {
-			want = append([]manifest.DependencyRef{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}, want...)
+			want = append([]manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}, want...)
 		}
-		assert.Diff(t, preparePrereqs(hr), want)
+		err := c.newExecution(hr.Named()).resolvePreRenderValuesFrom(t.Context(), hr, manifest.DrainNone)
+		blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+		if !ok {
+			t.Fatalf("pre-render gate=%v", err)
+		}
+		assert.Diff(t, blocked.Deps, want)
 	}
 }
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil, "test")
-	fp, _, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
+	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).FingerprintDedup(manifest.NamedResource{}, content)
 	return fp
 }
 

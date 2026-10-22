@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -49,7 +50,7 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					o.tasks.Go(ctx, "producer", func(ctx context.Context) {
 						select {
 						case <-release:
-							d.Dispatch(ctx, producer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+							d.Dispatch(ctx, producer, manifest.DrainNone)
 						case <-ctx.Done():
 						}
 					})
@@ -57,15 +58,14 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 						close(release)
 						o.tasks.BlockTillDone()
 					}
-					attempt := make(chan []manifest.NamedResource, 1)
+					attempt := make(chan *base.Execution, 1)
 					o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-						_, outWait := d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-						blocked := outWait
-						attempt <- blocked.Deps
+						result := d.Dispatch(ctx, consumer, manifest.DrainNone)
+						attempt <- result.Assessment.(*base.Execution)
 					})
-					var blocked []manifest.NamedResource
+					var execution *base.Execution
 					select {
-					case blocked = <-attempt:
+					case execution = <-attempt:
 					case <-ctx.Done():
 						t.Fatal(ctx.Err())
 					}
@@ -73,12 +73,11 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 						close(release)
 					}
 					o.tasks.BlockTillDone()
-					if slices.Contains(blocked, producer) == producerFirst {
-						t.Fatalf("consumer blockers = %v, producer first = %t", blocked, producerFirst)
+					defer execution.Close()
+					if slices.Contains(execution.Blocked, producer) == producerFirst {
+						t.Fatalf("consumer blockers = %v, producer first = %t", execution.Blocked, producerFirst)
 					}
-					o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-						d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-					})
+					o.tasks.Go(ctx, "consumer", func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) })
 					o.tasks.BlockTillDone()
 					output, _ := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "output"})
 					if output == nil || output.Data["version"] != "4.6.2" {
@@ -90,7 +89,7 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 	}
 }
 
-func TestRender_SubstitutionProducerFailures(t *testing.T) {
+func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
@@ -100,8 +99,19 @@ func TestRender_SubstitutionProducerFailures(t *testing.T) {
 			o := newSubstitutionOrchestrator(t, Config{Path: root})
 			res, err := o.Render(t.Context())
 			consumer, producer := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "producer")
-			if err == nil || !slices.Contains(res.Blocked[consumer], producer) || len(res.Manifests[consumer]) != 0 {
-				t.Fatalf("failed producer did not block consumer: error=%v blocked=%v manifests=%v", err, res.Blocked, res.Manifests[consumer])
+			if err == nil || res.Failed[producer].Status != store.StatusFailed {
+				t.Fatalf("materializer failure missing: error=%v failures=%v", err, res.Failed)
+			}
+			if kind == manifest.KindConfigMap {
+				target := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: "settings"}
+				if res.Failed[consumer].Status != store.StatusFailed || !slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) || len(res.Manifests[consumer]) != 0 {
+					t.Fatalf("unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v", res.Failed, res.Blocked, res.Manifests[consumer])
+				}
+			} else {
+				if len(res.Manifests[consumer]) != 1 || len(res.Blocked[consumer]) != 0 {
+					t.Fatalf("declared Secret absence blocked rendering: %+v", res)
+				}
+				assert.Diff(t, res.Manifests[consumer][0]["data"], map[string]any{"version": "${VERSION:=empty}"})
 			}
 		})
 	}
@@ -150,9 +160,7 @@ spec:
 					o.configureControllers()
 					d := dagDispatcher{o}
 					parent := testutil.KustomizationID("apps", "parent")
-					o.tasks.Go(t.Context(), "parent", func(ctx context.Context) {
-						d.Dispatch(ctx, parent, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-					})
+					o.tasks.Go(t.Context(), "parent", func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone) })
 					o.tasks.BlockTillDone()
 					owners := []manifest.NamedResource{
 						{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "a"},
@@ -164,13 +172,13 @@ spec:
 					}
 					release, done := make(chan struct{}), make(chan struct{})
 					o.tasks.Go(t.Context(), "first", func(ctx context.Context) {
-						d.Dispatch(ctx, order[0], manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+						d.Dispatch(ctx, order[0], manifest.DrainNone)
 						close(release)
 					})
 					o.tasks.Go(t.Context(), "second", func(ctx context.Context) {
 						select {
 						case <-release:
-							d.Dispatch(ctx, order[1], manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+							d.Dispatch(ctx, order[1], manifest.DrainNone)
 						case <-ctx.Done():
 						}
 						close(done)
@@ -178,9 +186,7 @@ spec:
 					<-done
 					o.tasks.BlockTillDone()
 					consumer := testutil.KustomizationID("apps", "consumer")
-					o.tasks.Go(t.Context(), "consumer", func(ctx context.Context) {
-						d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-					})
+					o.tasks.Go(t.Context(), "consumer", func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) })
 					o.tasks.BlockTillDone()
 					if failures := o.store.FailedResources(); len(failures) != 0 {
 						t.Fatalf("render failed: %v", failures)

@@ -3,7 +3,6 @@ package manifest
 import (
 	"cmp"
 	"iter"
-	"sync/atomic"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
@@ -178,40 +177,6 @@ const (
 	// DrainForce also fails present dependencies that remain pending.
 	DrainForce
 )
-
-// Opportunity borrows a scheduler-owned supplier word and its observed epoch.
-// Only the scheduler may write Word; low bit one means admitted work remains.
-type Opportunity struct {
-	NamedResource
-	Word          *atomic.Uint64
-	Observed, Cut uint64
-}
-
-// ContentWait carries immutable content targets, supplier observations and declaration.
-// The scheduler owns any copy it binds; dispatchers must not mutate borrowed payloads.
-type ContentWait struct {
-	Targets     []NamedResource
-	Suppliers   []Opportunity
-	Declaration BaseManifest
-}
-
-// ReconcileAttempt carries invocation admission and borrowed content bindings.
-type ReconcileAttempt struct {
-	Drain   DrainLevel
-	Content *ContentWait
-}
-
-// ReconcileWait separates required causes from content wake and binding identities.
-type ReconcileWait struct {
-	Deps    []NamedResource
-	Content *ContentWait
-}
-
-// Empty reports whether no ordinary or content work remains.
-func (w ReconcileWait) Empty() bool {
-	return len(w.Deps) == 0 && (w.Content == nil ||
-		len(w.Content.Targets) == 0 && len(w.Content.Suppliers) == 0 && w.Content.Declaration == nil)
-}
 
 // RawObject is the fallback for any Kubernetes document that doesn't
 // match a more specific type.

@@ -9,18 +9,10 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
-// TestE2E_StaleValuesWarning exercises #744 end-to-end: a HelmRelease pins a
-// value (`oldUnusedKey`) that no chart template references. The render still
-// succeeds (advisory only). The advisory surfaces in `flate test` — the
-// diagnostic command — attributed to that HR, while `flate build` renders the
-// same output but stays quiet: warnings and notes never appear in a build, only
-// in test. (The advisory's content — opaque sibling silent, referenced values
-// never flagged — is unit-covered by orchestrator.TestRender_StaleValuesWarning.)
 func TestE2E_StaleValuesWarning(t *testing.T) {
 	path := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "stalevalues"), path)
 
-	// build renders the same output but emits no advisory, on stdout or stderr.
 	bOut, bErr, code := harness.RunCLIBuffers("build", "hr", "--path", path)
 	if code != 0 {
 		t.Fatalf("stale-value detection is advisory and must not fail the render; exit=%d\nstderr:\n%s", code, bErr)
@@ -28,18 +20,25 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 	if !strings.Contains(bOut, "app-cm") || !strings.Contains(bOut, "opaque-cm") {
 		t.Errorf("rendered HR output missing:\n%s", bOut)
 	}
-	// The advisory footer lived on stderr; it must be gone. (The rendered
-	// opaque-cm legitimately contains "oldUnusedKey" in its dumped values, so
-	// only stderr — never stdout — is asserted clean.)
-	if strings.Contains(bErr, "warnings") || strings.Contains(bErr, "oldUnusedKey") {
-		t.Errorf("build stderr must not surface the stale-value advisory:\n%s", bErr)
+	for _, want := range []string{"warnings", "apps/app", "oldUnusedKey"} {
+		if !strings.Contains(bErr, want) {
+			t.Errorf("build stderr missing %q:\n%s", want, bErr)
+		}
+	}
+	if strings.Contains(bOut, "⚠ warnings") || strings.Count(bErr, "values not used by the chart") != 1 {
+		t.Errorf("build warning destination/count: stdout=%s stderr=%s", bOut, bErr)
 	}
 
-	// test surfaces the advisory, attributed to the HR whose chart names its values.
-	tOut, tErr, _ := harness.RunCLIBuffers("test", "hr", "--path", path)
+	tOut, tErr, code := harness.RunCLIBuffers("test", "hr", "--path", path)
+	if code != 0 {
+		t.Fatalf("stale-value detection must remain advisory; exit=%d stdout=%s stderr=%s", code, tOut, tErr)
+	}
 	for _, want := range []string{"warnings", "apps/app", "oldUnusedKey"} {
 		if !strings.Contains(tOut, want) {
 			t.Errorf("test stdout missing %q:\n%s\nstderr:\n%s", want, tOut, tErr)
 		}
+	}
+	if strings.Contains(tErr, "values not used by the chart") || strings.Count(tOut, "values not used by the chart") != 1 {
+		t.Errorf("test warning destination/count: stdout=%s stderr=%s", tOut, tErr)
 	}
 }

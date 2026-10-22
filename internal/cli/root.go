@@ -81,6 +81,24 @@ func New(version string) *cobra.Command {
 		newTestCmd(),
 		newCacheCmd(),
 	)
+	var wrapProfiles func(*cobra.Command)
+	wrapProfiles = func(cmd *cobra.Command) {
+		if cmd.RunE != nil && cmd.Flags().Lookup("path") != nil {
+			run := cmd.RunE
+			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+				stopProfile, err := startProfile()
+				if err != nil {
+					return err
+				}
+				defer stopProfile()
+				return run(cmd, args)
+			}
+		}
+		for _, child := range cmd.Commands() {
+			wrapProfiles(child)
+		}
+	}
+	wrapProfiles(root)
 	annotateEnvUsage(root)
 	return root
 }
@@ -111,12 +129,7 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	err := root.ExecuteContext(ctx)
-	// Deferred log notes and render advisories belong to `flate test`;
-	// diff also reports omitted required values on stderr. There is no
-	// end-of-run log flush: only `test` drains the buffered notes.
 	if err != nil {
-		// reportFailures already rendered a styled report for this error; don't
-		// reprint it as a flat "flate error: …" line.
 		if _, ok := errors.AsType[reportedError](err); !ok {
 			_, _ = io.WriteString(stderr, "flate error: "+err.Error()+"\n")
 		}

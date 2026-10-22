@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -37,6 +38,19 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 
 func TestEncoder_Images_Bytes(t *testing.T) {
 	t.Parallel()
+	wantErr := errors.New("name write failed")
+	if err := (Encoder{Writer: errorWriter{wantErr}, Format: FormatName}).Images([]string{"image:v1"}); !errors.Is(err, wantErr) {
+		t.Fatalf("image writer error: %v", err)
+	}
+	var empty bytes.Buffer
+	if err := (Encoder{Writer: &empty}).Images(nil); err != nil || empty.Len() != 0 {
+		t.Fatalf("empty images: %q %v", &empty, err)
+	}
+	var single bytes.Buffer
+	if err := (Encoder{Writer: &single}).Images([]string{"ghcr.io/demo/app:v1"}); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, single.String(), "ghcr.io/demo/app:v1\n")
 	images := []string{"雪:v2", "alpha:v1"}
 	for _, tc := range []struct {
 		format Format
@@ -80,6 +94,19 @@ func TestEncoder_Cluster_Bytes(t *testing.T) {
 
 func TestEncoder_Resources_Bytes(t *testing.T) {
 	t.Parallel()
+	wantErr := errors.New("name write failed")
+	if err := (Encoder{Writer: errorWriter{wantErr}, Format: FormatName}).Resources(nil, []map[string]string{{"name": "demo"}}, nil); !errors.Is(err, wantErr) {
+		t.Fatalf("resource writer error: %v", err)
+	}
+	var empty bytes.Buffer
+	if err := (Encoder{Writer: &empty, Format: FormatName}).Resources(nil, nil, nil); err != nil || empty.Len() != 0 {
+		t.Fatalf("empty resources: %q %v", &empty, err)
+	}
+	var single bytes.Buffer
+	if err := (Encoder{Writer: &single, Format: FormatName}).Resources(nil, []map[string]string{{"name": "demo"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, single.String(), "demo\n")
 	cols := []Column{{Header: "NAME", Key: "name"}, {Header: "PATH", Key: "path"}}
 	rows := []map[string]string{
 		{"name": "éclair", "path": "./é"},

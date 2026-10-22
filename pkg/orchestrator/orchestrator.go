@@ -278,26 +278,6 @@ type Result struct {
 	// (submodule skips, cache resets) which stay on stderr. A consumer like
 	// konflate surfaces these alongside the diff.
 	Warnings []manifest.Warning
-	// Objects contains selected roots after metadata filtering, grouped by requested kind.
-	Objects []manifest.BaseManifest
-	// Counts records matched roots per requested kind before label filtering.
-	// It is nonnil only on completed snapshots returned by Select.
-	Counts map[string]int
-	// Statuses contains roster statuses and eligible diagnostic failures. Blocked
-	// messages are prepared for test reports without changing dependency identity.
-	Statuses map[manifest.NamedResource]store.StatusInfo
-	// ChartVersions contains versions resolved from selected HR chartRef sources.
-	ChartVersions map[manifest.NamedResource]string
-	// Causes maps prepared failure roots to sorted distinct blocked victims.
-	// Missing roots have no Failed entry; closed cycle roots carry prepared Failed messages.
-	Causes map[manifest.NamedResource][]manifest.NamedResource
-	// Unavailable contains canonical failure, soft-skip or suspension evidence for
-	// paired producer output, independently of fatal namespace scope.
-	Unavailable map[manifest.NamedResource]store.StatusInfo
-	// Unrelated contains prepared advisories for failures outside named fatal scope.
-	Unrelated []manifest.Warning
-	// External contains paired external-source skip disclosures, honoring explicit namespace scope.
-	External []manifest.Warning
 }
 
 // New constructs an Orchestrator with one cache owner and both renderers.

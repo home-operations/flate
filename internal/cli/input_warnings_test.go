@@ -61,14 +61,28 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 			if code != 0 || stdout != "" {
 				t.Fatalf("comparison changed output or failed: code=%d stdout=%q stderr=%s", code, stdout, stderr)
 			}
-			for _, snapshot := range []string{"orig", "current"} {
-				want := "flate warning: " + snapshot + " snapshot: Kustomization.kustomize.toolkit.fluxcd.io/apps/affected: changed-only input coverage is incomplete"
-				if strings.Contains(stderr, want) != (namespace == "") {
-					t.Fatalf("warning scope differs: want %q visible=%v; stderr=%s", want, namespace == "", stderr)
+			message := "changed-only input coverage is incomplete"
+			if namespace != "" {
+				if strings.Contains(stderr, message) || strings.Contains(stderr, "apps/affected") {
+					t.Fatalf("out-of-scope warning: %s", stderr)
 				}
+				return
 			}
-			if namespace == "" && (!strings.Contains(stderr, "configuration transformations may rewrite plugin file operands") || !strings.Contains(stderr, "flate build all without --base or --path-orig")) {
-				t.Fatalf("missing actionable warning details: %s", stderr)
+			origStart := strings.Index(stderr, "orig snapshot:")
+			currentStart := strings.Index(stderr, "current snapshot:")
+			if origStart < 0 || currentStart <= origStart || strings.Count(stderr, "orig snapshot:") != 1 || strings.Count(stderr, "current snapshot:") != 1 {
+				t.Fatalf("expected distinct orig then current warning sections: %s", stderr)
+			}
+			for _, side := range []struct {
+				name, block string
+			}{{"orig", stderr[origStart:currentStart]}, {"current", stderr[currentStart:]}} {
+				want := "Kustomization.kustomize.toolkit.fluxcd.io apps/affected: " + message
+				if strings.Count(side.block, message) != 1 || !strings.Contains(side.block, want) {
+					t.Fatalf("expected one attributed %s warning: %s", side.name, side.block)
+				}
+				if !strings.Contains(side.block, "configuration transformations may rewrite plugin file operands") || !strings.Contains(side.block, "flate build all without --base or --path-orig") {
+					t.Fatalf("missing actionable %s warning details: %s", side.name, side.block)
+				}
 			}
 		})
 	}

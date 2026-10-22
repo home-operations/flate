@@ -176,8 +176,8 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 					t.Fatalf("missing child spec %q: %s", part, child)
 				}
 			}
-			if strings.Contains(child+childErr, "absent from offline inputs") {
-				t.Fatal("get must suppress advisories")
+			if strings.Contains(child, "absent from offline inputs") || strings.Count(childErr, "absent from offline inputs; accepted for") != wantWarning {
+				t.Fatalf("get warning destination/count: stdout=%s stderr=%s", child, childErr)
 			}
 			for _, skip := range []bool{true, false} {
 				skipKinds := "Secret"
@@ -185,8 +185,8 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 					skipKinds += ",CustomResourceDefinition"
 				}
 				built, builtErr := harness.RequireCLIOK(t, append(append([]string{"build", "all"}, args...), "--skip-kinds="+skipKinds)...)
-				if strings.Contains(built+builtErr, "absent from offline inputs") {
-					t.Fatal("build must suppress advisories")
+				if strings.Contains(built, "absent from offline inputs") || strings.Count(builtErr, "absent from offline inputs; accepted for") != wantWarning {
+					t.Fatalf("build warning destination/count: stdout=%s stderr=%s", built, builtErr)
 				}
 				if tc.kind == manifest.KindCustomResourceDefinition && tc.supplied != "" {
 					docs, err := manifest.DecodeDocs(strings.NewReader(built))
@@ -279,8 +279,8 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 			if code != 0 || !strings.Contains(out+errOut, "10m") || !strings.Contains(out+errOut, "5m") {
 				t.Fatalf("opt-in diff exit=%d stdout=%s stderr=%s", code, out, errOut)
 			}
-			if strings.Contains(out+errOut, "absent from offline inputs; accepted for") {
-				t.Fatal("diff must suppress advisories")
+			if strings.Contains(out, "absent from offline inputs; accepted for") || strings.Count(errOut, "absent from offline inputs; accepted for") != 2 || strings.Count(errOut, "orig snapshot:") != 1 || strings.Count(errOut, "current snapshot:") != 1 {
+				t.Fatalf("diff warning destination/count/sides: stdout=%s stderr=%s", out, errOut)
 			}
 		})
 	}

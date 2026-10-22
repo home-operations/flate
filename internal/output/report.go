@@ -42,7 +42,7 @@ type Note struct {
 type Model struct {
 	Primary []Primary
 	Missing []Missing
-	// Warnings are selected unrelated-failure advisories (Result.Unrelated).
+	// Warnings are the prepared selected diagnostics.
 	Warnings []manifest.Warning
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
 	// verdict's "N blocked" figure — distinct resources, not the sum of the

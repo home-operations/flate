@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
+	"slices"
 	"unicode/utf8"
 
 	"sigs.k8s.io/yaml"
@@ -52,12 +54,7 @@ func (e Encoder) Images(images []string) error {
 	case FormatYAML:
 		return e.YAML(images)
 	}
-	for _, image := range images {
-		if _, err := fmt.Fprintln(e.Writer, image); err != nil {
-			return err
-		}
-	}
-	return nil
+	return e.lines(slices.Values(images))
 }
 
 // Cluster writes a single cluster summary.
@@ -76,7 +73,13 @@ func (e Encoder) Resources(cols []Column, rows []map[string]string, docs []map[s
 	case FormatJSON:
 		return e.JSON(docs)
 	case FormatName:
-		return name(e.Writer, rows, "name")
+		return e.lines(func(yield func(string) bool) {
+			for _, row := range rows {
+				if !yield(row["name"]) {
+					return
+				}
+			}
+		})
 	}
 	return table(e.Writer, cols, rows)
 }
@@ -182,14 +185,11 @@ func (e Encoder) JSON(value any) error {
 	return err
 }
 
-// name emits one resource name per line.
-func name(w io.Writer, items []map[string]string, key string) error {
-	var b bytes.Buffer
-	b.Grow(len(items) * 32) // rough estimate: 32 bytes per name
-	for _, it := range items {
-		b.WriteString(it[key])
-		b.WriteByte('\n')
+func (e Encoder) lines(values iter.Seq[string]) error {
+	for value := range values {
+		if _, err := fmt.Fprintln(e.Writer, value); err != nil {
+			return err
+		}
 	}
-	_, err := w.Write(b.Bytes())
-	return err
+	return nil
 }

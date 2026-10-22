@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -13,7 +14,7 @@ import (
 
 type selectionSide struct {
 	run        Rendered
-	result     *Result
+	result     *selection.Selection
 	namespaces map[string]struct{}
 	roots      []manifest.NamedResource
 }
@@ -24,7 +25,7 @@ type selectionSide struct {
 // Borrowed objects, graphs and document batches MUST remain immutable in use.
 // The second return retains selected failures and non-resource errors; the
 // third contains only non-resource errors for diagnostics outside failure rows.
-func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, labels map[string]string) ([]*Result, error, error) {
+func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, labels map[string]string) ([]*selection.Selection, error, error) {
 	if len(runs) < 1 || len(runs) > 2 {
 		err := errors.Join(fmt.Errorf("%w: selection requires one or two runs", manifest.ErrInput), runErr)
 		return nil, err, nonResourceErrors(err)
@@ -47,7 +48,7 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 		return nil, err, nonResourceErrors(err)
 	}
 	sides := make([]selectionSide, len(runs))
-	selected := make([]*Result, len(runs))
+	selected := make([]*selection.Selection, len(runs))
 	for i, run := range runs {
 		sides[i].run = run
 		sides[i].collect(roots, labels, len(runs) == 2)
@@ -91,7 +92,7 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 	} else if s.run.filter.Enabled() {
 		s.namespaces = s.run.filter.KeepNamespaces()
 	}
-	s.result = &Result{Counts: make(map[string]int, len(roots))}
+	s.result = &selection.Selection{Counts: make(map[string]int, len(roots))}
 	for _, root := range roots {
 		for _, obj := range s.run.store.ListObjects(root.Group, root.Kind) {
 			id := obj.Named()

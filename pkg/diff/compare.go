@@ -4,7 +4,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/image"
+	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -31,8 +31,8 @@ func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, e
 // withheld before extraction and disclosed as document counts.
 func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved bool) ([]string, []Suppression, error) {
 	left, right, suppressed := suppress(orig, current)
-	origImages := selectedImages(left, orig.Manifests)
-	currentImages := selectedImages(right, current.Manifests)
+	origImages := imageutil.Collect(left, orig.Manifests)
+	currentImages := imageutil.Collect(right, current.Manifests)
 	out := make([]string, 0, len(currentImages))
 	for img := range currentImages {
 		if _, ok := origImages[img]; !ok {
@@ -48,16 +48,4 @@ func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved boo
 	}
 	slices.Sort(out)
 	return out, suppressed, selectedErr
-}
-
-func selectedImages(objects []manifest.BaseManifest, manifests map[manifest.NamedResource][]map[string]any) map[string]struct{} {
-	set := map[string]struct{}{}
-	for _, obj := range objects {
-		for _, doc := range manifests[obj.Named()] {
-			for _, img := range image.Extract(doc) {
-				set[img] = struct{}{}
-			}
-		}
-	}
-	return set
 }

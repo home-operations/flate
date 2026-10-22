@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
@@ -106,7 +107,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds",
 		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "kinds to exclude from rendered output (empty includes all kinds)")
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
-	fs.StringVar(&f.cacheDir, "cache-dir", "",
+	bindCacheDir(fs, &f.cacheDir,
 		"opt-in on-disk cache root for source artifacts, helm charts, and render output (default: memory)")
 	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
 		"max parallel reconcile bodies (0 = unbounded)")
@@ -263,27 +264,28 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 	}
 }
 
-func runOrchestrator(ctx context.Context, c commonFlags) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+func runOrchestrator(ctx context.Context, c commonFlags) orchestrator.Rendered {
 	if c.path == "" {
-		return nil, nil, errors.New("path is required")
+		return orchestrator.Rendered{Err: errors.New("path is required")}
 	}
 	if err := validatePathFlag("--path", c.path); err != nil {
-		return nil, nil, err
+		return orchestrator.Rendered{Err: err}
 	}
 	if c.pathOrig != "" {
 		if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
-			return nil, nil, err
+			return orchestrator.Rendered{Err: err}
 		}
 	}
 	if err := c.loadSubstitutions(ctx); err != nil {
-		return nil, nil, err
+		return orchestrator.Rendered{Err: err}
 	}
 	cleanup, err := resolveBaseline(ctx, &c, false)
 	if err != nil {
-		return nil, nil, err
+		return orchestrator.Rendered{Err: err}
 	}
-	o, res, runErr := runOrchestratorCfg(ctx, buildOrchCfg(c))
-	return o, res, errors.Join(runErr, cleanup())
+	run := runOrchestratorCfg(ctx, buildOrchCfg(c))
+	run.Err = errors.Join(run.Err, cleanup())
+	return run
 }
 
 // validatePathFlag rejects a flag value that doesn't point at a real
@@ -305,30 +307,20 @@ func validatePathFlag(flag, p string) error {
 	return nil
 }
 
-// runOrchestratorCfg routes the CLI through the embed-friendly
-// Orchestrator.Render entry point. Returns the populated orchestrator
-// (for Store lookups the CLI legitimately needs — object listings,
-// status queries, filter scope) AND the structured render Result.
-// Both stay non-nil when Bootstrap succeeded, even if Run had per-
-// resource failures: the partial output is still usable. A nil
-// orchestrator indicates a fatal init/bootstrap error and callers
-// should bail.
-func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) (*orchestrator.Orchestrator, *orchestrator.Result, error) {
+func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) orchestrator.Rendered {
 	o, err := orchestrator.New(ctx, cfg)
 	if err != nil {
-		return nil, nil, err
+		return orchestrator.Rendered{Err: err}
 	}
 	if barSink != nil {
 		defer barSink.progress(ctx, o.Store())()
 	}
 	res, err := o.Render(ctx)
-	// A Bootstrap failure has no Result. Callers must receive a nil
-	// orchestrator so they surface the error instead of reading a
-	// partially populated Store.
+	// Bootstrap failures MUST NOT expose a partially populated Store.
 	if res == nil {
-		return nil, nil, err
+		return orchestrator.Rendered{Err: err}
 	}
-	return o, res, err
+	return orchestrator.Rendered{Orchestrator: o, Result: res, Err: err}
 }
 
 // logBuffer is the process-wide deferred-log sink installed by setLogLevel; the
@@ -345,19 +337,13 @@ func drainLogNotes() []output.Note {
 	return logBuffer.drain()
 }
 
-// reportedError marks an error whose human-facing report has already been
-// rendered to stderr, so run's top-level printer skips the plain reprint.
+// reportedError retains a fatal cause already presented to the user.
 type reportedError struct{ err error }
 
 func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
-type reportErrors struct {
-	selected  error
-	remainder error
-}
-
-func failureModel(result *orchestrator.Result) output.Model {
+func failureModel(result *selection.Selection) output.Model {
 	var primary []output.Primary
 	var missing []output.Missing
 	blocked := result.BlockedCount()
@@ -371,23 +357,167 @@ func failureModel(result *orchestrator.Result) output.Model {
 
 	slices.SortFunc(primary, func(a, b output.Primary) int { return a.ID.Compare(b.ID) })
 	slices.SortFunc(missing, func(a, b output.Missing) int { return a.ID.Compare(b.ID) })
-	return output.Model{Primary: primary, Missing: missing, Warnings: result.Unrelated, Blocked: blocked}
+	return output.Model{Primary: primary, Missing: missing, Blocked: blocked}
 }
 
-// reportFailures preserves the command's named error-write policy.
-func reportFailures(w io.Writer, m output.Model, named bool, errs reportErrors) error {
-	if m.Empty() {
-		return errs.selected
+type presentation int
+
+const (
+	presentBuild presentation = iota
+	presentData
+	presentTest
+	presentDiff
+)
+
+var renderKinds = func() []string {
+	var kinds []string
+	for info := range manifest.Kinds() {
+		if info.Render {
+			kinds = append(kinds, info.Kind)
+		}
 	}
-	encoder := output.Encoder{Writer: w, Color: output.ColorEnabled(w)}
-	if writeErr := encoder.Report(m); writeErr != nil && named {
-		return errors.Join(writeErr, errs.selected)
+	return kinds
+}()
+
+type selectedRequest struct {
+	flags          commonFlags
+	roots          []manifest.NamedResource
+	labels         map[string]string
+	pair           bool
+	stdout, stderr io.Writer
+	presentation   presentation
+}
+
+type selectedInvocation struct {
+	sides          []*selection.Selection
+	err, remainder error
+	elapsed        time.Duration
+}
+
+type selectedPayload struct {
+	err      error
+	warnings []manifest.Warning
+	roster   *output.TestReport
+}
+
+func runSelected(ctx context.Context, req selectedRequest, payload func(*selectedInvocation) selectedPayload) error {
+	start := time.Now()
+	var runs []orchestrator.Rendered
+	var runErr error
+	if req.pair {
+		orig, current, err := runDiffOrchestrators(ctx, &req.flags)
+		runs, runErr = []orchestrator.Rendered{orig, current}, err
+	} else {
+		run := runOrchestrator(ctx, req.flags)
+		runs, runErr = []orchestrator.Rendered{run}, run.Err
 	}
-	if writeErr := encoder.Errors(errs.remainder); writeErr != nil {
-		return errors.Join(writeErr, errs.selected)
+	inv := selectedInvocation{elapsed: time.Since(start)}
+	inv.sides, inv.err, inv.remainder = orchestrator.Select(runs, runErr, req.roots, req.labels)
+	if len(inv.sides) == 0 {
+		return inv.err
 	}
-	if errs.selected == nil {
+	var result selectedPayload
+	root := req.roots[0]
+	count := 0
+	for _, side := range inv.sides {
+		count += side.Counts[root.Kind]
+	}
+	if root.Name != "" && count == 0 {
+		path := "--path"
+		if req.pair {
+			path = "--path or --path-orig"
+		}
+		missing := noNamedError(root.Kind, root.Name, path)
+		inv.err = errors.Join(missing, inv.err)
+		inv.remainder = errors.Join(missing, inv.remainder)
+	} else {
+		result = payload(&inv)
+	}
+	return finishSelected(req, &inv, result)
+}
+
+func finishSelected(req selectedRequest, inv *selectedInvocation, payload selectedPayload) error {
+	final := errors.Join(payload.err, inv.err)
+	named := req.roots[0].Name != ""
+	encoder := output.Encoder{Writer: req.stderr, Color: output.ColorEnabled(req.stderr)}
+	if req.presentation == presentTest {
+		if payload.roster == nil {
+			return final
+		}
+		out := output.Encoder{Writer: req.stdout, Color: output.ColorEnabled(req.stdout)}
+		if err := out.Test(*payload.roster, selectedWarnings(inv.sides[0]), drainLogNotes(), inv.elapsed); err != nil {
+			return errors.Join(err, final)
+		}
+		if payload.roster.AnyFailed() && (!named || inv.err == nil) {
+			final = errors.Join(errors.New("test failures detected"), final)
+		}
+	}
+	reported := req.presentation == presentTest
+	failures := req.presentation == presentBuild || req.presentation == presentTest && named && inv.err != nil
+	for i, side := range inv.sides {
+		var model output.Model
+		if failures {
+			model = failureModel(side)
+		}
+		if req.presentation != presentTest {
+			model.Warnings = selectedWarnings(side)
+		}
+		if model.Empty() {
+			continue
+		}
+		if req.pair {
+			if _, err := io.WriteString(req.stderr, []string{"orig", "current"}[i]+" snapshot:"); err != nil {
+				return errors.Join(err, final)
+			}
+		}
+		if err := encoder.Report(model); err != nil && (named || req.presentation != presentBuild) {
+			return errors.Join(err, final)
+		}
+		reported = reported || failures
+	}
+	if len(payload.warnings) > 0 {
+		if err := encoder.Report(output.Model{Warnings: payload.warnings}); err != nil {
+			return errors.Join(err, final)
+		}
+	}
+	diagnostic := errors.Join(payload.err, inv.remainder)
+	if req.presentation == presentDiff {
+		reported, diagnostic = final != nil, final
+	}
+	if reported {
+		if err := encoder.Errors(diagnostic); err != nil && (req.presentation != presentDiff || named) {
+			return errors.Join(err, final)
+		}
+		if final != nil {
+			return reportedError{final}
+		}
+	}
+	return final
+}
+
+func selectedWarnings(side *selection.Selection) []manifest.Warning {
+	total := len(side.Warnings) + len(side.Unrelated) + len(side.External)
+	if total == 0 {
 		return nil
 	}
-	return reportedError{errs.selected}
+	type identity struct {
+		resource          manifest.NamedResource
+		category, message string
+		count             int
+	}
+	seen := make(map[identity][]int, total)
+	warnings := make([]manifest.Warning, 0, total)
+	for _, group := range [][]manifest.Warning{side.Warnings, side.Unrelated, side.External} {
+		for _, warning := range group {
+			key := identity{warning.Resource, warning.Category, warning.Message, warning.Count}
+			if slices.ContainsFunc(seen[key], func(i int) bool {
+				return slices.Equal(warnings[i].Detail, warning.Detail)
+			}) {
+				continue
+			}
+			seen[key] = append(seen[key], len(warnings))
+			warnings = append(warnings, warning)
+		}
+	}
+	return warnings
 }

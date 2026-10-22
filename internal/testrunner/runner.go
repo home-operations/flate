@@ -5,13 +5,13 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 // Run classifies the objects and reporting statuses prepared by orchestrator.Select.
-func Run(result *orchestrator.Result) output.TestReport {
+func Run(result *selection.Selection) output.TestReport {
 	var rep output.TestReport
 	add := func(id manifest.NamedResource, info store.StatusInfo) {
 		c := classify(id, info)

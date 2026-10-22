@@ -99,7 +99,11 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
-	for side := range strings.SplitSeq(stderr, "current snapshot:") {
+	_, failures, ok := strings.Cut(stderr, "flate error: ")
+	if !ok {
+		t.Fatalf("fatal report missing:\n%s", stderr)
+	}
+	for side := range strings.SplitSeq(failures, "current snapshot:") {
 		if !strings.Contains(side, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps") || !strings.Contains(side, "missing.yaml") {
 			t.Errorf("snapshot failure missing resource detail:\n%s", stderr)
 		}

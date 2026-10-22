@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 
 func TestStartProfile_EnvironmentCleanupOnError(t *testing.T) {
 	for _, mode := range []string{"cpu", "mem", "block", "mutex", "trace"} {
-		for _, verb := range []string{"build", "test", "diff"} {
+		for _, verb := range []string{"build", "test", "diff", "get"} {
 			t.Run(mode+"/"+verb, func(t *testing.T) {
 				dir := t.TempDir()
 				t.Setenv("FLATE_PROFILE", mode)
@@ -40,6 +41,48 @@ func TestStartProfile_EnvironmentCleanupOnError(t *testing.T) {
 			})
 		}
 	}
+	t.Run("embedded get", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("FLATE_PROFILE", "cpu")
+		t.Setenv("FLATE_PROFILE_OUT", dir)
+		path := writeFixture(t)
+		for _, tc := range []struct {
+			resource string
+			fail     bool
+		}{{"images", false}, {"ks", true}, {"ks", false}} {
+			input := path
+			if tc.fail {
+				input = filepath.Join(dir, "missing")
+			}
+			cmd := New("test")
+			cmd.SetArgs([]string{"get", tc.resource, "--path", input, "--concurrency", "2"})
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			err := cmd.ExecuteContext(t.Context())
+			if (err != nil) != tc.fail {
+				t.Fatalf("get %s: %v", tc.resource, err)
+			}
+			info, statErr := os.Stat(filepath.Join(dir, "cpu.pprof"))
+			if statErr != nil || info.Size() == 0 {
+				t.Fatalf("profile not finalized: %v", statErr)
+			}
+		}
+	})
+	t.Run("ineligible handlers", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("FLATE_PROFILE", "cpu")
+		t.Setenv("FLATE_PROFILE_OUT", dir)
+		for _, args := range [][]string{{"--help"}, {"get", "--help"}, {"--version"}, {"cache"}, {"completion", "fish"}} {
+			_, stderr, code := runCLI(t, args...)
+			if code != 0 {
+				t.Fatalf("%v: %s", args, stderr)
+			}
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("ineligible profile: %v %v", entries, err)
+		}
+	})
 	t.Run("invalid", func(t *testing.T) {
 		t.Setenv("FLATE_PROFILE", "heap")
 		t.Setenv("FLATE_PROFILE_OUT", t.TempDir())

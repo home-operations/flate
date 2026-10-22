@@ -18,11 +18,13 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -476,7 +478,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 }
 
 func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
-	for _, name := range []string{"success", "render-warning", "fatal-bootstrap"} {
+	for _, name := range []string{"success", "render-warning", "partial-render", "fatal-bootstrap", "fatal-construction"} {
 		t.Run(name, func(t *testing.T) {
 			oldBar, oldLogger, original := barSink, slog.Default(), os.Stderr
 			var o *orchestrator.Orchestrator
@@ -504,8 +506,15 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 			barSink = &barWriter{out: &out}
 			slog.SetDefault(slog.New(slog.NewTextHandler(barSink, &slog.HandlerOptions{Level: slog.LevelDebug})))
 			path := filepath.Join(t.TempDir(), "absent")
-			if name != "fatal-bootstrap" {
+			switch name {
+			case "fatal-construction":
+				path = ""
+			case "fatal-bootstrap":
+			default:
 				path = writeFixture(t)
+			}
+			if name == "partial-render" {
+				testutil.WriteFile(t, path, "apps/kustomization.yaml", "resources: [missing.yaml]\n")
 			}
 			expected := original
 			if name == "render-warning" {
@@ -518,14 +527,23 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 				os.Stderr = raw
 				expected = raw
 			}
-			o, result, err := runOrchestratorCfg(t.Context(), orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true})
-			if name != "fatal-bootstrap" {
+			run := runOrchestratorCfg(t.Context(), orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true})
+			o = run.Orchestrator
+			result, err := run.Result, run.Err
+			switch name {
+			case "fatal-construction", "fatal-bootstrap":
+				if err == nil || o != nil || result != nil {
+					t.Fatalf("fatal run returned orchestrator=%v result=%v err=%v", o, result, err)
+				}
+			case "partial-render":
+				if err == nil || o == nil || result == nil || len(result.Failed) == 0 {
+					t.Fatalf("partial run lost state: %+v", run)
+				}
+			default:
 				assert.NoError(t, err)
 				if o == nil || result == nil {
 					t.Fatal("successful render returned nil")
 				}
-			} else if err == nil || o != nil || result != nil {
-				t.Fatalf("fatal bootstrap returned orchestrator=%v result=%v err=%v", o, result, err)
 			}
 			if name == "render-warning" {
 				const warning = "# Warning: 'commonLabels' is deprecated."
@@ -577,4 +595,103 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 		})
 	}
 	assert.Equal(t, buildOrchCfg(commonFlags{}).HelmOptions.SkipTests, true)
+}
+
+func TestRunSelected_WarningIdentity(t *testing.T) {
+	base := manifest.Warning{Category: manifest.WarnStaleValues, Resource: testutil.HelmReleaseID("apps", "demo"), Message: "advisory", Detail: []string{"one"}, Count: 3}
+	detail, count, category, resource, message := base, base, base, base, base
+	detail.Detail = []string{"two"}
+	count.Count = 4
+	category.Category = manifest.WarnOmittedValues
+	resource.Resource.Name = "other"
+	message.Message = "different"
+	want := []manifest.Warning{base, detail, count, category, resource, message}
+	side := &selection.Selection{Warnings: []manifest.Warning{base, detail, count, category, resource, message}, Unrelated: []manifest.Warning{base}, External: []manifest.Warning{detail}}
+	before := slices.Clone(side.Warnings)
+	for i := range before {
+		before[i].Detail = slices.Clone(before[i].Detail)
+	}
+	assert.Diff(t, selectedWarnings(side), want)
+	var first string
+	for run := range 2 {
+		var stderr bytes.Buffer
+		err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, pair: true, stderr: &stderr, presentation: presentData},
+			&selectedInvocation{sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}}, selectedPayload{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := "orig snapshot:" + output.Document(output.WarningsBlock(want, false)) + "current snapshot:" + output.Document(output.WarningsBlock([]manifest.Warning{base}, false))
+		assert.Equal(t, stderr.String(), expected)
+		if run == 0 {
+			first = stderr.String()
+		} else {
+			assert.Equal(t, stderr.String(), first)
+		}
+	}
+	assert.Diff(t, side.Warnings, before)
+	assert.Diff(t, side.Unrelated, []manifest.Warning{base})
+	assert.Diff(t, side.External, []manifest.Warning{detail})
+	if allocs := testing.AllocsPerRun(1, func() { selectedWarnings(&selection.Selection{}) }); allocs != 0 {
+		t.Fatalf("empty diagnostics allocated: %v", allocs)
+	}
+}
+
+func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
+	for _, mode := range []presentation{presentBuild, presentData, presentTest, presentDiff} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			if mode != presentTest {
+				t.Parallel()
+			}
+			o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := o.Stop(); err != nil {
+					t.Error(err)
+				}
+			})
+			id := testutil.KustomizationID("apps", "selected")
+			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "selected render failed"}}}
+			resourceErr := &orchestrator.FailuresError{Message: "aggregate render failure"}
+			closeErr, writeErr := errors.New("shared cleanup failed"), errors.New("payload write failed")
+			runs := []orchestrator.Rendered{{Orchestrator: o, Result: res, Err: resourceErr}, {Orchestrator: o, Result: &orchestrator.Result{}}}
+			roots := []manifest.NamedResource{id}
+			sides, selectedErr, remainder := orchestrator.Select(runs, errors.Join(resourceErr, fmt.Errorf("cache close: %w", closeErr)), roots, nil)
+			if len(sides) != 2 || selectedErr == nil {
+				t.Fatalf("completed run selection: %v", selectedErr)
+			}
+			var stdout, stderr bytes.Buffer
+			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))
+			payload := selectedPayload{err: payloadErr}
+			if mode == presentTest {
+				payload.roster = &output.TestReport{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1}
+			}
+			got := finishSelected(selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, presentation: mode},
+				&selectedInvocation{sides: sides, err: selectedErr, remainder: remainder}, payload)
+			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, selectedErr) {
+				t.Fatalf("lost selected, cleanup or payload error: %v", got)
+			}
+			if _, reported := errors.AsType[reportedError](got); !reported {
+				if err := (output.Encoder{Writer: &stderr}).Errors(got); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, message := range []string{"selected render failed", closeErr.Error(), writeErr.Error()} {
+				assert.Equal(t, strings.Count(stderr.String(), message), 1)
+			}
+		})
+	}
+}
+
+func TestRenderKinds_Capabilities(t *testing.T) {
+	t.Parallel()
+	var want []string
+	for info := range manifest.Kinds() {
+		if info.Render {
+			want = append(want, info.Kind)
+		}
+	}
+	assert.Diff(t, renderKinds, want)
 }

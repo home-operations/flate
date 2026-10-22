@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/pkg/source/cache"
 )
@@ -77,9 +78,13 @@ Set --dry-run to see what would be removed without touching disk.`,
 		"prune entries with mtime older than this duration (default 30d); 0 disables age pruning")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false,
 		"report what would be removed without touching disk")
-	cmd.Flags().StringVar(&f.cacheDir, "cache-dir", "",
+	bindCacheDir(cmd.Flags(), &f.cacheDir,
 		"explicit cache root to sweep (or set FLATE_CACHE_DIR)")
 	return cmd
+}
+
+func bindCacheDir(fs *pflag.FlagSet, dest *string, usage string) {
+	fs.StringVar(dest, "cache-dir", "", usage)
 }
 
 // formatBytes renders byte counts as KiB/MiB/GiB strings. Approximate;

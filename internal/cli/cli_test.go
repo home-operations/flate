@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -444,22 +445,38 @@ data:
 	return k8s
 }
 
-// TestRun_AdvisoriesOnlyInTest pins the contract: a render advisory (here an
-// unreadable substituteFrom Secret) surfaces in `flate test` output but NOT in
-// `flate build` — build is a data-producing verb, so warnings and deferred
-// notes belong to the diagnostic command, never the build's stdout or stderr.
-func TestRun_AdvisoriesOnlyInTest(t *testing.T) {
+func TestRun_AdvisoryDestinations(t *testing.T) {
 	k8s := writeUnreadableSecretFixture(t)
 	const advisory = "could not be read offline"
-
-	bOut, bErr, _ := runCLI(t, "build", "all", "--path", k8s)
-	if strings.Contains(bOut, advisory) || strings.Contains(bErr, advisory) {
-		t.Errorf("build must not surface the advisory.\nstdout:\n%s\nstderr:\n%s", bOut, bErr)
-	}
-
-	tOut, _, _ := runCLI(t, "test", "all", "--path", k8s)
-	if !strings.Contains(tOut, advisory) {
-		t.Errorf("test must surface the advisory; stdout:\n%s", tOut)
+	for _, command := range [][]string{{"build", "all"}, {"get", "all"}, {"get", "ks"}, {"get", "images"}, {"test", "all"}} {
+		t.Run(strings.Join(command, "/"), func(t *testing.T) {
+			var firstOut, firstErr string
+			for run := range 2 {
+				args := append(slices.Clone(command), "--path", k8s, "--concurrency", "2")
+				if command[0] != "test" {
+					args = append(args, "-o", "json")
+				}
+				stdout, stderr, code := runCLI(t, args...)
+				assert.Equal(t, code, 0)
+				diagnostic, data := stderr, stdout
+				if command[0] == "test" {
+					diagnostic, data = stdout, stderr
+				}
+				assert.Equal(t, strings.Count(diagnostic, advisory), 1)
+				assert.Equal(t, strings.Contains(data, advisory), false)
+				if command[0] != "test" {
+					if !json.Valid([]byte(stdout)) {
+						t.Fatalf("invalid payload: %s", stdout)
+					}
+					if run == 0 {
+						firstOut, firstErr = stdout, stderr
+					} else {
+						assert.Equal(t, stdout, firstOut)
+						assert.Equal(t, stderr, firstErr)
+					}
+				}
+			}
+		})
 	}
 }
 

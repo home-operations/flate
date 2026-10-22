@@ -50,6 +50,12 @@ metadata: {name: '{{ .Release.Name }}', namespace: apps}
 data:
   greeting: {{ .Values.greeting }}
   image: ghcr.io/demo/private:v1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}-second', namespace: apps}
+data:
+  image: ghcr.io/demo/private:v1
 `)
 				chart := `  chart:
     spec:
@@ -107,8 +113,8 @@ spec:
 				if side == "" {
 					side = "current"
 				}
-				prefix := persistenceNotice + "flate warning: HelmRelease.helm.toolkit.fluxcd.io apps/demo: 1 object not rendered on the " + side + " side; diff suppressed ("
-				if !strings.HasPrefix(imageStderr, prefix) || !strings.Contains(imageStderr, "missing-ca") {
+				prefix := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + side + " side; diff suppressed ("
+				if strings.Count(imageStderr, prefix) != 1 || strings.Contains(imageStderr, "×2") || !strings.Contains(imageStderr, "missing-ca") {
 					t.Fatalf("image suppression missing: %s", imageStderr)
 				}
 				writeErr := errors.New("image disclosure write failed")
@@ -135,14 +141,14 @@ spec:
 					t.Fatalf("expected one suppression, got:\n%s", stdout)
 				}
 				assert.Equal(t, got.Suppressed[0].Side, diff.SideCurrent)
-				assert.Equal(t, got.Suppressed[0].Count, 1)
+				assert.Equal(t, got.Suppressed[0].Count, 2)
 				assert.Equal(t, got.Suppressed[0].Parent, diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")})
 				assert.Equal(t, strings.Contains(got.Suppressed[0].Reason, "missing-ca"), true)
 				assert.Equal(t, strings.HasPrefix(got.Suppressed[0].Reason, "skipped:"), false)
 				return
 			}
 			if tc.wantSide != "" {
-				prefix := "# HelmRelease.helm.toolkit.fluxcd.io apps/demo: 1 object not rendered on the " + tc.wantSide + " side; diff suppressed ("
+				prefix := "# HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + tc.wantSide + " side; diff suppressed ("
 				if !strings.HasPrefix(stdout, prefix) || !strings.Contains(stdout, "missing-ca") {
 					t.Errorf("expected suppression with the missing Secret reason; got:\n%s", stdout)
 				}
@@ -338,7 +344,9 @@ func TestRun_DiffJSON_Empty(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
 			assert.Equal(t, code, 0)
-			assert.Equal(t, stderr, persistenceNotice)
+			assert.Equal(t, strings.HasPrefix(stderr, persistenceNotice), true)
+			assert.Equal(t, strings.Count(stderr, "--path and --path-orig resolve to the same root"), 2)
+			assert.Equal(t, strings.Count(stderr, "snapshot:"), 2)
 			var compact bytes.Buffer
 			if err := json.Compact(&compact, []byte(stdout)); err != nil {
 				t.Fatal(err)
@@ -434,14 +442,16 @@ spec:
 
 				stdout, stderr, code := runCLI(t, args...)
 				assert.Equal(t, code, tc.wantCode)
-				assert.Equal(t, strings.Contains(stderr, "values not used by the chart"), false)
+				assert.Equal(t, strings.Contains(stderr, "values not used by the chart"), tc.namespace == "")
 				assert.Equal(t, strings.Contains(stdout, "flate warning:"), false)
 				for _, side := range []struct {
 					name string
 					want bool
 				}{{"orig", tc.wantOrig}, {"current", tc.wantCurrent}} {
-					note := "flate warning: " + side.name + " snapshot: HelmRelease.helm.toolkit.fluxcd.io/apps/demo: required valuesFrom " + tc.kind + "/apps/extra-values omitted from offline render"
-					assert.Equal(t, strings.Contains(stderr, note), side.want)
+					_, block, found := strings.Cut(stderr, side.name+" snapshot:")
+					block, _, _ = strings.Cut(block, "snapshot:")
+					note := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: required valuesFrom " + tc.kind + "/apps/extra-values omitted from offline render"
+					assert.Equal(t, found && strings.Contains(block, note), side.want)
 				}
 				if tc.resource == "other" {
 					assert.Equal(t, stdout, "")
@@ -524,7 +534,13 @@ data: {greeting: hola}
 			if code != 0 {
 				t.Fatalf("diff exited %d: %s", code, stderr)
 			}
-			assert.Equal(t, stderr, persistenceNotice)
+			if tc.changed {
+				assert.Equal(t, stderr, persistenceNotice)
+			} else {
+				assert.Equal(t, strings.HasPrefix(stderr, persistenceNotice), true)
+				assert.Equal(t, strings.Count(stderr, "no changes detected"), 2)
+				assert.Equal(t, strings.Count(stderr, "snapshot:"), 2)
+			}
 			if tc.changed {
 				for _, want := range []string{"-  greeting: hola", "+  greeting: hi"} {
 					if !strings.Contains(stdout, want) {
@@ -567,7 +583,7 @@ data: {greeting: hola}
 				t.Errorf("external source must not render local manifests:\n%s", stdout)
 			}
 			if tc.warn {
-				for _, want := range []string{"orig snapshot", "current snapshot", "Kustomization.kustomize.toolkit.fluxcd.io/gitops-system/apps", "external source", "GitRepository.source.toolkit.fluxcd.io/gitops-system/home-kubernetes", "not rendered"} {
+				for _, want := range []string{"orig snapshot", "current snapshot", "Kustomization.kustomize.toolkit.fluxcd.io gitops-system/apps", "external source", "GitRepository.source.toolkit.fluxcd.io/gitops-system/home-kubernetes", "not rendered"} {
 					if !strings.Contains(stderr, want) {
 						t.Errorf("missing disclosure %q: %s", want, stderr)
 					}
@@ -713,7 +729,7 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 			if strings.Contains(stdout, "hola") {
 				t.Errorf("external baseline rendered local manifests:\n%s", stdout)
 			}
-			if !strings.Contains(stderr, "orig snapshot: Kustomization.kustomize.toolkit.fluxcd.io/gitops-system/apps skipped: external source") || strings.Contains(stderr, "current snapshot") {
+			if !strings.Contains(stderr, "Kustomization.kustomize.toolkit.fluxcd.io gitops-system/apps: external source") || strings.Contains(stderr, "current snapshot") {
 				t.Errorf("want only baseline external-source disclosure: %s", stderr)
 			}
 		})
@@ -770,11 +786,11 @@ spec: {url: "https://example.invalid/external.git", interval: 1h}
 			if code != tc.code {
 				t.Fatalf("diff exited %d, want %d: %s", code, tc.code, stderr)
 			}
-			origWarning := strings.Index(stderr, "orig snapshot: Kustomization.kustomize.toolkit.fluxcd.io/beta/external-apps skipped: external source GitRepository.source.toolkit.fluxcd.io/beta/external")
-			currentWarning := strings.Index(stderr, "current snapshot: Kustomization.kustomize.toolkit.fluxcd.io/beta/external-apps skipped: external source GitRepository.source.toolkit.fluxcd.io/beta/external")
+			origWarning := strings.Index(stderr, "orig snapshot:")
+			currentWarning := strings.Index(stderr, "current snapshot:")
 			errorAt := strings.Index(stderr, "no Kustomization named")
 			if tc.warn {
-				if origWarning < 0 || currentWarning <= origWarning || strings.Count(stderr, "not rendered") != 2 {
+				if origWarning < 0 || currentWarning <= origWarning || strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io beta/external-apps: external source GitRepository.source.toolkit.fluxcd.io/beta/external") != 2 || strings.Count(stderr, "not rendered") != 2 {
 					t.Errorf("want orig then current external-source disclosure: %s", stderr)
 				}
 				if tc.code != 0 && (errorAt < 0 || errorAt <= currentWarning) {

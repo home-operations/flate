@@ -97,6 +97,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	run.store.AddObject(ks)
 	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
 	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
+	raw := maps.Clone(run.Result.Manifests)
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
 	if err != nil {
@@ -104,9 +105,10 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	}
 	res := selected[0]
 	assert.Diff(t, res.Counts, map[string]int{manifest.KindHelmRelease: 1, manifest.KindKustomization: 1})
-	if len(res.Objects) != 1 || res.Objects[0] != ks || len(res.Manifests) != 1 || run.Result.Counts != nil {
+	if len(res.Objects) != 1 || res.Objects[0] != ks || len(res.Manifests) != 1 {
 		t.Fatalf("label or raw snapshot changed: selected=%+v raw=%+v", res, run.Result)
 	}
+	assert.Diff(t, run.Result.Manifests, raw)
 	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
 	if err != nil || len(selected[0].Objects) != 2 || selected[0].Objects[0] != hr || selected[0].Objects[1] != ks {
 		t.Fatalf("requested grouping changed: %+v %v", selected, err)

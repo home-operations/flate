@@ -141,7 +141,8 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace, requested string
-		helm, visible              bool
+		helm, visible, empty       bool
+		filters                    [][]bool
 	}{
 		{name: "inferred unrelated namespace", visible: true},
 		{name: "explicit affected namespace", namespace: "apps", visible: true},
@@ -149,9 +150,17 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 		{name: "explicit affected name", requested: "affected", visible: true},
 		{name: "explicit other name", requested: "selected"},
 		{name: "explicit other kind", helm: true},
+		{name: "disabled", visible: true, filters: [][]bool{{false}, {false, false}}},
+		{name: "orig enabled", visible: true, filters: [][]bool{{true, false}}},
+		{name: "current enabled", visible: true, filters: [][]bool{{false, true}}},
+		{name: "enabled empty changes", visible: true, empty: true, filters: [][]bool{{true}}},
 	} {
-		for _, count := range []int{1, 2} {
-			t.Run(fmt.Sprintf("%s/%d", tc.name, count), func(t *testing.T) {
+		filters := tc.filters
+		if filters == nil {
+			filters = [][]bool{{true}, {true, true}}
+		}
+		for _, enabled := range filters {
+			t.Run(fmt.Sprintf("%s/%d", tc.name, len(enabled)), func(t *testing.T) {
 				t.Parallel()
 				affected := testutil.KustomizationID("apps", "affected")
 				selected := testutil.KustomizationID("infra", "selected")
@@ -160,10 +169,16 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 				run.store.AddObject(&manifest.Kustomization{Name: affected.Name, Namespace: affected.Namespace})
 				run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
 				run.index = indexForTest(map[manifest.NamedResource]string{affected: "affected.yaml", selected: "selected.yaml"})
-				run.filter = change.NewFilter(change.NewSet([]string{"selected.yaml"}), run.index, run.store)
-				runs := []Rendered{run}
-				if count == 2 {
-					runs = append(runs, run)
+				paths := []string{"selected.yaml"}
+				if tc.empty {
+					paths = nil
+				}
+				runs := make([]Rendered, len(enabled))
+				for i, active := range enabled {
+					runs[i] = Rendered{Orchestrator: &Orchestrator{store: run.store, index: run.index}, Result: run.Result}
+					if active {
+						runs[i].filter = change.NewFilter(change.NewSet(paths), run.index, run.store)
+					}
 				}
 				root := testutil.KustomizationID(tc.namespace, tc.requested)
 				if tc.helm {
@@ -174,13 +189,22 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 					t.Fatal(err)
 				}
 				assert.Diff(t, run.Result.Warnings, []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}})
-				for _, result := range results {
+				for i, result := range results {
 					visible := slices.ContainsFunc(result.Warnings, func(w manifest.Warning) bool { return w.Category == warning.Category && w.Resource == affected })
-					assert.Equal(t, visible, count == 2 && tc.visible)
+					assert.Equal(t, visible, enabled[i] && tc.visible)
 					if tc.namespace == "" && tc.requested == "" && !tc.helm {
-						assert.Equal(t, len(result.Objects), 1)
-						assert.Equal(t, result.Objects[0].Named(), selected)
-						assert.Equal(t, len(result.Warnings), count-1)
+						var warnings []manifest.Warning
+						if enabled[i] {
+							warnings = append(warnings, warning)
+						}
+						if enabled[i] && !tc.empty {
+							assert.Equal(t, len(result.Objects), 1)
+							assert.Equal(t, result.Objects[0].Named(), selected)
+						} else {
+							assert.Equal(t, len(result.Objects), 2)
+							warnings = append(warnings, run.Result.Warnings[1])
+						}
+						assert.Diff(t, result.Warnings, warnings)
 					}
 				}
 			})

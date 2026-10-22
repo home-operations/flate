@@ -20,7 +20,7 @@ func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 		t.Fatalf("full test failed: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 	if strings.Contains(stdout+stderr, "input coverage is incomplete") {
-		t.Fatalf("full test reported comparison-only uncertainty: stdout=%s stderr=%s", stdout, stderr)
+		t.Fatalf("full test reported changed-only uncertainty: stdout=%s stderr=%s", stdout, stderr)
 	}
 }
 
@@ -37,10 +37,9 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 	write := func(interval string) string {
 		t.Helper()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owners.yaml]\n")
-		testutil.WriteFile(t, root, "flux/owners.yaml",
-			testutil.KustomizationYAML("affected", "apps", "  path: ./apps\n  interval: 5m\n")+"---\n"+
-				testutil.KustomizationYAML("selected", "infra", "  path: ./infra\n  interval: "+interval+"\n"))
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [affected.yaml, selected.yaml]\n")
+		testutil.WriteFile(t, root, "flux/affected.yaml", testutil.KustomizationYAML("affected", "apps", "  path: ./apps\n  interval: 5m\n"))
+		testutil.WriteFile(t, root, "flux/selected.yaml", testutil.KustomizationYAML("selected", "infra", "  path: ./infra\n  interval: "+interval+"\n"))
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "generators: [../config]\n")
 		testutil.WriteFile(t, root, "config/kustomization.yaml", "resources: [plugin.yaml]\npatches: [{target: {kind: ConfigMapGenerator}, patch: '[{\"op\":\"replace\",\"path\":\"/files/0\",\"value\":\"hidden.txt\"}]' }]\n")
 		testutil.WriteFile(t, root, "config/plugin.yaml", "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: stable}\nfiles: [value.txt]\n")

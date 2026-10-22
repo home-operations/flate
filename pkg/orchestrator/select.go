@@ -162,7 +162,7 @@ func (s *selectionSide) collectWarnings(root manifest.NamedResource, kinds map[m
 	for _, warning := range s.run.Result.Warnings {
 		if warning.Category == manifest.WarnIncompleteInputCoverage {
 			id := warning.Resource
-			if !comparison || !kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] || root.Name != "" && id.Name != root.Name || root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
+			if !s.run.filter.Enabled() || !kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] || root.Name != "" && id.Name != root.Name || root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace {
 				continue
 			}
 		} else if warning.Resource != (manifest.NamedResource{}) && !s.includes(warning.Resource.Namespace) {

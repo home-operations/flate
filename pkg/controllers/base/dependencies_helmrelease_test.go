@@ -123,10 +123,10 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 		child.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 	}})
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
-	_, next := st.GetEmission(parent.Named())
+	_, _, next := st.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Children = []store.Child{{Obj: child}}
-	st.RecordEmitted(parent.Named(), &next)
+	st.RecordEmitted(parent.Named(), &next, nil)
 	run := gateExecution(c, child.Named())
 	deps := run.dependencies(child, manifest.GateInputs)
 	if len(deps) != 0 {

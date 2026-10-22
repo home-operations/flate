@@ -252,7 +252,8 @@ metadata: {name: pending}
 `)
 		var objects []manifest.BaseManifest
 		opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
-		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(obj manifest.BaseManifest) {
+		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child store.Child) {
+			obj := child.Obj
 			objects = append(objects, obj)
 		})
 		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || len(objects) != 2 {
@@ -719,13 +720,13 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 		assert.NoError(t, err)
 		l.Admit(root)
 		owners := l.Kustomizations()
-		if len(owners) != 1 || owners[0].Namespace != "apps" || owners[0].Path != "./"+version {
+		if len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" || owners[0].Obj.(*manifest.Kustomization).Path != "./"+version {
 			t.Fatalf("replacement kept stale owner: %+v", owners)
 		}
 		sources := 0
 		for source := range l.Sources() {
 			sources++
-			repo := source.(*manifest.GitRepository)
+			repo := source.Obj.(*manifest.GitRepository)
 			if repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version {
 				t.Fatalf("replacement kept stale source: %+v", repo)
 			}

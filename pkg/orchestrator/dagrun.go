@@ -35,6 +35,8 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level m
 		execution = o.hrc.ReconcileNode(ctx, id, level)
 	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
 		execution = o.rsc.ReconcileNode(ctx, id, level)
+	case id.Group == "source.extensions.fluxcd.io" && id.Kind == "ArtifactGenerator":
+		execution = o.agc.ReconcileNode(ctx, id, level)
 	case o.src.Owns(id):
 		execution = o.src.ReconcileNode(ctx, id, level)
 	}
@@ -76,6 +78,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	o.ksc.StartLifecycle()
 	o.hrc.StartLifecycle()
 	o.rsc.StartLifecycle()
+	o.agc.StartLifecycle()
 
 	unsubscribe := o.watchDAG(sched)
 	defer unsubscribe()

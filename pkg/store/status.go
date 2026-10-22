@@ -295,6 +295,10 @@ func (sh *shard) setConditionLocked(id manifest.NamedResource, cond Condition, a
 			messageChanged = !sameMessage(previous.Message, objects, cond.Message, applyingObjects)
 		}
 		changed := messageChanged || previous.Status != cond.Status || previous.Reason != cond.Reason || previous.ObservedGeneration != cond.ObservedGeneration
+		// An unchanged blocker set MUST retain its first diagnostic to bound cyclic propagation.
+		if failure != nil && !failureChanged && record.conditions[i].Status == cond.Status && record.conditions[i].Reason == cond.Reason {
+			return record, false
+		}
 		if changed || failureChanged {
 			record.advanceLocked(sh)
 		}

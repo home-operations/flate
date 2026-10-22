@@ -176,6 +176,15 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			}
 			var replacementArchive bytes.Buffer
 			testutil.WriteTar(t, &replacementArchive, map[string]string{"file": "v2"}, 0o644)
+			openFirst, err := warm.Open("file")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := openFirst.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			replacement, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, producer(replacementArchive.Bytes(), want))
 			if err != nil {
 				t.Fatal(err)
@@ -185,6 +194,12 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 			}
 			if data, err := fs.ReadFile(warm, "file"); err != nil || string(data) != "v1" {
 				t.Fatalf("held generation: %q, %v", data, err)
+			}
+			if data, err := io.ReadAll(openFirst); err != nil || string(data) != "v1" {
+				t.Fatalf("open superseded generation: %q, %v", data, err)
+			}
+			if data, err := fs.ReadFile(replacement, "file"); err != nil || string(data) != "v2" {
+				t.Fatalf("replacement generation: %q, %v", data, err)
 			}
 			failure := errors.New("verification failed")
 			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
@@ -241,7 +256,7 @@ func TestAcquire_ArchivePolicy(t *testing.T) {
 				}
 				c := cachetest.New(t, root, New)
 				data := orderedArchive(t, "dir/drop", "discard", "dir/keep", "first", "dir/.sourceignore", "!keep\n", ".sourceignore", "dir/*\nempty/*\n", "dir/keep", "last", "empty/file", "discard", "image.png", "image", ".git/config", "git")
-				input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-policy", WithDefaults: defaults}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{}))
+				input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-policy", Policy: map[bool]string{true: "source"}[defaults]}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -253,8 +268,8 @@ func TestAcquire_ArchivePolicy(t *testing.T) {
 					t.Fatal("archive policy view has no acquisition identity")
 				}
 				for _, policy := range []ArchiveKey{
-					{Content: "source-test-policy", WithDefaults: !defaults},
-					{Content: "source-test-policy", WithDefaults: defaults, Ignore: "image.png\n"},
+					{Content: "source-test-policy", Policy: map[bool]string{true: "source"}[!defaults]},
+					{Content: "source-test-policy", Policy: map[bool]string{true: "source"}[defaults], Ignore: "image.png\n"},
 				} {
 					other, _, _, err := c.Acquire(t.Context(), policy, Policy{MaxAge: 0}, producer(data, ocispec.Descriptor{}))
 					if err != nil {
@@ -314,7 +329,7 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 						}
 					}
 					assert.NoError(t, w.Close())
-					key := ArchiveKey{Content: fmt.Sprintf("source-test-link-%t", defaults), Ignore: "ignored\n", WithDefaults: defaults}
+					key := ArchiveKey{Content: fmt.Sprintf("source-test-link-%t", defaults), Ignore: "ignored\n", Policy: map[bool]string{true: "source"}[defaults]}
 					input, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, producer(data.Bytes(), ocispec.Descriptor{}))
 					assert.NoError(t, err)
 					readers := []fs.FS{input}
@@ -2221,5 +2236,119 @@ func TestGit_FailedCleanupRejectsEscapingParent(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestAcquire_GeneratedPolicy(t *testing.T) {
+	t.Parallel()
+	for _, disk := range []bool{false, true} {
+		t.Run(fmt.Sprint(disk), func(t *testing.T) {
+			t.Parallel()
+			root := ""
+			if disk {
+				root = t.TempDir()
+			}
+			c := cachetest.New(t, root, New)
+			var archive bytes.Buffer
+			writer := tar.NewWriter(&archive)
+			for _, header := range []tar.Header{{Name: "empty/", Mode: 0o700, Typeflag: tar.TypeDir}, {Name: ".sourceignore", Mode: 0o600, Size: 4}, {Name: "kept", Mode: 0o711, Size: 4}, {Name: "parent/plain", Mode: 0o664, Size: 4}} {
+				header.Uid, header.Gid, header.Uname, header.Gname, header.ModTime = 42, 43, "owner", "group", time.Unix(100, 0)
+				header.AccessTime, header.ChangeTime, header.Format = time.Unix(101, 0), time.Unix(102, 0), tar.FormatPAX
+				if err := writer.WriteHeader(&header); err != nil {
+					t.Fatal(err)
+				}
+				if header.Size != 0 {
+					if _, err := io.WriteString(writer, "kept"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			key := ArchiveKey{Content: "generated-fixed", Policy: "fixed"}
+			calls := 0
+			produce := func(ctx context.Context, target ProducerInput) (ProducerResult, error) {
+				calls++
+				return producer(archive.Bytes(), ocispec.Descriptor{})(ctx, target)
+			}
+			var identity string
+			for run := range 2 {
+				input, descriptor, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, produce)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if calls != 1 || id == "" || descriptor.Annotations["flate.tree-digest"] == "" {
+					t.Fatalf("run %d: calls=%d descriptor=%+v", run, calls, descriptor)
+				}
+				if run == 0 {
+					identity = descriptor.Annotations["flate.tree-digest"]
+				} else if identity != descriptor.Annotations["flate.tree-digest"] {
+					t.Fatal("warm tree digest changed")
+				}
+				descriptor.Annotations["flate.tree-digest"] = "caller-mutated"
+				if data, err := fs.ReadFile(input, "kept"); err != nil || string(data) != "kept" {
+					t.Fatalf("fixed ignore read = %q, %v", data, err)
+				}
+				for _, entry := range []struct {
+					name string
+					mode fs.FileMode
+				}{{"empty", fs.ModeDir | 0o750}, {"parent", fs.ModeDir | 0o750}, {"parent/plain", 0o600}, {"kept", 0o700}} {
+					info, err := fs.Stat(input, entry.name)
+					if err != nil || info.Mode() != entry.mode {
+						t.Fatalf("normalized %s = %v, %v; want mode %v", entry.name, info, err, entry.mode)
+					}
+					if !info.ModTime().IsZero() {
+						t.Fatalf("normalized %s retained timestamp %v", entry.name, info.ModTime())
+					}
+					if header, ok := info.Sys().(*tar.Header); ok && (header.Uid != 0 || header.Gid != 0 || header.Uname != "" || header.Gname != "") {
+						t.Fatalf("normalized %s retained ownership: %+v", entry.name, header)
+					}
+					if header, ok := info.Sys().(*tar.Header); ok && (!header.AccessTime.IsZero() || !header.ChangeTime.IsZero()) {
+						t.Fatalf("normalized %s retained access/change times: %+v", entry.name, header)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAcquire_ExtractPolicy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path string
+		kind       byte
+	}{
+		{"symlink", "entry", tar.TypeSymlink}, {"hardlink", "entry", tar.TypeLink}, {"fifo", "entry", tar.TypeFifo},
+		{"character_device", "entry", tar.TypeChar}, {"block_device", "entry", tar.TypeBlock},
+		{"traversal", "a/../entry", tar.TypeReg}, {"absolute", "/entry", tar.TypeReg}, {"drive", "C:/entry", tar.TypeReg}, {"backslash", `a\entry`, tar.TypeReg},
+	} {
+		for _, disk := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/disk=%v", tc.name, disk), func(t *testing.T) {
+				t.Parallel()
+				root := ""
+				if disk {
+					root = t.TempDir()
+				}
+				c := cachetest.New(t, root, New)
+				var archive bytes.Buffer
+				writer := tar.NewWriter(&archive)
+				header := &tar.Header{Name: tc.path, Typeflag: tc.kind, Linkname: "target", Mode: 0o755}
+				if err := writer.WriteHeader(header); err != nil {
+					t.Fatal(err)
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+				input, _, id, err := c.Acquire(t.Context(), ArchiveKey{Content: tc.name, Policy: "extract"}, Policy{MaxAge: Forever}, producer(archive.Bytes(), ocispec.Descriptor{}))
+				if err == nil || input != nil || id != "" || !errors.Is(err, manifest.ErrFlux) {
+					t.Fatalf("invalid extraction = %q, %v", id, err)
+				}
+				input, _, id, err = c.Acquire(t.Context(), ArchiveKey{Content: tc.name, Policy: "extract"}, Policy{MaxAge: Forever}, producer(orderedArchive(t, "file", "retry"), ocispec.Descriptor{}))
+				if err != nil || input == nil || id == "" {
+					t.Fatalf("retry invalid extraction = %q, %v", id, err)
+				}
+			})
+		}
 	}
 }

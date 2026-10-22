@@ -17,7 +17,7 @@ func newDiffCmd() *cobra.Command {
 	cmd := diffCmd("diff", nil, "Diff rendered output against a previous revision (defaults to all)", "")
 	cmd.AddCommand(
 		diffCmd("all", nil,
-			"Diff every Kustomization and HelmRelease against another path", ""),
+			"Diff all Flux producer output against another path", ""),
 		diffCmd("ks [name]", []string{"kustomization", "kustomizations"},
 			"Diff Kustomizations against another path", manifest.KindKustomization),
 		diffCmd("hr [name]", []string{"helmrelease", "helmreleases"},
@@ -96,7 +96,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 }
 
 func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedResource) error {
-	kinds := renderKinds
+	kinds := runnableKinds
 	if root.Kind != "" {
 		kinds = []string{root.Kind}
 	}

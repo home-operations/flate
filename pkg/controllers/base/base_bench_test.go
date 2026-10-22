@@ -63,9 +63,9 @@ func BenchmarkEmit_Children(b *testing.B) {
 				owner := &manifest.RawObject{APIVersion: parent.KindInfo().APIVersion(), Kind: parent.Kind, Namespace: parent.Namespace, Name: parent.Name}
 				c.Store.AddObject(owner)
 				children, visible := c.ParseChildren(owner, docs, manifest.ParseDocOptions{DefaultNamespace: parent.Namespace})
-				_, next := st.GetEmission(parent)
+				_, _, next := st.GetEmission(parent)
 				next.Children, next.Manifests, next.Complete = children, visible, true
-				c.Emit(parent, &next)
+				c.Emit(parent, &next, nil)
 				next.Finish()
 			}
 		})

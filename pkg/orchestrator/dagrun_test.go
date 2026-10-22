@@ -75,7 +75,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					o.store.UpdateStatus(gate, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
 					o.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 					o.configureControllers()
-					o.ksc.Emit(gate, &store.Emission{Children: []store.Child{{Obj: original}}, Complete: true})
+					o.ksc.Emit(gate, &store.Emission{Children: []store.Child{{Obj: original}}, Complete: true}, nil)
 					var result schedule.Result
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
 						result = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.DrainNone)
@@ -108,10 +108,10 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 								o.filter.AddEmitted(gate, emitted.Obj, o.store)
 							}
 						}
-						_, next := o.store.GetEmission(gate)
+						_, _, next := o.store.GetEmission(gate)
 						defer next.Finish()
 						next.Children, next.Manifests, next.Complete = children, retained, true
-						o.store.RecordEmitted(gate, &next)
+						o.store.RecordEmitted(gate, &next, nil)
 					}, false)
 					t.Cleanup(unsub)
 					unsubArrivals := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -141,7 +141,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if !slices.Contains(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), child) {
 						t.Fatal("suspension lost the child's file read tracking")
 					}
-					_, inventory := o.store.GetEmission(child)
+					_, _, inventory := o.store.GetEmission(child)
 					if retained {
 						if len(artifact.Manifests) != 1 || o.store.GetArtifact(child) != nil || o.store.GetObject(retainedID) == nil || len(inventory.Children) != 1 {
 							t.Fatal("suspension pruned retained artifact or emission")

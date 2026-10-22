@@ -35,9 +35,9 @@ const accessInterval = time.Second
 // Content MUST include the effective credentials used by the producer.
 type ArchiveKey struct {
 	// Content describes the producer inputs.
-	Content      any
-	Ignore       string
-	WithDefaults bool
+	Content any
+	Ignore  string
+	Policy  string
 	// Required lists unprefixed descriptor annotation names; it does not affect identity.
 	Required []string
 }
@@ -109,11 +109,28 @@ func (e *producerError) Unwrap() []error { return []error{manifest.ErrFlux, e.er
 // Acquire publishes a complete archive or revalidates its previous generation after produce succeeds.
 // Its acquisition identity is empty on failure.
 func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (fs.FS, ocispec.Descriptor, string, error) {
+	switch key.Policy {
+	case "", "source", "fixed", "extract":
+	default:
+		return nil, ocispec.Descriptor{}, "", &CacheError{fmt.Errorf("%w: unknown archive policy %q", manifest.ErrInput, key.Policy)}
+	}
 	e, id, err := c.acquire(ctx, acquireKey{producer: archiveProducer{key: key, write: produce}, required: key.Required}, policy)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
 	}
-	return e.fs, e.descriptor, id, nil
+	descriptor := e.descriptor
+	descriptor.Annotations = maps.Clone(descriptor.Annotations)
+	if key.Policy == "fixed" {
+		fingerprint, err := e.fs.(*tarFS).treeIdentity(ctx)
+		if err != nil {
+			return nil, ocispec.Descriptor{}, "", &CacheError{err}
+		}
+		if descriptor.Annotations == nil {
+			descriptor.Annotations = make(map[string]string)
+		}
+		descriptor.Annotations["flate.tree-digest"] = "sha256:" + fingerprint
+	}
+	return e.fs, descriptor, id, nil
 }
 
 // Blob returns an independent reader over a complete generation. A nil producer only looks up

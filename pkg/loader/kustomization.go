@@ -22,10 +22,10 @@ import (
 type document struct {
 	body          *types.Kustomization
 	file          string
-	objects       []manifest.BaseManifest
-	built         []manifest.BaseManifest
+	objects       []store.Child
+	built         []store.Child
 	selected      bool
-	lookup        map[manifest.NamedResource]manifest.BaseManifest
+	lookup        map[manifest.NamedResource]store.Child
 	plugins       *[]pluginInputs
 	loaded        bool
 	bootstrap     bool

@@ -148,3 +148,20 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 	bound[i] = ""
 	return false
 }
+
+func (r *RawObject) references(yield func(Reference) bool) {
+	if !r.isArtifactGenerator() {
+		return
+	}
+	sources, _ := r.Spec["sources"].([]any)
+	for i, source := range sources {
+		fields, _ := source.(map[string]any)
+		kind, _ := fields["kind"].(string)
+		name, _ := fields["name"].(string)
+		namespace, _ := fields["namespace"].(string)
+		id := Resolve(NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace}, "", r.Namespace)
+		if !yield(Reference{NamedResource: id, Use: "artifact", Position: i, Content: true, Gate: GateArtifacts, Artifact: true, ArtifactOnly: true, ArtifactStages: GateArtifacts}) {
+			return
+		}
+	}
+}

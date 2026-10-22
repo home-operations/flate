@@ -36,6 +36,33 @@ func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 	}
 }
 
+func BenchmarkFilterResolve_ProducerChain(b *testing.B) {
+	input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		input: {File: "input.yaml"},
+	}}
+	previous := input
+	for i := range 8 {
+		declaration := manifest.NamedResource{Group: "example.test", Kind: "Producer", Namespace: "apps", Name: fmt.Sprintf("producer-%d", i)}
+		output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: fmt.Sprintf("output-%d", i)}
+		file := fmt.Sprintf("producer-%d.yaml", i)
+		index.Records[declaration] = manifest.DiscoveryRecord{File: file, Refs: []manifest.NamedResource{previous}}
+		index.Records[output] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Declaration: declaration, File: file}}}
+		previous = output
+	}
+	consumer := testutil.KustomizationID("apps", "consumer")
+	index.Records[consumer] = manifest.DiscoveryRecord{File: "consumer.yaml", Refs: []manifest.NamedResource{previous}}
+	objects := make(mapLister)
+	for id := range index.Records {
+		objects[id] = refObj(id)
+	}
+	changes := NewSet([]string{"input.yaml"})
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = NewFilter(changes, index, objects)
+	}
+}
+
 // BenchmarkBuildOwnership measures canonical claim grouping for 1000 Kustomizations.
 // Discovery prepares this immutable state before Filter construction.
 func BenchmarkBuildOwnership(b *testing.B) {

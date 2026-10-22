@@ -77,7 +77,8 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		rel, _ := filepath.Rel(repoRoot, dir)
 		root := graphVisit{root: repoRoot, dir: filepath.ToSlash(rel)}
 		var candidates []manifest.NamedResource
-		for _, obj := range doc.built {
+		for _, child := range doc.built {
+			obj := child.Obj
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				candidates = append(candidates, ref.NamedResource)
 			}
@@ -87,7 +88,8 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		root.source = manifest.BootstrapSourceID
 		_, builder := l.documents.read(dir)
 		root.coordinate = l.fileCoordinate(builder)
-		for _, obj := range doc.built {
+		for _, child := range doc.built {
+			obj := child.Obj
 			if record, ok := l.Index.Lookup(obj.Named()); ok && record.Builder == root.coordinate {
 				b.recordProducer(producerDeclaration{obj: obj, authored: obj.Named(), visit: root}, candidates)
 			}
@@ -124,6 +126,29 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 			declarations = nil
 		}
 	}
+	var candidates map[string][]manifest.NamedResource
+	for id, r := range l.Index.Files() {
+		obj := l.Store.GetObject(id)
+		if obj == nil || !manifest.KindOf(obj).Runnable || r.Path == "" {
+			continue
+		}
+		if slices.ContainsFunc(r.Productions, func(p manifest.Production) bool { return p.Owner != (manifest.NamedResource{}) }) {
+			continue
+		}
+		owners, ancestors := l.Index.OwnersOfFile(r.File)
+		if slices.ContainsFunc(append(owners, ancestors...), func(owner manifest.NamedResource) bool { return owner != id }) {
+			continue
+		}
+		if manifest.ProducerNeedsCandidates(obj) && candidates == nil {
+			candidates = map[string][]manifest.NamedResource{}
+			for _, input := range l.Index.Files() {
+				root := l.documents.mountedRoot(input.Path)
+				candidates[root] = append(candidates[root], input.Refs...)
+			}
+		}
+		v := graphVisit{owner: id, source: manifest.BootstrapSourceID, coordinate: r.File}
+		b.recordProducer(producerDeclaration{obj: obj, authored: r.Authored, visit: v}, candidates[l.documents.mountedRoot(r.Path)])
+	}
 	if err := l.addGenerated(ctx, generators); err != nil {
 		return err
 	}
@@ -135,7 +160,8 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 
 func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
 	pinned := map[manifest.NamedResource]bool{}
-	for _, ks := range l.Kustomizations() {
+	for _, child := range l.Kustomizations() {
+		ks := child.Obj.(*manifest.Kustomization)
 		_, pinned[ks.Named()], _ = SourceView(l.Store, ks.SourceID(), repoRoot)
 	}
 	var roots []string
@@ -255,7 +281,7 @@ func (l *Loader) StandaloneRoots(repoRoot string) []string {
 	return l.scopes.roots
 }
 
-func (l *Loader) packageRoots(repoRoot string, kss []*manifest.Kustomization) []string {
+func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	l.ensureScopes()
 	roots := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
@@ -267,7 +293,8 @@ func (l *Loader) packageRoots(repoRoot string, kss []*manifest.Kustomization) []
 			}
 		}
 	}
-	for _, ks := range kss {
+	for _, child := range kss {
+		ks := child.Obj.(*manifest.Kustomization)
 		root, pinned, external := SourceView(l.Store, ks.SourceID(), repoRoot)
 		if ks.IsFragment() {
 			continue
@@ -512,19 +539,28 @@ type selfProduceBuilder struct {
 	wipeSecrets  bool
 }
 
-func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.BaseManifest, declarations []producerDeclaration) []producerDeclaration {
+func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []store.Child, declarations []producerDeclaration) []producerDeclaration {
 	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
-	record := func(obj manifest.BaseManifest) {
-		id := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
+	record := func(child store.Child) {
+		obj, info := child.Obj, manifest.KindOf(child.Obj)
+		resolved := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
+		id := resolved
 		if owner, _ := b.idx.Lookup(v.owner); v.owner == obj.Named() || owner.Authored == obj.Named() {
 			id = v.owner
 		}
 		r := b.idx.Records[id]
-		if r.Authored == (manifest.NamedResource{}) {
-			r.Authored, r.Path, r.File = obj.Named(), v.file, v.coordinate
+		projected := obj
+		needsCandidates := manifest.ProducerNeedsCandidates(obj)
+		if id.Namespace != obj.Named().Namespace &&
+			(r.Authored == (manifest.NamedResource{}) || needsCandidates || id.Namespace != resolved.Namespace) {
+			projected = obj.WithNamespace(id.Namespace)
 		}
-		p := manifest.Production{Owner: v.owner, Authored: obj.Named(), Path: v.file, File: v.coordinate, Source: v.source}
-		if v.owner != (manifest.NamedResource{}) && manifest.KindOf(obj).Runnable && b.store.GetObject(id) == nil {
+		if r.Authored == (manifest.NamedResource{}) {
+			r.Authored, r.Path, r.File = obj.Named(), v.file, coordinate
+			r.Refs = discoveryReferences(projected)
+		}
+		p := manifest.Production{Owner: v.owner, Authored: obj.Named(), Path: v.file, File: coordinate, Source: v.source}
+		if v.owner != (manifest.NamedResource{}) && info.Runnable && b.store.GetObject(id) == nil {
 			p.Path = ""
 		}
 		if ks, ok := b.store.Get[*manifest.Kustomization](v.owner); ok {
@@ -537,18 +573,14 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 			r.Productions = append(r.Productions, p)
 		}
 		b.idx.Records[id] = r
-		if !v.deferMaterialization {
-			declaration := producerDeclaration{obj: obj, authored: obj.Named(), visit: v}
-			if manifest.ProducerNeedsCandidates(obj) {
-				if id.Namespace != obj.Named().Namespace {
-					declaration.obj = obj.WithNamespace(id.Namespace)
-				}
+		if !v.deferMaterialization || info.Runnable && b.store.GetObject(id) != nil {
+			declaration := producerDeclaration{obj: projected, authored: obj.Named(), visit: v}
+			if needsCandidates {
 				declarations = append(declarations, declaration)
 			} else {
 				b.recordProducer(declaration, nil)
 			}
 		}
-		info := manifest.KindOf(obj)
 		switch {
 		case info.Data:
 			if s, ok := obj.(*manifest.Secret); ok && !v.deferMaterialization {
@@ -592,13 +624,17 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 	}
 	var candidates []manifest.NamedResource
 	for _, v := range scope {
-		if v.role != kustomizeinput.Resource || v.deferMaterialization || v.document != nil || !v.readable {
+		if v.role != kustomizeinput.Resource || v.document != nil || !v.readable {
 			continue
 		}
-		record := func(obj manifest.BaseManifest) {
+		record := func(child store.Child) {
+			obj := child.Obj
 			ns := manifest.Resolve(obj.Named(), v.namespace, v.fallback).Namespace
 			if ns != obj.Named().Namespace {
 				obj = obj.WithNamespace(ns)
+			}
+			if v.deferMaterialization && b.store.GetObject(obj.Named()) == nil {
+				return
 			}
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				candidates = append(candidates, ref.NamedResource)
@@ -622,12 +658,15 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 func (b *selfProduceBuilder) recordProducer(declaration producerDeclaration, candidates []manifest.NamedResource) {
 	obj, authored, v := declaration.obj, declaration.authored, declaration.visit
 	projected := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
+	if v.owner == (manifest.NamedResource{}) && manifest.KindOf(obj).Runnable {
+		v.owner = projected
+	}
 	for _, target := range manifest.ProducerTargets(obj, candidates...) {
 		target.NamedResource = manifest.Resolve(target.NamedResource, v.namespace, v.fallback)
 		if target.Namespace == "" {
 			continue
 		}
-		p := manifest.Production{Owner: v.owner, Declaration: projected, Authored: authored, Source: v.source, File: v.coordinate}
+		p := manifest.Production{Owner: v.owner, Declaration: projected, Authored: authored, Source: v.source, File: cmp.Or(v.localCoordinate(), v.coordinate)}
 		r := b.idx.Records[target.NamedResource]
 		if !slices.Contains(r.Productions, p) {
 			r.Productions = append(r.Productions, p)

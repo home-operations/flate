@@ -239,14 +239,7 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	return out, nil
 }
 
-// ExternalArtifact is the Flux ExternalArtifact CRD
-// (source.toolkit.fluxcd.io/v1). It is the contract a third-party
-// controller uses to publish an on-cluster artifact under Flux's
-// source-controller schema. flate's offline reconcile cannot fetch
-// from a live cluster — if a downstream Kustomization or HelmRelease
-// references an ExternalArtifact via sourceRef.kind=ExternalArtifact,
-// the user must supply status.artifact in the YAML (typical workflow:
-// pre-bake a file:// URL) for flate to resolve a local path.
+// ExternalArtifact is a source whose content is published by its materializer.
 type ExternalArtifact struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -254,13 +247,6 @@ type ExternalArtifact struct {
 	// ExternalArtifactSpec embeds the upstream spec, exposing
 	// SourceRef at the top level.
 	sourcev1.ExternalArtifactSpec `json:",inline" yaml:",inline"`
-
-	// ArtifactURL / Revision / Digest come from status.artifact when
-	// pre-populated in the YAML. Empty otherwise (the normal case for a
-	// freshly-written CR); flate then fails to resolve any consumer.
-	ArtifactURL string `json:"-" yaml:"-"`
-	Revision    string `json:"-" yaml:"-"`
-	Digest      string `json:"-" yaml:"-"`
 }
 
 // Named identifies the ExternalArtifact.
@@ -284,24 +270,16 @@ func (e *ExternalArtifact) ExistenceOnly() bool { return false }
 // SourceInterval returns the authored source refresh interval.
 func (e *ExternalArtifact) SourceInterval() time.Duration { return 0 }
 
-// parseExternalArtifact decodes an ExternalArtifact CR via the
-// source-controller typed schema.
 func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	var cr sourcev1.ExternalArtifact
 	if err := decodeCR(doc, &cr, "ExternalArtifact", SourceDomain); err != nil {
 		return nil, err
 	}
-	out := &ExternalArtifact{
+	return &ExternalArtifact{
 		Name:                 cr.Name,
 		Namespace:            cr.Namespace,
 		ExternalArtifactSpec: cr.Spec,
-	}
-	if a := cr.Status.Artifact; a != nil {
-		out.ArtifactURL = a.URL
-		out.Revision = a.Revision
-		out.Digest = a.Digest
-	}
-	return out, nil
+	}, nil
 }
 
 func (g *GitRepository) references(yield func(Reference) bool) {
@@ -317,3 +295,11 @@ func (g *GitRepository) kind() KindInfo { return kindTable[kindGitRepository].Ki
 func (o *OCIRepository) kind() KindInfo { return kindTable[kindOCIRepository].KindInfo }
 
 func (e *ExternalArtifact) kind() KindInfo { return kindTable[kindExternalArtifact].KindInfo }
+
+func (e *ExternalArtifact) references(yield func(Reference) bool) {
+	if e.SourceRef == nil {
+		return
+	}
+	ref := e.SourceRef
+	yield(Reference{NamedResource: Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Name: ref.Name, Namespace: ref.Namespace}, "", e.Namespace), Use: "materializer", Gate: GateInputs})
+}

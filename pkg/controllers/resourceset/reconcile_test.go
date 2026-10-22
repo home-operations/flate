@@ -100,7 +100,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					runState.run.Dispatch(t.Context(), manifest.DrainNone, runState, (*execution).reconcile)
 					return
 				}
-				_, attempt := runState.run.Reads.GetEmission(id)
+				_, _, attempt := runState.run.Reads.GetEmission(id)
 				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&runState.run.Reads), func(content any) (bool, error) {
 					fp, hit, err := runState.run.FingerprintDedup(id, content)
 					if hit || err != nil {
@@ -121,7 +121,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				}
 				attempt.Children, attempt.Manifests = c.ParseChildren(c.Store.GetObject(id), docs, manifest.ParseDocOptions{})
 				attempt.Complete = true
-				runState.run.Emit(id, &attempt)
+				runState.run.Emit(id, &attempt, nil)
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 {
@@ -173,13 +173,13 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				for _, p := range providers {
 					children = append(children, store.Child{Obj: p})
 				}
-				st.RecordEmitted(owner.Named(), &store.Emission{Children: children, Complete: true})
+				st.RecordEmitted(owner.Named(), &store.Emission{Children: children, Complete: true}, nil)
 			}
 			check := func(count int, status store.Status) *store.Emission {
 				t.Helper()
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}}}
 				filter := change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, st)
-				_, before := st.GetEmission(rs.Named())
+				_, _, before := st.GetEmission(rs.Named())
 				for _, child := range before.Children {
 					if !filter.ShouldReconcile(child.Obj.Named()) {
 						t.Fatal("accepted child missing before replay")
@@ -194,7 +194,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				if info.Status != status {
 					t.Fatalf("status=%+v, want %s", info, status)
 				}
-				_, current := st.GetEmission(rs.Named())
+				_, _, current := st.GetEmission(rs.Named())
 				defer current.Finish()
 				if len(current.Manifests) != count || len(current.Children) != count {
 					t.Fatalf("inventory=%+v, want %d documents and children", current, count)

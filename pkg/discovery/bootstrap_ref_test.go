@@ -57,7 +57,8 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 				testutil.KustomizationYAML("parent", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n"))
 			child := testutil.KustomizationYAML("child", "", "  {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}\n")
 			testutil.WriteFile(t, root, "apps/child.yaml", child)
-			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n")
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml, generator.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n")
+			testutil.WriteFile(t, root, "apps/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps, uid: pinned}\nspec:\n  sources: [{alias: repo, kind: GitRepository, name: cluster, namespace: flux-system}]\n  artifacts: [{name: pinned-output}]\n")
 			testutil.WriteFile(t, root, "apps/input.txt", "pinned")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {value: pinned}\n")
 			hash := testutil.GitCommitAll(t, repo, "pinned", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
@@ -68,6 +69,9 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 				t.Fatal(err)
 			}
 			if err := os.Remove(filepath.Join(root, "apps/cm.yaml")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(root, "apps/generator.yaml")); err != nil {
 				t.Fatal(err)
 			}
 			testutil.WriteFile(t, root, "apps/child.yaml", strings.Replace(child, manifest.FluxKustomizeDomain, "foreign.example", 1))
@@ -101,6 +105,23 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if !available {
 				t.Fatalf("pinned artifact missing: records=%+v objects=%v", result.Index.Records, st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
 			}
+			generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
+			generatorObj := st.GetObject(generator)
+			_, generatorDoc, attempt := st.GetEmission(generator)
+			attempt.Finish()
+			if generatorObj == nil || generatorDoc == nil || generatorDoc["metadata"].(map[string]any)["uid"] != "pinned" {
+				t.Fatalf("pinned generator document = %#v", generatorDoc)
+			}
+			generatorRecord, _ := result.Index.Lookup(generator)
+			input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			if !slices.Equal(generatorRecord.Refs, []manifest.NamedResource{input}) {
+				t.Fatalf("pinned generator inputs = %v", generatorRecord.Refs)
+			}
+			output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "pinned-output"}
+			productions := st.Productions(output, result.Index)
+			if len(productions) != 1 || productions[0].Owner != parent || productions[0].Declaration != generator || productions[0].Source != input || productions[0].File != generatorRecord.File {
+				t.Fatalf("pinned generator productions = %+v", productions)
+			}
 			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
 				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
 			}
@@ -113,7 +134,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if !ok || fileGenerated.Data["value"] != "pinned" {
 				t.Fatalf("committed generator file = %v", fileGenerated)
 			}
-			for _, id := range []manifest.NamedResource{childID, cm, generated} {
+			for _, id := range []manifest.NamedResource{childID, cm, generated, generator} {
 				file := filepath.Join(root, filepath.FromSlash(filesForTest(result.Index)[id]))
 				if !safepath.Contains(artifact.LocalPath, file) {
 					t.Fatalf("source file for %s = %s, want under %s", id, file, artifact.LocalPath)
@@ -307,22 +328,29 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 		{name: "pinned-local", kind: manifest.KindGitRepository, url: "git://fixture.invalid/cluster", local: true},
 		{name: "external-git", kind: manifest.KindGitRepository, url: "git://fixture.invalid/other"},
 		{name: "external-oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster"},
+		{name: "external-bucket", kind: manifest.KindBucket, url: "https://fixture.invalid/cluster"},
 		{name: "late-pinned-local", kind: manifest.KindGitRepository, url: "git://fixture.invalid/cluster", local: true, late: true},
 		{name: "late-external-git", kind: manifest.KindGitRepository, url: "git://fixture.invalid/other", late: true},
 		{name: "late-external-oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/cluster", late: true},
+		{name: "late-external-bucket", kind: manifest.KindBucket, url: "https://fixture.invalid/cluster", late: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := discoveryRefFixture(t)
 			st := store.New()
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "flux-system", Name: "cluster"}
-			if tc.kind == manifest.KindGitRepository {
+			switch tc.kind {
+			case manifest.KindGitRepository:
 				st.AddObject(&manifest.GitRepository{
 					Name: id.Name, Namespace: id.Namespace, URL: tc.url,
 					Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 				})
-			} else {
+			case manifest.KindOCIRepository:
 				st.AddObject(&manifest.OCIRepository{Name: id.Name, Namespace: id.Namespace, URL: tc.url})
+			default:
+				bucket := &manifest.Bucket{Name: id.Name, Namespace: id.Namespace}
+				bucket.Endpoint, bucket.BucketName = tc.url, id.Name
+				st.AddObject(bucket)
 			}
 			ks := &manifest.Kustomization{
 				Name: "apps", Namespace: id.Namespace, Path: "./apps",
@@ -347,7 +375,11 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				if tc.kind == manifest.KindGitRepository {
 					ref = "\n  ref: {tag: v1.0.0}"
 				}
-				testutil.WriteFile(t, root, "authored/source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: cluster, namespace: flux-system}\nspec:\n  url: %q%s\n", tc.kind, tc.url, ref))
+				field := "url"
+				if tc.kind == manifest.KindBucket {
+					field, ref = "endpoint", "\n  bucketName: cluster"
+				}
+				testutil.WriteFile(t, root, "authored/source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: cluster, namespace: flux-system}\nspec:\n  %s: %q%s\n", tc.kind, field, tc.url, ref))
 				l := loader.New(st)
 				l.SourceRoot, l.PreferExisting = root, true
 				if _, err := l.Load(t.Context(), filepath.Join(root, "authored")); err != nil {

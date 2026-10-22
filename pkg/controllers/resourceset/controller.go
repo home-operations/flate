@@ -73,7 +73,7 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 		if hit || err != nil {
 			return hit, err
 		}
-		_, bound := c.run.Reads.GetEmission(id)
+		_, _, bound := c.run.Reads.GetEmission(id)
 		attempt = &bound
 		attempt.Fingerprint = fp
 		return false, nil
@@ -90,5 +90,5 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 	base.Stamp(rs.EmissionPolicy(), docs)
 	attempt.Children, attempt.Manifests = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Complete = true
-	return c.run.Emit(id, attempt)
+	return c.run.Emit(id, attempt, nil)
 }

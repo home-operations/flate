@@ -17,7 +17,7 @@ type PromoteOptions struct {
 	Record      manifest.Production
 	Reads       *store.ReadSet
 	WipeSecrets bool                             // SOPS ciphertext is replaced with offline placeholders.
-	Documents   []manifest.BaseManifest          // Parsed, sanitized documents replace raw file acquisition.
+	Documents   []store.Child                    // Parsed, sanitized documents replace raw file acquisition.
 	Admit       func(manifest.BaseManifest) bool // Admission applies to the requested object and every sibling.
 }
 
@@ -58,7 +58,8 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 	if authored == (manifest.NamedResource{}) {
 		authored = id
 	}
-	for _, obj := range objs {
+	for _, child := range objs {
+		obj := child.Obj
 		if opts.Documents == nil && obj.Named() == authored {
 			if authored.Namespace != id.Namespace {
 				obj = obj.WithNamespace(id.Namespace)
@@ -73,9 +74,9 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 			return false
 		}
 		if opts.Reads != nil {
-			opts.Reads.Admit(obj, source, record.Owner)
+			opts.Reads.Admit(obj, source, record.Owner, child.Doc)
 		} else {
-			st.AddObject(obj)
+			st.AddObject(obj, child.Doc)
 		}
 	}
 	obj := st.GetObject(id)
@@ -84,7 +85,7 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 
 // RegisterBuilt replaces package resource evidence with authoritative built documents.
 // The root MUST be loaded and docs MUST be sanitized immutable build output.
-func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
+func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.SourceRoot, l.documents.mountedRoot(root), root)
 	rel, _ := filepath.Rel(sourceRoot, root)
@@ -122,10 +123,11 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 	_, builder := l.documents.read(root)
 	builder = l.fileCoordinate(builder)
 	records := make([]manifest.DiscoveryRecord, len(docs))
-	for i, obj := range docs {
+	for i, child := range docs {
+		obj := child.Obj
 		id := obj.Named()
 		record := manifest.DiscoveryRecord{File: builder, Builder: builder, Inputs: inputs}
-		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.indexedObject(id, raw)) {
+		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.indexedObject(id, raw).Obj) {
 			record.File, record.Inputs = raw.File, shared
 		}
 		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
@@ -139,7 +141,7 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.indexedObject(id, record)) {
+		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.indexedObject(id, record).Obj) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)
@@ -147,25 +149,26 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 		delete(l.admitted, id)
 	}
 	cached := l.documents.cache[root]
-	cached.built = append([]manifest.BaseManifest{}, docs...)
+	cached.built = append([]store.Child{}, docs...)
 	l.documents.cache[root] = cached
 	if l.candidates == nil {
-		l.candidates = map[manifest.NamedResource]manifest.BaseManifest{}
+		l.candidates = map[manifest.NamedResource]store.Child{}
 	}
-	for i, obj := range docs {
+	for i, child := range docs {
+		obj := child.Obj
 		id := obj.Named()
-		if existing := l.Store.GetObject(id); existing != nil && (existing == l.candidates[id] || existing == l.admitted[id]) {
+		if existing := l.Store.GetObject(id); existing != nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.admitted, id)
 		l.Index.Records[id] = records[i]
-		l.candidates[id] = obj
+		l.candidates[id] = child
 	}
 	l.scopes.complete = false
 }
 
 // BuiltDocuments returns the authoritative package batch for an indexed built object.
-func (l *Loader) BuiltDocuments(id manifest.NamedResource) []manifest.BaseManifest {
+func (l *Loader) BuiltDocuments(id manifest.NamedResource) []store.Child {
 	r, ok := l.Index.Lookup(id)
 	if !ok || r.Builder == "" {
 		return nil

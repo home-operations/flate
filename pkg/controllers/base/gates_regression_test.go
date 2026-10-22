@@ -44,10 +44,10 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	s.AddObject(parent)
 	s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
 	c := New(s, task.NewBounded(2))
-	_, next := s.GetEmission(parent.Named())
+	_, _, next := s.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Complete = true
-	c.Emit(parent.Named(), &next)
+	c.Emit(parent.Named(), &next, nil)
 	info, _ := s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 0 objects")
 	first := info
@@ -55,7 +55,7 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 		t.Helper()
 		if allocations := testing.AllocsPerRun(100, func() {
 			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
-			c.Emit(parent.Named(), &next)
+			c.Emit(parent.Named(), &next, nil)
 		}); allocations != 0 {
 			t.Fatalf("applying publication allocates %g times", allocations)
 		}
@@ -64,12 +64,12 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	}
 	t.Run("first", func(t *testing.T) { publication(t, "applying 0 objects") })
 	if allocations := testing.AllocsPerRun(100, func() {
-		c.Emit(parent.Named(), &next)
+		c.Emit(parent.Named(), &next, nil)
 	}); allocations != 0 {
 		t.Fatalf("repeated publication allocates %g times", allocations)
 	}
 	next.Manifests = []map[string]any{{"kind": "ConfigMap"}}
-	c.Emit(parent.Named(), &next)
+	c.Emit(parent.Named(), &next, nil)
 	info, _ = s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 1 objects")
 	t.Run("changed", func(t *testing.T) { publication(t, "applying 1 objects") })
@@ -181,7 +181,7 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 					return false
 				}
 				s.AddObject(parent)
-				s.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: fresh}}, Complete: true})
+				s.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: fresh}}, Complete: true}, nil)
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 				return true
 			}}
@@ -223,7 +223,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
+			child := &manifest.ExternalArtifact{Name: "child", Namespace: "apps"}
 			s.AddObject(parent)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
 			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
@@ -235,15 +235,16 @@ func TestEmit_LatePreflight(t *testing.T) {
 			if handled || err != nil {
 				t.Fatalf("admission=%t/%v", handled, err)
 			}
-			_, next := s.GetEmission(parent.Named())
+			_, _, next := s.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children, next.Complete = []store.Child{{Obj: child}}, complete
 			reject.Store(true)
 			s.SetPreflight(parent.Named(), "cycle")
-			if err := execution.Emit(parent.Named(), &next); err == nil {
+			payloads := map[manifest.NamedResource]*store.SourceArtifact{child.Named(): {FS: fstest.MapFS{}}}
+			if err := execution.Emit(parent.Named(), &next, payloads); err == nil {
 				t.Fatalf("publication error=%v", err)
 			}
-			if s.GetObject(child.Named()) != nil || s.GetArtifact(parent.Named()) != nil || filter.ShouldReconcile(child.Named()) {
+			if s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named()) != nil || s.GetArtifact(parent.Named()) != nil || filter.ShouldReconcile(child.Named()) {
 				t.Fatal("rejected publication admitted children or expanded selection")
 			}
 		})
@@ -325,10 +326,10 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			if len(children) != wantChildren {
 				t.Fatalf("children=%d, want %d", len(children), wantChildren)
 			}
-			_, next := s.GetEmission(producer.Named())
+			_, _, next := s.GetEmission(producer.Named())
 			defer next.Finish()
 			next.Children, next.Manifests, next.Complete = children, visible, true
-			c.Emit(producer.Named(), &next)
+			c.Emit(producer.Named(), &next, nil)
 			accepted, _ := s.GetArtifact(producer.Named()).(*store.Emission)
 			if accepted == nil || len(accepted.Manifests) != 1 {
 				t.Fatalf("accepted=%v", accepted)
@@ -367,6 +368,75 @@ func TestRequireRefresh_FailedParentRetainsInputFailures(t *testing.T) {
 			} else if failed, ok := errors.AsType[*manifest.DependencyFailedError](err); !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{missing, parent.Named()}) {
 				t.Fatalf("gate=%v, want both input and parent failures", err)
 			}
+		})
+	}
+}
+
+func TestRequireRefresh_ArtifactReferences(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		kind       string
+		apiVersion string
+		spec       map[string]any
+		dependency manifest.BaseManifest
+		stage      manifest.GateStage
+		parent     bool
+	}{
+		{
+			name: "generator source", kind: "ArtifactGenerator", apiVersion: "source.extensions.fluxcd.io/v1beta1",
+			spec:       map[string]any{"sources": []any{map[string]any{"alias": "repo", "kind": manifest.KindGitRepository, "name": "repo", "namespace": "other"}}},
+			dependency: &manifest.GitRepository{Name: "repo", Namespace: "other"}, stage: manifest.GateArtifacts, parent: true,
+		},
+		{
+			name: "source materializer", kind: manifest.KindExternalArtifact, apiVersion: "source.toolkit.fluxcd.io/v1",
+			spec:       map[string]any{"sourceRef": map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "name": "generator"}},
+			dependency: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}, stage: manifest.GateInputs,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			obj, _, _, err := manifest.ParseDoc(map[string]any{
+				"apiVersion": tc.apiVersion, "kind": tc.kind,
+				"metadata": map[string]any{"name": "consumer", "namespace": "apps"}, "spec": tc.spec,
+			}, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			s.AddObjects([]manifest.BaseManifest{obj, parent, tc.dependency})
+			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending})
+			s.UpdateStatus(tc.dependency.Named(), store.StatusInfo{Status: store.StatusPending})
+			c := New(s, task.NewBounded(2))
+			c.Configure(Options{Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{obj.Named(): parent.Named()})})
+			if tc.parent {
+				first := gateExecution(c, obj.Named())
+				defer first.Close()
+				_, err := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
+				blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+				if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{parent.Named()}) {
+					t.Fatalf("parent gate=%v", err)
+				}
+				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
+			}
+			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true}, nil)
+			first := gateExecution(c, obj.Named())
+			defer first.Close()
+			canonical, err := first.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)
+			assert.Equal(t, canonical, obj)
+			blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+			if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{tc.dependency.Named()}) {
+				t.Fatalf("reference gate=%v", err)
+			}
+			s.SetArtifact(tc.dependency.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
+			s.UpdateStatus(tc.dependency.Named(), store.StatusInfo{Status: store.StatusReady})
+			if first.Reads.Valid() {
+				t.Fatal("dependency transition retained a stale assessment")
+			}
+			fresh := gateExecution(c, obj.Named())
+			defer fresh.Close()
+			canonical, err = fresh.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)
+			assert.NoError(t, err)
+			assert.Equal(t, canonical, obj)
 		})
 	}
 }

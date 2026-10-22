@@ -1615,8 +1615,8 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 			leaf := &manifest.RawObject{APIVersion: "v1", Kind: manifest.KindConfigMap, Name: "leaf", Namespace: "ns"}
 			emitter := &manifest.Kustomization{Name: "emitter", Namespace: "ns"}
 			st.AddObjects([]manifest.BaseManifest{parent, emitter})
-			st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
-			st.RecordEmitted(child.Named(), &store.Emission{Children: []store.Child{{Obj: leaf}}, Complete: true})
+			st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
+			st.RecordEmitted(child.Named(), &store.Emission{Children: []store.Child{{Obj: leaf}}, Complete: true}, nil)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				parent.Named(): {File: "parent.yaml"}, emitter.Named(): {File: "emitter.yaml"},
 			}}
@@ -1738,4 +1738,155 @@ func (m mapLister) Productions(id manifest.NamedResource, index *manifest.Discov
 // GetArtifact returns nil because the fixture has no accepted artifacts.
 func (m mapLister) GetArtifact(manifest.NamedResource) store.Artifact {
 	return nil
+}
+
+func TestFilter_DeclarationSourceChange(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, file string
+		declared   bool
+		otherScope bool
+		pinned     bool
+		want       bool
+	}{
+		{name: "declaration", file: "generator.yaml", declared: true, want: true},
+		{name: "ordinary_production", file: "generator.yaml"},
+		{name: "unrelated_declaration", file: "other.yaml", declared: true},
+		{name: "other_namespace", file: "generator.yaml", declared: true, otherScope: true},
+		{name: "fixed_pin", file: "../pinned/generator.yaml", declared: true, pinned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "generated"}
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}}
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			declaration := manifest.NamedResource{Group: "example.com", Kind: "Generator", Namespace: "apps", Name: "declaration"}
+			production := manifest.Production{Owner: owner.Named(), File: tc.file, Source: manifest.BootstrapSourceID}
+			if tc.declared {
+				production.Declaration = declaration
+			}
+			target := source
+			if tc.otherScope {
+				target.Namespace = "other"
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				consumer.Named(): {File: "consumer.yaml", Refs: []manifest.NamedResource{source}},
+				owner.Named():    {File: "owner.yaml", Pinned: tc.pinned},
+				target:           {Productions: []manifest.Production{production}},
+			}}
+			objects := mapLister{consumer.Named(): consumer, owner.Named(): owner}
+			assert.Diff(t, index.Records[consumer.Named()].Refs, []manifest.NamedResource{source})
+			assert.Diff(t, index.Records[target].Productions, []manifest.Production{production})
+			filter := NewFilter(NewSet([]string{"generator.yaml"}), index, objects)
+			assert.Equal(t, filter.ShouldReconcile(consumer.Named()), tc.want)
+			assert.Equal(t, filter.ShouldReconcile(owner.Named()), tc.want)
+		})
+	}
+}
+
+func TestFilter_ProducerInputClosure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                               string
+		chain, cycle, promotion, ownerOnly bool
+		foreign, fixed, projected          bool
+		want                               bool
+	}{
+		{name: "generic_declaration", want: true},
+		{name: "chained_declaration", chain: true, want: true},
+		{name: "cycles_and_duplicates", chain: true, cycle: true, want: true},
+		{name: "dependency_promotion", promotion: true, want: true},
+		{name: "owner_is_not_declaration", ownerOnly: true},
+		{name: "projected_namespace", projected: true, want: true},
+		{name: "foreign_same_name", foreign: true},
+		{name: "fixed_coordinate", fixed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			input := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}
+			declaration := manifest.NamedResource{Group: "example.test", Kind: "Producer", Namespace: "apps", Name: "declaration"}
+			owner := testutil.KustomizationID("apps", "owner")
+			output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "generated"}
+			consumer := testutil.KustomizationID("apps", "consumer")
+			unrelated := testutil.KustomizationID("apps", "unrelated")
+			independent := declaration
+			independent.Name = "independent"
+			independentOutput := output
+			independentOutput.Name = "independent-output"
+			production := manifest.Production{Owner: owner, Declaration: declaration, Source: manifest.BootstrapSourceID, File: "declaration.yaml"}
+			if tc.projected {
+				production.Authored = declaration
+				production.Authored.Namespace = ""
+			}
+			if tc.fixed {
+				production.File = "../fixed/declaration.yaml"
+			}
+			target := output
+			if tc.foreign {
+				target.Namespace = "other"
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				input:             {File: "input.yaml"},
+				declaration:       {File: "declaration.yaml", Refs: []manifest.NamedResource{input}},
+				owner:             {File: "owner.yaml"},
+				target:            {Productions: []manifest.Production{production}},
+				consumer:          {File: "consumer.yaml", Refs: []manifest.NamedResource{output}},
+				unrelated:         {File: "unrelated.yaml", Refs: []manifest.NamedResource{independentOutput}},
+				independent:       {File: "independent.yaml"},
+				independentOutput: {Productions: []manifest.Production{{Owner: independent, Declaration: independent, Source: manifest.BootstrapSourceID, File: "independent.yaml"}}},
+			}}
+			r := index.Records[declaration]
+			r.Refs = append(r.Refs, independent)
+			index.Records[declaration] = r
+			if tc.ownerOnly {
+				r := index.Records[declaration]
+				r.Refs = []manifest.NamedResource{independent}
+				index.Records[declaration] = r
+				r = index.Records[owner]
+				r.Refs = []manifest.NamedResource{input}
+				index.Records[owner] = r
+			}
+			leaf := consumer
+			if tc.chain || tc.promotion {
+				next := declaration
+				next.Name = "next"
+				nextOutput := output
+				nextOutput.Name = "next-output"
+				if tc.promotion {
+					seed := testutil.KustomizationID("apps", "seed")
+					index.Records[seed] = manifest.DiscoveryRecord{File: "seed.yaml", Refs: []manifest.NamedResource{declaration}}
+					index.Readers = map[string][]manifest.NamedResource{"input.yaml": {seed}}
+					r := index.Records[declaration]
+					r.Refs = []manifest.NamedResource{nextOutput, independent}
+					index.Records[declaration] = r
+					index.Records[next] = manifest.DiscoveryRecord{File: "next.yaml", Refs: []manifest.NamedResource{input}}
+				} else {
+					index.Records[next] = manifest.DiscoveryRecord{File: "next.yaml", Refs: []manifest.NamedResource{output}}
+					leaf = testutil.KustomizationID("apps", "leaf")
+					index.Records[leaf] = manifest.DiscoveryRecord{File: "leaf.yaml", Refs: []manifest.NamedResource{nextOutput}}
+				}
+				index.Records[nextOutput] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: owner, Declaration: next, Source: manifest.BootstrapSourceID, File: "next.yaml"}}}
+				if tc.cycle {
+					r := index.Records[declaration]
+					r.Refs = append(r.Refs, nextOutput, nextOutput)
+					index.Records[declaration] = r
+					r = index.Records[target]
+					r.Productions = append(r.Productions, production)
+					index.Records[target] = r
+				}
+			}
+			objects := make(mapLister)
+			for id := range index.Records {
+				objects[id] = refObj(id)
+			}
+			filter := NewFilter(NewSet([]string{"input.yaml"}), index, objects)
+			assert.Equal(t, filter.ShouldReconcile(consumer), tc.want)
+			assert.Equal(t, filter.ShouldReconcile(leaf), tc.want)
+			assert.Equal(t, filter.ShouldReconcile(unrelated), false)
+			assert.Equal(t, filter.ShouldReconcile(declaration), !tc.ownerOnly)
+			if tc.projected {
+				assert.Equal(t, filter.ShouldReconcile(production.Authored), false)
+			}
+		})
+	}
 }

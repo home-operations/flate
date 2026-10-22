@@ -7,6 +7,7 @@ with `go test -race ./test/e2e/...`.
 
 | Package | Scenarios |
 | --- | --- |
+| `.` | ArtifactGenerator strategies, bootstrap inputs, partial failure and emitted changed-only diff |
 | `sourceref` | Source references, pinned trees and discovery |
 | `scope` | Selection, ownership, orphans, diff and change scope |
 | `helm` | Helm listing, builds, diagnostics and stale values |
@@ -46,6 +47,20 @@ with `go test -race ./test/e2e/...`.
   `test/e2e/scope` test `TestE2E_OrphanedKustomizationNotDiscovered`.
 
 - `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, sanitized ciphertext, authored and explicit namespaces, and one tracked child render.
+
+ArtifactGenerator CLI fixtures are created in temporary repositories by
+`test/e2e/artifactgenerator_test.go`. `AllStrategies` combines nested directory
+copying, YAML merging and a local gzip tar archive, then compares two CLI runs.
+`PartialFailure` publishes outputs A and B before output C fails and checks that
+their consumers still render. `BootstrapInput` selects a static generator when
+only its consumer declaration changes. `BuiltBootstrapInput` patches a generator
+copy input and UID in a bare Kustomize entry, then checks consumed output and
+deterministic bytes. `EmittedChangedOnlyDiff` renders the generator from
+a Component, changes its selected copy input, and checks both changed-only build
+and forward/reverse diff with shallow and absent history on opposite sides,
+without selecting an unrelated consumer. Each case runs with
+two workers and compares two equal CLI runs. Consumed-input successor scheduling
+remains deferred to X2 and is not asserted by these fixtures.
 
 ## Upstream attribution
 

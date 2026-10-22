@@ -70,6 +70,7 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 
 type objectCell struct {
 	static    manifest.BaseManifest
+	document  map[string]any
 	binding   *Input
 	support   *Input
 	excluded  bool
@@ -257,6 +258,8 @@ func (s *Store) rUnlockAll() {
 
 type objectUpdate struct {
 	obj                         manifest.BaseManifest
+	document                    map[string]any
+	explicit                    bool
 	binding                     *Input
 	support                     *Input
 	cell                        objectCell
@@ -267,11 +270,18 @@ type objectUpdate struct {
 }
 
 func (u *objectUpdate) compare() {
-	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && objectEqual(u.cell.static, u.obj)
+	equal := objectEqual(u.cell.static, u.obj)
+	if !u.explicit {
+		u.document = nil
+		if equal {
+			u.document = u.cell.document
+		}
+	}
+	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && equal
 	u.membershipEqual = u.staticEqual || u.cell.static != nil && sameLabels(Child{Obj: u.cell.static}, Child{Obj: u.obj}, nil)
-	u.effectiveEqual = u.staticEqual
+	u.effectiveEqual = equal && reconcileDocumentEqual(u.obj, u.cell.document, u.document)
 	if u.effective.child.Obj != u.cell.static {
-		u.effectiveEqual = objectEqual(u.effective.child.Obj, u.obj)
+		u.effectiveEqual = objectEqual(u.effective.child.Obj, u.obj) && reconcileDocumentEqual(u.obj, u.effective.child.Doc, u.document)
 	}
 }
 
@@ -282,28 +292,36 @@ func (u objectUpdate) currentLocked(sh *shard) bool {
 }
 
 // AddObject inserts a manifest. Equal content with unchanged authority is a no-op.
-func (s *Store) AddObject(obj manifest.BaseManifest) { s.addObject(obj, nil, nil) }
+func (s *Store) AddObject(obj manifest.BaseManifest, docs ...map[string]any) {
+	s.addObject(obj, nil, nil, docs...)
+}
 
-func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input) {
+func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, docs ...map[string]any) {
+	if len(docs) > 1 {
+		panic("multiple authoritative documents")
+	}
 	id := obj.Named()
 	sh := s.shardFor(id)
 	for {
 		sh.mu.RLock()
 		cell := sh.cells[id]
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
-		if cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden && !cell.retired && !needsRoot {
+		if len(docs) == 0 && cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden && !cell.retired && !needsRoot {
 			sh.mu.RUnlock()
 			return
 		}
-		u := objectUpdate{obj: obj, binding: binding, support: support, cell: cell, needsRoot: needsRoot}
+		u := objectUpdate{obj: obj, binding: binding, support: support, cell: cell, needsRoot: needsRoot, explicit: len(docs) != 0}
+		if u.explicit {
+			u.document = docs[0]
+		}
 		if sh.derived {
 			sh.captureLocked(id, cell, &u.effective)
 		} else {
-			u.effective.child.Obj = cell.static
+			u.effective.child.Obj, u.effective.child.Doc = cell.static, cell.document
 		}
 		sh.mu.RUnlock()
 		u.compare()
-		if u.staticEqual && u.effectiveEqual && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
+		if u.staticEqual && u.effectiveEqual && (!u.explicit || specValueEqual(u.cell.document, u.document)) && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
 			return
 		}
 		sh.mu.Lock()
@@ -334,6 +352,8 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input) {
 func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdate) eventDispatch {
 	cell := u.cell
 	if u.staticEqual && u.effectiveEqual && !cell.retired {
+		cell.document = u.document
+		sh.cells[id] = cell
 		return eventDispatch{}
 	}
 	var admissions uint64
@@ -369,6 +389,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	if !u.staticEqual {
 		cell.static, cell.binding, cell.support = u.obj, u.binding, u.support
 	}
+	cell.document = u.document
 	cell.retired = false
 	sh.cells[id] = cell
 	if !u.membershipEqual && bucket.update(nameID{id.Namespace, id.Name}, cell.static != nil, true, bucket.generation) {
@@ -484,7 +505,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 			id := obj.Named()
 			sh := s.shardFor(id)
 			cell := sh.cells[id]
-			cell.static, cell.rooted, cell.retired = obj, true, false
+			cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
 			sh.cells[id] = cell
 		}
 		for _, p := range s.reachabilityLocked(region) {
@@ -527,7 +548,7 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)
 	}
-	cell.static, cell.rooted, cell.binding, cell.support = nil, false, nil, nil
+	cell.static, cell.rooted, cell.binding, cell.support, cell.document = nil, false, nil, nil, nil
 	sh.cells[id] = cell
 	sh.clearFacetsLocked(id)
 	if bucket.update(nameID{id.Namespace, id.Name}, false, true, bucket.generation) {
@@ -630,7 +651,7 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	}
 	region := s.affectedLocked(changed, manifest.NamedResource{})
 	cell := sh.cells[id]
-	cell.static, cell.rooted, cell.binding, cell.support = nil, false, nil, nil
+	cell.static, cell.rooted, cell.binding, cell.support, cell.document = nil, false, nil, nil, nil
 	sh.cells[id] = cell
 	sh.clearFacetsLocked(id)
 	dispatches := s.reachabilityLocked(region)
@@ -700,7 +721,7 @@ func (s *Store) addAnchor(u objectUpdate) bool {
 		obj = u.cell.static
 	}
 	cell := sh.cells[id]
-	cell.rooted, cell.static, cell.binding, cell.support = true, obj, u.binding, u.support
+	cell.rooted, cell.static, cell.binding, cell.support, cell.document = true, obj, u.binding, u.support, u.document
 	sh.cells[id] = cell
 	dispatches := s.reachabilityLocked(region)
 	s.unlockAll()
@@ -719,8 +740,17 @@ func dispatchPublications(publications []objectPublication) {
 	slices.SortStableFunc(publications, func(a, b objectPublication) int { return a.event.id.Compare(b.event.id) })
 	for _, p := range publications {
 		if p.force || p.before == nil || p.after == nil || !objectEqual(p.before, p.after) ||
-			p.document != nil && !specValueEqual(p.document, p.nextDocument) {
+			p.document != nil && !reconcileDocumentEqual(p.after, p.document, p.nextDocument) {
 			p.event.run()
 		}
 	}
+}
+
+type documentInput interface {
+	ReconcileDocument() bool
+}
+
+func reconcileDocumentEqual(obj manifest.BaseManifest, a, b map[string]any) bool {
+	input, ok := obj.(documentInput)
+	return (a == nil || b == nil || manifest.DocAPIVersion(a) == manifest.DocAPIVersion(b)) && (!ok || !input.ReconcileDocument() || specValueEqual(a, b))
 }

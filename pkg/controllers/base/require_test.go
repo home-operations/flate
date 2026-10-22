@@ -92,9 +92,9 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 	c := base.New(st, nil)
 	first := controllertest.NewExecution(c, obj.Named())
 	first.Reads.GetObject(input.Named())
-	_, output := first.Reads.GetEmission(obj.Named())
+	_, _, output := first.Reads.GetEmission(obj.Named())
 	output.Complete = true
-	first.Emit(obj.Named(), &output)
+	first.Emit(obj.Named(), &output, nil)
 	output.Finish()
 	defer first.Close()
 	st.AddObject(&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{"value": "new"}})
@@ -157,9 +157,9 @@ func TestRecordEmitted_PhantomSupersession(t *testing.T) {
 			defer first.Close()
 			first.Dispatch(t.Context(), manifest.DrainNone, first, func(first *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 				first.Reads.GetObject(input.Named())
-				_, output := first.Reads.GetEmission(obj.Named())
+				_, _, output := first.Reads.GetEmission(obj.Named())
 				output.Children, output.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, true
-				first.Emit(obj.Named(), &output)
+				first.Emit(obj.Named(), &output, nil)
 				output.Finish()
 				return nil
 			})
@@ -521,7 +521,7 @@ func TestDispatch_ArrivalDuringClassification(t *testing.T) {
 				st.AddObject(parent)
 				accepted := child.Clone()
 				accepted.Suspend = suspended
-				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}})
+				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}, nil)
 				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
 				close(published)
 			})

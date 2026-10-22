@@ -554,7 +554,7 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 					if kind == manifest.KindHelmRelease {
 						data = map[string]any{"values.yaml": "greeting: exact"}
 					}
-					f.o.ksc.Emit(owner, &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: data}}}, Complete: true})
+					f.o.ksc.Emit(owner, &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: data}}}, Complete: true}, nil)
 				}
 				if prior.Valid() {
 					t.Fatal("changed authority retained the prior assessment")

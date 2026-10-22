@@ -19,5 +19,5 @@ func recordForTest(tb testing.TB, s *Store, id manifest.NamedResource, children 
 		}
 		next.Children = append(next.Children, Child{Obj: &manifest.RawObject{APIVersion: version, Kind: child.Kind, Namespace: child.Namespace, Name: child.Name}})
 	}
-	s.RecordEmitted(id, next)
+	s.RecordEmitted(id, next, nil)
 }

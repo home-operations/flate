@@ -126,7 +126,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			return handled, err
 		}
 		attempt.Finish()
-		_, attempt = c.run.Reads.GetEmission(id)
+		_, _, attempt = c.run.Reads.GetEmission(id)
 		return false, nil
 	}
 	docs, err := c.Helm.Template(ctx, hr, hr.Values, input)
@@ -182,7 +182,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	attempt.Children, attempt.Manifests = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Children = append(attempt.Children, synthetic...)
 	attempt.Fingerprint, attempt.Complete = fp, true
-	return c.run.Emit(id, &attempt)
+	return c.run.Emit(id, &attempt, nil)
 }
 
 // renderBestEffort retries a failed chart render with empty values replaced by
@@ -237,10 +237,10 @@ func (c *execution) materializeHelmChartSource(id manifest.NamedResource, hr *ma
 	}
 	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
 	// The incomplete generic publication makes C available before H waits for acquisition.
-	_, attempt := c.run.Reads.GetEmission(id)
+	_, _, attempt := c.run.Reads.GetEmission(id)
 	attempt.Children = []store.Child{{Obj: syn}}
 	defer attempt.Finish()
-	if err := c.run.Emit(id, &attempt); err != nil {
+	if err := c.run.Emit(id, &attempt, nil); err != nil {
 		return hr, false, err
 	}
 	hr.Chart.Source = syn.Named()

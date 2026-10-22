@@ -87,11 +87,32 @@ func TestStore_Snapshot(t *testing.T) {
 
 func TestStore_AddObject_ContentDedup(t *testing.T) {
 	t.Parallel()
+	t.Run("document metadata", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		obj := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
+		arrivals := 0
+		s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
+		s.AddObject(obj)
+		doc := map[string]any{"metadata": map[string]any{"name": obj.Name}}
+		s.AddObject(obj, doc)
+		next := manifest.DeepCopyMap(doc)
+		next["metadata"].(map[string]any)["namespace"] = obj.Namespace
+		s.AddObject(obj, next)
+		if arrivals != 1 {
+			t.Fatalf("unchanged source metadata caused %d arrivals, want 1", arrivals)
+		}
+		_, retained, attempt := s.GetEmission(obj.Named())
+		defer attempt.Finish()
+		if !specValueEqual(retained, next) {
+			t.Fatal("suppressed arrival lost the authoritative document")
+		}
+	})
 	for _, insert := range []struct {
 		name string
 		add  func(*Store, manifest.BaseManifest)
 	}{
-		{"single", (*Store).AddObject},
+		{"single", func(s *Store, obj manifest.BaseManifest) { s.AddObject(obj) }},
 		{"batch", func(s *Store, obj manifest.BaseManifest) { s.AddObjects([]manifest.BaseManifest{obj}) }},
 	} {
 		t.Run(insert.name, func(t *testing.T) {
@@ -1211,7 +1232,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							parent := id
 							parent.Name = "parent-" + id.Name
 							s.AddObject(&manifest.RawObject{APIVersion: parent.Group + "/v1", Kind: parent.Kind, Name: parent.Name, Namespace: parent.Namespace})
-							s.RecordEmitted(parent, &Emission{Children: []Child{{Obj: obj}}, Complete: true})
+							s.RecordEmitted(parent, &Emission{Children: []Child{{Obj: obj}}, Complete: true}, nil)
 							s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: id.Group})
 							s.SetArtifact(id, &SourceArtifact{URL: id.Group})
 						}
@@ -1239,7 +1260,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						removed := objects[0].Named()
 						parent := removed
 						parent.Name = "parent-" + removed.Name
-						s.RecordEmitted(parent, &Emission{Complete: true})
+						s.RecordEmitted(parent, &Emission{Complete: true}, nil)
 						s.DeleteObject(parent)
 						assert.Equal(t, s.GetObject(removed), nil)
 						var removedObservation Observation
@@ -1259,7 +1280,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						assert.Diff(t, conds, []Condition{readyCondition(StatusReady, "", id.Group)})
 						parent = id
 						parent.Name = "parent-" + id.Name
-						s.RecordEmitted(parent, &Emission{Complete: true})
+						s.RecordEmitted(parent, &Emission{Complete: true}, nil)
 						s.DeleteObject(parent)
 					}
 				})
@@ -1325,5 +1346,46 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 		// Success — no deadlock.
 	case <-time.After(30 * time.Second):
 		t.Fatal("cross-shard ops deadlocked (lockAll canonical-order regression?)")
+	}
+}
+
+func TestStore_AddObject_TypedDocumentFreeAllocations(t *testing.T) {
+	s := New()
+	versions := [2]*manifest.ResourceSetInputProvider{
+		{Name: "provider", Namespace: "ns", Labels: map[string]string{"revision": "a"}},
+		{Name: "provider", Namespace: "ns", Labels: map[string]string{"revision": "b"}},
+	}
+	s.AddObject(versions[0])
+	i := 0
+	got := testing.AllocsPerRun(100, func() {
+		i++
+		s.AddObject(versions[i%2])
+	})
+	if got > 6 {
+		t.Fatalf("changed typed object allocations=%v, want at most 6", got)
+	}
+	if s.GetObject(versions[0].Named()) != versions[i%2] {
+		t.Fatal("changed typed object was not admitted")
+	}
+}
+
+func TestRecordEmitted_ReplacementAllocations(t *testing.T) {
+	s := New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "ns"}
+	s.AddObject(owner)
+	versions := [2]Emission{{Complete: true}, {Complete: true}}
+	for version := range versions {
+		for i := range 100 {
+			versions[version].Children = append(versions[version].Children, Child{Obj: &manifest.RawObject{Kind: "Deployment", APIVersion: "apps/v1", Name: fmt.Sprintf("app-%d-%d", version, i), Namespace: "ns"}})
+		}
+	}
+	s.RecordEmitted(owner.Named(), &versions[0], nil)
+	round := 0
+	got := testing.AllocsPerRun(20, func() {
+		round++
+		s.RecordEmitted(owner.Named(), &versions[round%2], nil)
+	})
+	if got > 60 {
+		t.Fatalf("100-output replacement allocations=%v, want at most 60", got)
 	}
 }

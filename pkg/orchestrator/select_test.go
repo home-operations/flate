@@ -1195,7 +1195,7 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 				if obj == hr {
 					name = "child-hr"
 				}
-				run.store.RecordEmitted(obj.Named(), &store.Emission{Manifests: []map[string]any{document("v1", manifest.KindConfigMap, "unrelated", name)}, Complete: true})
+				run.store.RecordEmitted(obj.Named(), &store.Emission{Manifests: []map[string]any{document("v1", manifest.KindConfigMap, "unrelated", name)}, Complete: true}, nil)
 				run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			run.Result.Manifests = run.collectManifests()
@@ -1258,9 +1258,9 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 		winner["data"] = map[string]any{"marker": "emitted"}
 		shared := &manifest.ConfigMap{Name: "shared", Namespace: "apps"}
 		run.documents = []map[string]any{declaration, original}
-		run.store.RecordEmitted(ks.Named(), &store.Emission{Children: []store.Child{{Obj: hr, Doc: declaration}, {Obj: shared, Doc: winner}}, Manifests: []map[string]any{declaration, winner}, Complete: true})
+		run.store.RecordEmitted(ks.Named(), &store.Emission{Children: []store.Child{{Obj: hr, Doc: declaration}, {Obj: shared, Doc: winner}}, Manifests: []map[string]any{declaration, winner}, Complete: true}, nil)
 		descendant := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "descendant", "namespace": "apps"}}
-		run.store.RecordEmitted(hr.Named(), &store.Emission{Manifests: []map[string]any{descendant}, Complete: true})
+		run.store.RecordEmitted(hr.Named(), &store.Emission{Manifests: []map[string]any{descendant}, Complete: true}, nil)
 		for _, obj := range []manifest.BaseManifest{ks, hr} {
 			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 		}

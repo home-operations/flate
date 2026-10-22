@@ -1267,7 +1267,7 @@ func TestLoader_PreferExistingIndexedObject(t *testing.T) {
 	l.Admit(root)
 	id := testutil.KustomizationID("apps", "child")
 	record, _ := l.Index.Lookup(id)
-	if record.Path != filepath.Join(root, "first/ks.yaml") || len(l.Kustomizations()) != 1 || l.Kustomizations()[0].Path != "./first" {
+	if record.Path != filepath.Join(root, "first/ks.yaml") || len(l.Kustomizations()) != 1 || l.Kustomizations()[0].Obj.(*manifest.Kustomization).Path != "./first" {
 		t.Fatalf("first indexed object was replaced: %+v, %+v", record, l.Kustomizations())
 	}
 }
@@ -1310,7 +1310,8 @@ func TestLoader_ProjectedEvidence(t *testing.T) {
 			l.candidates = nil
 		}
 		sources := 0
-		for source := range l.Sources() {
+		for child := range l.Sources() {
+			source := child.Obj
 			sources++
 			assert.Equal(t, source.Named().Namespace, "apps")
 		}
@@ -1318,10 +1319,10 @@ func TestLoader_ProjectedEvidence(t *testing.T) {
 		owners := l.Kustomizations()
 		assert.Equal(t, len(owners), 2)
 		for _, owner := range owners {
-			assert.Equal(t, owner.Namespace, "apps")
+			assert.Equal(t, owner.Obj.Named().Namespace, "apps")
 		}
 	}
 	for _, obj := range l.documents.cache[filepath.Join(root, "objects.yaml")].objects {
-		assert.Equal(t, obj.Named().Namespace, "")
+		assert.Equal(t, obj.Obj.Named().Namespace, "")
 	}
 }

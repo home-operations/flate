@@ -132,6 +132,12 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 			return nil
 		}
 	}
+	var err error
+	obj, err = c.run.RequireRefresh(ctx, obj, manifest.GateInputs, level)
+	if err != nil {
+		return err
+	}
+
 	if level == manifest.DrainNone {
 		// A producer may need this source's content; drain releases availability waits.
 		if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {

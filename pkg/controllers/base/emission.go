@@ -67,7 +67,7 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []map[stri
 }
 
 // Emit extends changed-only selection before the single coherent publication.
-func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission) {
+func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
 	if !next.Reads.Valid() {
 		return
 	}
@@ -87,7 +87,12 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission) {
 		}
 		c.KeepEmitted(id, obj, next.Reads)
 	}
-	c.Store.RecordEmitted(id, next)
+	c.Store.RecordEmitted(id, next, payloads)
+	if next != original {
+		children := original.Children
+		*original = *next
+		original.Children = children
+	}
 	if next.Complete {
 		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {
 			message := store.ApplyingStatus(len(next.Manifests))

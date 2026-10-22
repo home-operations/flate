@@ -2,18 +2,21 @@ package orchestrator
 
 import (
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
@@ -25,18 +28,18 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	st.AddObject(&manifest.HelmRelease{Name: ready.Name, Namespace: ready.Namespace})
 	st.RecordEmitted(ready, &store.Emission{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "ready-cm"}},
-	}})
+	}}, nil)
 	st.UpdateStatus(ready, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 
 	failedHR := testutil.HelmReleaseID("app", "broken")
 	hr := &manifest.HelmRelease{Name: failedHR.Name, Namespace: failedHR.Namespace}
 	st.AddObject(hr)
-	_, completed := st.GetEmission(failedHR)
+	_, _, completed := st.GetEmission(failedHR)
 	completed.Manifests = []map[string]any{
 		{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "broken-deploy"}},
 	}
 	completed.Complete = true
-	st.RecordEmitted(failedHR, &completed)
+	st.RecordEmitted(failedHR, &completed, nil)
 	completed.Finish()
 	successor := hr.Clone()
 	successor.Chart.Name = "different"
@@ -51,7 +54,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	st.AddObject(&manifest.Kustomization{Name: failedKS.Name, Namespace: failedKS.Namespace})
 	st.RecordEmitted(failedKS, &store.Emission{Manifests: []map[string]any{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "apps"}},
-	}})
+	}}, nil)
 	st.UpdateStatus(failedKS, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "kustomize build boom"})
 
 	o := &Orchestrator{store: st}
@@ -87,11 +90,11 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 			owner.ResourcesTemplate = "accepted-" + owner.Name
 			st.AddObject(owner)
 			index.Records[owner.Named()] = manifest.DiscoveryRecord{Parent: parent}
-			_, completed := st.GetEmission(owner.Named())
+			_, _, completed := st.GetEmission(owner.Named())
 			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": owner.Name}}
 			completed.Children, completed.Manifests = parseChildrenForTest(owner.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 			completed.Complete = true
-			st.RecordEmitted(owner.Named(), &completed)
+			st.RecordEmitted(owner.Named(), &completed, nil)
 			completed.Finish()
 			st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			winningDocs, winningChild = completed.Manifests, completed.Children[0]
@@ -124,7 +127,7 @@ func TestCollectManifests_MissingParent(t *testing.T) {
 	st.AddObject(rs)
 	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings", "namespace": "apps"}}
 	children, docs := base.New(st, nil).ParseChildren(rs, []map[string]any{doc}, manifest.ParseDocOptions{})
-	st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
+	st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 	o := &Orchestrator{store: st, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		rs.Named(): {Parent: parent},
 	}}}
@@ -155,7 +158,7 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 						<-release[i]
 						doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"value": fmt.Sprint(i)}}
 						children, docs := parseChildrenForTest(owners[i], []map[string]any{doc}, manifest.ParseDocOptions{})
-						st.RecordEmitted(owners[i], &store.Emission{Children: children, Manifests: docs, Complete: true})
+						st.RecordEmitted(owners[i], &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 						done <- struct{}{}
 					})
 				}
@@ -180,7 +183,7 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 				}
 				for _, owner := range owners {
 					children, docs := parseChildrenForTest(owner, got[owners[workers-1]], manifest.ParseDocOptions{})
-					st.RecordEmitted(owner, &store.Emission{Children: children, Manifests: docs, Complete: true})
+					st.RecordEmitted(owner, &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 				}
 				if got := outputByParent(o.collectManifests()); len(got) != workers {
 					t.Fatalf("equal ordinary producer groups changed: %v", got)
@@ -228,7 +231,7 @@ func TestCollectManifests_ParentlessResourceSetSharedChild(t *testing.T) {
 					if len(children) != len(batch) || len(docs) != len(batch) {
 						t.Fatalf("%s must publish every child: %v, %v", id, children, docs)
 					}
-					st.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
+					st.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 					if id == z.Named() {
 						winningDocs = docs
 					}
@@ -291,12 +294,12 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 				}
 				var wg sync.WaitGroup
 				wg.Go(func() {
-					st.RecordEmitted(owners[first].Named(), &emissions[first])
+					st.RecordEmitted(owners[first].Named(), &emissions[first], nil)
 					close(release)
 				})
 				wg.Go(func() {
 					<-release
-					st.RecordEmitted(owners[second].Named(), &emissions[second])
+					st.RecordEmitted(owners[second].Named(), &emissions[second], nil)
 					close(done)
 				})
 				<-done
@@ -314,11 +317,11 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 				check(1)
 				assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: id, Category: manifest.WarnConflictingProducers, Count: 1,
 					Message: "conflicting producers; using " + owners[1].Named().String(), Detail: []string{owners[0].Named().String(), owners[1].Named().String()}}})
-				st.RecordEmitted(owners[1].Named(), &store.Emission{Complete: true})
+				st.RecordEmitted(owners[1].Named(), &store.Emission{Complete: true}, nil)
 				check(0)
 				assert.Equal(t, len(st.Warnings()), 0)
-				st.RecordEmitted(owners[1].Named(), &emissions[1])
-				st.RecordEmitted(owners[0].Named(), &emissions[1])
+				st.RecordEmitted(owners[1].Named(), &emissions[1], nil)
+				st.RecordEmitted(owners[0].Named(), &emissions[1], nil)
 				check(1)
 				assert.Equal(t, len(st.Warnings()), 0)
 			})
@@ -376,15 +379,15 @@ spec:
 			if len(children) != len(batch) {
 				t.Fatalf("parsed %d of %d mixed children", len(children), len(batch))
 			}
-			st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
+			st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
 			ks := testutil.KustomizationID("apps", "nested")
 			hr := testutil.HelmReleaseID("apps", "nested")
 			ksDocs := []map[string]any{{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "from-ks", "namespace": "apps"}}}
 			hrDocs := []map[string]any{{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "from-hr", "namespace": "apps"}}}
-			st.RecordEmitted(ks, &store.Emission{Manifests: ksDocs, Complete: true})
-			st.RecordEmitted(hr, &store.Emission{Manifests: hrDocs, Complete: true})
+			st.RecordEmitted(ks, &store.Emission{Manifests: ksDocs, Complete: true}, nil)
+			st.RecordEmitted(hr, &store.Emission{Manifests: hrDocs, Complete: true}, nil)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {Parent: parent}}}
-			_, before := st.GetEmission(rs.Named())
+			_, _, before := st.GetEmission(rs.Named())
 			before.Finish()
 			for i, child := range before.Children {
 				before.Children[i].Doc = manifest.DeepCopyMap(child.Doc)
@@ -402,9 +405,9 @@ spec:
 				ks:     ksDocs,
 				hr:     hrDocs,
 			})
-			_, after := st.GetEmission(rs.Named())
+			_, _, after := st.GetEmission(rs.Named())
 			after.Finish()
-			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(store.Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("retained children changed (-want +got): %s", diff)
 			}
 			assert.Diff(t, after.Manifests, before.Manifests)
@@ -416,6 +419,127 @@ spec:
 			if !ok || secret.StringData["key"] != "value" {
 				t.Fatal("collection discarded Secret values")
 			}
+		})
+	}
+}
+
+func TestCollectManifests_ArtifactGenerators(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                   string
+		emitted, orphan, rival bool
+		skip                   bool
+	}{
+		{name: "static"},
+		{name: "orphan", orphan: true},
+		{name: "emitted", emitted: true},
+		{name: "parentless_resourceset_wins", rival: true},
+		{name: "skip_generated_kind", emitted: true, skip: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parser := base.New(st, nil)
+			if tc.skip {
+				parser.Configure(base.Options{SkipKinds: []string{manifest.KindExternalArtifact}})
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			var generatorDocs []map[string]any
+			var generators []manifest.NamedResource
+			for _, name := range []string{"z", "a"} {
+				doc := map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "metadata": map[string]any{"name": name, "namespace": "apps"}, "spec": map[string]any{}}
+				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+				assert.NoError(t, err)
+				generators = append(generators, obj.Named())
+				generatorDocs = append(generatorDocs, doc)
+				if !tc.emitted {
+					st.AddObject(obj, doc)
+				}
+				if tc.orphan {
+					index.Records[obj.Named()] = manifest.DiscoveryRecord{Authored: obj.Named(), File: name + ".yaml"}
+				}
+			}
+			nested := testutil.KustomizationID("apps", "nested")
+			nestedDocs := []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "nested-output", "namespace": "apps"}}}
+			if tc.emitted {
+				st.AddObject(parent)
+				generatorDocs = append(generatorDocs, map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": nested.Name, "namespace": nested.Namespace}, "spec": map[string]any{}})
+				children, docs := parseChildrenForTest(parent.Named(), generatorDocs, manifest.ParseDocOptions{})
+				st.RecordEmitted(parent.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
+				st.RecordEmitted(nested, &store.Emission{Manifests: nestedDocs, Complete: true}, nil)
+			}
+			outputs := map[string][]map[string]any{}
+			shared := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "shared"}
+			var byteWinner *store.SourceArtifact
+			for _, generator := range generators {
+				docs := []map[string]any{
+					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "shared", "labels": map[string]any{"writer": generator.Name}}},
+					{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": map[string]any{"name": "own-" + generator.Name}},
+				}
+				children, accepted := parser.ParseChildren(st.GetObject(generator), docs, manifest.ParseDocOptions{DefaultNamespace: generator.Namespace})
+				payload := &store.SourceArtifact{Key: generator.Name, FS: fstest.MapFS{"value": {Data: []byte(generator.Name)}}}
+				st.RecordEmitted(generator, &store.Emission{Children: children, Manifests: accepted, Complete: true}, map[manifest.NamedResource]*store.SourceArtifact{shared: payload})
+				if generator.Name == "z" {
+					byteWinner = payload
+				}
+				for _, child := range children {
+					outputs[generator.Name] = append(outputs[generator.Name], child.Doc)
+				}
+			}
+			if tc.rival {
+				rs := &manifest.ResourceSet{Name: "rival", Namespace: "apps"}
+				st.AddObject(rs)
+				rivalDoc := manifest.DeepCopyMap(outputs["z"][0])
+				rivalDoc["metadata"].(map[string]any)["labels"] = map[string]any{"writer": "rival"}
+				children, docs := parseChildrenForTest(rs.Named(), []map[string]any{rivalDoc}, manifest.ParseDocOptions{})
+				st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
+				_, declaration, attempt := st.GetEmission(shared)
+				attempt.Finish()
+				assert.Diff(t, declaration, rivalDoc)
+				assert.Equal(t, st.EmissionOwner(shared), rs.Named())
+			}
+			assert.Equal(t, st.GetArtifact(shared), store.Artifact(byteWinner))
+			want := map[manifest.NamedResource][]map[string]any{}
+			if tc.emitted {
+				want[parent.Named()] = generatorDocs
+				want[nested] = nestedDocs
+			}
+			var generated []map[string]any
+			if !tc.skip {
+				for _, name := range []string{"a", "z"} {
+					id := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: name}
+					docs := outputs[name]
+					if name == "a" || tc.rival {
+						docs = docs[1:]
+					}
+					if tc.emitted {
+						generated = append(generated, docs...)
+					} else {
+						want[id] = docs
+					}
+				}
+			}
+			if tc.emitted {
+				want[parent.Named()] = append(generated, generatorDocs...)
+			}
+			bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare", "namespace": "apps"}}
+			unchanged := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "unchanged", "namespace": "apps"}}
+			index.Records[manifest.DocIdentity(bare)] = manifest.DiscoveryRecord{File: "entry/bare.yaml"}
+			index.Records[manifest.DocIdentity(unchanged)] = manifest.DiscoveryRecord{File: "entry/unchanged.yaml"}
+			o := &Orchestrator{store: st, index: index, documents: []map[string]any{bare, unchanged, outputs["z"][0]}}
+			if tc.skip {
+				o.cfg.HelmOptions.SkipKinds = []string{manifest.KindExternalArtifact}
+			}
+			batches := o.collectManifests()
+			assert.Diff(t, outputByParent(batches), want)
+			assert.Diff(t, batches[len(batches)-1].Documents, []map[string]any{bare, unchanged})
+			assert.Equal(t, batches[len(batches)-1].Parent, manifest.BaseManifest(nil))
+			o.filter = change.NewFilter(change.NewSet([]string{"entry/bare.yaml"}), index, st)
+			batches = o.collectManifests()
+			assert.Diff(t, outputByParent(batches), want)
+			assert.Diff(t, batches[len(batches)-1].Documents, []map[string]any{bare})
+
 		})
 	}
 }
@@ -445,13 +569,13 @@ func TestCollectManifests_CoveredRetainedOutput(t *testing.T) {
 			}})
 			accepted := raw.Clone()
 			accepted.Chart.Name = "accepted"
-			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}))
+			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}), nil)
 			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "accepted-output"}}
-			st.RecordEmitted(raw.Named(), captureEmission(st, raw.Named(), &store.Emission{Manifests: []map[string]any{doc}, Complete: true}))
+			st.RecordEmitted(raw.Named(), captureEmission(st, raw.Named(), &store.Emission{Manifests: []map[string]any{doc}, Complete: true}), nil)
 			if survivor {
-				st.RecordEmitted(peer.Named(), captureEmission(st, peer.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}))
+				st.RecordEmitted(peer.Named(), captureEmission(st, peer.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}), nil)
 			}
-			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Complete: true}))
+			st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Complete: true}), nil)
 			st.UpdateStatus(raw.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "failed successor"})
 			o := &Orchestrator{store: st}
 			docs := outputByParent(o.collectManifests())[raw.Named()]

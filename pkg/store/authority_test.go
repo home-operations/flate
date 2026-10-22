@@ -38,7 +38,7 @@ func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
 			p, q := ownerID("a"), ownerID("z")
 			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace}, &manifest.Kustomization{Name: q.Name, Namespace: q.Namespace}})
 			child := emissionChild("shared", "equal")
-			s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
+			s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true}, nil)
 			h1 := headsForTest(s, child.Obj.Named())
 			captureReads := func() *ReadSet {
 				t.Helper()
@@ -53,14 +53,14 @@ func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
 				return reads
 			}
 			first := captureReads()
-			s.RecordEmitted(q, &Emission{Children: []Child{child}, Complete: true})
+			s.RecordEmitted(q, &Emission{Children: []Child{child}, Complete: true}, nil)
 			h2 := headsForTest(s, child.Obj.Named())
 			if h2.object <= h1.object {
 				t.Fatal("equal contributor admission did not advance authority")
 			}
 			assert.Equal(t, first.Valid(), false)
 			second := captureReads()
-			s.RecordEmitted(p, &Emission{Complete: true})
+			s.RecordEmitted(p, &Emission{Complete: true}, nil)
 			h3 := headsForTest(s, child.Obj.Named())
 			if h3.object <= h2.object || s.EmissionOwner(child.Obj.Named()) != q {
 				t.Fatal("equal unselected contributor withdrawal lost authority")
@@ -132,7 +132,7 @@ func TestStore_CollectionAuthority(t *testing.T) {
 			s.AddObject(versions[1])
 			assert.Equal(t, head(), first)
 			assert.Equal(t, s.GetObject(id), versions[1])
-			input, _ := s.GetEmission(id)
+			input, _, _ := s.GetEmission(id)
 			assert.Equal(t, input, versions[1])
 			s.AddObjects([]manifest.BaseManifest{versions[2]})
 			if head() <= first {
@@ -181,7 +181,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 		p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 		s.AddObject(p)
 		child := emissionChild("aba", "a")
-		s.RecordEmitted(p.Named(), &Emission{Children: []Child{child}, Complete: true})
+		s.RecordEmitted(p.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
 		h1 := headsForTest(s, p.Named())
 		var reads ReadSet
 		reads.Init(s, ownerID("reader"), nil)
@@ -189,7 +189,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 		defer reads.Retire()
 		s.DeleteObject(p.Named())
 		s.AddObject(p)
-		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("aba", "a")}, Complete: true})
+		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("aba", "a")}, Complete: true}, nil)
 		if headsForTest(s, p.Named()).producer <= h1.producer {
 			t.Fatal("producer readmission reused its authority generation")
 		}
@@ -256,7 +256,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 			obj := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 			s.AddObject(obj)
 			child := emissionChild("child", "old")
-			s.RecordEmitted(obj.Named(), &Emission{Children: []Child{child}, Complete: true})
+			s.RecordEmitted(obj.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
 			s.SetArtifact(child.Obj.Named(), &SourceArtifact{Key: "old"})
 			id := child.Obj.Named()
 			if kind == "producer" {
@@ -298,7 +298,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 				case "artifact":
 					s.SetArtifact(id, &SourceArtifact{Key: "new"})
 				case "producer":
-					s.RecordEmitted(id, &Emission{Children: []Child{emissionChild("child", "new")}, Complete: true})
+					s.RecordEmitted(id, &Emission{Children: []Child{emissionChild("child", "new")}, Complete: true}, nil)
 				case "bucket":
 					s.AddObject(emissionChild("new", "new").Obj)
 				}
@@ -346,7 +346,7 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 	s.AddObject(p)
 	old := emissionChild("cut", "old")
 	fresh := emissionChild("cut", "new")
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{old}, Complete: true})
+	s.RecordEmitted(p.Named(), &Emission{Children: []Child{old}, Complete: true}, nil)
 	sh := s.shardFor(old.Obj.Named())
 	sh.mu.RLock()
 	var before capture
@@ -361,9 +361,9 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 	}, false)
 	defer unsub()
 	var wg sync.WaitGroup
-	wg.Go(func() { s.RecordEmitted(p.Named(), &Emission{Children: []Child{fresh}, Complete: true}) })
+	wg.Go(func() { s.RecordEmitted(p.Named(), &Emission{Children: []Child{fresh}, Complete: true}, nil) })
 	<-paused
-	obj, accepted := s.GetEmission(p.Named())
+	obj, _, accepted := s.GetEmission(p.Named())
 	assert.Equal(t, obj, manifest.BaseManifest(p))
 	assert.Equal(t, accepted.Children[0].Obj, fresh.Obj)
 	assert.Equal(t, s.GetObject(fresh.Obj.Named()), fresh.Obj)
@@ -389,7 +389,7 @@ func TestFeasibility_PointerOnlyExistingSection(t *testing.T) {
 			s := New()
 			p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 			s.AddObject(p)
-			s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("cut", "a")}, Complete: true})
+			s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("cut", "a")}, Complete: true}, nil)
 			tasks := task.NewBounded(2)
 			captured, replaced := make(chan struct{}), make(chan struct{})
 			tasks.Go(t.Context(), "retry", func(context.Context) {
@@ -398,7 +398,7 @@ func TestFeasibility_PointerOnlyExistingSection(t *testing.T) {
 				slot := sh.slots[p.Named()]
 				previous, generation := slot.current.Load(), slot.generation
 				sh.mu.RUnlock()
-				_, proposed := s.GetEmission(p.Named())
+				_, _, proposed := s.GetEmission(p.Named())
 				defer proposed.Finish()
 				if route == "stable" {
 					proposed.Children = []Child{emissionChild("cut", "proposed")}
@@ -424,15 +424,17 @@ func TestFeasibility_PointerOnlyExistingSection(t *testing.T) {
 			tasks.Go(t.Context(), "replace", func(context.Context) {
 				defer close(replaced)
 				tasks.YieldSlot(func() { <-captured })
-				s.RecordEmitted(p.Named(), &Emission{Children: []Child{changed}, Complete: true})
+				s.RecordEmitted(p.Named(), &Emission{Children: []Child{changed}, Complete: true}, nil)
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 {
 				t.Fatal("publication task panicked")
 			}
-			_, retained := s.GetEmission(p.Named())
+			_, _, retained := s.GetEmission(p.Named())
 			defer retained.Finish()
-			assert.Diff(t, retained.Children, []Child{changed})
+			if !slices.EqualFunc(retained.Children, []Child{changed}, childEqual) {
+				t.Fatal("retry changed the accepted replacement children")
+			}
 			if s.GetObject(emissionChild("new", "b").Obj.Named()) != nil {
 				t.Fatal("retry installed a proposed target")
 			}
@@ -457,12 +459,12 @@ func TestFamilyAuthority_CrossFamilyWithdrawalCut(t *testing.T) {
 	fromP, fromQ := emissionChild("from-p", "p"), emissionChild("from-q", "q")
 	emittedP := *p
 	emittedP.Path = "emitted"
-	_, a := s.GetEmission(p.Named())
+	_, _, a := s.GetEmission(p.Named())
 	a.Children, a.Complete = []Child{{Obj: q}, fromP}, true
-	s.RecordEmitted(p.Named(), &a)
-	_, b := s.GetEmission(q.Named())
+	s.RecordEmitted(p.Named(), &a, nil)
+	_, _, b := s.GetEmission(q.Named())
 	b.Children, b.Complete = []Child{{Obj: &emittedP}, fromQ}, true
-	s.RecordEmitted(q.Named(), &b)
+	s.RecordEmitted(q.Named(), &b, nil)
 	paused, resume := make(chan struct{}), make(chan struct{})
 	var stopped atomic.Bool
 	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -504,10 +506,10 @@ func TestOfflockModel_ActivationAfterValidation(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	_, next := s.GetEmission(p.Named())
+	_, _, next := s.GetEmission(p.Named())
 	next.Complete = true
 	var wg sync.WaitGroup
-	wg.Go(func() { s.RecordEmitted(p.Named(), &next) })
+	wg.Go(func() { s.RecordEmitted(p.Named(), &next, nil) })
 	<-paused
 	scoped := *seed
 	scoped.Namespace = "late"
@@ -530,7 +532,7 @@ func TestFeasibility_RevisionBeforeSeparateInstall(t *testing.T) {
 	p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	s.AddObject(p)
 	a, b := emissionChild("child", "a"), emissionChild("child", "b")
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{a}, Complete: true})
+	s.RecordEmitted(p.Named(), &Emission{Children: []Child{a}, Complete: true}, nil)
 	target := s.shardFor(a.Obj.Named())
 	if target == s.shardFor(p.Named()) {
 		t.Fatal("fixture requires different producer and target shards")
@@ -538,7 +540,7 @@ func TestFeasibility_RevisionBeforeSeparateInstall(t *testing.T) {
 	target.mu.Lock()
 	done := make(chan struct{})
 	go func() {
-		s.RecordEmitted(p.Named(), &Emission{Children: []Child{b}, Complete: true})
+		s.RecordEmitted(p.Named(), &Emission{Children: []Child{b}, Complete: true}, nil)
 		close(done)
 	}()
 	timer := time.NewTimer(5 * time.Second)
@@ -573,7 +575,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 	p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	seed, emitted := emissionChild("anchor", "static"), emissionChild("anchor", "emitted")
 	s.AddObjects([]manifest.BaseManifest{p, seed.Obj})
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{emitted}, Complete: true})
+	s.RecordEmitted(p.Named(), &Emission{Children: []Child{emitted}, Complete: true}, nil)
 	sh := s.shardFor(seed.Obj.Named())
 	sh.mu.RLock()
 	cell := sh.cells[seed.Obj.Named()]
@@ -584,7 +586,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 	assert.Equal(t, u.effectiveEqual, true)
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("anchor", "new")}, Complete: true})
+		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("anchor", "new")}, Complete: true}, nil)
 	})
 	wg.Wait()
 	if s.addAnchor(u) {
@@ -592,7 +594,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 	}
 	s.AddObject(emitted.Obj)
 	assert.Equal(t, s.GetObject(seed.Obj.Named()), emitted.Obj)
-	s.RecordEmitted(p.Named(), &Emission{Complete: true})
+	s.RecordEmitted(p.Named(), &Emission{Complete: true}, nil)
 	assert.Equal(t, s.GetObject(seed.Obj.Named()), emitted.Obj)
 }
 
@@ -602,30 +604,30 @@ func TestGetEmission_InputAuthorityStamp(t *testing.T) {
 	p := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	q := &manifest.ResourceSet{Name: "consumer", Namespace: "apps"}
 	s.AddObject(p)
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "a"})
-	_, before := s.GetEmission(q.Named())
+	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "a"}, nil)
+	_, _, before := s.GetEmission(q.Named())
 	before.Complete, before.Fingerprint = true, "unchanged-output"
-	s.RecordEmitted(q.Named(), &before)
+	s.RecordEmitted(q.Named(), &before, nil)
 	slot := s.shardFor(q.Named()).slots[q.Named()]
 	revision := slot.current.Load().revision
 	var reads ReadSet
 	reads.Init(s, q.Named(), nil)
 	reads.GetObject(q.Named())
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"})
-	_, after := s.GetEmission(q.Named())
+	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"}, nil)
+	_, _, after := s.GetEmission(q.Named())
 	if reads.Valid() {
 		t.Fatal("producer authority transition failed to invalidate its reader")
 	}
 	after.Complete = true
-	s.RecordEmitted(q.Named(), &after)
+	s.RecordEmitted(q.Named(), &after, nil)
 	assert.Equal(t, slot.current.Load().revision, revision)
 	assert.Equal(t, after.inputHead.owner, before.inputHead.owner)
 	assert.Equal(t, after.inputHead.generation, before.inputHead.generation)
 	if after.inputHead.revision <= before.inputHead.revision {
 		t.Fatal("stable publication reused its captured authority revision")
 	}
-	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"})
-	_, repeated := s.GetEmission(q.Named())
+	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"}, nil)
+	_, _, repeated := s.GetEmission(q.Named())
 	assert.Equal(t, repeated.inputHead, after.inputHead)
 }
 
@@ -639,7 +641,7 @@ func TestReadRegistration_SeedReplacement(t *testing.T) {
 	s.AddObject(child)
 	replacement := child.Clone()
 	replacement.Values["value"] = "new"
-	s.RecordEmitted(parent.Named(), &Emission{Children: []Child{{Obj: replacement}}, Complete: true})
+	s.RecordEmitted(parent.Named(), &Emission{Children: []Child{{Obj: replacement}}, Complete: true}, nil)
 	if actual := s.GetObject(child.Named()); actual != replacement {
 		t.Fatal("seed admission masked its producer's replacement")
 	}

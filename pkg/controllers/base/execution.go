@@ -67,7 +67,7 @@ func (e *Execution) Valid() bool {
 func (e *Execution) Retire() {
 	switch output := e.Store.GetArtifact(e.Reads.ID()).(type) {
 	case *store.Emission:
-		if output.OutputReads == &e.Reads {
+		if output.Retains(&e.Reads) {
 			return
 		}
 	case *store.SourceArtifact:
@@ -79,18 +79,21 @@ func (e *Execution) Retire() {
 }
 
 // Emit publishes the candidate inventory with its consumed provenance.
-func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission) error {
+func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
 	if err := e.checkpoint(); err != nil {
 		return err
 	}
-	e.publish(id, next)
+	e.publish(id, next, payloads)
 	return nil
 }
 
-func (e *Execution) publish(id manifest.NamedResource, next *store.Emission) {
+func (e *Execution) publish(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
 	e.Reads.Bind(next)
 	next.Unreadable = e.Unreadable
-	e.Controller.Emit(id, next)
+	e.Controller.Emit(id, next, payloads)
+	if next.Complete && e.Reads.Valid() {
+		e.recovering = true
+	}
 }
 
 // Require assesses and retains readiness gates from the captured inputs.
@@ -191,10 +194,10 @@ func (e *Execution) finish(err error) {
 		if artifact, ok := e.Store.GetArtifact(id).(*store.SourceArtifact); ok && !artifact.Reads.Valid() {
 			e.Store.SetArtifact(id, nil)
 		}
-		_, next := e.Reads.GetEmission(id)
+		_, _, next := e.Reads.GetEmission(id)
 		if e.Store.HasInventory(id) {
 			next.Complete = !next.OutputReads.Valid()
-			e.publish(id, &next)
+			e.publish(id, &next, nil)
 		}
 		next.Finish()
 		if errors.Is(err, manifest.ErrSourceSkipped) {
@@ -277,8 +280,8 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 	}
 	var owners []manifest.NamedResource
 	for _, production := range e.Reads.Productions(id, nil) {
-		if production.Owner != (manifest.NamedResource{}) && production.Owner != id {
-			owners = append(owners, production.Owner)
+		if owner := e.Reads.Materializer(id, production); owner != (manifest.NamedResource{}) && owner != id {
+			owners = append(owners, owner)
 		}
 	}
 	slices.SortFunc(owners, manifest.NamedResource.Compare)
@@ -335,7 +338,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	var attempt store.Emission
 	bound := false
 	if !matched {
-		_, attempt = e.Reads.GetEmission(id)
+		_, _, attempt = e.Reads.GetEmission(id)
 		defer attempt.Finish()
 		bound = true
 		output, matched = attempt.Replay(fp)
@@ -359,7 +362,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 		return fp, true, nil
 	}
 	if !bound {
-		_, attempt = e.Reads.GetEmission(id)
+		_, _, attempt = e.Reads.GetEmission(id)
 		defer attempt.Finish()
 	}
 	attempt.Children = output.Children
@@ -367,7 +370,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	return fp, true, e.Emit(id, &attempt)
+	return fp, true, e.Emit(id, &attempt, nil)
 }
 
 // Outcome returns the retained readiness decision without reading the store.
@@ -380,10 +383,10 @@ func (e *Execution) Progressed() bool { return !e.Reused }
 func (e *Execution) Close() { e.Reads.Close() }
 
 func (e *Execution) withdrawInvalid() {
-	_, next := e.Reads.GetEmission(e.Reads.ID())
+	_, _, next := e.Reads.GetEmission(e.Reads.ID())
 	if e.Store.HasInventory(e.Reads.ID()) && !next.OutputReads.Valid() {
 		next.Complete = true
-		e.publish(e.Reads.ID(), &next)
+		e.publish(e.Reads.ID(), &next, nil)
 	}
 	next.Finish()
 }

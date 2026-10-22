@@ -11,27 +11,16 @@ import (
 	"go.yaml.in/yaml/v4/plugin/limit"
 )
 
-// decodedMapPool recycles top-level map[string]any documents produced
-// by DecodeDocs. yaml.v4's libyaml constructor reuses a pre-populated
-// non-nil map when decoding (constructor.go: `if out.IsNil() {
-// MakeMap }`), so handing it a cleared pooled map skips the
-// 16-bucket map allocation per document — meaningful for multi-doc
-// helm output (50+ docs) and tight loader loops.
-//
-// Pool elements are *map[string]any to avoid escaping a fresh
-// interface wrapper per Get / Put. The 16-entry seed mirrors the
-// typical Flux CR top-level shape (apiVersion, kind, metadata, spec,
-// plus a handful of misc keys).
+// yaml.v4 reuses non-nil maps; only unretained documents may return here.
 var decodedMapPool = sync.Pool{
 	New: func() any {
-		m := make(map[string]any, 16)
-		return &m
+		return make(map[string]any, 8)
 	},
 }
 
 // getDecodedMap returns a cleared, ready-to-use map from the pool.
 func getDecodedMap() map[string]any {
-	return *decodedMapPool.Get().(*map[string]any)
+	return decodedMapPool.Get().(map[string]any)
 }
 
 // ReleaseDoc returns a decoded document to the internal pool. Safe to
@@ -45,7 +34,7 @@ func ReleaseDoc(m map[string]any) {
 		return
 	}
 	clear(m)
-	decodedMapPool.Put(&m)
+	decodedMapPool.Put(m)
 }
 
 // DecodeDocs reads zero or more YAML documents from r and returns each

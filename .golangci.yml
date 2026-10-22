@@ -128,6 +128,8 @@ linters:
               desc: base is below the kind controllers
             - pkg: github.com/home-operations/flate/pkg/controllers/kustomization
               desc: base is below the kind controllers
+            - pkg: github.com/home-operations/flate/pkg/controllers/artifactgenerator
+              desc: base is below the kind controllers
             - pkg: github.com/home-operations/flate/pkg/controllers/resourceset
               desc: base is below the kind controllers
             - pkg: github.com/home-operations/flate/pkg/controllers/source

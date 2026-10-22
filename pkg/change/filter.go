@@ -2,6 +2,7 @@ package change
 
 import (
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -42,13 +43,8 @@ type Filter struct {
 	mu   sync.RWMutex
 	keep map[manifest.NamedResource]struct{}
 
-	// primary is the subset of keep whose render output likely differs
-	// from baseline — file-change owners, their siblings, and runtime
-	// adds emitted by another primary entry. Ancestor-only entries
-	// (kept so parent patches apply per #58) are explicitly NOT
-	// marked primary so their render emissions don't cascade-include
-	// every file-loaded sibling via AddEmitted.
-	primary map[manifest.NamedResource]struct{}
+	// Runtime uses membership; construction also tracks admission strength.
+	primary map[manifest.NamedResource]uint8
 
 	// keepByName: (Group, Kind, Name) presence set used as an O(1) fallback
 	// when either side of a lookup has an empty namespace.
@@ -168,7 +164,7 @@ func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseM
 		f.markKept(id)
 		added = append(added, id)
 	}
-	f.primary[id] = struct{}{}
+	f.primary[id] = 1
 	for _, accepted := range acceptedChildren(id, objs) {
 		added = append(added, f.addRecursiveLocked(accepted.Obj.Named(), objs)...)
 	}
@@ -214,7 +210,7 @@ func (f *Filter) addRecursiveLocked(id manifest.NamedResource, objs ObjectLister
 		// differs from baseline and its own emissions must cascade
 		// too. This is symmetric with resolve()'s enqueuePrimary
 		// upgrade path.
-		f.primary[cur] = struct{}{}
+		f.primary[cur] = 1
 		// Transitive walk: a runtime-added KS / HR pulls its
 		// sourceRef / chartRef / valuesFrom into keep with it.
 		// objs may be nil for tests that construct a Filter without
@@ -286,40 +282,32 @@ func (f *Filter) addDependencyOnlyRecursiveLocked(objs ObjectLister, ids ...mani
 }
 
 func (f *Filter) resolve() {
+	const (
+		primaryAdmission uint8 = 1 << iota
+		changeAdmission
+		ownerAdmission
+	)
 	objs := f.objs
-	// Capacity hint: the final keep set is roughly proportional to the
-	// discovery record map; prime both maps and the BFS queue at that size
-	// to avoid repeated rehash/realloc on the initial resolve scan.
 	var records map[manifest.NamedResource]manifest.DiscoveryRecord
 	if f.index != nil {
 		records = f.index.Records
 	}
 	hint := len(records)
 	keep := make(map[manifest.NamedResource]struct{}, hint)
-	primary := make(map[manifest.NamedResource]struct{}, hint)
+	primary := make(map[manifest.NamedResource]uint8, hint)
 	queue := make([]manifest.NamedResource, 0, hint)
-	enqueuePrimary := func(id manifest.NamedResource) {
-		if _, isPrimary := primary[id]; isPrimary {
+	enqueuePrimary := func(id manifest.NamedResource, changed bool) {
+		state := primary[id] | primaryAdmission
+		if changed {
+			state |= changeAdmission
+		}
+		if state == primary[id] {
 			return
 		}
-		primary[id] = struct{}{}
+		primary[id] = state
 		keep[id] = struct{}{}
-		// Always re-queue when promoting an ancestor-only entry
-		// to primary: the BFS body uses the head's primacy at
-		// dequeue time to decide whether dependencies propagate
-		// as primary or ancestor. Without the re-queue, an entry
-		// walked first as ancestor would never have its deps re-
-		// walked as primary, so chained transitive deps (a future
-		// chart-source-of-source or similar) silently stay ancestor-
-		// only. Symmetric with addRecursive's stack push.
 		queue = append(queue, id)
 	}
-	// enqueueAncestor adds id to keep without marking it primary.
-	// Ancestors render so their patches/substituteFrom apply to
-	// descendants (#58), but their render output for unrelated
-	// sibling children is identical to baseline — so AddEmitted
-	// must NOT keep-add those siblings on the cascade path. The
-	// primary/non-primary distinction is the gate.
 	enqueueAncestor := func(id manifest.NamedResource) {
 		if _, seen := keep[id]; seen {
 			return
@@ -339,13 +327,6 @@ func (f *Filter) resolve() {
 		ownership[file] = result
 		return result
 	}
-	// enqueueAncestorChain marks the structural parent that owns file
-	// (longest-prefix spec.path match) plus its meta-Kustomization
-	// ancestors as ancestor-only — they must render to inject patches /
-	// emit namespace-scoped sources, but their unrelated children must
-	// not cascade into keep (#58/#103). self is skipped so a KS walking
-	// its own source file doesn't re-enqueue itself; pass the zero id
-	// when there is nothing to exclude.
 	enqueueAncestorChain := func(file string, self manifest.NamedResource) {
 		for _, owner := range ownersOf(file).owners {
 			if owner != self {
@@ -356,7 +337,6 @@ func (f *Filter) resolve() {
 			enqueueAncestor(ancestor)
 		}
 	}
-	ownersHit := make(map[manifest.NamedResource]struct{})
 	changed := func(record manifest.DiscoveryRecord) bool {
 		return f.changes.Contains(record.File) || slices.ContainsFunc(record.Inputs, f.changes.Contains)
 	}
@@ -366,18 +346,9 @@ func (f *Filter) resolve() {
 			if record, _ := f.index.Lookup(owner); record.Pinned {
 				continue
 			}
-			ownersHit[owner] = struct{}{}
-			enqueuePrimary(owner)
+			enqueuePrimary(owner, true)
+			primary[owner] |= ownerAdmission
 		}
-		// Also include ancestor/meta Kustomizations whose render
-		// mutates the leaf owner's spec — parent-injected spec.patches
-		// and postBuild.substituteFrom land at parent-render time, so
-		// in changed-only mode the parent has to run too. Ancestors
-		// are NOT added to ownersHit, so the sibling-pull-in below
-		// doesn't drag in everything else they own. See #58. They're
-		// also NOT marked primary so AddEmitted skips their unrelated
-		// emitted children — preventing the keep cascade where a
-		// one-file change pulls in the entire cluster.
 		for _, ancestor := range ownersOf(file).ancestors {
 			if record, _ := f.index.Lookup(ancestor); record.Pinned {
 				continue
@@ -387,21 +358,22 @@ func (f *Filter) resolve() {
 	}
 	changedInputs := len(f.changes.inputs) != 0
 	for id, record := range f.index.Files() {
-		src := record.File
 		if changed(record) {
 			changedInputs = changedInputs || id.KindInfo().Data
-			enqueuePrimary(id)
+			enqueuePrimary(id, true)
 			continue
 		}
-		// Pull in every sibling resource that shares an affected owner.
-		for _, owner := range ownersOf(src).owners {
-			if _, hit := ownersHit[owner]; hit {
-				enqueuePrimary(id)
+		for _, owner := range ownersOf(record.File).owners {
+			if primary[owner]&ownerAdmission != 0 {
+				enqueuePrimary(id, true)
 				break
 			}
 		}
 	}
 
+	type reverseEdge struct{ source, consumer manifest.NamedResource }
+	var edgeBuffer [32]reverseEdge
+	edges := edgeBuffer[:0]
 	for consumer, record := range records {
 		var refs [8]manifest.NamedResource
 		sources := append(refs[:0], record.Refs...)
@@ -412,74 +384,74 @@ func (f *Filter) resolve() {
 			sr, ok := f.index.Lookup(src)
 			_, oneSided := f.changes.inputs[src]
 			if changedInputs && !oneSided {
-				src.Namespace = ""
-				_, oneSided = f.changes.inputs[src]
+				unnamespaced := src
+				unnamespaced.Namespace = ""
+				_, oneSided = f.changes.inputs[unnamespaced]
 			}
-			if (!ok || !changed(sr)) && !oneSided {
-				continue
+			if ok && changed(sr) || oneSided {
+				enqueuePrimary(src, true)
+				edges = append(edges, reverseEdge{src, consumer})
 			}
-			enqueuePrimary(consumer)
-			enqueueAncestorChain(record.File, manifest.NamedResource{})
-			break
+			for _, production := range sr.Productions {
+				if production.Declaration == (manifest.NamedResource{}) || !filepath.IsLocal(production.File) {
+					continue
+				}
+				if f.changes.Contains(production.File) {
+					enqueuePrimary(production.Declaration, true)
+				}
+				edges = append(edges, reverseEdge{production.Declaration, consumer})
+			}
 		}
 	}
+	slices.SortFunc(edges, func(a, b reverseEdge) int { return a.source.Compare(b.source) })
 
-	// NOTE: queue grows inside the loop via enqueuePrimary/enqueueAncestor.
-	// Re-evaluate len(queue) each iteration; do NOT convert to `range queue`
-	// (intrange linter must not auto-fix this — see //nolint below).
+	// The queue grows when an admission gains primary or change-affecting strength.
 	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
-		_, headPrimary := primary[queue[head]]
+		id := queue[head]
+		headPrimary := primary[id]&primaryAdmission != 0
+		headChanged := primary[id]&changeAdmission != 0
+		if headChanged {
+			start, _ := slices.BinarySearchFunc(edges, id, func(edge reverseEdge, id manifest.NamedResource) int {
+				return edge.source.Compare(id)
+			})
+			for _, edge := range edges[start:] {
+				if edge.source != id {
+					break
+				}
+				enqueuePrimary(edge.consumer, true)
+				record, _ := f.index.Lookup(edge.consumer)
+				enqueueAncestorChain(record.File, manifest.NamedResource{})
+			}
+		}
 		if headPrimary {
-			for _, child := range acceptedChildren(queue[head], objs) {
-				enqueuePrimary(child.Obj.Named())
+			for _, child := range acceptedChildren(id, objs) {
+				enqueuePrimary(child.Obj.Named(), headChanged)
 			}
 		}
 		var refs [8]manifest.NamedResource
-		record, _ := f.index.Lookup(queue[head])
+		record, _ := f.index.Lookup(id)
 		deps := append(refs[:0], record.Refs...)
 		if objs != nil {
-			deps = appendReferences(deps, objs.GetObject(queue[head]), false)
+			deps = appendReferences(deps, objs.GetObject(id), false)
 		}
-		for _, d := range deps {
+		for _, dep := range deps {
 			if headPrimary {
-				enqueuePrimary(d)
+				enqueuePrimary(dep, false)
 			} else {
-				enqueueAncestor(d)
+				enqueueAncestor(dep)
 			}
-			// If a data dependency is rendered by another Flux
-			// Kustomization, that producer must run so the data
-			// object materializes. Producers are ancestor-only —
-			// their output is needed, but an unchanged producer
-			// should NOT become a primary emitter that cascades
-			// unrelated children into changed-only scope (the #204
-			// cascade rationale applies). Skip the self-producer
-			// case (a KS that produces its own substituteFrom CM —
-			// bjw-s self-substitute pattern). See #418.
-			//
-			// Read discovery data owners via the unlocked producersFor:
-			// resolve() runs pre-publication (f.keep / f.primary not yet set),
-			// before the keep-set lock is used by concurrent readers.
-			for _, producer := range f.producersFor(d, objs) {
-				if producer == queue[head] {
-					continue
+			for _, producer := range f.producersFor(dep, objs) {
+				if producer != id {
+					enqueueAncestor(producer)
 				}
-				enqueueAncestor(producer)
 			}
 		}
-		src := record.File
-		if src == "" || !queue[head].KindInfo().Parent {
-			continue
+		if record.File != "" && id.KindInfo().Parent {
+			enqueueAncestorChain(record.File, id)
 		}
-		enqueueAncestorChain(src, queue[head])
 	}
 	f.keep = keep
 	f.primary = primary
-
-	// Index ONLY empty-namespace keep entries by (Group, Kind, Name) — see
-	// ShouldReconcile's doc for the asymmetry rationale. Indexing
-	// every keep entry (regardless of namespace) would let one kept
-	// resource silently scope-in every same-(Group, Kind, Name) resource in
-	// other namespaces.
 	f.keepByName = make(map[nameKey]struct{})
 	for id := range keep {
 		if id.Namespace == "" {

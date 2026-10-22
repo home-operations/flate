@@ -153,10 +153,10 @@ func BenchmarkRecordEmitted_Replacement1000(b *testing.B) {
 	i := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		_, next := s.GetEmission(parent.Named())
+		_, _, next := s.GetEmission(parent.Named())
 		next.Children = versions[i%2]
 		next.Complete = true
-		s.RecordEmitted(parent.Named(), &next)
+		s.RecordEmitted(parent.Named(), &next, nil)
 		next.Finish()
 		i++
 	}

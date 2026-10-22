@@ -757,7 +757,8 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ks := func(name, path string) string {
-		return testutil.KustomizationYAML(name, "flux-system", "  path: "+path+"\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n  interval: 10m\n")
+		return testutil.KustomizationYAML(name, "flux-system", "  path: "+path+"\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n  interval: 10m\n") + "---\n" +
+			fmt.Sprintf("apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: %s, namespace: flux-system, uid: %s}\nspec:\n  sources: [{alias: repo, kind: GitRepository, name: flux-system}]\n  artifacts: [{name: %s-output}]\n", name, name, name)
 	}
 	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "keep.yaml"), ks("keep", "./apps"))
 	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "drop.yaml"), ks("drop", "./apps"))
@@ -769,10 +770,11 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
+	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 		Path: filepath.Join(dir, "cluster"), RepoRoot: dir, Store: st, WipeSecrets: true,
 		KRMIgnoreFile: filepath.Join(dir, "override.krmignore"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	id := func(name string) manifest.NamedResource {
@@ -782,6 +784,18 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 		if got := st.GetObject(id(name)) != nil; got != want {
 			t.Errorf("Store has %s = %v, want %v", name, got, want)
 		}
+		generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "flux-system", Name: name}
+		obj := st.GetObject(generator)
+		assert.Equal(t, obj != nil, want)
+		if want {
+			_, doc, attempt := st.GetEmission(generator)
+			attempt.Finish()
+			assert.Equal(t, doc["metadata"].(map[string]any)["uid"], any(name))
+			record, _ := result.Index.Lookup(generator)
+			assert.Diff(t, record.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}})
+		}
+		output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "flux-system", Name: name + "-output"}
+		assert.Equal(t, slices.ContainsFunc(st.Productions(output, result.Index), func(p manifest.Production) bool { return p.Declaration == generator }), want)
 	}
 }
 

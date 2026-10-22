@@ -81,7 +81,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, reque
 		}
 	case sourcev1.OCILayerExtract:
 		var err error
-		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, WithDefaults: true, Required: []string{"upstream-digest", "revision"}}, policy, produce)
+		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, Policy: "source", Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 		}

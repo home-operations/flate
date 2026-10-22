@@ -479,7 +479,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 					t.Errorf("status = %+v, want Ready/suspended", info)
 				}
-				_, inventory := st.GetEmission(rs.Named())
+				_, _, inventory := st.GetEmission(rs.Named())
 				if art != nil || st.GetObject(child) != nil || deliveries.Load() != 0 || len(inventory.Children) != 0 {
 					t.Errorf("disabled replacement rendered: artifact=%+v child=%v raw deliveries=%d", art, st.GetObject(child), deliveries.Load())
 				}

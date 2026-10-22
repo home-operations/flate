@@ -17,25 +17,44 @@ import (
 
 func TestCapture_ProducerRecordLifetime(t *testing.T) {
 	t.Parallel()
-	s := New()
-	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-	s.AddObject(producer)
-	child := emissionChild("input", "old")
-	s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true})
-	previous := weak.Make(s.GetArtifact(producer.Named()).(*Emission))
-	var reads ReadSet
-	reads.Init(s, ownerID("reader"), nil)
-	defer reads.Retire()
-	assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
-	s.RecordEmitted(producer.Named(), &Emission{Children: []Child{emissionChild("input", "new")}, Complete: true})
-	runtime.GC()
-	if previous.Value() != nil {
-		t.Fatal("captured child retained the superseded producer's execution history")
+	for _, payload := range []bool{false, true} {
+		t.Run(fmt.Sprintf("payload=%t", payload), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			s.AddObject(producer)
+			child := emissionChild("input", "old")
+			var firstPayload map[manifest.NamedResource]*SourceArtifact
+			if payload {
+				firstPayload = map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "first"}}
+			}
+			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true}, firstPayload)
+			previous := weak.Make(s.GetArtifact(producer.Named()).(*Emission))
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
+			if payload {
+				assert.Equal(t, reads.GetArtifact(child.Obj.Named()), Artifact(firstPayload[child.Obj.Named()]))
+				if !reads.Valid() {
+					t.Fatal("current payload reader was invalid before supersession")
+				}
+			}
+			var nextPayload map[manifest.NamedResource]*SourceArtifact
+			if payload {
+				nextPayload = map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "next"}}
+			}
+			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{emissionChild("input", "new")}, Complete: true}, nextPayload)
+			runtime.GC()
+			if previous.Value() != nil {
+				t.Fatal("captured child retained the superseded producer's execution history")
+			}
+			assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
+			assert.Equal(t, reads.Valid(), false)
+			runtime.KeepAlive(s)
+			runtime.KeepAlive(&reads)
+		})
 	}
-	assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
-	assert.Equal(t, reads.Valid(), false)
-	runtime.KeepAlive(s)
-	runtime.KeepAlive(&reads)
 }
 
 func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
@@ -45,7 +64,7 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	s.AddObject(producer)
 	provider := &manifest.ResourceSetInputProvider{Name: "provider", Namespace: "apps", Labels: map[string]string{"selected": "false"}}
 	publish := func(obj *manifest.ResourceSetInputProvider) {
-		s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: obj}}, Complete: true})
+		s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: obj}}, Complete: true}, nil)
 	}
 	publish(provider)
 	var reads ReadSet
@@ -75,53 +94,70 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 
 func TestReadRegistration_CrossShardLostWakeup(t *testing.T) {
 	t.Parallel()
-	for _, phase := range []string{"before-link", "after-link", "after-validation"} {
-		t.Run(phase, func(t *testing.T) {
-			t.Parallel()
-			s := New()
-			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-			s.AddObject(producer)
-			old := emissionChild("input", "old")
-			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{old}, Complete: true})
-			if kindShardIndex(producer.Named().Kind) == kindShardIndex(old.Obj.Named().Kind) {
-				t.Fatal("fixture must span distinct shards")
-			}
-			var reads ReadSet
-			reads.Init(s, ownerID("reader"), make([]Input, 3))
-			if phase == "before-link" {
-				sh := s.shardFor(old.Obj.Named())
-				sh.mu.RLock()
-				var view capture
-				sh.captureLocked(old.Obj.Named(), sh.cells[old.Obj.Named()], &view)
-				sh.mu.RUnlock()
-				reads.sample(view.owner, view.record)
-			} else {
-				assert.Equal(t, reads.GetObject(old.Obj.Named()), old.Obj)
-				if phase == "after-validation" && !reads.Valid() {
-					t.Fatal("unchanged captured input was invalid")
+	for _, payload := range []bool{false, true} {
+		for _, phase := range []string{"before-link", "after-link", "after-validation"} {
+			t.Run(fmt.Sprintf("payload=%t/%s", payload, phase), func(t *testing.T) {
+				t.Parallel()
+				s := New()
+				producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+				s.AddObject(producer)
+				old := emissionChild("input", "old")
+				var firstPayload map[manifest.NamedResource]*SourceArtifact
+				if payload {
+					firstPayload = map[manifest.NamedResource]*SourceArtifact{old.Obj.Named(): {Key: "first"}}
 				}
-			}
-			published := make(chan struct{})
-			go func() {
-				s.RecordEmitted(producer.Named(), &Emission{Children: []Child{emissionChild("input", "new")}, Complete: true})
-				close(published)
-			}()
-			<-published
-			if phase == "before-link" {
-				reads.activateProducers()
-				if reads.Valid() {
-					t.Fatal("activation certified an obsolete producer record")
+				s.RecordEmitted(producer.Named(), &Emission{Children: []Child{old}, Complete: true}, firstPayload)
+				if payload {
+					s.AddObject(old.Obj)
 				}
-			} else {
-				assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
-				if reads.Valid() {
-					t.Fatal("publication was lost after activation")
+				if kindShardIndex(producer.Named().Kind) == kindShardIndex(old.Obj.Named().Kind) {
+					t.Fatal("fixture must span distinct shards")
 				}
-			}
-			reads.Retire()
-			for range s.Sweep() {
-			}
-		})
+				var reads ReadSet
+				reads.Init(s, ownerID("reader"), make([]Input, 3))
+				if phase == "before-link" {
+					sh := s.shardFor(old.Obj.Named())
+					sh.mu.RLock()
+					var view capture
+					sh.captureLocked(old.Obj.Named(), sh.cells[old.Obj.Named()], &view)
+					sh.mu.RUnlock()
+					if payload {
+						reads.sample(old.Obj.Named(), view.payloadOwner, view.payloadRecord)
+					} else {
+						reads.sample(old.Obj.Named(), view.owner, view.record)
+					}
+				} else {
+					assert.Equal(t, reads.GetObject(old.Obj.Named()), old.Obj)
+					if phase == "after-validation" && !reads.Valid() {
+						t.Fatal("unchanged captured input was invalid")
+					}
+				}
+				published := make(chan struct{})
+				go func() {
+					var nextPayload map[manifest.NamedResource]*SourceArtifact
+					if payload {
+						nextPayload = map[manifest.NamedResource]*SourceArtifact{old.Obj.Named(): {Key: "next"}}
+					}
+					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{emissionChild("input", "new")}, Complete: true}, nextPayload)
+					close(published)
+				}()
+				<-published
+				if phase == "before-link" {
+					reads.activateProducers()
+					if reads.Valid() {
+						t.Fatal("activation certified an obsolete producer record")
+					}
+				} else {
+					assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
+					if reads.Valid() {
+						t.Fatal("publication was lost after activation")
+					}
+				}
+				reads.Retire()
+				for range s.Sweep() {
+				}
+			})
+		}
 	}
 }
 
@@ -131,14 +167,14 @@ func TestDerivedCapture_UnselectedContributorStableCommit(t *testing.T) {
 	a, z := ownerID("a"), ownerID("z")
 	s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace}, &manifest.Kustomization{Name: z.Name, Namespace: z.Namespace}})
 	child := emissionChild("shared", "first")
-	s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true})
-	s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true})
+	s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, nil)
+	s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, nil)
 	var reads ReadSet
 	reads.Init(s, ownerID("reader"), make([]Input, 4))
 	assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
 	_ = reads.Productions(child.Obj.Named(), nil)
 	before := headsForTest(s, child.Obj.Named())
-	s.RecordEmitted(a, &Emission{Children: []Child{emissionChild("shared", "second")}, Complete: true})
+	s.RecordEmitted(a, &Emission{Children: []Child{emissionChild("shared", "second")}, Complete: true}, nil)
 	assert.Equal(t, headsForTest(s, child.Obj.Named()).object, before.object)
 	assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
@@ -172,18 +208,18 @@ func TestDerivedCapture_UnselectedContributorReplacement(t *testing.T) {
 				}
 			}()
 			child := emissionChild("shared", "first")
-			_, initial := previous.GetEmission(a)
+			_, _, initial := previous.GetEmission(a)
 			initial.Children, initial.Complete = []Child{child}, true
-			s.RecordEmitted(a, &initial)
+			s.RecordEmitted(a, &initial, nil)
 			initial.Finish()
-			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true})
+			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, nil)
 			assert.Equal(t, content.GetObject(child.Obj.Named()), child.Obj)
 			assert.Diff(t, contributors.Productions(child.Obj.Named(), nil), []manifest.Production{{Owner: a}, {Owner: z}})
 			before := headsForTest(s, child.Obj.Named())
 			if invalidated {
 				s.AddObject(emissionChild("input", "new").Obj)
 			}
-			s.RecordEmitted(a, &Emission{Children: []Child{child, emissionChild("other", "new")}, Complete: true})
+			s.RecordEmitted(a, &Emission{Children: []Child{child, emissionChild("other", "new")}, Complete: true}, nil)
 			assert.Equal(t, headsForTest(s, child.Obj.Named()).object, before.object)
 			assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
 			assert.Equal(t, content.Valid(), true)
@@ -568,7 +604,7 @@ func TestReadRegistration_AbsentAdmission(t *testing.T) {
 				if mode == "batch" {
 					s.AddObjects([]manifest.BaseManifest{child.Obj})
 				} else {
-					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true})
+					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
 				}
 			}()
 			<-done
@@ -660,7 +696,7 @@ func TestReadRegistration_AbsenceExhaustionIsAtomic(t *testing.T) {
 				case "artifact":
 					s.SetArtifact(obj.Named(), &SourceArtifact{})
 				case "emission":
-					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: obj}}, Complete: true})
+					s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: obj}}, Complete: true}, nil)
 				}
 			}()
 			if !panicked || sh.absence.generation.Load() != generation || !reads.Valid() {
@@ -744,7 +780,7 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 	if reads.Valid() || st.GetObject(id) == nil {
 		t.Fatal("readiness transition must invalidate its reader without withdrawing source bytes")
 	}
-	st.RecordEmitted(owner, &Emission{Complete: true})
+	st.RecordEmitted(owner, &Emission{Complete: true}, nil)
 	if st.GetObject(id) != nil {
 		t.Fatal("producer replacement retained unsupported source bytes")
 	}
@@ -786,15 +822,15 @@ func TestReadSet_UnsettledProducerSnapshot(t *testing.T) {
 			second := &manifest.Kustomization{Name: "second", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{source, first, second})
 			if tc.known {
-				st.RecordEmitted(first.Named(), &Emission{Children: []Child{{Obj: source}}})
+				st.RecordEmitted(first.Named(), &Emission{Children: []Child{{Obj: source}}}, nil)
 			}
 			var reads ReadSet
 			reads.Init(st, ownerID("reader"), nil)
 			defer reads.Retire()
 			before := reads.UnsettledProducers(source.Named())
-			st.RecordEmitted(second.Named(), &Emission{Children: []Child{{Obj: source}}})
+			st.RecordEmitted(second.Named(), &Emission{Children: []Child{{Obj: source}}}, nil)
 			if tc.known {
-				st.RecordEmitted(first.Named(), &Emission{Children: []Child{{Obj: source}}, Complete: true})
+				st.RecordEmitted(first.Named(), &Emission{Children: []Child{{Obj: source}}, Complete: true}, nil)
 			}
 			if after := reads.UnsettledProducers(source.Named()); !slices.Equal(before, after) {
 				t.Fatalf("availability query changed within one captured execution: before=%v after=%v", before, after)
@@ -860,6 +896,7 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true},
 				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true},
 				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ChartSource: true},
+				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ArtifactOnly: true},
 			}
 			if reverse {
 				slices.Reverse(refs)
@@ -931,7 +968,7 @@ func TestRequire_CapturedIdentityDuringAdmission(t *testing.T) {
 	reads.Init(s, ownerID("reader"), nil)
 	defer reads.Retire()
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(nil))
-	ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true, ChartSource: true}
+	ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true, ChartSource: true, ArtifactOnly: true}
 	start := make(chan struct{})
 	var workers sync.WaitGroup
 	workers.Go(func() {
@@ -963,7 +1000,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	if pending.GetDeclaration(raw.Named()) != nil || pending.GetObject(raw.Named()) != raw {
 		t.Fatal("raw visibility supplied authority")
 	}
-	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true})
+	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true}, nil)
 	invalidated := slices.Collect(s.Sweep())
 	if !slices.Contains(invalidated, pending.ID()) || pending.GetDeclaration(raw.Named()) != nil {
 		t.Fatal("arrival failed to wake or changed the first captured view")
@@ -974,7 +1011,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	if accepted.GetDeclaration(raw.Named()) != raw || accepted.Matches(&pending) {
 		t.Fatal("same bytes concealed authority arrival")
 	}
-	s.RecordEmitted(supplier.Named(), &Emission{Complete: true})
+	s.RecordEmitted(supplier.Named(), &Emission{Complete: true}, nil)
 	if accepted.Valid() || s.GetObject(raw.Named()) != raw || s.GetDeclaration(raw.Named()) != nil {
 		t.Fatal("withdrawal lost raw identity or retained authority")
 	}
@@ -984,7 +1021,7 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	if withdrawn.Matches(&accepted) || pending.Valid() {
 		t.Fatal("same bytes concealed withdrawal or reused authority after ABA")
 	}
-	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true})
+	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true}, nil)
 	var supplied ReadSet
 	supplied.Init(s, ownerID("supplied"), nil)
 	defer supplied.Retire()
@@ -998,5 +1035,109 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	defer rooted.Retire()
 	if !rooted.Matches(&supplied) || rooted.GetDeclaration(raw.Named()) != raw {
 		t.Fatal("equal effective content could not rebind rooted authority")
+	}
+}
+
+func TestCapture_PayloadAuthority(t *testing.T) {
+	t.Parallel()
+	for _, static := range []bool{false, true} {
+		t.Run(fmt.Sprintf("static=%t", static), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			a, z := ownerID("a"), ownerID("z")
+			s.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace}, &manifest.Kustomization{Name: z.Name, Namespace: z.Namespace}})
+			child := emissionChild("input", "a")
+			declaration := emissionChild("input", "z")
+			target := child.Obj.Named()
+			payload := &SourceArtifact{Key: "first", Digest: "first", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
+			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: payload})
+			s.RecordEmitted(z, &Emission{Children: []Child{declaration}, Complete: true}, nil)
+			if static {
+				s.AddObject(declaration.Obj)
+			}
+			var first, second ReadSet
+			first.Init(s, ownerID("first-reader"), nil)
+			defer first.Retire()
+			assert.Equal(t, first.GetObject(target), declaration.Obj)
+			assert.Equal(t, first.GetArtifact(target), Artifact(payload))
+			if !first.Valid() {
+				t.Fatal("capturing independent declaration and payload invalidated a current reader")
+			}
+			next := &SourceArtifact{Key: "next", Digest: "next", FS: fstest.MapFS{"file": {Data: []byte("next")}}}
+			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: next})
+			assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{first.ID()})
+			if first.Valid() {
+				t.Fatal("payload-only replacement did not invalidate the registered reader")
+			}
+			assert.Equal(t, first.GetArtifact(target), Artifact(payload))
+			second.Init(s, ownerID("second-reader"), nil)
+			defer second.Retire()
+			assert.Equal(t, second.GetArtifact(target), Artifact(next))
+			if !second.Valid() {
+				t.Fatal("new payload authority could not be captured")
+			}
+			s.RecordEmitted(a, &Emission{Complete: true}, nil)
+			if second.Valid() {
+				t.Fatal("last payload withdrawal retained registered artifact authority")
+			}
+			assert.Equal(t, s.GetObject(target), declaration.Obj)
+			assert.Equal(t, s.GetArtifact(target), Artifact(nil))
+		})
+	}
+}
+
+func TestRecordEmitted_StalePayloadRejected(t *testing.T) {
+	t.Parallel()
+	s := New()
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	s.AddObject(producer)
+	input := ownerID("input")
+	s.SetArtifact(input, &SourceArtifact{Key: "first"})
+	var reads ReadSet
+	reads.Init(s, producer.Named(), nil)
+	defer reads.Retire()
+	reads.GetArtifact(input)
+	_, _, next := reads.GetEmission(producer.Named())
+	defer next.Finish()
+	child := emissionChild("output", "old")
+	next.Children, next.Complete = []Child{child}, true
+	reads.Bind(&next)
+	s.SetArtifact(input, &SourceArtifact{Key: "changed"})
+	s.RecordEmitted(producer.Named(), &next, map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "stale"}})
+	if s.GetObject(child.Obj.Named()) != nil || s.GetArtifact(child.Obj.Named()) != nil || s.HasInventory(producer.Named()) {
+		t.Fatal("invalid captured inputs published stale declaration or bytes")
+	}
+}
+
+func TestProductions_SelfPublication(t *testing.T) {
+	t.Parallel()
+	s := New()
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	child := emissionChild("output", "value")
+	s.AddObject(producer)
+	production := manifest.Production{Owner: producer.Named(), Source: manifest.BootstrapSourceID}
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		producer.Named():  {Productions: []manifest.Production{production}},
+		child.Obj.Named(): {Productions: []manifest.Production{production}},
+	}})
+	var self, observer ReadSet
+	self.Init(s, producer.Named(), nil)
+	observer.Init(s, ownerID("observer"), nil)
+	defer self.Close()
+	defer observer.Close()
+	assert.Diff(t, self.Productions(producer.Named(), nil), []manifest.Production{production})
+	assert.Diff(t, observer.Productions(producer.Named(), nil), []manifest.Production{production})
+	_, _, next := self.GetEmission(producer.Named())
+	defer next.Finish()
+	next.Children, next.Complete = []Child{child}, true
+	s.RecordEmitted(producer.Named(), &next, nil)
+	if !self.Valid() || observer.Valid() || s.GetObject(child.Obj.Named()) == nil {
+		t.Fatalf("publication validity: self=%t observer=%t child=%v", self.Valid(), observer.Valid(), s.GetObject(child.Obj.Named()))
+	}
+	changed := producer.Clone()
+	changed.Path = "changed"
+	s.AddObject(changed)
+	if self.Valid() {
+		t.Fatal("self-publication exemption ignored replacement of the declaration")
 	}
 }

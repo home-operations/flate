@@ -285,7 +285,7 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
 	s.AddObject(producer)
 	declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": "credentials", "template": map[string]any{"data": map[string]any{"X": "remote"}}}}}
-	c.Emit(producer.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true})
+	c.Emit(producer.Named(), &store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true}, nil)
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}}}}
 	execution := gateExecution(c, consumer.Named())
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: "credentials"}
@@ -336,7 +336,7 @@ func TestCollectDeps_DeclarationAvailabilityUsesCommonGate(t *testing.T) {
 				st.SetDiscoveryIndex(index)
 				other := &manifest.Kustomization{Name: "other", Namespace: child.Namespace}
 				st.AddObject(other)
-				st.RecordEmitted(other.Named(), captureEmission(st, other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}))
+				st.RecordEmitted(other.Named(), captureEmission(st, other.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}), nil)
 			}
 			c := New(st, nil)
 			c.Configure(Options{Index: index})

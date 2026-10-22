@@ -542,7 +542,7 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	}
 	l.Admit(root)
 	owners := l.Kustomizations()
-	if len(owners) != 1 || owners[0].TargetNamespace != "" || owners[0].Namespace != "apps" {
+	if len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" {
 		t.Fatalf("unloaded ancestor injected namespace: %+v", owners)
 	}
 }

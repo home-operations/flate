@@ -129,7 +129,7 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
 
       - name: Publish packslip
-        uses: jdx/packslip@2187c31f8317b8548833baf60cfe93db1f42431d # v1.9.0
+        uses: jdx/packslip@693d02c49f6e1c8a0cc797472dc3fa53f0a6c955 # v1.9.1
         with:
           artifacts: dist/*.tar.gz dist/*.zip
           bin: flate

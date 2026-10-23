@@ -219,7 +219,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{".", "one", "two"} {
 		testutil.WriteFile(t, root, dir+"/Chart.yaml", "apiVersion: v2\nname: chart\nversion: 1.0.0\n")
-		testutil.WriteFile(t, root, dir+"/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: chart\n")
+		testutil.WriteFile(t, root, dir+"/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: chart\ndata:\n  marker: {{ .Values.marker | quote }}\n")
 	}
 	testutil.WriteFile(t, root, "config/prod.yaml", "marker: acquired\n")
 	repo := testutil.GitInit(t, root)
@@ -245,6 +245,79 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 	for _, id := range []string{"git-one", "git-two"} {
 		generation, _, err := owner.Git(t.Context(), cache.GitKey{Content: id}, cache.Policy{MaxAge: cache.Forever}, produce)
 		assert.NoError(t, err)
+
+		for _, persistent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/persistent_%t", id, persistent), func(t *testing.T) {
+				t.Parallel()
+				if persistent && !renderPersistenceEligible(t) {
+					t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
+				}
+				outputRoot := ""
+				if persistent {
+					outputRoot = t.TempDir()
+				}
+				outputOwner := cachetest.New(t, outputRoot, cache.New)
+				renderer, err := NewClient(outputOwner)
+				assert.NoError(t, err)
+				backing := &chartBacking{Filesystem: generation.Backing}
+				input, _, err := gittree.New(t.Context(), backing, generation.Commit, gittree.ViewOptions{Content: struct{ Source string }{id}})
+				assert.NoError(t, err)
+				selected := hr.Clone()
+				selected.ChartValuesFiles = []string{"config/prod.yaml"}
+				sources := store.New()
+				sources.SetArtifact(selected.ChartSource(), &store.SourceArtifact{FS: input})
+				renderer.SetSourceResolver(NewStoreSourceResolver(sources))
+				first, err := renderer.Template(t.Context(), selected, nil, Options{})
+				assert.NoError(t, err)
+				if !strings.Contains(first, `marker: "acquired"`) {
+					t.Fatal(first)
+				}
+				reads := backing.opens.Load()
+				if reads == 0 {
+					t.Fatal("first render did not read acquired backing")
+				}
+				second, err := renderer.Template(t.Context(), selected, nil, Options{})
+				assert.NoError(t, err)
+				assert.Equal(t, second, first)
+				assert.Equal(t, backing.opens.Load(), reads)
+				if !persistent {
+					return
+				}
+				d, err := renderer.describeChart(t.Context(), selected)
+				assert.NoError(t, err)
+				d.values, err = renderer.observeValuesFiles(t.Context(), d, selected.ChartValuesFiles, false)
+				assert.NoError(t, err)
+				key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, selected), PersistOnly: true}
+				witness := first + "# pinned persistent hit witness\n"
+				r, _, _, err := outputOwner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					err := json.NewEncoder(w).Encode(renderRecord{Output: witness, Analysis: d.analyze()})
+					return cache.ProducerResult{}, err
+				})
+				assert.NoError(t, err)
+				assert.NoError(t, r.Close())
+				fresh, err := NewClient(cachetest.New(t, outputRoot, cache.New))
+				assert.NoError(t, err)
+				fresh.SetSourceResolver(NewStoreSourceResolver(sources))
+				before := backing.opens.Load()
+				hit, err := fresh.Template(t.Context(), selected, nil, Options{})
+				assert.NoError(t, err)
+				assert.Equal(t, hit, witness)
+				reads = backing.opens.Load()
+				if reads <= before || len(fresh.chartValuesCache) != 1 {
+					t.Fatal("fresh persisted hit did not observe its values")
+				}
+				for _, entry := range fresh.chartValuesCache {
+					if entry.merged != nil || entry.inputs == nil {
+						t.Fatal("persisted hit did not leave an observation-only entry")
+					}
+				}
+				hit, err = fresh.Template(t.Context(), selected, nil, Options{})
+				assert.NoError(t, err)
+				assert.Equal(t, hit, witness)
+				assert.Equal(t, backing.opens.Load(), reads)
+				t.Log("verified pinned persisted hits and observation-only reuse")
+			})
+		}
 		backing := &chartBacking{Filesystem: generation.Backing}
 		input, pin, err := gittree.New(t.Context(), backing, generation.Commit, gittree.ViewOptions{Content: struct{ Source string }{id}})
 		assert.NoError(t, err)

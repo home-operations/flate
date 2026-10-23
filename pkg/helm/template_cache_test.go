@@ -116,12 +116,12 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					assert.Equal(t, loaded.chart.Metadata.Version, "6.15.0")
 					assert.Equal(t, loaded.chart.Dependencies()[0].Metadata.Version, "1.2.3+child")
 					loaded.oci = &ociChartContent{Digest: identity.Digest, Revision: identity.Revision, DisableTracking: disable}
-					valuesKey := chartValuesCacheKey(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, nil)
+					valuesKey := chartValuesCacheKey(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, "")
 					merged, ok := cli.chartValuesCache[valuesKey]
 					if !ok || valuesKey == "" {
 						t.Fatal("render did not cache values under its effective fingerprint")
 					}
-					key := computeTemplateKey(loaded, merged, opts, hr)
+					key := computeTemplateKey(loaded, merged.merged, opts, hr)
 					repeated, err := cli.Template(t.Context(), hr, nil, opts)
 					if err != nil || repeated != out {
 						t.Fatalf("repeat render differs: %v", err)
@@ -649,7 +649,7 @@ data:
 				t.Fatal(err)
 			}
 			values := map[string]any{"greeting": "hi", "fail": true}
-			loaded.inputs, loaded.valuesErr = loaded.observeValuesFiles(t.Context(), newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
+			loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
 			assert.NoError(t, loaded.valuesErr)
 			key := cache.BlobKey{Content: computeTemplateKey(loaded, values, Options{}, newHR()), PersistOnly: true}
 			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
@@ -700,7 +700,7 @@ data:
 				}
 				alternate := maps.Clone(values)
 				alternate["variant"] = true
-				loaded.inputs, loaded.valuesErr = loaded.observeValuesFiles(t.Context(), newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
+				loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
 				assert.NoError(t, loaded.valuesErr)
 				alternateKey := cache.BlobKey{Content: computeTemplateKey(loaded, alternate, Options{}, newHR()), PersistOnly: true}
 				r, _, _, err := cli.cache.Blob(t.Context(), alternateKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
@@ -973,7 +973,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		assert.NoError(t, err)
 		initial, err := loadDecodedChart(t.Context(), cli, hr)
 		assert.NoError(t, err)
-		initial.inputs, initial.valuesErr = initial.observeValuesFiles(t.Context(), hr.ChartValuesFiles, true)
+		initial.values, initial.valuesErr = cli.observeValuesFiles(t.Context(), initial, hr.ChartValuesFiles, true)
 		assert.NoError(t, initial.valuesErr)
 		key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
 		if key == "" {
@@ -1055,7 +1055,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		}
 		missing, err := fresh.describeChart(t.Context(), sourceHR)
 		assert.NoError(t, err)
-		missing.inputs, missing.valuesErr = missing.observeValuesFiles(t.Context(), sourceHR.ChartValuesFiles, false)
+		missing.values, missing.valuesErr = fresh.observeValuesFiles(t.Context(), missing, sourceHR.ChartValuesFiles, false)
 		if !errors.Is(missing.valuesErr, fs.ErrNotExist) {
 			t.Fatal(missing.valuesErr)
 		}

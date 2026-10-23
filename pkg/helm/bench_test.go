@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -100,6 +101,79 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 		if !strings.Contains(out, "demo-cm") {
 			b.Fatalf("missing rendered name")
 		}
+	}
+}
+
+func BenchmarkTemplate_SourceValues(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		disk bool
+	}{
+		{name: "WarmRender"},
+		{name: "PersistedHit", disk: true},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			if tc.disk && !renderPersistenceEligible(b) {
+				b.Fatalf("persisted benchmark requires a clean VCS-stamped build: %s", sourcecache.RenderPersistenceDisabledReason())
+			}
+			dir := stageBenchChartDir(b)
+			testutil.WriteFile(b, dir, "config/prod.yaml", "greeting: pinned\nreplicas: 3\n")
+			root := ""
+			if tc.disk {
+				root = b.TempDir()
+			}
+			owner := cachetest.New(b, root, sourcecache.New)
+			cli, err := NewClient(owner)
+			if err != nil {
+				b.Fatal(err)
+			}
+			input := acquireChartFS(b, owner, os.DirFS(dir))
+			cli.SetSourceResolver(benchChartResolver(b, dir, input))
+			hr := newHR()
+			hr.ChartValuesFiles = []string{"config/prod.yaml"}
+			first, err := cli.Template(b.Context(), hr, nil, Options{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			if !strings.Contains(first, `greeting: "pinned"`) || !strings.Contains(first, `replicas: "3"`) {
+				b.Fatal(first)
+			}
+			second, err := cli.Template(b.Context(), hr, nil, Options{})
+			if err != nil || second != first {
+				b.Fatalf("warm render differs: %v", err)
+			}
+			loaded, err := cli.describeChart(b.Context(), hr)
+			if err != nil || loaded.valuesPin == "" {
+				b.Fatalf("source values are not pinned: %v", err)
+			}
+			if tc.disk {
+				if loaded.record == nil {
+					b.Fatal("warm render did not use persisted output")
+				}
+				witness := first + "# selected source values persisted hit\n"
+				reader, _, _, err := owner.Blob(b.Context(), sourcecache.BlobKey{Content: loaded.record.key, PersistOnly: true}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					err := json.NewEncoder(w).Encode(renderRecord{Output: witness, Analysis: loaded.record.Analysis})
+					return sourcecache.ProducerResult{}, err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := reader.Close(); err != nil {
+					b.Fatal(err)
+				}
+				out, err := cli.Template(b.Context(), hr, nil, Options{})
+				if err != nil || out != witness {
+					b.Fatalf("persisted output witness missing: %v", err)
+				}
+				b.Log("verified selected source values persisted hit")
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := cli.Template(b.Context(), hr, nil, Options{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

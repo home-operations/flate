@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -96,6 +97,37 @@ func BenchmarkChartValues_Cached(b *testing.B) {
 	}
 	if _, err := cli.mergeChartValuesFiles(b.Context(), loaded, hr.ChartValuesFiles, false); err != nil {
 		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := cli.mergeChartValuesFiles(b.Context(), loaded, hr.ChartValuesFiles, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkChartValues_PinnedSource(b *testing.B) {
+	dir := stageBenchChartDir(b)
+	names := make([]string, 10)
+	for i := range names {
+		names[i] = fmt.Sprintf("config/values-%d.yaml", i)
+		testutil.WriteFile(b, dir, names[i], fmt.Sprintf("layer-%d:\n  key: value-%d\nshared:\n  nested-%d: %d\n", i, i, i, i))
+	}
+	owner := cachetest.New(b, "", sourcecache.New)
+	cli, err := NewClient(owner)
+	if err != nil {
+		b.Fatal(err)
+	}
+	cli.SetSourceResolver(benchChartResolver(b, dir, acquireChartFS(b, owner, os.DirFS(dir))))
+	hr := newHR()
+	hr.ChartValuesFiles = names
+	loaded, err := loadDecodedChart(b.Context(), cli, hr)
+	if err != nil || loaded.valuesPin == "" {
+		b.Fatalf("source values are not pinned: %v", err)
+	}
+	merged, err := cli.mergeChartValuesFiles(b.Context(), loaded, hr.ChartValuesFiles, false)
+	if err != nil || len(merged) != 11 {
+		b.Fatalf("prime selected values: %v, got %v", err, merged)
 	}
 	b.ReportAllocs()
 	for b.Loop() {

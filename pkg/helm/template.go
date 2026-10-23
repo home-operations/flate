@@ -46,7 +46,9 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		loaded.oci = &ociChartContent{Digest: loaded.artifact.Digest, Revision: loaded.artifact.Revision, DisableTracking: opts.DisableChartDigestTracking}
 	}
 	caps, capabilityErr := opts.capabilities()
-	loaded.inputs, loaded.valuesErr = loaded.observeValuesFiles(ctx, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+	if loaded.valuesFS != nil {
+		loaded.values, loaded.valuesErr = c.observeValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+	}
 	if hrValues == nil {
 		hrValues = map[string]any{}
 	}
@@ -304,11 +306,7 @@ type chartValuesFile struct {
 	Missing  bool
 }
 
-func (l chartDescription) readValuesFile(ctx context.Context, name string) (chartValuesFile, error) {
-	clean := path.Clean(name)
-	if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
-		return chartValuesFile{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, fs.ErrInvalid)
-	}
+func (l chartDescription) readValuesFile(ctx context.Context, name, clean string) (chartValuesFile, error) {
 	if err := ctx.Err(); err != nil {
 		return chartValuesFile{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, err)
 	}
@@ -348,57 +346,118 @@ func (l chartDescription) readValuesFile(ctx context.Context, name string) (char
 	return chartValuesFile{Data: data}, nil
 }
 
-func (l chartDescription) observeValuesFiles(ctx context.Context, names []string, ignoreMissing bool) ([]chartValuesFile, error) {
-	if l.valuesFS == nil {
-		return nil, nil
+type chartValuesEntry struct {
+	key         string
+	fingerprint *string
+	names       []string
+	inputs      []chartValuesFile
+	merged      map[string]any
+}
+
+func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription, names []string, ignoreMissing bool) (chartValuesEntry, error) {
+	if len(names) == 0 {
+		return chartValuesEntry{}, nil
 	}
-	inputs := make([]chartValuesFile, len(names))
-	observed := make(map[string]chartValuesFile, len(names))
+	cleaned := names
+	normalized := false
 	for i, name := range names {
 		clean := path.Clean(name)
+		if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
+			return chartValuesEntry{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, fs.ErrInvalid)
+		}
+		if clean != name {
+			if !normalized {
+				cleaned = slices.Clone(names)
+				normalized = true
+			}
+			cleaned[i] = clean
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return chartValuesEntry{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, names[0], err)
+	}
+	var key string
+	if loaded.valuesFS == nil || loaded.valuesPin != "" {
+		key = chartValuesCacheKey(loaded, cleaned, ignoreMissing, "")
+	}
+	if key != "" {
+		c.chartMu.RLock()
+		cached := c.chartValuesCache[key]
+		c.chartMu.RUnlock()
+		if cached != nil {
+			return *cached, nil
+		}
+	}
+	entry := chartValuesEntry{key: key, names: cleaned}
+	if loaded.valuesFS == nil {
+		return entry, nil
+	}
+	entry.inputs = make([]chartValuesFile, len(names))
+	observed := make(map[string]chartValuesFile, len(names))
+	for i, name := range names {
+		clean := cleaned[i]
 		file, ok := observed[clean]
 		if !ok {
 			var err error
-			file, err = l.readValuesFile(ctx, name)
+			file, err = loaded.readValuesFile(ctx, name, clean)
 			if err != nil && (!ignoreMissing || !file.Missing) {
-				return nil, err
+				return chartValuesEntry{}, err
 			}
 			observed[clean] = file
 		}
-		inputs[i] = file
+		entry.inputs[i] = file
 	}
-	return inputs, nil
+	if err := ctx.Err(); err != nil {
+		return chartValuesEntry{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, names[len(names)-1], err)
+	}
+	fingerprint := manifest.Fingerprint(entry.inputs)
+	entry.fingerprint = &fingerprint
+	entry.key = chartValuesCacheKey(loaded, cleaned, ignoreMissing, fingerprint)
+	if entry.key != "" {
+		if !normalized {
+			entry.names = slices.Clone(names)
+		}
+		published := entry
+		c.chartMu.Lock()
+		if existing := c.chartValuesCache[entry.key]; existing != nil {
+			entry = *existing
+		} else {
+			c.chartValuesCache[entry.key] = &published
+		}
+		c.chartMu.Unlock()
+	}
+	return entry, nil
 }
 
 func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartDescription, names []string, ignoreMissing bool) (map[string]any, error) {
 	if loaded.valuesErr != nil {
 		return nil, loaded.valuesErr
 	}
-	inputs := loaded.inputs
-	if inputs == nil {
+	entry := loaded.values
+	if entry.names == nil {
 		var err error
-		inputs, err = loaded.observeValuesFiles(ctx, names, ignoreMissing)
+		entry, err = c.observeValuesFiles(ctx, loaded, names, ignoreMissing)
 		if err != nil {
 			return nil, err
 		}
 	}
-	key := chartValuesCacheKey(loaded, names, ignoreMissing, inputs)
-	if key != "" {
-		c.chartMu.RLock()
-		cached, ok := c.chartValuesCache[key]
-		c.chartMu.RUnlock()
-		if ok {
-			return manifest.DeepCopyMap(cached), nil
-		}
+	if entry.names == nil {
+		return map[string]any{}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, names[0], err)
+	}
+	if entry.merged != nil {
+		return manifest.DeepCopyMap(entry.merged), nil
 	}
 	merged := map[string]any{}
 	for i, name := range names {
 		var file chartValuesFile
-		if inputs != nil {
-			file = inputs[i]
+		if entry.inputs != nil {
+			file = entry.inputs[i]
 		} else {
 			var err error
-			file, err = loaded.readValuesFile(ctx, name)
+			file, err = loaded.readValuesFile(ctx, name, entry.names[i])
 			if file.Missing && ignoreMissing {
 				err = nil
 			}
@@ -417,31 +476,39 @@ func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartDescript
 		}
 		merged = values.DeepMergeInto(merged, m)
 	}
-	if key == "" {
+	if entry.key == "" {
 		return merged, nil
 	}
-	c.chartMu.Lock()
-	if existing, ok := c.chartValuesCache[key]; ok {
-		c.chartMu.Unlock()
-		return manifest.DeepCopyMap(existing), nil
+	published := entry
+	published.merged = merged
+	if entry.inputs == nil {
+		published.names = slices.Clone(entry.names)
 	}
-	c.chartValuesCache[key] = merged
+	c.chartMu.Lock()
+	if existing := c.chartValuesCache[entry.key]; existing != nil && existing.merged != nil {
+		merged = existing.merged
+	} else {
+		c.chartValuesCache[entry.key] = &published
+	}
 	c.chartMu.Unlock()
 	return manifest.DeepCopyMap(merged), nil
 }
 
-func chartValuesCacheKey(loaded chartDescription, names []string, ignoreMissing bool, inputs []chartValuesFile) string {
+func chartValuesCacheKey(loaded chartDescription, names []string, ignoreMissing bool, inputs string) string {
 	if loaded.fingerprint == "" {
 		return ""
+	}
+	if loaded.valuesPin != "" {
+		inputs = ""
 	}
 	return manifest.Fingerprint(struct {
 		Chart         string
 		OCI           *ociChartContent
 		Names         []string
 		IgnoreMissing bool
-		Source        bool              `json:",omitempty"`
-		Pin           string            `json:",omitempty"`
-		Inputs        []chartValuesFile `json:",omitempty"`
+		Source        bool   `json:",omitempty"`
+		Pin           string `json:",omitempty"`
+		Inputs        string `json:",omitempty"`
 	}{loaded.fingerprint, loaded.oci, names, ignoreMissing, loaded.valuesFS != nil, loaded.valuesPin, inputs})
 }
 

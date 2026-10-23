@@ -297,7 +297,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		if validOutput && validChartTemplates(d.chart) {
 			t.Fatal("invalid template bytes were changed")
 		}
-		d.inputs, d.valuesErr = d.observeValuesFiles(t.Context(), hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, d.valuesErr)
 		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
 		if err == nil {
@@ -420,7 +420,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			if hr.UsesDirectOCIRepository() {
 				d.oci = &ociChartContent{Digest: art.Digest, Revision: art.Revision, DisableTracking: opts.DisableChartDigestTracking}
 			}
-			d.inputs, d.valuesErr = d.observeValuesFiles(t.Context(), hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+			d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 			assert.NoError(t, d.valuesErr)
 			key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, opts, hr), PersistOnly: true}
 			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
@@ -480,7 +480,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		cli.SetSourceResolver(NewStoreSourceResolver(st))
 		d, err := cli.describeChart(t.Context(), hr)
 		assert.NoError(t, err)
-		d.inputs, d.valuesErr = d.observeValuesFiles(t.Context(), hr.ChartValuesFiles, true)
+		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
 		assert.NoError(t, d.valuesErr)
 		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), PersistOnly: true}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, err := io.WriteString(w, "{")

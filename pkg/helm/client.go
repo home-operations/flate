@@ -39,7 +39,7 @@ type Client struct {
 	chartLoadLocks *keylock.KeyMap[string]
 
 	// Cached values MUST remain immutable; chartMu guards lookup and publication.
-	chartValuesCache map[string]map[string]any
+	chartValuesCache map[string]*chartValuesEntry
 
 	// valuesCache memoizes parsed-YAML output of ExpandValueReferences
 	// across HRs in this Client's lifetime. One HR with 10 valuesFrom
@@ -57,7 +57,7 @@ type Client struct {
 func NewClient(owner *cache.Cache) (*Client, error) {
 	return &Client{
 		chartCache:       map[string]chartDescription{},
-		chartValuesCache: map[string]map[string]any{},
+		chartValuesCache: map[string]*chartValuesEntry{},
 		chartLoadLocks:   keylock.New[string](),
 		valuesCache:      values.NewCache(),
 		cache:            owner,
@@ -96,7 +96,7 @@ type chartDescription struct {
 	key, location string
 	analysis      *chartAnalysis
 	record        *renderRecord
-	inputs        []chartValuesFile
+	values        chartValuesEntry
 	valuesErr     error
 	chart         *chart.Chart
 	fingerprint   string

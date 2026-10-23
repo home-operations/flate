@@ -73,6 +73,7 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 		khr.TestEnable = hr.Test.Enable
 	}
 
+	inputs := loaded.values.fingerprint
 	type keyOptions struct {
 		SkipCRDs, SkipTests      bool
 		KubeVersion, APIVersions string
@@ -83,12 +84,12 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 	return manifest.Fingerprint(struct {
 		Chart   string
 		OCI     *ociChartContent
-		Inputs  []chartValuesFile
+		Inputs  *string
 		Values  map[string]any
 		Options keyOptions
 		Release keyHR
 	}{
-		Chart: loaded.fingerprint, OCI: loaded.oci, Inputs: loaded.inputs, Values: releaseValues,
+		Chart: loaded.fingerprint, OCI: loaded.oci, Inputs: inputs, Values: releaseValues,
 		Options: keyOptions{opts.SkipCRDs, opts.SkipTests, opts.KubeVersion, opts.APIVersions, opts.IsUpgrade, opts.NoHooks, opts.ShowOnly, opts.EnableDNS},
 		Release: khr,
 	})

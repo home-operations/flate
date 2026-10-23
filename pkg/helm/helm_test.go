@@ -120,12 +120,15 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	}
 	cachedBefore := make(map[string]map[string]any, len(cli.chartValuesCache))
 	for key, value := range cli.chartValuesCache {
-		cachedBefore[key] = manifest.DeepCopyMap(value)
+		cachedBefore[key] = manifest.DeepCopyMap(value.merged)
 	}
 	repeated, err := cli.Template(t.Context(), hr, vals, Options{})
 	assert.NoError(t, err)
 	assert.Equal(t, repeated, outputs[0])
-	assert.Diff(t, cli.chartValuesCache, cachedBefore)
+	assert.Equal(t, len(cli.chartValuesCache), len(cachedBefore))
+	for key, before := range cachedBefore {
+		assert.Diff(t, cli.chartValuesCache[key].merged, before)
+	}
 }
 
 func helmChartFixture(t *testing.T) *Client {

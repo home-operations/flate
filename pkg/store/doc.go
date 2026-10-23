@@ -8,11 +8,11 @@
 //   - The artifact produced by a controller (e.g. a checked-out git
 //     working tree, a rendered manifest, a downloaded chart).
 //
-// Three event types are dispatched as state evolves: ObjectAdded,
-// StatusUpdated, ArtifactUpdated. Callers subscribe via AddListener (sync,
-// returns an unsubscribe function).
+// ObjectAdded, StatusUpdated, ArtifactUpdated and WarningAdded events are
+// observed through AddListener. WarningAdded carries each newly recorded
+// origin/payload contribution with Count 1; Warnings returns aggregate counts
+// and derived conflicting-producer diagnostics.
 //
-// Store is safe for concurrent use. Listeners run inline on the goroutine
-// that triggered the event; they MUST NOT call back into the same Store
-// with a blocking call.
+// Store is safe for concurrent use. Listeners run inline after state locks
+// are released. Event payloads are immutable; copy Warning.Detail before mutation.
 package store

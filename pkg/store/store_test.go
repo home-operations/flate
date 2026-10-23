@@ -589,15 +589,27 @@ func TestStore_ListObjects_DeterministicOrder(t *testing.T) {
 
 func TestStore_AddListener_Unsubscribe(t *testing.T) {
 	t.Parallel()
-	s := New()
-	count := 0
-	unsub := s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		count++
-	}, false)
-	s.AddObject(newCM("a", "ns"))
-	unsub()
-	s.AddObject(newCM("b", "ns"))
-	assert.Equal(t, count, 1) // post-unsubscribe add is silent
+	for _, event := range []EventKind{EventObjectAdded, EventWarningAdded} {
+		t.Run(fmt.Sprint(event), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			publish := func(name string) {
+				if event == EventWarningAdded {
+					s.AddWarning(newCM(name, "ns").Named(), manifest.Warning{Category: manifest.WarnStaleValues, Message: "m"})
+				} else {
+					s.AddObject(newCM(name, "ns"))
+				}
+			}
+			count := 0
+			unsub := s.AddListener(event, func(_ manifest.NamedResource, _ any) {
+				count++
+			}, false)
+			publish("a")
+			unsub()
+			publish("b")
+			assert.Equal(t, count, 1)
+		})
+	}
 }
 
 func TestStore_SetArtifact(t *testing.T) {
@@ -696,41 +708,55 @@ func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 
 func TestStore_ListenerPanicIsolated(t *testing.T) {
 	t.Parallel()
-	s := New()
-	other := 0
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		panic("boom")
-	}, false)
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		other++
-	}, false)
-	s.AddObject(newCM("a", "ns")) // should not crash
-	assert.Equal(t, other, 1)     // sibling listener still ran
+	for _, event := range []EventKind{EventObjectAdded, EventWarningAdded} {
+		t.Run(fmt.Sprint(event), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			publish := func(name string) {
+				if event == EventWarningAdded {
+					s.AddWarning(newCM(name, "ns").Named(), manifest.Warning{Category: manifest.WarnStaleValues, Message: "m"})
+				} else {
+					s.AddObject(newCM(name, "ns"))
+				}
+			}
+			other := 0
+			s.AddListener(event, func(_ manifest.NamedResource, _ any) {
+				panic("boom")
+			}, false)
+			s.AddListener(event, func(_ manifest.NamedResource, _ any) {
+				other++
+			}, false)
+			publish("a")
+			assert.Equal(t, other, 1)
+		})
+	}
 }
 
-// AddListener with flush=true replays existing store contents into the
-// new listener. A panic in the listener during replay must not crash
-// the caller — controllers attach with flush=true in Start() and a
-// crash here would tear down the whole reconcile pipeline before the
-// orchestrator's Run loop ever ticked. Parity with the live `fire`
-// path in TestStore_ListenerPanicIsolated.
 func TestStore_ListenerPanicRecoveredDuringReplay(t *testing.T) {
 	t.Parallel()
-	s := New()
-	s.AddObject(newCM("a", "ns"))
-	s.AddObject(newCM("b", "ns"))
-	// The panicky listener attaches with flush=true → replay fires
-	// against every existing object. Without panic recovery the test
-	// would fail with a runtime panic.
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		panic("boom during replay")
-	}, true)
-	// Confirm the Store is still healthy after the recovered panic.
-	other := 0
-	s.AddListener(EventObjectAdded, func(_ manifest.NamedResource, _ any) {
-		other++
-	}, true)
-	assert.Equal(t, other, 2) // store healthy after recovered replay panic
+	for _, event := range []EventKind{EventObjectAdded, EventWarningAdded} {
+		t.Run(fmt.Sprint(event), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			publish := func(name string) {
+				if event == EventWarningAdded {
+					s.AddWarning(newCM(name, "ns").Named(), manifest.Warning{Category: manifest.WarnStaleValues, Message: "m"})
+				} else {
+					s.AddObject(newCM(name, "ns"))
+				}
+			}
+			publish("a")
+			publish("b")
+			s.AddListener(event, func(_ manifest.NamedResource, _ any) {
+				panic("boom during replay")
+			}, true)
+			other := 0
+			s.AddListener(event, func(_ manifest.NamedResource, _ any) {
+				other++
+			}, true)
+			assert.Equal(t, other, 2)
+		})
+	}
 }
 
 func TestStore_Concurrency(t *testing.T) {
@@ -1009,7 +1035,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 			s := New()
 			arrived, release := make(chan struct{}, workers), make(chan struct{})
 			var events [numEventKinds + 1]sync.Map
-			for kind := EventObjectAdded; int(kind) <= numEventKinds; kind++ {
+			for _, kind := range []EventKind{EventObjectAdded, EventStatusUpdated, EventArtifactUpdated} {
 				s.AddListener(kind, func(id manifest.NamedResource, _ any) {
 					count, _ := events[kind].LoadOrStore(id, new(atomic.Int64))
 					count.(*atomic.Int64).Add(1)
@@ -1053,7 +1079,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							owners := testutil.Owners(s.Productions(id, nil))
 							assert.Equal(t, len(owners), 1)
 							assert.Equal(t, owners[0].Group, id.Group)
-							for kind := EventObjectAdded; int(kind) <= numEventKinds; kind++ {
+							for _, kind := range []EventKind{EventObjectAdded, EventStatusUpdated, EventArtifactUpdated} {
 								count, ok := events[kind].Load(id)
 								if !ok || count.(*atomic.Int64).Load() != 1 {
 									t.Errorf("event %v for %v = %v", kind, id, count)

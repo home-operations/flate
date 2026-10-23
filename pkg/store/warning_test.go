@@ -4,11 +4,17 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+type warningEvent struct {
+	Origin  manifest.NamedResource
+	Warning manifest.Warning
+}
 
 func hrID(name string) manifest.NamedResource {
 	return testutil.HelmReleaseID("default", name)
@@ -24,6 +30,10 @@ func TestWarnings_Empty(t *testing.T) {
 func TestAddWarning_DedupAndCount(t *testing.T) {
 	t.Parallel()
 	s := New()
+	var events []warningEvent
+	s.AddListener(EventWarningAdded, func(id manifest.NamedResource, payload any) {
+		events = append(events, warningEvent{Origin: id, Warning: payload.(manifest.Warning)})
+	}, false)
 	origin := hrID("app")
 	w := manifest.Warning{Resource: origin, Category: manifest.WarnStaleValues, Count: 42,
 		Message: "values not defined by the chart schema", Detail: []string{"a", "b"}}
@@ -47,6 +57,16 @@ func TestAddWarning_DedupAndCount(t *testing.T) {
 	core.Resource.Group = ""
 	assert.Equal(t, core.Resource.String(), w.Resource.String())
 	s.AddWarning(origin, core)
+
+	var wantEvents []warningEvent
+	for _, contribution := range []struct {
+		origin  manifest.NamedResource
+		warning manifest.Warning
+	}{{origin, w}, {hrID("other"), w}, {origin, detail}, {origin, message}, {origin, foreign}, {origin, core}} {
+		contribution.warning.Count = 1
+		wantEvents = append(wantEvents, warningEvent{Origin: contribution.origin, Warning: contribution.warning})
+	}
+	assert.Diff(t, events, wantEvents)
 
 	got := s.Warnings()
 	if len(got) != 5 {
@@ -155,8 +175,17 @@ func TestWarnings_Sorted(t *testing.T) {
 func TestAddWarning_DefensiveCopy(t *testing.T) {
 	t.Parallel()
 	s := New()
+	var live, replay manifest.Warning
+	s.AddListener(EventWarningAdded, func(_ manifest.NamedResource, payload any) {
+		if live.Count == 0 {
+			live = payload.(manifest.Warning)
+		}
+	}, false)
 	detail := []string{"x"}
 	s.AddWarning(hrID("app"), manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
+	s.AddListener(EventWarningAdded, func(_ manifest.NamedResource, payload any) {
+		replay = payload.(manifest.Warning)
+	}, true)()
 	detail[0] = "MUTATED"
 
 	got := s.Warnings()
@@ -168,6 +197,14 @@ func TestAddWarning_DefensiveCopy(t *testing.T) {
 	if again := s.Warnings(); again[0].Detail[0] != "x" || again[0].Count != 1 {
 		t.Errorf("Warnings() returned aliased internal state: %+v", again)
 	}
+	copied := slices.Clone(live.Detail)
+	copied[0] = "listener-owned"
+	s.AddWarning(hrID("other"), manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: []string{"x"}})
+	want := manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: []string{"x"}, Count: 1}
+	assert.Diff(t, live, want)
+	assert.Diff(t, replay, want)
+	assert.Equal(t, s.Warnings()[0].Count, 2)
+
 }
 
 func TestAddWarning_Concurrent(t *testing.T) {
@@ -201,4 +238,165 @@ func TestAddWarning_Concurrent(t *testing.T) {
 			assert.Diff(t, s.Warnings(), []manifest.Warning{w})
 		})
 	}
+}
+
+func TestAddWarning_ListenerReplay(t *testing.T) {
+	t.Parallel()
+	for _, flush := range []bool{false, true} {
+		name := "live only"
+		if flush {
+			name = "replay and live"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			w := manifest.Warning{Resource: hrID("display"), Category: manifest.WarnStaleValues, Message: "m", Count: 99}
+			s.AddWarning(manifest.NamedResource{}, w)
+			s.AddWarning(hrID("app"), w)
+			seen := map[manifest.NamedResource][]manifest.Warning{}
+			unsub := s.AddListener(EventWarningAdded, func(origin manifest.NamedResource, payload any) {
+				seen[origin] = append(seen[origin], payload.(manifest.Warning))
+			}, flush)
+			w.Count = 1
+			want := map[manifest.NamedResource][]manifest.Warning{}
+			if flush {
+				want[manifest.NamedResource{}] = []manifest.Warning{w}
+				want[hrID("app")] = []manifest.Warning{w}
+			}
+			assert.Diff(t, seen, want)
+			s.AddWarning(hrID("other"), w)
+			s.AddWarning(hrID("other"), w)
+			want[hrID("other")] = []manifest.Warning{w}
+			assert.Diff(t, seen, want)
+			unsub()
+			unsub()
+			s.AddWarning(hrID("after unsubscribe"), w)
+			assert.Diff(t, seen, want)
+			assert.Equal(t, s.Warnings()[0].Count, 4)
+		})
+	}
+}
+
+func TestAddWarning_ListenerOverlap(t *testing.T) {
+	t.Parallel()
+	for _, flush := range []bool{false, true} {
+		name := "without replay"
+		if flush {
+			name = "with replay"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			origin := hrID("app")
+			w := manifest.Warning{Category: manifest.WarnStaleValues, Message: "m", Count: 1}
+			paused, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(resume) })
+			unsub := s.AddListener(EventWarningAdded, func(_ manifest.NamedResource, _ any) {
+				close(paused)
+				<-resume
+			}, false)
+			go func() { defer close(done); s.AddWarning(origin, w) }()
+			<-paused
+			t.Cleanup(func() { release(); <-done })
+			var seen []warningEvent
+			s.AddListener(EventWarningAdded, func(id manifest.NamedResource, payload any) {
+				seen = append(seen, warningEvent{Origin: id, Warning: payload.(manifest.Warning)})
+			}, flush)
+			unsub()
+			release()
+			<-done
+			var want []warningEvent
+			if flush {
+				want = append(want, warningEvent{Origin: origin, Warning: w})
+			}
+			assert.Diff(t, seen, want)
+			s.AddWarning(hrID("other"), w)
+			want = append(want, warningEvent{Origin: hrID("other"), Warning: w})
+			assert.Diff(t, seen, want)
+		})
+	}
+}
+
+func TestAddWarning_ListenerUnlocked(t *testing.T) {
+	t.Parallel()
+	for _, flush := range []bool{false, true} {
+		name := "live"
+		if flush {
+			name = "replay"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			w := manifest.Warning{Category: manifest.WarnStaleValues, Message: "m"}
+			if flush {
+				s.AddWarning(hrID("app"), w)
+			}
+			paused, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(resume) })
+			go func() {
+				defer close(done)
+				s.AddListener(EventWarningAdded, func(_ manifest.NamedResource, _ any) {
+					assert.Equal(t, len(s.Warnings()), 1)
+					close(paused)
+					<-resume
+				}, flush)
+				if !flush {
+					s.AddWarning(hrID("app"), w)
+				}
+			}()
+			<-paused
+			t.Cleanup(func() { release(); <-done })
+			s.AddObject(newCM("independent", "ns"))
+			assert.Equal(t, len(s.ListObjects("", "")), 1)
+			release()
+			<-done
+		})
+	}
+}
+
+func TestStore_ListenerStateLock(t *testing.T) {
+	t.Parallel()
+	for _, flush := range []bool{false, true} {
+		name := "without replay"
+		if flush {
+			name = "with replay"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(_ *testing.T) {
+				s := New()
+				s.lockAll()
+				s.AddListener(EventWarningAdded, func(_ manifest.NamedResource, _ any) {}, flush)()
+				s.unlockAll()
+				s.warnMu.Lock()
+				for _, event := range []EventKind{EventObjectAdded, EventStatusUpdated, EventArtifactUpdated} {
+					s.AddListener(event, func(_ manifest.NamedResource, _ any) {}, flush)()
+				}
+				s.warnMu.Unlock()
+			})
+		})
+	}
+}
+
+func TestWarnings_DerivedConflictDoesNotDispatch(t *testing.T) {
+	t.Parallel()
+	s := New()
+	var events []warningEvent
+	s.AddListener(EventWarningAdded, func(id manifest.NamedResource, payload any) {
+		events = append(events, warningEvent{Origin: id, Warning: payload.(manifest.Warning)})
+	}, false)
+	for _, name := range []string{"a", "b"} {
+		owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
+		s.AddObject(owner)
+		child := emissionChild("shared", name)
+		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{child}, Manifests: []map[string]any{child.Doc}, Complete: true})
+	}
+	warnings := s.Warnings()
+	if len(warnings) != 1 || warnings[0].Category != manifest.WarnConflictingProducers {
+		t.Fatalf("derived conflict warning = %+v", warnings)
+	}
+	s.AddListener(EventWarningAdded, func(id manifest.NamedResource, payload any) {
+		events = append(events, warningEvent{Origin: id, Warning: payload.(manifest.Warning)})
+	}, true)()
+	assert.Equal(t, len(events), 0)
 }

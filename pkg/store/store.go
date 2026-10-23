@@ -15,7 +15,7 @@ import (
 // numEventKinds is the number of distinct EventKind values (1-based, so
 // index 0 is unused). A fixed-size array indexed directly by EventKind
 // removes the map lookup and bucket overhead on every dispatch path.
-const numEventKinds = 3
+const numEventKinds = int(EventWarningAdded)
 
 // shardCount is the number of shards the per-Kind sharded state is
 // distributed across. The Store's writers and readers route through
@@ -127,17 +127,7 @@ type Store struct {
 	index    atomic.Pointer[manifest.DiscoveryIndex]
 	coverage map[manifest.NamedResource]*contributor
 
-	// listeners is indexed by EventKind (1-based; index 0 unused). A
-	// fixed-size array beats a map here: the set of kinds is closed,
-	// the index arithmetic is O(1) with no hash, and the array itself
-	// is inline in the Store struct rather than a separately-allocated
-	// map header. Every dispatch path benefits.
-	//
-	// Listener sets stay global — they fan out to interested
-	// observers irrespective of the resource's Kind, and the
-	// listenerSet has its own internal mutex so the shard locks don't
-	// serialize listener registration.
-	listeners [numEventKinds + 1]*listenerSet
+	listeners [numEventKinds + 1]listenerSet
 
 	// warn collects render advisories (manifest.Warning) for Result.Warnings.
 	// Kept off the shards: warnings are low-volume, some are render-global
@@ -155,11 +145,8 @@ func New() *Store {
 	for i := range s.shards {
 		s.shards[i] = newShard()
 	}
-	// Index 0 is the reserved unused slot (EventKind is 1-based); init
-	// one listener set per real event kind so adding a kind can't drift
-	// out of sync with a forgotten assignment here.
 	for ev := EventObjectAdded; int(ev) <= numEventKinds; ev++ {
-		s.listeners[ev] = newListenerSet()
+		s.listeners[ev].snapshot.Store(&emptyListenerSnapshot)
 	}
 	return s
 }

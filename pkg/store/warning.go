@@ -10,7 +10,8 @@ import (
 // AddWarning records one advisory per origin and complete warning payload.
 // Count reports distinct origins sharing a resource, category, message and
 // ordered detail; incoming Count is ignored. A zero origin identifies a
-// render-global advisory independently of the displayed Resource.
+// render-global advisory independently of the displayed Resource. Newly recorded
+// contributions dispatch EventWarningAdded after releasing the warning lock.
 func (s *Store) AddWarning(origin manifest.NamedResource, w manifest.Warning) {
 	detail := ""
 	if len(w.Detail) > 0 {
@@ -21,25 +22,29 @@ func (s *Store) AddWarning(origin manifest.NamedResource, w manifest.Warning) {
 	}
 	key := warningKey{w.Resource, w.Category, w.Message, detail}
 
+	w.Count = 1
 	s.warnMu.Lock()
-	defer s.warnMu.Unlock()
 	if i, ok := s.warnIndex[key]; ok {
 		record := &s.warnOrder[i]
-		if _, seen := record.origins[origin]; !seen {
-			record.origins[origin] = struct{}{}
-			record.warning.Count = len(record.origins)
+		if _, seen := record.origins[origin]; seen {
+			s.warnMu.Unlock()
+			return
 		}
-		return
+		record.origins[origin] = struct{}{}
+		record.warning.Count = len(record.origins)
+	} else {
+		if s.warnIndex == nil {
+			s.warnIndex = make(map[warningKey]int)
+		}
+		s.warnIndex[key] = len(s.warnOrder)
+		s.warnOrder = append(s.warnOrder, warningRecord{
+			warning: w,
+			origins: map[manifest.NamedResource]struct{}{origin: {}},
+		})
 	}
-	if s.warnIndex == nil {
-		s.warnIndex = make(map[warningKey]int)
-	}
-	w.Count = 1
-	s.warnIndex[key] = len(s.warnOrder)
-	s.warnOrder = append(s.warnOrder, warningRecord{
-		warning: w,
-		origins: map[manifest.NamedResource]struct{}{origin: {}},
-	})
+	dispatch := fireUnderLock(s, EventWarningAdded, origin, w)
+	s.warnMu.Unlock()
+	dispatch()
 }
 
 // Warnings returns a copy of the collected advisories ordered by

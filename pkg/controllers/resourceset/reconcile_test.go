@@ -3,6 +3,7 @@ package resourceset
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,126 +22,137 @@ import (
 
 func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 	t.Parallel()
-	for _, workers := range []int{2, 4} {
-		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
-			t.Parallel()
-			st := store.New()
-			tasks := task.NewBounded(workers)
-			c := New(st, tasks, false)
-			c.Configure(base.Options{})
-			c.StartLifecycle()
-			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			release := sync.OnceFunc(func() { close(resume) })
-			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.Close() })
-			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			st.AddObject(parent)
-			provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
-			st.AddObject(provider)
-			st.UpdateStatus(provider.Named(), store.StatusReady, "", "")
-			docA := map[string]any{
-				"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
-				"metadata": map[string]any{"name": "binding", "namespace": "apps"},
-				"spec": map[string]any{
-					"inputs":            []any{map[string]any{"name": "from-a"}},
-					"inputsFrom":        []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
-					"resourcesTemplate": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: << inputs.name >>, namespace: apps}\n",
-				},
-			}
-			docB := manifest.DeepCopyMap(docA)
-			docB["spec"].(map[string]any)["inputs"].([]any)[0].(map[string]any)["name"] = "from-b"
-			publish := func(doc map[string]any) {
-				publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
-			}
-			publish(docA)
-			st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
-			id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "binding"}
-			rs, ok := st.Get[*manifest.ResourceSet](id)
-			if !ok {
-				t.Fatal("parent did not emit input A")
-			}
-			_, wantFingerprint, err := renderWithAdmission(rs, resourceset.StoreResolver(st), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var accepted atomic.Pointer[store.Emission]
-			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
-				if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
-					accepted.Store(emission)
-				}
-			}, false)
-			t.Cleanup(unsubscribe)
-			tasks.Go(t.Context(), "parent", func(context.Context) {
-				defer release()
-				reached := false
-				tasks.YieldSlot(func() {
-					select {
-					case <-started:
-						reached = true
-					case <-rendered:
-					}
-				})
-				if !reached {
-					t.Error("render never reached admission")
-					return
-				}
-				publish(docB)
-			})
-			tasks.Go(t.Context(), "render", func(context.Context) {
-				defer close(rendered)
-				var attempt store.Emission
-				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(st), func(content any) (bool, error) {
-					fp, hit, err := c.FingerprintDedup(id, content)
-					if hit || err != nil {
-						return hit, err
-					}
-					_, attempt = st.GetEmission(id)
-					attempt.Fingerprint = fp
-					close(started)
-					tasks.YieldSlot(func() { <-resume })
-					return false, nil
-				})
-				defer attempt.Finish()
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				for _, warning := range warnings {
-					st.AddWarning(id, warning)
-				}
-				attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{})
-				attempt.Complete = true
-				c.Emit(id, &attempt)
-			})
-			tasks.BlockTillDone()
-			if tasks.Failures() != 0 {
-				t.Fatalf("task failures = %d", tasks.Failures())
-			}
-			emission := accepted.Load()
-			if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint != wantFingerprint {
-				t.Fatalf("accepted A emission = %+v; fingerprint want %s", emission, wantFingerprint)
-			}
-			if !hasRenderedDoc(emission, manifest.KindConfigMap, "from-a") {
-				t.Fatal("accepted emission did not render input A")
-			}
-			current, ok := st.Get[*manifest.ResourceSet](id)
-			if !ok || string(current.Inputs[0]["name"].Raw) != `"from-b"` {
-				t.Fatalf("current input is not B: %+v", current)
-			}
-			if st.GetArtifact(id) != nil {
-				t.Error("input B incorrectly accepts the output rendered from A")
-			}
-			publish(docA)
-			if st.GetArtifact(id) != emission {
-				t.Error("restoring exact input A did not expose the captured emission")
-			}
-			publish(docB)
-			if st.GetArtifact(id) != nil {
-				t.Error("restored input B incorrectly accepts A's emission")
-			}
-			if string(rs.Inputs[0]["name"].Raw) != `"from-a"` {
-				t.Fatal("render mutated input A")
+	st := store.New()
+	tasks := task.NewBounded(2)
+	c := New(st, tasks, false)
+	c.Configure(base.Options{})
+	c.StartLifecycle()
+	t.Cleanup(c.Close)
+	started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(resume) })
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	st.AddObject(parent)
+	provider := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: "apps", Type: fluxopv1.InputProviderGitHubBranch}
+	st.AddObject(provider)
+	st.UpdateStatus(provider.Named(), store.StatusReady, "", "")
+	docA := map[string]any{
+		"apiVersion": "fluxcd.controlplane.io/v1", "kind": manifest.KindResourceSet,
+		"metadata": map[string]any{"name": "binding", "namespace": "apps"},
+		"spec": map[string]any{
+			"inputs":            []any{map[string]any{"name": "from-a"}},
+			"inputsFrom":        []any{map[string]any{"kind": manifest.KindResourceSetInputProvider, "name": provider.Name}},
+			"resourcesTemplate": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: << inputs.name >>, namespace: apps}\n",
+		},
+	}
+	docB := manifest.DeepCopyMap(docA)
+	docB["spec"].(map[string]any)["inputs"].([]any)[0].(map[string]any)["name"] = "from-b"
+	publish := func(doc map[string]any) {
+		publishDocuments(c, parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+	}
+	publish(docA)
+	st.UpdateStatus(parent.Named(), store.StatusReady, "", "")
+	id := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "binding"}
+	rs, ok := st.Get[*manifest.ResourceSet](id)
+	if !ok {
+		t.Fatal("parent did not emit input A")
+	}
+	_, wantFingerprint, err := renderWithAdmission(rs, resourceset.StoreResolver(st), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Pointer[store.Emission]
+	unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
+		if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
+			accepted.Store(emission)
+		}
+	}, false)
+	unsubscribeWarning := st.AddListener(store.EventWarningAdded, func(origin manifest.NamedResource, payload any) {
+		w, ok := payload.(manifest.Warning)
+		if origin != id || !ok || w.Category != manifest.WarnOfflineInputProvider || w.Resource != id ||
+			!slices.Equal(w.Detail, []string{provider.Named().String(), provider.Type}) {
+			return
+		}
+		close(started)
+		tasks.YieldSlot(func() { <-resume })
+	}, false)
+	t.Cleanup(func() {
+		release()
+		tasks.BlockTillDone()
+		unsubscribeWarning()
+		unsubscribe()
+	})
+	unrelatedDone := make(chan struct{})
+	tasks.Go(t.Context(), "unrelated warnings", func(context.Context) {
+		defer close(unrelatedDone)
+		warning := manifest.Warning{Resource: id, Category: manifest.WarnOfflineInputProvider,
+			Detail: []string{provider.Named().String(), provider.Type}}
+		st.AddWarning(parent.Named(), warning)
+		warning.Resource = parent.Named()
+		st.AddWarning(id, warning)
+		warning.Resource = id
+		warning.Category = manifest.WarnStaleValues
+		st.AddWarning(id, warning)
+		warning.Category = manifest.WarnOfflineInputProvider
+		warning.Detail = []string{"another provider", provider.Type}
+		st.AddWarning(id, warning)
+		warning.Detail = []string{provider.Named().String(), fluxopv1.InputProviderStatic}
+		st.AddWarning(id, warning)
+	})
+	select {
+	case <-started:
+		t.Fatal("unrelated warning admitted the parent update")
+	case <-unrelatedDone:
+	}
+	tasks.Go(t.Context(), "parent", func(context.Context) {
+		defer release()
+		reached := false
+		tasks.YieldSlot(func() {
+			select {
+			case <-started:
+				reached = true
+			case <-rendered:
 			}
 		})
+		if !reached {
+			t.Error("reconciliation completed without the provider warning")
+			return
+		}
+		publish(docB)
+	})
+	tasks.Go(t.Context(), "render", func(ctx context.Context) {
+		defer close(rendered)
+		if wait := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !wait.Empty() {
+			t.Errorf("unexpected reconcile wait: %+v", wait)
+		}
+	})
+	tasks.BlockTillDone()
+	if tasks.Failures() != 0 {
+		t.Fatalf("task failures = %d", tasks.Failures())
+	}
+	emission := accepted.Load()
+	if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint != wantFingerprint {
+		t.Fatalf("accepted A emission = %+v; fingerprint want %s", emission, wantFingerprint)
+	}
+	if !hasRenderedDoc(emission, manifest.KindConfigMap, "from-a") {
+		t.Fatal("accepted emission did not render input A")
+	}
+	current, ok := st.Get[*manifest.ResourceSet](id)
+	if !ok || string(current.Inputs[0]["name"].Raw) != `"from-b"` {
+		t.Fatalf("current input is not B: %+v", current)
+	}
+	if st.GetArtifact(id) != nil {
+		t.Error("input B incorrectly accepts the output rendered from A")
+	}
+	publish(docA)
+	if st.GetArtifact(id) != emission {
+		t.Error("restoring exact input A did not expose the captured emission")
+	}
+	publish(docB)
+	if st.GetArtifact(id) != nil {
+		t.Error("restored input B incorrectly accepts A's emission")
+	}
+	if string(rs.Inputs[0]["name"].Raw) != `"from-a"` {
+		t.Fatal("render mutated input A")
 	}
 }
 

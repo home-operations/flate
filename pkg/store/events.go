@@ -9,7 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// EventKind enumerates the three observable changes the Store dispatches.
+// EventKind enumerates the observable changes the Store dispatches.
 type EventKind int
 
 const (
@@ -20,74 +20,58 @@ const (
 	EventStatusUpdated
 	// EventArtifactUpdated fires when an artifact is stored.
 	EventArtifactUpdated
+	// EventWarningAdded fires once per newly recorded origin and complete warning payload.
+	EventWarningAdded
 )
 
 // Listener receives store events. The payload type depends on EventKind:
 //   - EventObjectAdded     → manifest.BaseManifest
 //   - EventStatusUpdated   → StatusInfo
 //   - EventArtifactUpdated → Artifact
+//   - EventWarningAdded    → manifest.Warning with Count 1; id is the origin
 //
 // Listeners run synchronously on the goroutine that triggered the event,
-// so they MUST NOT call back into the same Store with a blocking call.
+// after its state lock is released. Payloads are immutable snapshots; listeners
+// MUST copy Warning.Detail before modifying it.
 type Listener func(id manifest.NamedResource, payload any)
 
 // Unsubscribe removes a listener. It is safe to call from inside the
 // listener.
 type Unsubscribe func()
 
-// AddListener registers a callback for the given event kind. When
-// flush==true, the listener is immediately invoked with every matching
-// object already in the store before the call returns. Replay order is
-// unspecified (Go-map iteration); listeners that need a deterministic
-// order must sort what they receive. Listener panics during replay
-// are recovered, same as live dispatch. The returned Unsubscribe
-// removes the listener.
+// AddListener registers a callback for the given event kind. With flush=true,
+// it replays existing state before returning, in unspecified order. Warning
+// replay delivers every origin/payload contribution, including zero origins,
+// with Count 1. Derived conflicting-producer warnings are not contributions.
+// Listener panics are recovered during both replay and live dispatch.
 //
-// Lock strategy (sharded):
-//   - flush=false: holds every shard's RLock during set.add so a
-//     concurrent writer can't snapshot listeners (fireUnderLock) and
-//     dispatch before fn is registered. We need RLocks on ALL shards
-//     because a writer on any shard runs fireUnderLock under its own
-//     shard's write lock — without holding every shard's RLock here,
-//     a concurrent writer on shard X could snapshot listeners (not
-//     yet including fn), release shard X's lock, and dispatch while
-//     fn is being added. The cost (one rLockAll per AddListener) is
-//     paid once at controller wiring time, not on the dispatch hot
-//     path.
-//   - flush=true: holds every shard's write lock across (register +
-//     snapshot) so the pair is atomic with respect to writers. Without
-//     the write locks, a concurrent AddObject on some shard could
-//     update its map, snapshot listeners (already including fn via
-//     set.add), and dispatch — while this goroutine replays the same
-//     object from the post-update map snapshot, double-firing fn.
-//     Exactly-one delivery is the invariant; the canonical-order
-//     lockAll prevents deadlock between two simultaneous flush=true
-//     calls.
+// Registration and replay capture MUST hold the same state lock as writers'
+// listener snapshots: warnMu for warnings, all shard locks for other events.
+// This prevents missed live events and double delivery between replay and live.
 func (s *Store) AddListener(event EventKind, fn Listener, flush bool) Unsubscribe {
 	if event < 1 || int(event) > numEventKinds {
 		panic("store: unknown event kind")
 	}
-	set := s.listeners[event]
-	if !flush {
-		// All-shard RLock closes the dispatcher-vs-add race uniformly
-		// across shards. Writers acquire their single shard's write
-		// lock to fire — RLocking every shard here forces the writer
-		// to wait until our set.add completes, so the writer's
-		// listener snapshot either pre-dates this add (and our fn
-		// correctly misses that pre-existing event) or post-dates it
-		// (and our fn is in the snapshot — correct).
+	set := &s.listeners[event]
+	if event == EventWarningAdded {
+		s.warnMu.Lock()
+	} else if flush {
+		s.lockAll()
+	} else {
 		s.rLockAll()
-		handle := set.add(fn)
-		s.rUnlockAll()
-		return func() { set.remove(handle) }
 	}
-	// flush=true: must hold every shard's write lock so the
-	// (register + capture replay snapshot) pair is atomic with
-	// respect to writers anywhere in the store.
-	s.lockAll()
 	handle := set.add(fn)
-	pairs := s.snapshotForReplay(event)
-	s.unlockAll()
+	var pairs []idPayload
+	if flush {
+		pairs = s.snapshotForReplay(event)
+	}
+	if event == EventWarningAdded {
+		s.warnMu.Unlock()
+	} else if flush {
+		s.unlockAll()
+	} else {
+		s.rUnlockAll()
+	}
 	for _, p := range pairs {
 		if e, ok := p.payload.(*Emission); ok && !emissionCurrent(e, p.input) {
 			continue
@@ -104,13 +88,19 @@ type idPayload struct {
 	input   Child
 }
 
-// snapshotForReplay captures the existing-state replay for event.
-// Caller MUST hold every shard's write lock (via lockAll) — the
-// snapshot read walks every shard and must be atomic with respect to
-// writers' map updates so the listener-snapshot they capture is
-// consistent with the replay set returned here.
+// snapshotForReplay requires warnMu for warnings or lockAll for other events.
 func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 	switch event {
+	case EventWarningAdded:
+		var out []idPayload
+		for _, record := range s.warnOrder {
+			w := record.warning
+			w.Count = 1
+			for origin := range record.origins {
+				out = append(out, idPayload{id: origin, payload: w})
+			}
+		}
+		return out
 	case EventObjectAdded:
 		return collectReplay(s.shards[:], func(sh *shard) map[manifest.NamedResource]manifest.BaseManifest {
 			return sh.objects
@@ -169,21 +159,9 @@ var emptyDispatch = func() {}
 
 var emptyListenerSnapshot listenerSnapshot
 
-// fireUnderLock is the race-safe dispatcher writers MUST use: it
-// captures the listener snapshot under the caller's already-held
-// shard lock and returns a closure the caller invokes AFTER releasing
-// the lock. The pattern is:
-//
-//	sh.mu.Lock()
-//	... mutate sh.objects / sh.conditions / sh.artifacts ...
-//	dispatch := fireUnderLock(s, EventX, id, payload)
-//	sh.mu.Unlock()
-//	dispatch()
-//
-// Holding the shard lock while snapshotting listeners closes the
-// AddListener-vs-writer race documented on AddListener: a
-// flush=false add holds every shard's RLock, so the snapshot
-// captured here cannot interleave with an in-progress add.
+// fireUnderLock captures listeners under the caller's already-held state lock.
+// Callers MUST invoke the returned closure after releasing that lock. Sharing
+// the lock with AddListener makes registration atomic with respect to writers.
 //
 // When no listeners are registered for event, fireUnderLock returns
 // a no-op closure without boxing the payload. AddObject dispatches changed objects
@@ -229,12 +207,6 @@ type listenerSnapshot struct {
 type listenerEntry struct {
 	id int64
 	fn Listener
-}
-
-func newListenerSet() *listenerSet {
-	l := &listenerSet{}
-	l.snapshot.Store(&emptyListenerSnapshot)
-	return l
 }
 
 func (l *listenerSet) add(fn Listener) int64 {

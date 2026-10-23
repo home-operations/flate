@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -197,7 +198,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		st.AddObject(repo)
 		c.StartLifecycle()
 		tasks.Go(t.Context(), repo.Named().String(), func(ctx context.Context) {
-			if deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
+			if _, deps := c.ReconcileNode(ctx, repo.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
 				t.Errorf("blocked source %s: %v", repo.Named(), deps)
 			}
 		})
@@ -425,6 +426,7 @@ type fallbackFetcher struct {
 	retry         sourcecache.Policy
 	fallbackRetry sourcecache.Policy
 	fallbackErr   error
+	warnings      []manifest.Warning
 }
 
 func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
@@ -440,10 +442,7 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, poli
 		if configPath != missing.RegistryConfig {
 			return nil, fmt.Errorf("unexpected registry config %q", configPath)
 		}
-		if f.fallbackErr != nil {
-			return nil, f.fallbackErr
-		}
-		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
+		return &store.SourceArtifact{Kind: manifest.KindOCIRepository, Warnings: f.warnings}, f.fallbackErr
 	}
 	return nil, missing
 }
@@ -454,20 +453,33 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 		name         string
 		rendered     bool
 		wantFallback int
+		fallbackErr  error
+		wantStatus   store.Status
 	}{
-		{name: "rendered Secret takes precedence", rendered: true},
-		{name: "unrendered Secret falls back at fixpoint", wantFallback: 1},
+		{name: "rendered Secret takes precedence", rendered: true, wantStatus: store.StatusReady},
+		{name: "unrendered Secret falls back at fixpoint", wantFallback: 1, wantStatus: store.StatusReady},
+		{name: "failed fallback retains warnings", wantFallback: 1, fallbackErr: fmt.Errorf("%w: registry authentication failed", manifest.ErrInput), wantStatus: store.StatusFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fallbackFetcher{}
+			warning := manifest.Warning{Resource: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"module"}}
+			f := &fallbackFetcher{fallbackErr: tt.fallbackErr, warnings: []manifest.Warning{warning}}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
 			st.AddObject(repo)
 
-			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {
+			var out schedule.Outcome
+			dispatch := controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: func(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+				result, wait := c.ReconcileNode(ctx, id, attempt)
+				out = result
+				return result, wait
+			}}
+			if controllertest.Reconcile(t.Context(), t, dispatch, 0) {
 				t.Fatal("missing Secret must block before any registry fallback")
+			}
+			if out != (schedule.Outcome{Kind: schedule.Blocked}) || len(st.Warnings()) != 0 {
+				t.Fatalf("initial outcome/warnings = %+v / %+v", out, st.Warnings())
 			}
 			if f.fallbackCalls != 0 {
 				t.Fatalf("fallback calls = %d while renders can still produce the Secret, want 0", f.fallbackCalls)
@@ -479,14 +491,20 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 				f.rendered = true
 				drain = manifest.DrainNone
 			}
-			if !controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, drain) {
+			if !controllertest.Reconcile(t.Context(), t, dispatch, drain) {
 				t.Fatal("source must terminalize")
 			}
-			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
-				t.Fatalf("status = %+v, want Ready without a skip", info)
+			if info, _ := st.GetStatus(repo.Named()); info.Status != tt.wantStatus || info.Outcome() == store.OutcomeSkipped {
+				t.Fatalf("status = %+v, want %s without a skip", info, tt.wantStatus)
 			}
-			if st.GetArtifact(repo.Named()) == nil {
-				t.Error("fetch must store its artifact")
+			if out != (schedule.Outcome{}) {
+				t.Fatalf("final outcome = %+v, want terminal without scheduling flags", out)
+			}
+			if present := st.GetArtifact(repo.Named()) != nil; present != (tt.fallbackErr == nil) {
+				t.Errorf("artifact present = %t, fallback error = %v", present, tt.fallbackErr)
+			}
+			if warnings := st.Warnings(); len(warnings) != tt.wantFallback || len(warnings) > 0 && (warnings[0].Category != warning.Category || warnings[0].Resource != repo.Named() || warnings[0].Count != 1) {
+				t.Fatalf("registry fallback warnings = %+v", warnings)
 			}
 			wantPolicy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}
 			if f.retry != wantPolicy || tt.wantFallback > 0 && f.fallbackRetry != wantPolicy {

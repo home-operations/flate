@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -49,11 +50,14 @@ func TestReconcile_TaskFailures(t *testing.T) {
 			d := Dispatch{
 				Tasks: tasks,
 				ID:    testutil.HelmReleaseID("media", "sonarr"),
-				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait {
+				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 					if tc.panics {
 						panic("reconcile failure")
 					}
-					return manifest.ReconcileWait{Deps: tc.dependencies}
+					if len(tc.dependencies) == 0 {
+						return schedule.Outcome{}, manifest.ReconcileWait{}
+					}
+					return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: tc.dependencies}
 				},
 			}
 			before := tasks.Failures()
@@ -76,7 +80,7 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 		Tasks: tasks,
 		Store: st,
 		ID:    id,
-		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait {
+		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 			panic("reconcile failure")
 		},
 	}
@@ -91,22 +95,31 @@ func TestReconcile_TypedWait(t *testing.T) {
 	t.Parallel()
 	id := testutil.HelmReleaseID("apps", "reader")
 	for _, tc := range []struct {
-		name string
-		wait manifest.ReconcileWait
+		name   string
+		wait   manifest.ReconcileWait
+		failed bool
 	}{
-		{"nil", manifest.ReconcileWait{}},
-		{"empty content", manifest.ReconcileWait{Content: &manifest.ContentWait{}}},
-		{"dependencies", manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}},
-		{"targets", manifest.ReconcileWait{Content: &manifest.ContentWait{Targets: []manifest.NamedResource{id}}}},
-		{"suppliers", manifest.ReconcileWait{Content: &manifest.ContentWait{Suppliers: []manifest.Opportunity{{NamedResource: id}}}}},
-		{"declaration", manifest.ReconcileWait{Content: &manifest.ContentWait{Declaration: &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}}}},
+		{name: "nil"},
+		{name: "empty content", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{}}},
+		{name: "dependencies", wait: manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}},
+		{name: "targets", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{Targets: []manifest.NamedResource{id}}}},
+		{name: "suppliers", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{Suppliers: []manifest.Opportunity{{NamedResource: id}}}}},
+		{name: "declaration", wait: manifest.ReconcileWait{Content: &manifest.ContentWait{Declaration: &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}}}},
+		{name: "dependency failure", wait: manifest.ReconcileWait{Deps: []manifest.NamedResource{id}}, failed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := Dispatch{Tasks: task.NewBounded(2), ID: id, ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait {
-				return tc.wait
+			d := Dispatch{Tasks: task.NewBounded(2), ID: id, ReconcileNode: func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+				out := schedule.Outcome{}
+				if !tc.wait.Empty() {
+					out.Kind = schedule.Blocked
+				}
+				if tc.failed {
+					out.Kind = schedule.DependencyFailed
+				}
+				return out, tc.wait
 			}}
-			assert.Equal(t, Reconcile(t.Context(), t, d, manifest.DrainForce), tc.name == "nil" || tc.name == "empty content")
+			assert.Equal(t, Reconcile(t.Context(), t, d, manifest.DrainForce), tc.wait.Empty() || tc.failed)
 		})
 	}
 }

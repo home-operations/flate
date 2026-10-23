@@ -1,7 +1,7 @@
 // Package schedule provides flate's dependency-driven reconcile scheduler:
 // a re-entrant fixpoint engine that runs each node's reconcile body on a
 // bounded task pool, parks a body that reports unsatisfied dependencies
-// (Dispatcher OutcomeBlocked), and re-runs it when any of those dependencies
+// (Blocked), and re-runs it when any of those dependencies
 // advances.
 //
 // Termination is STRUCTURAL, not timed. Every render emission is a synchronous
@@ -35,41 +35,28 @@ import (
 // source CR — by its store identity.
 type NodeID = manifest.NamedResource
 
-// Outcome is what one reconcile-body invocation reported via the Dispatcher.
-type Outcome int
+// Kind is the final disposition of an invocation or ordinary dependency.
+type Kind uint8
 
 const (
-	// OutcomeTerminal means the body wrote a terminal store status
-	// (Ready/Skipped/Failed); the node is done unless a later store event
-	// re-emits or resets it.
-	OutcomeTerminal Outcome = iota
-	// OutcomeBlocked means the body could not proceed because one or more
-	// dependencies are unsatisfied; the scheduler parks the node keyed on the
-	// returned ids and re-runs it when any advances. Blocked bodies MUST gate
-	// before publishing: emit-before-block feedback cannot be distinguished
-	// from unchanged dependency retries and is outside the convergence guard.
-	OutcomeBlocked
-	// OutcomeDependencyFailed is terminal for this attempt, with dependency
-	// identities retained so actual Ready progress can reconsider the failure.
-	OutcomeDependencyFailed
-	// OutcomeTerminalNoop is terminal with no object arrivals from this body.
-	// Selector clients may use it for verified dedup no-ops; ambiguous results
-	// MUST remain OutcomeTerminal for conservative replay accounting.
-	OutcomeTerminalNoop
+	// Terminal is satisfied or finished without dependency recovery edges.
+	Terminal Kind = iota
+	// Blocked retains dependencies that may advance.
+	Blocked
+	// DependencyFailed retains required causes for recovery.
+	DependencyFailed
 )
 
-// Dispatcher runs a node's reconcile body. The orchestrator supplies the
-// concrete implementation, closing over the store and the three controllers;
-// the scheduler never sees a store or controller type.
-// Returned wait slices MUST remain immutable while retained by the scheduler.
+// Outcome carries one final disposition and owner-produced scheduling facts.
+type Outcome struct {
+	Kind  Kind
+	Noop  bool
+	Rerun bool
+}
+
+// Dispatcher returns the owner's final classification with immutable borrowed waits.
 type Dispatcher interface {
-	// Dispatch invokes id's reconcile body synchronously on the calling
-	// goroutine (a task.Service worker) and reports back:
-	//   - out: OutcomeTerminal, OutcomeTerminalNoop, OutcomeBlocked, or OutcomeDependencyFailed.
-	//   - blocked: ordinary dependencies and immutable content wait for the latter two outcomes.
-	//   - rerun: re-evaluate this node at the structural fixpoint.
-	// attempt carries the drain level and immutable supplier observations.
-	Dispatch(ctx context.Context, id NodeID, attempt manifest.ReconcileAttempt) (out Outcome, blocked manifest.ReconcileWait, rerun bool)
+	Dispatch(ctx context.Context, id NodeID, attempt manifest.ReconcileAttempt) (Outcome, manifest.ReconcileWait)
 }
 
 type taskService interface {
@@ -121,7 +108,7 @@ type node struct {
 	drain        manifest.DrainLevel
 	id           NodeID
 	state        nodeState
-	blockedOn    []NodeID // deps recorded at the last OutcomeBlocked
+	blockedOn    []NodeID // deps recorded at the last blocked completion
 	redispatches int
 	failedOn     []NodeID // unique dependencies; borrowed dispatcher slices MUST stay immutable
 	failedSeen   map[NodeID]*failedMark
@@ -237,72 +224,16 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	s.mu.Lock()
 	for s.err == nil {
-		// 1. Dispatch the runnable frontier onto the bounded pool.
-		for len(s.runq) > 0 && s.err == nil {
-			id := s.runq[0]
-			s.runq = s.runq[1:]
-			n := s.nodes[id]
-			if n == nil || n.state != stateRunnable {
-				continue
-			}
-			n.state = stateRunning
-			n.startedAt = s.generation
-			n.queuedCharged = false
-			n.blockedOn = nil
-			s.inFlight++
-			attempt := manifest.ReconcileAttempt{Drain: s.draining, Content: n.content}
-			n.drain = attempt.Drain
-			s.mu.Unlock()
-			s.tasks.Go(runCtx, "schedule/"+id.String(), func(ctx context.Context) {
-				out := OutcomeTerminal
-				var blocked manifest.ReconcileWait
-				var rerun bool
-				defer func() {
-					s.complete(n, out, &blocked, rerun)
-				}()
-				out, blocked, rerun = s.disp.Dispatch(ctx, n.id, attempt)
-			})
-			s.mu.Lock()
-		}
+		s.submitFrontier(runCtx)
 		if s.err != nil {
 			break
 		}
-		// 2. Frontier empty. If nothing is in flight, we are at a fixpoint:
-		//    either done, or the remaining parked nodes are unproducible and
-		//    must be drained.
 		if s.inFlight == 0 {
-			if !s.hasParkedLocked() {
-				// Quiescent: nothing running, nothing parked. If the store grew
-				// since the last sweep, re-run the rerun nodes (a selector
-				// ResourceSet re-expands against the now-complete store) and loop;
-				// the dirty bit, cleared here and re-set only by a fresh arrival,
-				// bounds the sweeps.
-				if s.dirty {
-					s.dirty = false
-					if s.requeueRerunLocked() {
-						continue
-					}
-				}
-				break // clean fixpoint: every node terminal
-			}
-			// Parked nodes remain with nothing in flight. Escalate the drain
-			// level and re-queue all parked once. WITHIN a level the cascade
-			// propagates via complete() wakes — inFlight never settles to 0
-			// mid-cascade, because a terminalize that wakes a waiter pushes it
-			// to runq before the loop re-checks inFlight — so reaching here
-			// again means the level made no progress: a cross-kind structural
-			// cycle (same-kind cycles fail earlier at preflight). manifest.DrainForce
-			// fails present-Pending deps, breaking the cycle the way the event
-			// engine's quiescence does; finalSweep is the last-resort backstop.
-			if s.draining < manifest.DrainForce {
-				s.draining++
-			}
-			if !s.requeueAllParkedLocked() {
+			if !s.advanceLocked() {
 				break
 			}
 			continue
 		}
-		// 3. Work in flight, frontier empty: wait for a completion or arrival.
 		s.cond.Wait()
 	}
 	if s.err == nil {
@@ -320,9 +251,53 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	return err
 }
 
+// Caller holds mu; task submission releases it before invoking the pool.
+func (s *Scheduler) submitFrontier(ctx context.Context) {
+	for len(s.runq) > 0 && s.err == nil {
+		id := s.runq[0]
+		s.runq = s.runq[1:]
+		n := s.nodes[id]
+		if n == nil || n.state != stateRunnable {
+			continue
+		}
+		n.state = stateRunning
+		n.startedAt = s.generation
+		n.queuedCharged = false
+		n.blockedOn = nil
+		s.inFlight++
+		attempt := manifest.ReconcileAttempt{Drain: s.draining, Content: n.content}
+		n.drain = attempt.Drain
+		s.mu.Unlock()
+		s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
+			var out Outcome
+			var wait manifest.ReconcileWait
+			defer func() {
+				s.complete(n, out, &wait)
+			}()
+			out, wait = s.disp.Dispatch(ctx, n.id, attempt)
+		})
+		s.mu.Lock()
+	}
+}
+
+// Caller holds mu with an empty runnable frontier and no in-flight work.
+func (s *Scheduler) advanceLocked() bool {
+	if !s.hasParkedLocked() {
+		if !s.dirty {
+			return false
+		}
+		s.dirty = false
+		return s.requeueRerunLocked()
+	}
+	if s.draining < manifest.DrainForce {
+		s.draining++
+	}
+	return s.requeueAllParkedLocked()
+}
+
 // complete records the result of one Dispatch. Runs on the worker goroutine;
 // acquires mu. Touches ONLY scheduler state — never the store or the pool.
-func (s *Scheduler) complete(n *node, out Outcome, wait *manifest.ReconcileWait, rerun bool) {
+func (s *Scheduler) complete(n *node, out Outcome, wait *manifest.ReconcileWait) {
 	s.mu.Lock()
 	// Broadcast on EVERY path (terminalize, park, re-queue) so the Run loop
 	// re-evaluates inFlight/runq after any transition — a terminalize that
@@ -332,10 +307,10 @@ func (s *Scheduler) complete(n *node, out Outcome, wait *manifest.ReconcileWait,
 	defer s.cond.Broadcast()
 	id := n.id
 	s.inFlight--
-	sameFailed := out == OutcomeDependencyFailed && s.sameFailedLocked(n, wait.Deps)
+	sameFailed := out.Kind == DependencyFailed && s.sameFailedLocked(n, wait.Deps)
 	if !sameFailed {
 		n.conservativeUsed = false
-		if out != OutcomeDependencyFailed {
+		if out.Kind != DependencyFailed {
 			s.clearFailedLocked(n)
 		}
 	}
@@ -346,8 +321,8 @@ func (s *Scheduler) complete(n *node, out Outcome, wait *manifest.ReconcileWait,
 		n.conservativeUsed = false
 		return
 	}
-	n.rerun = rerun
-	if out == OutcomeDependencyFailed {
+	n.rerun = out.Rerun
+	if out.Kind == DependencyFailed {
 		if !sameFailed {
 			previous := n.failedOn
 			n.failedOn = wait.Deps
@@ -438,25 +413,20 @@ func (s *Scheduler) complete(n *node, out Outcome, wait *manifest.ReconcileWait,
 			n.rerunRequested = true
 		}
 	}
-	n.productive = n.productive || rerun && out == OutcomeTerminal
+	n.productive = n.productive || out.Rerun && out.Kind == Terminal && !out.Noop
 
-	// A wake landed while this body was running: honor it exactly once by
-	// re-queuing, regardless of the outcome just reported. The re-run
-	// re-reads the store and re-evaluates against the now-current state
-	// (covers a dep that advanced mid-run, and the #102 parent-mutated-spec
-	// re-emit). We do NOT mark it terminal, so a parker never sees a stale
-	// terminal here.
+	// A running wake MUST be honored once before terminalization.
 	if n.rerunRequested {
 		s.redispatchLocked(n)
 		return
 	}
 
-	switch out {
-	case OutcomeTerminal, OutcomeTerminalNoop, OutcomeDependencyFailed:
+	switch out.Kind {
+	case Terminal, DependencyFailed:
 		n.state = stateTerminal
 		n.exhaust()
 		s.wakeWaitersLocked(id)
-	case OutcomeBlocked:
+	case Blocked:
 		s.parkLocked(n, wait)
 	}
 }

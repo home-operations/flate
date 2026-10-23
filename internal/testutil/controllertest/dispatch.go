@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -15,7 +16,7 @@ type Dispatch struct {
 	Tasks         *task.Service
 	Store         *store.Store
 	ID            manifest.NamedResource
-	ReconcileNode func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) manifest.ReconcileWait
+	ReconcileNode func(context.Context, manifest.NamedResource, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait)
 }
 
 // Reconcile submits one pass and reports whether it has no blocked dependencies.
@@ -24,7 +25,8 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 	var terminal bool
 	failures := d.Tasks.Failures()
 	d.Tasks.Go(ctx, "test/"+d.ID.String(), func(ctx context.Context) {
-		terminal = d.ReconcileNode(ctx, d.ID, manifest.ReconcileAttempt{Drain: drain}).Empty()
+		out, _ := d.ReconcileNode(ctx, d.ID, manifest.ReconcileAttempt{Drain: drain})
+		terminal = out.Kind != schedule.Blocked
 	})
 	d.Tasks.BlockTillDone()
 	if added := d.Tasks.Failures() - failures; added > 0 {

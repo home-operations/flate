@@ -56,32 +56,31 @@ func mustCELEnv() *cel.Env {
 	return env
 }
 
-// evaluateReadyExpr compiles (memoized) and evaluates expr against the
-// projected views of self (consumer) and dep (dependency). Returns true
-// iff the program produces a bool true.
-//
-// Errors are split: a compile/program error is wrapped in *celCompileErr
-// (terminal — the expression itself is broken); an eval error against
-// the projected object is returned unwrapped (transient — the dep's
-// status may not yet be populated, so callers polling on store events
-// should keep waiting).
-func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
+func (w *Waiter) evaluateReadyExpr(expr string, dep manifest.NamedResource, obj manifest.BaseManifest, conds []store.Condition) (bool, error) {
 	prog, err := compileReadyExpr(expr)
 	if err != nil {
 		return false, &celCompileErr{err}
 	}
-	// Bind self/dep as lazy thunks (cel-go's `func() any` activation
-	// form). The interpreter resolves a name at most once per eval, and
-	// only when the program actually references it — so projectObject
-	// (a store-locked Snapshot plus several map allocations) runs only
-	// for the variables the expression reads. The dominant Flux idiom
-	// touches `dep` alone, leaving `self` unprojected. The produced
-	// value and the adapter path are identical to passing the map
-	// directly, so eval semantics are byte-for-byte unchanged.
-	val, _, err := prog.Eval(map[string]any{
-		"self": func() any { return projectObject(s, self) },
-		"dep":  func() any { return projectObject(s, dep) },
-	})
+	var dependency, self func() any
+	parent, st := w.Parent, w.Store
+	if parent == dep {
+		var projected map[string]any
+		dependency = func() any {
+			if projected == nil {
+				projected = projectObject(dep, obj, conds)
+			}
+			return projected
+		}
+		self = dependency
+	} else {
+		dependency = func() any { return projectObject(dep, obj, conds) }
+		self = func() any {
+			var info store.Observation
+			obj := st.Snapshot(new(parent), true, &info)
+			return projectObject(parent, obj, info.Conditions)
+		}
+	}
+	val, _, err := prog.Eval(map[string]any{"self": self, "dep": dependency})
 	if err != nil {
 		return false, fmt.Errorf("eval: %w", err)
 	}
@@ -129,21 +128,8 @@ func buildCacheEntry(expr string) celCacheEntry {
 	return celCacheEntry{prog: prog}
 }
 
-// projectObject builds the unstructured-shaped value the CEL
-// expression sees for `self` / `dep`. Includes:
-//   - apiVersion + kind
-//   - metadata.{name,namespace,generation,labels,annotations}
-//   - status.{observedGeneration,conditions}
-//
-// Labels and annotations are surfaced from the typed manifest in the
-// store when available — common upstream Flux readiness idioms like
-// `dep.metadata.annotations['app.kubernetes.io/component'] == 'cache'`
-// rely on these being populated. The full spec is not yet projected;
-// CEL expressions touching spec.* read undefined (documented gap).
-func projectObject(s *store.Store, id manifest.NamedResource) map[string]any {
-	// CEL predicates can correlate metadata with conditions, so both MUST come
-	// from one snapshot to avoid combining states from different writes.
-	obj, conds := s.Snapshot(id)
+// projectObject keeps metadata and conditions from the same observation.
+func projectObject(id manifest.NamedResource, obj manifest.BaseManifest, conds []store.Condition) map[string]any {
 	if obj == nil {
 		// Status entry without an object — only the metadata/status
 		// derived from id is reachable; labels and annotations are

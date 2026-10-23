@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -76,16 +77,19 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.strictSubstitutions = opts.StrictSubstitutions
 }
 
-// ReconcileNode runs one Kustomization invocation and returns any remaining typed wait.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+// ReconcileNode runs one Kustomization invocation and returns its dependency classification.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
-func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, invocation manifest.ReconcileAttempt) error {
+func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
+	if gated {
+		return schedule.Outcome{}, nil
+	}
 	level := invocation.Drain
 	id := ks.Named()
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	// SetPendingUnlessReady (not a raw UpdateStatus) on every pre-render
 	// progress write: a no-op re-reconcile of an already-Ready KS (re-emitted
@@ -113,16 +117,16 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 			_, blocked := errors.AsType[*depwait.ErrBlocked](err)
 			_, failed := errors.AsType[*manifest.DependencyFailedError](err)
 			if (blocked || failed) && level >= manifest.DrainCascade && ref.Kind == manifest.KindOCIRepository && c.Store.GetObject(ref) == nil && c.Store.GetArtifact(ref) == nil {
-				return fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
+				return schedule.Outcome{}, fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, ref)
 			}
-			return err
+			return schedule.Outcome{}, err
 		}
 		if ok {
 			ks = fresh
 		}
 	}
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	c.SetPendingUnlessReady(id, "resolving source artifact")
@@ -133,7 +137,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		var err error
 		source, applyIgnore, err = c.resolveSource(ks, level)
 		if err != nil {
-			return err
+			return schedule.Outcome{}, err
 		}
 		effective, captured := c.Store.GetEmission(id)
 		current, _ := effective.(*manifest.Kustomization)
@@ -147,7 +151,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		}
 		captured.Finish()
 		if current == nil {
-			return nil
+			return schedule.Outcome{}, nil
 		}
 		ks = current
 	}
@@ -156,11 +160,11 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 	c.SetPendingUnlessReady(id, "expanding substitutions")
 	var resolved depwait.Resolution
 	if err := c.Require(&depwait.Waiter{Parent: id, Declaration: ks, Supplied: c.substitutionSources, WipeSecrets: c.WipeSecrets}, invocation, &resolved); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	ks, err := kustomize.Prepare(ks, resolved.Inputs, c.substitute)
 	if err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	// A substituteFrom Secret flate can't read offline (absent, or an
 	// ExternalSecret-synthesized empty target) leaves its variables unavailable.
@@ -182,28 +186,28 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 		})
 	}
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	sourceContent := struct{ Path, Key, Revision, Digest string }{source.LocalPath, source.Key, source.Revision, source.Digest}
-	fp, handled, err := c.FingerprintDedup(id, ks.Content(sourceContent))
+	fp, handled, _, err := c.FingerprintDedup(id, ks.Content(sourceContent))
 	if handled {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering")
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
 	}, c.retry)
 	if err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	docs, err := manifest.SplitDocs(data)
 	if err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	docs = manifest.FlattenLists(docs)
 
@@ -222,7 +226,7 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 			}
 			substituted, sErr := substituteDoc(doc, vars, c.strictSubstitutions)
 			if sErr != nil {
-				return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
+				return schedule.Outcome{}, fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
 			}
 			docs[i] = substituted
 		}
@@ -230,12 +234,12 @@ func (c *Controller) reconcile(ctx context.Context, ks *manifest.Kustomization, 
 
 	c.Store.UpdateStatus(id, store.StatusPending, "", fmt.Sprintf("applying %d objects", len(docs)))
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace})
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, data
 	c.Emit(id, &attempt)
-	return nil
+	return schedule.Outcome{}, nil
 }
 
 // collectDeps preserves authored ordering, declaration parents and source gates.

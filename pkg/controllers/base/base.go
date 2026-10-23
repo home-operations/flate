@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
@@ -192,37 +193,37 @@ func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string
 	c.Store.UpdateStatus(id, store.StatusPending, "", msg)
 }
 
-// FingerprintDedup derives the replay key from content and reuses accepted children.
+// FingerprintDedup returns the key, handled flag and proven no-publication flag.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
-func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, error) {
+func (c *Controller) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, bool, error) {
 	if content == nil {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	fp := manifest.Fingerprint(content)
 	if fp == "" {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	current, _ := c.Store.GetArtifact(id).(*store.Emission)
 	if current != nil && current.Fingerprint == fp {
 		if err := c.PreflightError(id); err != nil {
-			return fp, true, err
+			return fp, true, false, err
 		}
-		return fp, true, nil
+		return fp, true, true, nil
 	}
 	_, attempt := c.Store.GetEmission(id)
 	defer attempt.Finish()
 	if attempt.Fingerprint != fp {
-		return fp, false, nil
+		return fp, false, false, nil
 	}
 	if err := c.PreflightError(id); err != nil {
-		return fp, true, err
+		return fp, true, false, err
 	}
 	for _, child := range attempt.Children {
 		c.KeepEmitted(id, child.Obj)
 	}
 	attempt.Complete = true
 	c.Store.RecordEmitted(id, &attempt)
-	return fp, true, nil
+	return fp, true, false, nil
 }
 
 // KeepOrderingDep drops only known unchanged targets; unknown refs MUST remain
@@ -341,29 +342,31 @@ func (c *Controller) RequireRefresh[T manifest.BaseManifest](
 	return obj, ok, nil
 }
 
-// DispatchNode gates and reconciles one invocation, retaining any typed wait.
+// DispatchNode gates an invocation and preserves its final dependency classification.
 func (c *Controller) DispatchNode[T manifest.BaseManifest](
 	ctx context.Context,
 	id manifest.NamedResource,
 	attempt manifest.ReconcileAttempt,
-	fn func(context.Context, T, manifest.ReconcileAttempt) error,
-) manifest.ReconcileWait {
+	fn func(context.Context, T, manifest.ReconcileAttempt, bool) (schedule.Outcome, error),
+) (schedule.Outcome, manifest.ReconcileWait) {
 	s := c.Store
 	prior, _ := s.GetStatus(id)
-	if obj, ok := s.Get[T](id); ok {
-		if c.preGate(obj) {
-			return manifest.ReconcileWait{}
-		}
-		if c.filterActive() && !c.filter.ShouldReconcile(id) {
+	obj, ok := s.Get[T](id)
+	gated := false
+	if ok {
+		switch {
+		case c.preGate(obj):
+			gated = true
+		case c.filterActive() && !c.filter.ShouldReconcile(id):
 			s.UpdateStatus(id, store.StatusReady, store.ReasonUnchanged, "unchanged")
-			return manifest.ReconcileWait{}
-		}
-		if msg, failed := c.PreflightFailure(id); failed {
-			s.UpdateStatus(id, store.StatusFailed, "", msg)
-			return manifest.ReconcileWait{}
-		}
-		if prior.IsDependencyFailure() {
-			s.UpdateStatus(id, store.StatusPending, "", "")
+			gated = true
+		default:
+			if msg, failed := c.PreflightFailure(id); failed {
+				s.UpdateStatus(id, store.StatusFailed, "", msg)
+				gated = true
+			} else if prior.IsDependencyFailure() {
+				s.UpdateStatus(id, store.StatusPending, "", "")
+			}
 		}
 	}
 	defer func() {
@@ -376,33 +379,52 @@ func (c *Controller) DispatchNode[T manifest.BaseManifest](
 		// Re-panic so task.Service records the failed callback.
 		panic(r)
 	}()
-	// Gate status listeners may replace the object; the body must re-read it.
-	obj, ok := s.Get[T](id)
+	// Gate status listeners may replace the object; an admitted body must re-read it.
+	if !gated {
+		obj, ok = s.Get[T](id)
+	}
 	if !ok {
 		if info, has := s.GetStatus(id); has && info.Status != store.StatusReady {
 			s.UpdateStatus(id, store.StatusReady, store.ReasonSkipped, "object not in store at reconcile time")
 		}
-		return manifest.ReconcileWait{}
+		return schedule.Outcome{}, manifest.ReconcileWait{}
 	}
-	err := fn(ctx, obj, attempt)
+	out, err := fn(ctx, obj, attempt, gated)
+	if gated {
+		return out, manifest.ReconcileWait{}
+	}
 	switch {
 	case errors.Is(err, errSuspended):
+		out.Noop, out.Rerun = false, false
 	case err != nil:
+		out.Noop = false
 		if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
-			return blocked.ReconcileWait
+			if !blocked.Empty() {
+				out.Kind = schedule.Blocked
+			}
+			return out, blocked.ReconcileWait
 		}
 		if errors.Is(err, manifest.ErrSourceSkipped) {
 			s.UpdateStatus(id, store.StatusReady, store.ReasonSkipped,
 				strings.TrimSpace(manifest.TrimSentinelPrefix(err.Error())))
 		} else {
 			s.UpdateFailure(id, err)
+			if failed, ok := errors.AsType[*manifest.DependencyFailedError](err); ok && len(failed.Failed) != 0 {
+				out.Kind = schedule.DependencyFailed
+				return out, manifest.ReconcileWait{Deps: failed.Failed}
+			}
 		}
 	default:
 		if existing, ok := s.GetStatus(id); ok && (existing.Status == store.StatusFailed ||
 			existing.Status == store.StatusReady && (existing.Message != "" || existing.Outcome() != store.OutcomePassed)) {
-			return manifest.ReconcileWait{}
+			out.Noop = false
+			if existing.IsDependencyFailure() {
+				out.Kind = schedule.DependencyFailed
+				return out, manifest.ReconcileWait{Deps: existing.BlockedBy()}
+			}
+			return out, manifest.ReconcileWait{}
 		}
 		s.UpdateStatus(id, store.StatusReady, "", "")
 	}
-	return manifest.ReconcileWait{}
+	return out, manifest.ReconcileWait{}
 }

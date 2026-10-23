@@ -188,11 +188,10 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 	}
 }
 
-type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool)
+type chartSourceDispatcher func(context.Context, schedule.NodeID, manifest.DrainLevel) (schedule.Outcome, manifest.ReconcileWait)
 
-func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
-	out, deps, rerun := d(ctx, id, attempt.Drain)
-	return out, manifest.ReconcileWait{Deps: deps}, rerun
+func (d chartSourceDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+	return d(ctx, id, attempt.Drain)
 }
 
 func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
@@ -231,7 +230,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 					sourceStarted := make(chan struct{})
 					sourceRelease := make(chan struct{})
 					parked := make(chan manifest.NamedResource, len(consumers))
-					dispatch := chartSourceDispatcher(func(_ context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, []schedule.NodeID, bool) {
+					dispatch := chartSourceDispatcher(func(_ context.Context, id schedule.NodeID, level manifest.DrainLevel) (schedule.Outcome, manifest.ReconcileWait) {
 						if id == source {
 							close(sourceStarted)
 							tasks.YieldSlot(func() { <-sourceRelease })
@@ -243,21 +242,21 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 								}})
 							}
 							st.UpdateStatus(id, tc.status, "", "source finished")
-							return schedule.OutcomeTerminal, nil, false
+							return schedule.Outcome{}, manifest.ReconcileWait{}
 						}
 						hr := *st.GetObject(id).(*manifest.HelmRelease)
 						c.materializeHelmChartSource(id, &hr)
 						err := c.awaitChartSource(&hr, level)
 						if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 							parked <- id
-							return schedule.OutcomeBlocked, blocked.Deps, false
+							return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: blocked.Deps}
 						}
 						if err != nil {
 							st.UpdateStatus(id, store.StatusFailed, "", err.Error())
-							return schedule.OutcomeDependencyFailed, []schedule.NodeID{source}, false
+							return schedule.Outcome{Kind: schedule.DependencyFailed}, manifest.ReconcileWait{Deps: []schedule.NodeID{source}}
 						}
 						st.UpdateStatus(id, store.StatusReady, "", "")
-						return schedule.OutcomeTerminal, nil, false
+						return schedule.Outcome{}, manifest.ReconcileWait{}
 					})
 					s := schedule.New(tasks, dispatch)
 					unsub := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -306,7 +305,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							for iteration := range 2 {
 								var arrivals int
 								stop := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
-								if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+								if _, blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 									t.Fatal(blocked)
 								}
 								stop()
@@ -985,7 +984,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil, "test")
-	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
+	fp, _, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
 	return fp
 }
 

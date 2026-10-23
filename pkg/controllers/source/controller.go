@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -89,8 +90,8 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 	return obj == nil && id.Group == manifest.SourceDomain || manifest.KindOf(obj).Runnable
 }
 
-// ReconcileNode runs one source invocation and returns any remaining typed wait.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+// ReconcileNode runs one source invocation and returns its dependency classification.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
@@ -100,12 +101,15 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 // KS/HR controllers' shape. Returning ErrSourceSkipped yields a
 // Ready/ReasonSkipped status; ErrBlocked parks the fetch for a dependency
 // retry; any other error yields Failed.
-func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, invocation manifest.ReconcileAttempt) error {
+func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
+	if gated {
+		return schedule.Outcome{}, nil
+	}
 	level := invocation.Drain
 	id := obj.Named()
 	facts := obj.(sourceFacts)
 	if facts.ExistenceOnly() {
-		return nil
+		return schedule.Outcome{}, nil
 	}
 	// Dispatcher ownership guarantees a fetcher for this kind.
 	fetcher := c.Fetchers[id.Kind]
@@ -116,7 +120,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 			for _, warning := range art.Warnings {
 				c.Store.AddWarning(id, warning)
 			}
-			return nil
+			return schedule.Outcome{}, nil
 		}
 		c.Store.UpdateStatus(id, store.StatusPending, "", "acquiring source content")
 	}
@@ -143,7 +147,7 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 	missing, isMissing := errors.AsType[*src.MissingSecretError](fetchErr)
 	if isMissing && level == manifest.DrainNone {
 		c.Store.UpdateStatus(id, store.StatusPending, "", "waiting for source Secret")
-		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
+		return schedule.Outcome{}, &depwait.ErrBlocked{Deps: []manifest.NamedResource{missing.Secret}}
 	}
 	if isMissing && missing.RetryWithRegistryConfig != nil && !c.producerBacked(fetchErr) {
 		c.Tasks.YieldSlot(func() {
@@ -167,15 +171,15 @@ func (c *Controller) reconcile(ctx context.Context, obj manifest.BaseManifest, i
 		// materializes live). A missing Secret with neither still fails loud.
 		if errors.Is(fetchErr, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(fetchErr)) {
 			c.Logger().Info("skipped (missing secret)", "id", id.String(), "err", fetchErr)
-			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
+			return schedule.Outcome{}, fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(fetchErr.Error()))
 		}
-		return fetchErr
+		return schedule.Outcome{}, fetchErr
 	}
 	c.Logger().Debug("fetch complete", "id", id.String(), "duration", time.Since(started), "artifact", artifact != nil)
 	if artifact != nil {
 		c.Store.SetArtifact(id, artifact)
 	}
-	return nil
+	return schedule.Outcome{}, nil
 }
 
 // producerBacked reports whether err is a missing-auth-Secret error whose

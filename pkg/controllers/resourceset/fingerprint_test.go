@@ -251,7 +251,7 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 	docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 		var hit bool
 		var err error
-		fp, hit, err = c.FingerprintDedup(rs.Named(), content)
+		fp, hit, _, err = c.FingerprintDedup(rs.Named(), content)
 		return hit, err
 	})
 	return docs, fp, err

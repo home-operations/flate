@@ -143,7 +143,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							var fp string
 							docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 								var err error
-								fp, _, err = c.FingerprintDedup(rs.Named(), content)
+								fp, _, _, err = c.FingerprintDedup(rs.Named(), content)
 								return false, err
 							})
 							renders.Add(1)
@@ -206,11 +206,11 @@ func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+	if _, blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 		t.Fatal(blocked)
 	}
 	initial := s.GetArtifact(rs.Named())
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+	if _, blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 		t.Fatal(blocked)
 	}
 	if updates.Load() != 1 || s.GetArtifact(rs.Named()) != initial {
@@ -219,7 +219,7 @@ func TestDirtyRerun_EqualOutputRenderCount(t *testing.T) {
 	fresh := *rs
 	fresh.ResourcesTemplate += "\n"
 	s.AddObject(&fresh)
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+	if _, blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 		t.Fatal(blocked)
 	}
 	if updates.Load() != 2 || s.GetArtifact(rs.Named()) == initial {

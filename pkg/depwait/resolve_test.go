@@ -3,7 +3,6 @@ package depwait
 import (
 	"context"
 	"errors"
-	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/task"
 	"slices"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -220,9 +220,9 @@ func TestResolve_FileIndexedData(t *testing.T) {
 	}
 }
 
-type resolutionDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool)
+type resolutionDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait)
 
-func (d resolutionDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+func (d resolutionDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	return d(ctx, id, attempt)
 }
 
@@ -243,23 +243,23 @@ func TestResolve_OptionalFailureCauses(t *testing.T) {
 			required := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ks.Namespace, Name: "cluster-vars"}
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: supplier}}}}})
 			var failed *manifest.DependencyFailedError
-			d := resolutionDispatcher(func(_ context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+			d := resolutionDispatcher(func(_ context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 				if id == supplier {
 					st.UpdateStatus(id, store.StatusFailed, "", "supplier failed")
-					return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+					return schedule.Outcome{}, manifest.ReconcileWait{}
 				}
 				w := Waiter{Store: st, Parent: reader.Named(), Declaration: reader}
 				var r Resolution
 				w.Classify(attempt, &r)
 				if blocked, ok := errors.AsType[*ErrBlocked](r.Err()); ok {
-					return schedule.OutcomeBlocked, blocked.ReconcileWait, false
+					return schedule.Outcome{Kind: schedule.Blocked}, blocked.ReconcileWait
 				}
 				var ok bool
 				failed, ok = errors.AsType[*manifest.DependencyFailedError](r.Err())
 				if !ok {
 					t.Errorf("expected required failure, got %v", r.Err())
 				}
-				return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+				return schedule.Outcome{}, manifest.ReconcileWait{}
 			})
 			sched := schedule.New(task.NewBounded(2), d)
 			unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -292,11 +292,11 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	var selected manifest.Data
 	release := make(chan struct{})
 	observed := make(chan error, 1)
-	d := resolutionDispatcher(func(_ context.Context, n schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	d := resolutionDispatcher(func(_ context.Context, n schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 		if n == supplier {
 			<-release
 			st.UpdateStatus(n, store.StatusReady, "", "")
-			return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+			return schedule.Outcome{}, manifest.ReconcileWait{}
 		}
 		w := Waiter{Store: st, Parent: ks.Named(), Declaration: ks, WipeSecrets: true}
 		var result Resolution
@@ -305,13 +305,13 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 			observed <- result.Err()
 		}
 		if blocked, ok := errors.AsType[*ErrBlocked](result.Err()); ok {
-			return schedule.OutcomeBlocked, blocked.ReconcileWait, false
+			return schedule.Outcome{Kind: schedule.Blocked}, blocked.ReconcileWait
 		}
 		if err := result.Err(); err != nil {
 			t.Errorf("admission error=%v", err)
 		}
 		selected = result.Inputs.Data(id)
-		return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+		return schedule.Outcome{}, manifest.ReconcileWait{}
 	})
 	sched := schedule.New(task.NewBounded(2), d)
 	sched.Seed([]schedule.NodeID{supplier, ks.Named()})

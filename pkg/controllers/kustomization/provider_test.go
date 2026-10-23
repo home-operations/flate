@@ -115,7 +115,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	}
 	ks := obj.(*manifest.Kustomization)
 	st.AddObject(ks)
-	err = c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	_, err = c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false)
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 		t.Fatalf("strict engine failure lost classification: %v", err)
 	}

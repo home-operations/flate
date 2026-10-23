@@ -120,11 +120,11 @@ func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
 			observedOnce := sync.OnceFunc(func() { close(observed) })
 			var started, requested atomic.Bool
 			var sched *schedule.Scheduler
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 				if id == keeper {
 					close(keeping)
 					<-releaseKeeper
-					return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+					return schedule.Outcome{}, manifest.ReconcileWait{}
 				}
 				if id == f.supplier {
 					started.Store(true)
@@ -137,14 +137,14 @@ func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
 						sched.OnArrival(f.supplier, true)
 					}
 				}
-				out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if id == f.reader && attempt.Content == nil && out != schedule.OutcomeBlocked {
+				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+				if id == f.reader && attempt.Content == nil && out.Kind != schedule.Blocked {
 					t.Error("unbound reader skipped content classification")
 					observedOnce()
 				}
 				if queued {
-					if out != schedule.OutcomeBlocked || wait.Content == nil || len(wait.Content.Suppliers) != 1 || wait.Content.Suppliers[0].Observed&1 == 0 {
-						t.Errorf("queued supplier admitted absence: %v %+v", out, wait)
+					if out.Kind != schedule.Blocked || outWait.Content == nil || len(outWait.Content.Suppliers) != 1 || outWait.Content.Suppliers[0].Observed&1 == 0 {
+						t.Errorf("queued supplier admitted absence: %v %+v", out, outWait)
 					}
 					if f.o.store.GetArtifact(f.reader) != nil {
 						t.Error("queued supplier allowed reader publication")
@@ -152,7 +152,7 @@ func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
 					observedOnce()
 					<-releaseReader
 				}
-				return out, wait, rerun
+				return out, outWait
 			})
 			sched = schedule.New(f.o.tasks, d)
 			unsub := f.o.watchDAG(sched)
@@ -211,7 +211,7 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 				f.o.ksc.Controller.Configure(opts)
 				f.o.hrc.Controller.Configure(opts)
 				var sawBound atomic.Bool
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 					if id == f.supplier {
 						startOnce.Do(func() { close(started) })
 						<-release
@@ -221,13 +221,13 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 						<-started
 						armed.Store(true)
 					}
-					out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
 					if bound {
-						if out != schedule.OutcomeBlocked || f.o.store.GetArtifact(f.reader) != nil {
-							t.Errorf("successor admitted reader before settlement: %v %+v", out, wait)
+						if out.Kind != schedule.Blocked || f.o.store.GetArtifact(f.reader) != nil {
+							t.Errorf("successor admitted reader before settlement: %v %+v", out, outWait)
 						}
 						if boundary == "between samples" {
-							if wait.Content.Suppliers[0].Observed == wait.Content.Suppliers[0].Word.Load() {
+							if outWait.Content.Suppliers[0].Observed == outWait.Content.Suppliers[0].Word.Load() {
 								t.Error("first sample did not precede successor intent")
 							}
 							close(release)
@@ -238,7 +238,7 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 					} else if id == f.reader && sawBound.Load() && attempt.Drain != manifest.DrainNone {
 						t.Errorf("missed epoch recheck forced drain %v", attempt.Drain)
 					}
-					return out, wait, rerun
+					return out, outWait
 				})
 				tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
 					if name == "schedule/"+f.supplier.String() {
@@ -268,7 +268,7 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 			f.o.configureControllers()
 			var sched *schedule.Scheduler
 			var admitted atomic.Bool
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 				arrival := id == f.reader && (attempt.Content != nil && len(attempt.Content.Suppliers) > 0) && admitted.CompareAndSwap(false, true)
 				if arrival {
 					assert.Equal(t, attempt.Drain, manifest.DrainNone)
@@ -277,11 +277,11 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 					}
 					sched.OnArrival(f.supplier, true)
 				}
-				out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if arrival && out != schedule.OutcomeBlocked {
-					t.Errorf("arrival admitted absence: %v %+v", out, wait)
+				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+				if arrival && out.Kind != schedule.Blocked {
+					t.Errorf("arrival admitted absence: %v %+v", out, outWait)
 				}
-				return out, wait, rerun
+				return out, outWait
 			})
 			sched = schedule.New(f.o.tasks, d)
 			unsub := f.o.watchDAG(sched)
@@ -353,9 +353,9 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 					}
 					o.configureControllers()
 					d := dagDispatcher{o}
-					out, wait, _ := d.Dispatch(t.Context(), reader, manifest.ReconcileAttempt{})
-					if out != schedule.OutcomeBlocked || wait.Content == nil || !slices.Contains(wait.Content.Targets, target) {
-						t.Fatalf("reader did not wait for ResourceSet: %v %+v", out, wait)
+					out, outWait := d.Dispatch(t.Context(), reader, manifest.ReconcileAttempt{})
+					if out.Kind != schedule.Blocked || outWait.Content == nil || !slices.Contains(outWait.Content.Targets, target) {
+						t.Fatalf("reader did not wait for ResourceSet: %v %+v", out, outWait)
 					}
 					sched := schedule.New(d, d)
 					unsubscribe := o.watchDAG(sched)
@@ -402,9 +402,9 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			if !o.filter.ShouldReconcile(producer) {
 				t.Fatal("prediction owner not selected")
 			}
-			out, wait, _ := d.Dispatch(t.Context(), producer, manifest.ReconcileAttempt{})
-			if out != schedule.OutcomeTerminal || !wait.Empty() {
-				t.Fatalf("producer did not render: %v %+v", out, wait)
+			out, outWait := d.Dispatch(t.Context(), producer, manifest.ReconcileAttempt{})
+			if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() {
+				t.Fatalf("producer did not render: %v %+v", out, outWait)
 			}
 			facts := o.store.ReferenceFacts(target, o.index)
 			if facts.Data != nil || facts.Accepted || !slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
@@ -412,9 +412,9 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			}) || o.store.GetArtifact(target) != nil {
 				t.Fatalf("source-qualified prediction supplied content or disappeared: %+v", facts)
 			}
-			out, wait, _ = d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.ReconcileAttempt{})
-			if out != schedule.OutcomeBlocked || wait.Content != nil || !slices.Contains(wait.Deps, target) {
-				t.Fatalf("prediction bypassed ordinary source wait: %v %+v", out, wait)
+			out, outWait = d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.ReconcileAttempt{})
+			if out.Kind != schedule.Blocked || outWait.Content != nil || !slices.Contains(outWait.Deps, target) {
+				t.Fatalf("prediction bypassed ordinary source wait: %v %+v", out, outWait)
 			}
 		})
 	}
@@ -445,7 +445,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 	var drain atomic.Int64
 	var lastSupplier manifest.Opportunity
 	parked := make(chan struct{}, 8)
-	d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 		if id == f.supplier {
 			close(started)
 			if !before {
@@ -453,7 +453,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 				case <-release:
 				case <-ctx.Done():
 					close(premature)
-					return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+					return schedule.Outcome{}, manifest.ReconcileWait{}
 				}
 			}
 		}
@@ -462,7 +462,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 			if !before && !released.Load() && attempt.Drain != manifest.DrainNone {
 				t.Error("scheduler issued a cut while supplier body remained in flight")
 				cancel()
-				return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+				return schedule.Outcome{}, manifest.ReconcileWait{}
 			}
 			if attempt.Content != nil && len(attempt.Content.Suppliers) > 0 {
 				lastSupplier = attempt.Content.Suppliers[0]
@@ -473,16 +473,16 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 				select {
 				case <-started:
 				case <-ctx.Done():
-					return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+					return schedule.Outcome{}, manifest.ReconcileWait{}
 				}
 			}
 		}
-		out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-		if id == f.reader && !before && !released.Load() && (out != schedule.OutcomeBlocked || wait.Content == nil) {
+		out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+		if id == f.reader && !before && !released.Load() && (out.Kind != schedule.Blocked || outWait.Content == nil) {
 			t.Error("running supplier admitted absence before body completion")
 			cancel()
 		}
-		return out, wait, rerun
+		return out, outWait
 	})
 	tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
 		if name == "schedule/"+f.supplier.String() {
@@ -579,18 +579,18 @@ func TestResolve_OptionalForceCut(t *testing.T) {
 				}
 				completed := make(chan struct{})
 				var cut atomic.Bool
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 					if attempt.Drain == manifest.DrainForce {
 						cut.Store(true)
 						if id != first {
 							<-completed
 						}
 					}
-					out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
 					if attempt.Drain == manifest.DrainForce && id == first {
 						close(completed)
 					}
-					return out, wait, rerun
+					return out, outWait
 				})
 				sched := schedule.New(f.o.tasks, d)
 				unsub := f.o.watchDAG(sched)
@@ -640,7 +640,7 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 				f.o.ksc.Controller.Configure(opts)
 				f.o.hrc.Controller.Configure(opts)
 				var sched *schedule.Scheduler
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 					if id == f.supplier && attempt.Drain == manifest.DrainForce {
 						f.o.tasks.YieldSlot(func() { <-release })
 					}
@@ -665,14 +665,14 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 							}
 						}
 					}
-					out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
 					if check {
-						if out != schedule.OutcomeBlocked || f.o.store.GetArtifact(f.reader) != nil {
-							t.Errorf("stale cut admitted reader: %v %+v", out, wait)
+						if out.Kind != schedule.Blocked || f.o.store.GetArtifact(f.reader) != nil {
+							t.Errorf("stale cut admitted reader: %v %+v", out, outWait)
 							cancel()
 						}
-						if wait.Content != nil {
-							for _, o := range wait.Content.Suppliers {
+						if outWait.Content != nil {
+							for _, o := range outWait.Content.Suppliers {
 								if o.Cut != 0 {
 									t.Errorf("rejected cut survived: %+v", o)
 								}
@@ -681,7 +681,7 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 						rejected.Store(true)
 						releaseOnce.Do(func() { close(release) })
 					}
-					return out, wait, rerun
+					return out, outWait
 				})
 				tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
 					if name == "schedule/"+f.supplier.String() && armed.Load() {
@@ -725,7 +725,7 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 			var readerDispatches atomic.Int64
 			var changed atomic.Bool
 			var full atomic.Bool
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 				if id == f.reader {
 					readerDispatches.Add(1)
 				}
@@ -748,20 +748,20 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 					}
 					f.o.store.AddObject(extra)
 				}
-				out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
-				if id == f.reader && changed.Load() && !full.Load() && (out != schedule.OutcomeBlocked || wait.Content == nil || len(wait.Content.Suppliers) != 2) {
-					t.Errorf("binding lost current supplier set: %v %+v", out, wait)
+				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+				if id == f.reader && changed.Load() && !full.Load() && (out.Kind != schedule.Blocked || outWait.Content == nil || len(outWait.Content.Suppliers) != 2) {
+					t.Errorf("binding lost current supplier set: %v %+v", out, outWait)
 					cancel()
 					full.Store(true)
 				}
 				if id == f.reader && (attempt.Content != nil && len(attempt.Content.Suppliers) == 2) && full.CompareAndSwap(false, true) {
 					assert.Equal(t, readerDispatches.Load(), int64(4))
 					t.Logf("complete binding reached in %d reader dispatches", readerDispatches.Load())
-					if out != schedule.OutcomeBlocked || wait.Content == nil || len(wait.Content.Suppliers) != 2 {
-						t.Errorf("binding lost current supplier set: %v %+v", out, wait)
+					if out.Kind != schedule.Blocked || outWait.Content == nil || len(outWait.Content.Suppliers) != 2 {
+						t.Errorf("binding lost current supplier set: %v %+v", out, outWait)
 					}
 				}
-				return out, wait, rerun
+				return out, outWait
 			})
 			tasks := r4Tasks{tasks: f.o.tasks, after: func(name string) {
 				if name == "schedule/"+extra.Named().String() {
@@ -848,7 +848,7 @@ func TestResolve_OptionalForceCutTargets(t *testing.T) {
 			f.o.hrc.Controller.Configure(opts)
 			release := make(chan struct{})
 			var rejected atomic.Bool
-			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+			d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 				if id == f.supplier && attempt.Drain == manifest.DrainForce {
 					f.o.tasks.YieldSlot(func() { <-release })
 				}
@@ -860,14 +860,14 @@ func TestResolve_OptionalForceCutTargets(t *testing.T) {
 					f.o.ksc.Emit(staticOwner.Named(), &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: second.Data}}}, Complete: true})
 					f.o.ksc.Emit(f.supplier, &store.Emission{Children: []store.Child{{Obj: &manifest.RawObject{APIVersion: "v1", Kind: second.Named().Kind, Name: second.Name, Namespace: second.Namespace}}}})
 				}
-				out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+				out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
 				if check {
-					if out != schedule.OutcomeBlocked || wait.Content == nil || !slices.Equal(wait.Content.Targets, []manifest.NamedResource{second.Named()}) || st.GetArtifact(f.reader) != nil {
-						t.Errorf("changed target reused cut: %v %+v", out, wait)
+					if out.Kind != schedule.Blocked || outWait.Content == nil || !slices.Equal(outWait.Content.Targets, []manifest.NamedResource{second.Named()}) || st.GetArtifact(f.reader) != nil {
+						t.Errorf("changed target reused cut: %v %+v", out, outWait)
 					}
 					close(release)
 				}
-				return out, wait, rerun
+				return out, outWait
 			})
 			sched := schedule.New(f.o.tasks, d)
 			unsub := f.o.watchDAG(sched)
@@ -917,7 +917,7 @@ func TestResolve_OptionalForceCutSuppliers(t *testing.T) {
 				f.o.hrc.Controller.Configure(opts)
 				release := make(chan struct{})
 				var rejected atomic.Bool
-				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+				d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 					if id != f.reader && attempt.Drain == manifest.DrainForce {
 						f.o.tasks.YieldSlot(func() { <-release })
 					}
@@ -940,14 +940,14 @@ func TestResolve_OptionalForceCutSuppliers(t *testing.T) {
 							}
 						}
 					}
-					out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+					out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
 					if check {
-						if out != schedule.OutcomeBlocked || st.GetArtifact(f.reader) != nil {
-							t.Errorf("changed suppliers reused cut: %v %+v", out, wait)
+						if out.Kind != schedule.Blocked || st.GetArtifact(f.reader) != nil {
+							t.Errorf("changed suppliers reused cut: %v %+v", out, outWait)
 							cancel()
 						}
-						if wait.Content != nil {
-							for _, o := range wait.Content.Suppliers {
+						if outWait.Content != nil {
+							for _, o := range outWait.Content.Suppliers {
 								if o.Cut != 0 {
 									t.Errorf("changed set retained cut: %+v", o)
 								}
@@ -955,7 +955,7 @@ func TestResolve_OptionalForceCutSuppliers(t *testing.T) {
 						}
 						close(release)
 					}
-					return out, wait, rerun
+					return out, outWait
 				})
 				sched := schedule.New(f.o.tasks, d)
 				unsub := f.o.watchDAG(sched)
@@ -1029,10 +1029,10 @@ func TestReconcile_TypedWait(t *testing.T) {
 				f.o.store.AddObject(rs)
 				var out schedule.Outcome
 				f.o.tasks.Go(t.Context(), "initial", func(ctx context.Context) {
-					out, _, _ = (dagDispatcher{f.o}).Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{})
+					out, _ = (dagDispatcher{f.o}).Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{})
 				})
 				f.o.tasks.BlockTillDone()
-				assert.Equal(t, out, schedule.OutcomeTerminal)
+				assert.Equal(t, out.Kind, schedule.Terminal)
 				f.o.store.UpdateStatus(gate.Named(), store.StatusPending, "", "successor queued")
 				if f.o.store.GetArtifact(rs.Named()) == nil {
 					t.Fatal("ResourceSet artifact was not retained")
@@ -1046,18 +1046,19 @@ func TestReconcile_TypedWait(t *testing.T) {
 			}
 			before := f.o.store.GetArtifact(id)
 			var out schedule.Outcome
-			var wait manifest.ReconcileWait
+			var outWait manifest.ReconcileWait
+
 			f.o.tasks.Go(t.Context(), "typed", func(ctx context.Context) {
-				out, wait, _ = (dagDispatcher{f.o}).Dispatch(ctx, id, manifest.ReconcileAttempt{})
+				out, outWait = (dagDispatcher{f.o}).Dispatch(ctx, id, manifest.ReconcileAttempt{})
 			})
 			f.o.tasks.BlockTillDone()
-			assert.Equal(t, out, schedule.OutcomeBlocked)
-			assert.Equal(t, wait.Empty(), false)
+			assert.Equal(t, out.Kind, schedule.Blocked)
+			assert.Equal(t, outWait.Empty(), false)
 			if kind == manifest.KindKustomization || kind == manifest.KindHelmRelease {
-				assert.Equal(t, len(wait.Content.Suppliers), 1)
-				assert.Diff(t, wait.Content.Targets, []manifest.NamedResource{f.target})
+				assert.Equal(t, len(outWait.Content.Suppliers), 1)
+				assert.Diff(t, outWait.Content.Targets, []manifest.NamedResource{f.target})
 			} else {
-				assert.Equal(t, len(wait.Deps), 1)
+				assert.Equal(t, len(outWait.Deps), 1)
 			}
 			assert.Equal(t, f.o.store.GetArtifact(id), before)
 			assert.Equal(t, f.o.tasks.Failures(), int64(0))
@@ -1074,7 +1075,7 @@ func TestResolve_OptionalInvocationSnapshot(t *testing.T) {
 	release := make(chan struct{})
 	var checked atomic.Bool
 	var sched *schedule.Scheduler
-	d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+	d := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 		if id == f.supplier {
 			f.o.tasks.YieldSlot(func() { <-release })
 		}
@@ -1085,12 +1086,12 @@ func TestResolve_OptionalInvocationSnapshot(t *testing.T) {
 			before = slices.Clone(attempt.Content.Suppliers)
 			sched.OnArrival(f.supplier, true)
 		}
-		out, wait, rerun := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
+		out, outWait := (dagDispatcher{f.o}).Dispatch(ctx, id, attempt)
 		if check {
 			assert.Equal(t, slices.Equal(attempt.Content.Suppliers, before), true)
-			assert.Equal(t, out, schedule.OutcomeBlocked)
+			assert.Equal(t, out.Kind, schedule.Blocked)
 		}
-		return out, wait, rerun
+		return out, outWait
 	})
 	sched = schedule.New(f.o.tasks, d)
 	unsub := f.o.watchDAG(sched)

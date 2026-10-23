@@ -48,25 +48,25 @@ data: {key: value}
 	unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 	t.Cleanup(unsub)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-	out, blocked, _ := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	if out != schedule.OutcomeTerminal || !blocked.Empty() || arrivals.Load() != 1 {
-		t.Fatalf("fresh result=%v blocked=%v arrivals=%d", out, blocked, arrivals.Load())
+	out, outWait := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() || arrivals.Load() != 1 {
+		t.Fatalf("fresh result=%v blocked=%v arrivals=%d", out, outWait, arrivals.Load())
 	}
 	before := s.GetArtifact(rs.Named())
-	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	if out != schedule.OutcomeTerminalNoop || !blocked.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
-		t.Fatalf("dedup result=%v blocked=%v arrivals=%d artifact changed=%v", out, blocked, arrivals.Load(), s.GetArtifact(rs.Named()) != before)
+	out, outWait = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	if (out.Kind != schedule.Terminal || !out.Noop) || !outWait.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
+		t.Fatalf("dedup result=%v blocked=%v arrivals=%d artifact changed=%v", out, outWait, arrivals.Load(), s.GetArtifact(rs.Named()) != before)
 	}
 	s.UpdateStatus(rs.Named(), store.StatusReady, store.ReasonSkipped, "")
-	out, blocked, _ = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-	if out != schedule.OutcomeTerminal || !blocked.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
-		t.Fatalf("typed skip became a dedup no-op: outcome=%v blocked=%v arrivals=%d", out, blocked, arrivals.Load())
+	out, outWait = d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+	if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() || arrivals.Load() != 1 || s.GetArtifact(rs.Named()) != before {
+		t.Fatalf("typed skip became a dedup no-op: outcome=%v blocked=%v arrivals=%d", out, outWait, arrivals.Load())
 	}
 }
 
 func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"dedup", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended", "refresh suspended"} {
+	for _, name := range []string{"dedup", "informative ready", "fresh fingerprint identical docs", "missing artifact", "empty fingerprint", "blocked gate", "failed gate", "preflight failure", "filter skip", "vanished", "render failure", "suspended", "refresh suspended", "refresh selector"} {
 		for _, selector := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/selector_%v", name, selector), func(t *testing.T) {
 				t.Parallel()
@@ -85,17 +85,19 @@ data: {key: fixed}
 				}
 				s.AddObject(rs)
 				d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
-				if out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); rerun != selector || out != schedule.OutcomeTerminal || !blocked.Empty() {
-					t.Fatalf("fresh setup failed: %v %v", out, blocked)
+				if out, outWait := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); out.Rerun != selector || (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() {
+					t.Fatalf("fresh setup failed: %v %v", out, outWait)
 				}
 				before := s.GetArtifact(rs.Named()).(*store.Emission)
 				c.Close()
 				opts := base.Options{}
-				want := schedule.OutcomeTerminal
+				want := schedule.Outcome{}
 				fresh := *rs
 				switch name {
 				case "dedup":
-					want = schedule.OutcomeTerminalNoop
+					want = schedule.Outcome{Noop: true}
+				case "informative ready":
+					s.UpdateStatus(rs.Named(), store.StatusReady, "", "retained explanation")
 				case "fresh fingerprint identical docs":
 					fresh.Inputs = []fluxopv1.ResourceSetInput{{"unused": &apiextensionsv1.JSON{Raw: []byte(`"new"`)}}}
 					s.AddObject(&fresh)
@@ -110,12 +112,12 @@ data: {key: fixed}
 						manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 					}
 					s.AddObject(&fresh)
-					want = schedule.OutcomeBlocked
+					want = schedule.Outcome{Kind: schedule.Blocked}
 					if name == "failed gate" {
 						gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns"}
 						s.AddObject(gate)
 						s.UpdateStatus(gate.Named(), store.StatusFailed, "", "gate failed")
-						want = schedule.OutcomeTerminal
+						want = schedule.Outcome{}
 					}
 				case "preflight failure":
 					opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
@@ -127,7 +129,7 @@ data: {key: fixed}
 				case "suspended":
 					fresh.Suspend = true
 					s.AddObject(&fresh)
-				case "refresh suspended":
+				case "refresh suspended", "refresh selector":
 					gate := &manifest.ResourceSet{Name: "gate", Namespace: "ns", Suspend: true}
 					s.AddObject(gate)
 					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
@@ -141,9 +143,15 @@ data: {key: fixed}
 					unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 						info, ok := payload.(store.StatusInfo)
 						if id == rs.Named() && ok && info.Message == "resolving inputs" && !published.Swap(true) {
-							suspended := fresh
-							suspended.Suspend = true
-							s.AddObject(&suspended)
+							replacement := fresh
+							if name == "refresh suspended" {
+								replacement.Suspend = true
+							} else if selector {
+								replacement.InputsFrom = nil
+							} else {
+								replacement.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{}}}
+							}
+							s.AddObject(&replacement)
 						}
 					}, false)
 					t.Cleanup(unsub)
@@ -164,11 +172,15 @@ data: {key: fixed}
 					}
 				}, false)
 				t.Cleanup(unsub)
-				out, blocked, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-				if rerun != (selector && name != "vanished" && name != "suspended" && name != "refresh suspended") || out != want || (!blocked.Empty()) != (want == schedule.OutcomeBlocked) {
-					t.Fatalf("outcome=%v blocked=%v; want %v", out, blocked, want)
+				out, outWait := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+				wantRerun := selector && name != "vanished" && name != "suspended" && name != "refresh suspended"
+				if name == "refresh selector" {
+					wantRerun = !selector
 				}
-				if want == schedule.OutcomeTerminalNoop && arrivals.Load() != 0 {
+				if out.Rerun != wantRerun || (out.Kind != want.Kind || out.Noop != want.Noop) || (!outWait.Empty()) != (want.Kind == schedule.Blocked) {
+					t.Fatalf("outcome=%v blocked=%v; want %v", out, outWait, want)
+				}
+				if (want.Kind == schedule.Terminal && want.Noop) && arrivals.Load() != 0 {
 					t.Fatalf("no-op emitted %d arrivals", arrivals.Load())
 				}
 				if name == "fresh fingerprint identical docs" {
@@ -235,9 +247,9 @@ data: {key: initial}
 	s.AddObject(&fresh)
 	done := make(chan schedule.Outcome, 1)
 	tasks.Go(ctx, "dispatch", func(ctx context.Context) {
-		out, _, rerun := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-		if !rerun {
-			t.Error("post-reconcile intent ignored the updated selector")
+		out, _ := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+		if out.Rerun {
+			t.Error("invocation used selector intent from a different declaration")
 		}
 		done <- out
 	})
@@ -253,14 +265,14 @@ data: {key: initial}
 		s.AddObject(&newest)
 		close(release)
 	})
-	if out := <-done; out != schedule.OutcomeTerminal {
+	if out := <-done; out.Kind != schedule.Terminal || out.Noop {
 		t.Fatalf("concurrent fresh render classified as %v", out)
 	}
 	tasks.BlockTillDone()
-	if out, _, _ := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); out != schedule.OutcomeTerminal {
+	if out, _ := d.Dispatch(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); out.Kind != schedule.Terminal || out.Noop {
 		t.Fatalf("newest content must render conservatively: %v", out)
 	}
-	if out, _, rerun := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !rerun || out != schedule.OutcomeTerminalNoop {
+	if out, _ := d.Dispatch(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !out.Rerun || (out.Kind != schedule.Terminal || !out.Noop) {
 		t.Fatalf("settled newest content must dedup: %v", out)
 	}
 	cm, ok := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "output"})
@@ -269,9 +281,9 @@ data: {key: initial}
 	}
 }
 
-type withdrawalDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool)
+type withdrawalDispatcher func(context.Context, schedule.NodeID, manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait)
 
-func (d withdrawalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+func (d withdrawalDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	return d(ctx, id, attempt)
 }
 
@@ -296,17 +308,17 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					publishLate := func() {
 						s.RecordEmitted(k, &late)
 					}
-					dispatch := withdrawalDispatcher(func(_ context.Context, id schedule.NodeID, _ manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+					dispatch := withdrawalDispatcher(func(_ context.Context, id schedule.NodeID, _ manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 						if id == consumer {
 							if calls.Add(1) == 1 {
 								close(consumerStarted)
-								return schedule.OutcomeBlocked, manifest.ReconcileWait{Deps: []schedule.NodeID{k}}, false
+								return schedule.Outcome{Kind: schedule.Blocked}, manifest.ReconcileWait{Deps: []schedule.NodeID{k}}
 							}
 							if s.GetObject(k) != nil {
 								t.Error("withdrawal wake observed child still live")
 							}
 							close(woken)
-							return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+							return schedule.Outcome{}, manifest.ReconcileWait{}
 						}
 						tasks.YieldSlot(func() { <-publishRelease })
 						if lateFirst {
@@ -316,7 +328,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 						if !lateFirst {
 							publishLate()
 						}
-						return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+						return schedule.Outcome{}, manifest.ReconcileWait{}
 					})
 					scheduler := schedule.New(tasks, dispatch)
 					o := &Orchestrator{store: s}
@@ -407,9 +419,9 @@ data: {value: rendered}
 			})
 			tasks.Go(t.Context(), "dispatch-withdrawn", func(ctx context.Context) {
 				tasks.YieldSlot(func() { <-withdrawn })
-				out, blocked, _ := d.Dispatch(ctx, l.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-				if out != schedule.OutcomeTerminal || !blocked.Empty() {
-					t.Errorf("withdrawn dispatch = %v, blocked = %v", out, blocked)
+				out, outWait := d.Dispatch(ctx, l.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+				if (out.Kind != schedule.Terminal || out.Noop) || !outWait.Empty() {
+					t.Errorf("withdrawn dispatch = %v, blocked = %v", out, outWait)
 				}
 			})
 			tasks.BlockTillDone()
@@ -502,7 +514,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 				}, false)
 				defer unsub()
 				d := dagDispatcher{o}
-				dispatch := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+				dispatch := withdrawalDispatcher(func(ctx context.Context, id schedule.NodeID, level manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 					if id != p {
 						if id.Kind == manifest.KindHelmRelease && scenario != "unchanged" {
 							o.tasks.YieldSlot(func() {
@@ -513,11 +525,11 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							})
 						}
 						hidden := id == repo && s.GetObject(id) == nil
-						out, blocked, rerun := d.Dispatch(ctx, id, level)
+						out, outWait := d.Dispatch(ctx, id, level)
 						if hidden {
 							withdrew.Do(func() { close(withdrawn) })
 						}
-						return out, blocked, rerun
+						return out, outWait
 					}
 					o.tasks.YieldSlot(func() {
 						select {
@@ -555,7 +567,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 					next.Finish()
 					s.UpdateStatus(p, store.StatusReady, "", "")
 					close(published)
-					return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+					return schedule.Outcome{}, manifest.ReconcileWait{}
 				})
 				sched := schedule.New(o.tasks, dispatch)
 				unwatch := o.watchDAG(sched)

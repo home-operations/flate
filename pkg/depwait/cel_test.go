@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -63,7 +64,7 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	ref := manifest.DependencyRef{NamedResource: dep,
 		ReadyExpr: `dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`,
 	}
-	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != classReady {
+	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != schedule.Terminal {
 		t.Errorf("replace ReadyExpr true over Failed built-in: got %+v, want ClassReady", got)
 	}
 }
@@ -85,7 +86,7 @@ func TestReadyExpr_CompileError(t *testing.T) {
 			w := &Waiter{Store: s}
 			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: `this isn't valid CEL`}
 			got := w.classify(ref, manifest.DrainNone, w.Existence)
-			if got.Kind != classFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
+			if got.Kind != schedule.DependencyFailed || !strings.HasPrefix(got.Message, "readyExpr:") {
 				t.Errorf("compile error: got %+v, want ClassFailed with 'readyExpr:' prefix", got)
 			}
 		})
@@ -121,11 +122,14 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 
 	w := &Waiter{Store: s}
 	const expr = `dep.status.conditions[100].type == "Ready"` // index out of range → runtime eval error
-	if ready, failMsg := w.tryReadyExpr(expr, dep); ready || failMsg != "" {
+	var observation store.Observation
+	obj := s.Snapshot(&dep, true, &observation)
+	conds := observation.Conditions
+	if ready, failMsg := w.tryReadyExpr(manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}, obj, conds); ready || failMsg != "" {
 		t.Fatalf("transient eval error: ready=%v failMsg=%q, want false/empty (not terminal)", ready, failMsg)
 	}
 	ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: expr}
-	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != classBlocked {
+	if got := w.classify(ref, manifest.DrainNone, w.Existence); got.Kind != schedule.Blocked {
 		t.Errorf("transient eval error@none: got %+v, want ClassBlocked (re-runnable, not failed)", got)
 	}
 }
@@ -142,12 +146,22 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 		Annotations: map[string]string{"app.kubernetes.io/version": "1.2.3"},
 	})
 	s.UpdateStatus(dep, store.StatusReady, "", "")
+	var observation store.Observation
+	obj := s.Snapshot(&dep, true, &observation)
+	conds := observation.Conditions
+	fresh := obj.(*manifest.Kustomization).Clone()
+	fresh.Labels = map[string]string{"tier": "changed"}
+	fresh.Annotations = map[string]string{"app.kubernetes.io/version": "2.0.0"}
+	s.AddObject(fresh)
+	s.UpdateStatus(dep, store.StatusFailed, "", "replacement")
+	w := Waiter{Store: s}
 
 	for _, expr := range []string{
 		`dep.metadata.labels["tier"] == "data"`,
 		`dep.metadata.annotations["app.kubernetes.io/version"] == "1.2.3"`,
 	} {
-		ok, err := evaluateReadyExpr(expr, s, manifest.NamedResource{}, dep)
+		expr += ` && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
+		ok, err := w.evaluateReadyExpr(expr, dep, obj, conds)
 		if err != nil || !ok {
 			t.Errorf("expr %q: ok=%v err=%v, want true/nil", expr, ok, err)
 		}
@@ -168,6 +182,27 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	if err != nil || !ok {
 		t.Errorf("self/dep binding: ok=%v err=%v, want true/nil", ok, err)
 	}
+	var observation store.Observation
+	obj := s.Snapshot(&dep, true, &observation)
+	conds := observation.Conditions
+	s.UpdateStatus(dep, store.StatusFailed, "", "replacement")
+	for _, tc := range []struct {
+		name   string
+		self   manifest.NamedResource
+		reason string
+	}{
+		{"same identity", dep, "Skipped"},
+		{"distinct identity", self, "Succeeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := Waiter{Store: s, Parent: tc.self}
+			expr := `self.status.conditions.exists(c, c.type == "Ready" && c.reason == "` + tc.reason + `") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`
+			if ok, err := w.evaluateReadyExpr(expr, dep, obj, conds); err != nil || !ok {
+				t.Fatalf("retained observation: ok=%v err=%v", ok, err)
+			}
+		})
+	}
 	for _, group := range []string{"", "example.test"} {
 		t.Run("group="+group, func(t *testing.T) {
 			t.Parallel()
@@ -183,6 +218,21 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 			}
 		})
 	}
+	t.Run("ResourceSet pending self", func(t *testing.T) {
+		t.Parallel()
+		s := store.New()
+		parent := &manifest.ResourceSet{Name: "parent", Namespace: "ns"}
+		dependency := &manifest.Kustomization{Name: "child", Namespace: "ns"}
+		s.AddObject(parent)
+		s.AddObject(dependency)
+		s.UpdateStatus(parent.Named(), store.StatusPending, "", "waiting on child")
+		s.UpdateStatus(dependency.Named(), store.StatusReady, "", "")
+		pending, _ := s.GetStatus(parent.Named())
+		expr := fmt.Sprintf(`dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True") && self.status.conditions.exists(c, c.type == "Ready" && c.status == %q && c.reason == %q && c.message == %q)`, metav1.ConditionUnknown, pending.Reason, pending.Message)
+		if ok, err := evaluateReadyExpr(expr, s, parent.Named(), dependency.Named()); err != nil || !ok {
+			t.Fatalf("ResourceSet self condition: ok=%v err=%v, want true/nil", ok, err)
+		}
+	})
 }
 
 // TestCompileReadyExpr_MemoizesErrors pins the compile-error cache: a known-bad
@@ -200,4 +250,12 @@ func TestCompileReadyExpr_MemoizesErrors(t *testing.T) {
 	if !errors.Is(err1, err2) {
 		t.Errorf("compile error not memoized: %p vs %p", err1, err2)
 	}
+}
+
+func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedResource) (bool, error) {
+	var observation store.Observation
+	obj := s.Snapshot(&dep, true, &observation)
+	conds := observation.Conditions
+	w := Waiter{Store: s, Parent: self}
+	return w.evaluateReadyExpr(expr, dep, obj, conds)
 }

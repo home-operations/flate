@@ -207,6 +207,6 @@ func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil, "test")
-	fp, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
+	fp, _, _, _ := c.FingerprintDedup(manifest.NamedResource{}, content)
 	return fp
 }

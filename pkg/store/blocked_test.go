@@ -109,9 +109,19 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			} else if info.BlockedBy() != nil {
 				t.Fatalf("transition retained blockers: %v", info.BlockedBy())
 			}
-			obj, conds := st.Snapshot(id)
-			if obj != hr {
-				t.Fatalf("snapshot object = %v, want %v", obj, hr)
+			var initial Observation
+			obj := st.Snapshot(&id, true, &initial)
+			snapshot := initial.StatusInfo
+			conds := initial.Conditions
+			if obj != hr || snapshot != info {
+				t.Fatalf("snapshot object/status = %v/%+v, want %v/%+v", obj, snapshot, hr, info)
+			}
+			var uncopiedObservation Observation
+			uncopied := st.Snapshot(&id, false, &uncopiedObservation)
+			status := uncopiedObservation.StatusInfo
+			omitted := uncopiedObservation.Conditions
+			if uncopied != obj || status != snapshot || omitted != nil {
+				t.Fatalf("unrequested snapshot = %v/%+v/%v", uncopied, status, omitted)
 			}
 			want := []Condition{{Type: ConditionReady, Status: tc.ready, Reason: tc.reason, Message: tc.message}}
 			if tc.name == "Healthy condition" {
@@ -119,6 +129,14 @@ func TestUpdateFailure_Transitions(t *testing.T) {
 			}
 			if !slices.EqualFunc(conds, want, conditionEqual) {
 				t.Fatalf("conditions = %+v, want %+v", conds, want)
+			}
+			conds[0].Message = "caller mutation"
+			var retainedObservation Observation
+			st.Snapshot(&id, true, &retainedObservation)
+			retained := retainedObservation.StatusInfo
+			copied := retainedObservation.Conditions
+			if retained != info || !slices.EqualFunc(copied, want, conditionEqual) {
+				t.Fatal("caller mutated snapshot storage")
 			}
 		})
 	}
@@ -251,6 +269,14 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	check(second)
 	info, _ := st.GetStatus(id)
 	check(info)
+	var initial Observation
+	observed := st.Snapshot(&id, true, &initial)
+	snapshot := initial.StatusInfo
+	conditions := initial.Conditions
+	check(snapshot)
+	if observed != obj || len(conditions) != 1 || conditions[0].Message != snapshot.Message || conditions[0].Reason != string(snapshot.Reason) {
+		t.Fatalf("incoherent object/status/conditions: %v/%+v/%+v", observed, snapshot, conditions)
+	}
 	for _, info := range st.FailedResources() {
 		check(info)
 	}
@@ -259,6 +285,14 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 	check(second)
 	info, _ = st.GetStatus(id)
 	check(info)
+	var updated Observation
+	st.Snapshot(&id, true, &updated)
+	snapshot = updated.StatusInfo
+	conditions = updated.Conditions
+	check(snapshot)
+	if len(conditions) != 1 || conditions[0].Status != metav1.ConditionUnknown || conditions[0].Message != snapshot.Message {
+		t.Fatalf("refire snapshot mismatch: %+v/%+v", snapshot, conditions)
+	}
 	close(release)
 	wg.Wait()
 }

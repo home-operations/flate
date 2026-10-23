@@ -72,7 +72,7 @@ data:
 			}
 			expectedRefs := slices.Clone(hr.ValuesFrom)
 			st.AddObject(hr)
-			if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); blocked.Empty() {
+			if _, blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); blocked.Empty() {
 				t.Fatal("expected reconciliation to wait for a dependency")
 			}
 			assert.Equal(t, len(st.Warnings()), 0)

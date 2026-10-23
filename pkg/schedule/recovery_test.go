@@ -47,13 +47,13 @@ func TestDependencyFailureRecovery(t *testing.T) {
 				var runs, active atomic.Int64
 				var recovered atomic.Bool
 				var s *Scheduler
-				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 					if nid == driver {
 						if !awaitSignal(ctx, observed) {
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						if mode != "during registration" && !awaitTerminal(ctx, s, victim) {
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						s.OnStatusWake(dep, false, true)
 						if mode != "permanent failure" {
@@ -66,7 +66,7 @@ func TestDependencyFailureRecovery(t *testing.T) {
 						if mode == "during registration" {
 							close(finish)
 						}
-						return OutcomeTerminal, nil, false
+						return Outcome{}, manifest.ReconcileWait{}
 					}
 					if active.Add(1) != 1 {
 						t.Error("consumer dispatched concurrently")
@@ -77,10 +77,10 @@ func TestDependencyFailureRecovery(t *testing.T) {
 						if mode == "during registration" {
 							awaitSignal(ctx, finish)
 						}
-						return OutcomeDependencyFailed, []NodeID{dep}, false
+						return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{dep}}
 					}
 					recovered.Store(true)
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}))
 				s.Seed([]NodeID{victim, driver})
 				if err := s.Run(ctx); err != nil {
@@ -120,10 +120,10 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 				entered, release, third := make(chan struct{}), make(chan struct{}), make(chan struct{})
 				var runs, active atomic.Int64
 				var s *Scheduler
-				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+				s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 					if nid == driver {
 						if !awaitTerminal(ctx, s, victim) {
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						s.OnArrival(unrelated, false)
 						s.OnStatusWake(unrelated, true, false)
@@ -133,7 +133,7 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 						assert.Equal(t, runs.Load(), int64(1))
 						s.OnStatusWake(first, true, false)
 						if !awaitSignal(ctx, entered) {
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						s.OnStatusWake(unrelated, true, false)
 						s.mu.Lock()
@@ -143,11 +143,11 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 						if mode == "cancellation" {
 							cancel()
 							close(release)
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						close(release)
 						if !awaitSignal(ctx, third) || !awaitTerminal(ctx, s, victim) {
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						s.OnStatusWake(first, false, false)
 						s.OnStatusWake(first, true, false)
@@ -161,7 +161,7 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 							}
 							s.OnStatusWake(replacement, true, false)
 						}
-						return OutcomeTerminal, nil, false
+						return Outcome{}, manifest.ReconcileWait{}
 					}
 					if active.Add(1) != 1 {
 						t.Error("consumer dispatched concurrently")
@@ -169,20 +169,20 @@ func TestDependencyFailureRunningWakeAndReplacement(t *testing.T) {
 					defer active.Add(-1)
 					switch runs.Add(1) {
 					case 1:
-						return OutcomeDependencyFailed, []NodeID{first, second}, false
+						return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{first, second}}
 					case 2:
 						close(entered)
 						awaitSignal(ctx, release)
 						if mode == "changed dependencies" {
-							return OutcomeDependencyFailed, []NodeID{replacement}, false
+							return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{replacement}}
 						}
 					case 3:
 						close(third)
 						if mode == "changed dependencies" {
-							return OutcomeDependencyFailed, []NodeID{replacement}, false
+							return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{replacement}}
 						}
 					}
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}))
 				s.Seed([]NodeID{victim, driver})
 				err := s.Run(ctx)
@@ -219,10 +219,10 @@ func TestDependencyFailureMultiHopRecovery(t *testing.T) {
 			var readyA, readyB, readyC atomic.Bool
 			var runsB, runsC atomic.Int64
 			var s *Scheduler
-			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 				switch nid {
 				case a:
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				case driver:
 					if awaitTerminal(ctx, s, b) && awaitTerminal(ctx, s, c) {
 						readyA.Store(true)
@@ -231,19 +231,19 @@ func TestDependencyFailureMultiHopRecovery(t *testing.T) {
 				case b:
 					runsB.Add(1)
 					if !readyA.Load() {
-						return OutcomeDependencyFailed, []NodeID{a}, false
+						return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{a}}
 					}
 					readyB.Store(true)
 					s.OnStatusWake(b, true, false)
 				case c:
 					runsC.Add(1)
 					if !readyB.Load() {
-						return OutcomeDependencyFailed, []NodeID{b}, false
+						return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{b}}
 					}
 					readyC.Store(true)
 					s.OnStatusWake(c, true, false)
 				}
-				return OutcomeTerminal, nil, false
+				return Outcome{}, manifest.ReconcileWait{}
 			}))
 			s.Seed([]NodeID{a, b, c, driver})
 			if err := s.Run(ctx); err != nil {
@@ -262,11 +262,11 @@ func TestDependencyFailureRedispatchLimit(t *testing.T) {
 	var s *Scheduler
 	var runs atomic.Int64
 	dep, victim := testutil.KustomizationID("ns", "dep"), testutil.KustomizationID("ns", "consumer")
-	s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
+	s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 		runs.Add(1)
 		s.OnStatusWake(dep, false, false)
 		s.OnStatusWake(dep, true, false)
-		return OutcomeDependencyFailed, []NodeID{dep}, false
+		return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{dep}}
 	}))
 	s.Seed([]NodeID{victim})
 	if err := s.Run(ctx); err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {
@@ -322,7 +322,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 				requested, applied := make(chan int), make(chan struct{})
 				var runs, self, active atomic.Int64
 				var s *Scheduler
-				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+				s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 					active.Add(1)
 					defer active.Add(-1)
 					if nid == producer {
@@ -332,7 +332,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 							case got := <-requested:
 								assert.Equal(t, got, round)
 							case <-ctx.Done():
-								return OutcomeTerminal, nil, false
+								return Outcome{}, manifest.ReconcileWait{}
 							}
 							assert.Equal(t, active.Load(), int64(2))
 							if round == 1 && tc.cancel {
@@ -342,7 +342,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 									s.cond.Wait()
 								}
 								s.mu.Unlock()
-								return OutcomeTerminal, nil, false
+								return Outcome{}, manifest.ReconcileWait{}
 							}
 							if len(blockers) > 0 {
 								switch tc.event {
@@ -368,10 +368,10 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 							select {
 							case applied <- struct{}{}:
 							case <-ctx.Done():
-								return OutcomeTerminal, nil, false
+								return Outcome{}, manifest.ReconcileWait{}
 							}
 						}
-						return OutcomeTerminal, nil, false
+						return Outcome{}, manifest.ReconcileWait{}
 					}
 					assert.Equal(t, self.Add(1), int64(1))
 					defer self.Add(-1)
@@ -379,7 +379,7 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 					select {
 					case requested <- round:
 					case <-ctx.Done():
-						return OutcomeTerminal, nil, false
+						return Outcome{}, manifest.ReconcileWait{}
 					}
 					if tc.cancel {
 						// Hold the body until cancellation is observed by the scheduler.
@@ -389,12 +389,12 @@ func TestProgress_RegistrationEpisodes(t *testing.T) {
 					}
 					if round >= len(tc.blockers) {
 						t.Error("unexpected retry")
-						return OutcomeTerminal, nil, false
+						return Outcome{}, manifest.ReconcileWait{}
 					}
 					if blockers := blockerRounds[round]; len(blockers) > 0 {
-						return OutcomeDependencyFailed, blockers, false
+						return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: blockers}
 					}
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}))
 				if tc.existing {
 					s.nodes[a] = &node{id: a, state: stateTerminal}
@@ -437,16 +437,19 @@ func TestProgress_UnwatchedData(t *testing.T) {
 			consumer, producer := testutil.KustomizationID("ns", "consumer"), testutil.KustomizationID("ns", "producer")
 			started, finished := make(chan struct{}), make(chan struct{})
 			var s *Scheduler
-			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 				if nid == consumer {
 					close(started)
 					awaitSignal(ctx, finished)
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}
 				if !awaitSignal(ctx, started) {
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{
+
+						// Warm-up and measured arrivals MUST use disjoint identities.
+					}
 				}
-				// Warm-up and measured arrivals MUST use disjoint identities.
+
 				kind := manifest.KindConfigMap
 				// Integer-truncated averaging tolerates isolated incidental allocations
 				// but still rejects an allocation on every measured invocation.
@@ -467,7 +470,7 @@ func TestProgress_UnwatchedData(t *testing.T) {
 				assert.Equal(t, len(s.parkedIdx), 0)
 				s.mu.Unlock()
 				close(finished)
-				return OutcomeTerminal, nil, false
+				return Outcome{}, manifest.ReconcileWait{}
 			}))
 			s.Seed([]NodeID{consumer, producer})
 			if err := s.Run(ctx); err != nil {
@@ -502,11 +505,11 @@ func TestProgress_BlockerSlicesImmutable(t *testing.T) {
 	consumer := testutil.KustomizationID("ns", "consumer")
 	n := &node{id: consumer, state: stateRunning}
 	s.nodes[consumer], s.inFlight = n, 1
-	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: blocked}, false)
+	s.complete(s.nodes[consumer], Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: blocked})
 	assert.Diff(t, blocked, want)
 	assert.Diff(t, n.failedOn, []NodeID{a, b})
 	n.conservativeUsed, n.state, s.inFlight = true, stateRunning, 1
-	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{b, a, b}}, false)
+	s.complete(s.nodes[consumer], Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: []NodeID{b, a, b}})
 	assert.Equal(t, n.conservativeUsed, true)
 	assert.Diff(t, blocked, want)
 }

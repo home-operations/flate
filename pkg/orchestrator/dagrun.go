@@ -9,12 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// dagDispatcher implements schedule.Dispatcher: it routes a node by Kind to the
-// owning controller's ReconcileNode and maps the blocked result into a
-// scheduler Outcome. This is the single composition point where the scheduler,
-// the controllers, and the store meet — pkg/schedule itself imports none of
-// them. NodeID is manifest.NamedResource, so the blocked slice flows through
-// untranslated.
+// dagDispatcher routes invocations to their owning controller.
 type dagDispatcher struct{ o *Orchestrator }
 
 // Go admits scheduler bodies through the invocation's shared task service.
@@ -29,45 +24,20 @@ func (d dagDispatcher) BlockTillDone() {
 	d.o.tasks.BlockTillDone()
 }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
-	out, blocked := d.reconcile(ctx, id, attempt)
-	return out, blocked, id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet && d.o.rsc.WantsDrainRerun(id)
-}
-
-func (d dagDispatcher) reconcile(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
+func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	o := d.o
-	var blocked manifest.ReconcileWait
 	switch {
 	case id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization:
-		blocked = o.ksc.ReconcileNode(ctx, id, attempt)
+		return o.ksc.ReconcileNode(ctx, id, attempt)
 	case id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease:
-		blocked = o.hrc.ReconcileNode(ctx, id, attempt)
+		return o.hrc.ReconcileNode(ctx, id, attempt)
 	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
-		before, _ := o.store.GetArtifact(id).(*store.Emission)
-		blocked = o.rsc.ReconcileNode(ctx, id, attempt)
-		if blocked.Empty() && before != nil && before.Fingerprint != "" && o.store.GetArtifact(id) == before {
-			info, ok := o.store.GetStatus(id)
-			// A fresh fingerprint replaces the artifact even for identical docs.
-			// Nil dependencies alone do not prove success: gates and skips
-			// may preserve an artifact and an informative Ready status.
-			// deleteLocked removes conditions with the object; Ready implies prior presence on this path.
-			if ok && info.Outcome() == store.OutcomePassed && info.Message == "" {
-				return schedule.OutcomeTerminalNoop, manifest.ReconcileWait{}
-			}
-		}
+		return o.rsc.ReconcileNode(ctx, id, attempt)
 	case o.src.Owns(id):
-		blocked = o.src.ReconcileNode(ctx, id, attempt)
+		return o.src.ReconcileNode(ctx, id, attempt)
 	default:
-		// Not a schedulable kind (should never be dispatched) — terminal no-op.
-		return schedule.OutcomeTerminal, manifest.ReconcileWait{}
+		return schedule.Outcome{}, manifest.ReconcileWait{}
 	}
-	if !blocked.Empty() {
-		return schedule.OutcomeBlocked, blocked
-	}
-	if info, _ := o.store.GetStatus(id); info.IsDependencyFailure() {
-		return schedule.OutcomeDependencyFailed, manifest.ReconcileWait{Deps: info.BlockedBy()}
-	}
-	return schedule.OutcomeTerminal, manifest.ReconcileWait{}
 }
 
 // seedNodes returns every file-loaded reconcilable + ResourceSet + source

@@ -31,7 +31,7 @@ func BenchmarkHelmReleaseFingerprint_SourceIdentity(b *testing.B) {
 			c := base.New(store.New(), nil, "test")
 			b.ReportAllocs()
 			for b.Loop() {
-				if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
+				if fp, _, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 					b.Fatal("empty fingerprint")
 				}
 			}
@@ -51,7 +51,7 @@ func BenchmarkHelmReleaseFingerprint_SourceLookup(b *testing.B) {
 	for b.Loop() {
 		source := resolver.LocalSourceArtifact(hr.ChartSource())
 		identity := struct{ Digest, Revision string }{source.Digest, source.Revision}
-		if fp, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
+		if fp, _, _, _ := c.FingerprintDedup(hr.Named(), hr.Content(identity, nil)); fp == "" {
 			b.Fatal("empty fingerprint")
 		}
 	}

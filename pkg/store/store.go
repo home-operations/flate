@@ -464,23 +464,37 @@ func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	return sh.objectLocked(id)
 }
 
-// Snapshot returns the manifest and a copy of its conditions under one shard read lock.
-// The shared lock keeps object metadata and conditions coherent for CEL evaluation.
-// Hidden registrations return nil for both; absent objects may have conditions
-// recorded before admission.
-func (s *Store) Snapshot(id manifest.NamedResource) (manifest.BaseManifest, []Condition) {
-	sh := s.shardFor(id)
+// Observation holds the requested readiness facts from a coherent Snapshot.
+type Observation struct {
+	StatusInfo
+	Conditions []Condition
+	Statusful  bool
+}
+
+// Snapshot reads an effective object and optionally fills its readiness observation.
+func (s *Store) Snapshot(id *manifest.NamedResource, conditions bool, observed *Observation) manifest.BaseManifest {
+	sh := s.shardFor(*id)
 	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	obj := sh.objectLocked(id)
-	if sh.hidden[id] {
-		return nil, nil
+	obj := sh.objectLocked(*id)
+	hidden := len(sh.hidden) != 0 && sh.hidden[*id]
+	if hidden {
+		obj = nil
 	}
-	conds := sh.conditions[id].conditions
-	if len(conds) == 0 {
-		return obj, nil
+	if observed != nil {
+		*observed = Observation{}
+		if !hidden {
+			observed.Statusful = obj != nil && manifest.KindOf(obj).Status || obj == nil && id.KindInfo().Status
+			if observed.Statusful || obj == nil || conditions {
+				record := sh.conditions[*id]
+				observed.StatusInfo, _ = record.statusInfo()
+				if conditions {
+					observed.Conditions = slices.Clone(record.conditions)
+				}
+			}
+		}
 	}
-	return obj, slices.Clone(conds)
+	sh.mu.RUnlock()
+	return obj
 }
 
 // DeleteObject removes the object stored under id. Returns whether

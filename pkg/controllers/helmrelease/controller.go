@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -85,16 +86,19 @@ func (c *Controller) Start(_ context.Context) {
 	c.StartLifecycle()
 }
 
-// ReconcileNode runs one HelmRelease invocation and returns any remaining typed wait.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+// ReconcileNode runs one HelmRelease invocation and returns its dependency classification.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
-func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, invocation manifest.ReconcileAttempt) error {
+func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
+	if gated {
+		return schedule.Outcome{}, nil
+	}
 	level := invocation.Drain
 	id := hr.Named()
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	// Parent gate: if this HR was file-loaded under a Flux KS's
@@ -120,14 +124,14 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
 			ctx, id, []manifest.DependencyRef{{NamedResource: parent}}, level)
 		if err != nil {
-			return err
+			return schedule.Outcome{}, err
 		}
 		if ok {
 			hr = fresh
 		}
 	}
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	// Honor spec.dependsOn — HR-to-HR ordering. Flux gates rendering on
@@ -144,31 +148,31 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 		fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](
 			ctx, id, deps, level)
 		if err != nil {
-			return err
+			return schedule.Outcome{}, err
 		}
 		if ok {
 			hr = fresh
 		}
 	}
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	c.SetPendingUnlessReady(id, "resolving pre-render references")
 	fresh, ok, err := c.RequireRefresh[*manifest.HelmRelease](ctx, id, nil, level)
 	if err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	if ok {
 		hr = fresh
 	}
 	var resolved depwait.Resolution
 	if err := c.Require(&depwait.Waiter{Parent: id, Dependencies: preparePrereqs(hr), Declaration: hr, WipeSecrets: c.WipeSecrets, AllowMissingSecrets: c.allowMissingSecrets}, invocation, &resolved); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	hr, omitted := applyValuesFrom(hr, resolved.Omitted)
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	// SetPendingUnlessReady, not a raw UpdateStatus: this pre-dedup progress
@@ -182,7 +186,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	c.SetPendingUnlessReady(id, "resolving chart")
 	hr, err = helm.Prepare(hr, c.Helm.Resolver().HelmChart, resolved.Inputs, c.Helm.ValuesCache())
 	if err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	// Wait for the declared chart source to be Ready, BEFORE the fingerprint
@@ -190,7 +194,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	// replay stale docs over a source that has since failed or soft-skipped
 	// via --allow-missing-secrets).
 	if err := c.awaitChartSource(hr, level); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	// A HelmRepository is just a registry/index base — its chart has no
 	// standalone source CR. Now that the declared source is Ready (so the
@@ -203,32 +207,32 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	hr, repointed := c.materializeHelmChartSource(id, hr)
 	if repointed {
 		if err := c.awaitChartSource(hr, level); err != nil {
-			return err
+			return schedule.Outcome{}, err
 		}
 	}
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	var sourceContent any
 	if hr.UsesDirectOCIRepository() {
 		source := c.Helm.Resolver().LocalSourceArtifact(hr.ChartSource())
 		if source == nil {
-			return fmt.Errorf("resolve oci chart identity: %w: OCIRepository %s artifact not available",
+			return schedule.Outcome{}, fmt.Errorf("resolve oci chart identity: %w: OCIRepository %s artifact not available",
 				manifest.ErrObjectNotFound, hr.Chart.RepoFullName())
 		}
 		sourceContent = struct{ Digest, Revision string }{source.Digest, source.Revision}
 	}
-	fp, handled, err := c.FingerprintDedup(id, hr.Content(sourceContent, omitted))
+	fp, handled, _, err := c.FingerprintDedup(id, hr.Content(sourceContent, omitted))
 	if handled {
-		return err
+		return schedule.Outcome{}, err
 	}
 
 	_, attempt := c.Store.GetEmission(id)
 	defer attempt.Finish()
 	c.Store.UpdateStatus(id, store.StatusPending, "", "rendering chart")
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	raw, err := c.Helm.Template(ctx, hr, hr.Values, c.Options)
 	var docs []map[string]any
@@ -255,7 +259,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 		}
 	}
 	if err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	// #744: flag top-level release values no chart template references — a key
 	// renamed/removed when the chart was upgraded silently does nothing, so the
@@ -280,7 +284,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 
 	c.Store.UpdateStatus(id, store.StatusPending, "", fmt.Sprintf("applying %d objects", len(docs)))
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return schedule.Outcome{}, err
 	}
 	var synthetic []store.Child
 	for _, child := range attempt.Children {
@@ -293,7 +297,7 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease, in
 	attempt.Fingerprint, attempt.Complete = fp, true
 	c.Emit(id, &attempt)
 	c.recordOmittedValues(id, omitted)
-	return nil
+	return schedule.Outcome{}, nil
 }
 
 // renderBestEffort retries a failed chart render with empty values replaced by

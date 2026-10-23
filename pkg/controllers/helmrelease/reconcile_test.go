@@ -307,7 +307,7 @@ func TestReconcile_ParentGateWaits(t *testing.T) {
 	})
 	st.AddObject(parent) // never reaches Ready
 	st.AddObject(hr)
-	err := c.reconcile(t.Context(), hr, manifest.ReconcileAttempt{Drain: manifest.DrainForce})
+	_, err := c.reconcile(t.Context(), hr, manifest.ReconcileAttempt{Drain: manifest.DrainForce}, false)
 	if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("parent gate category = %v", err)
 	}
@@ -468,7 +468,7 @@ data: {greeting: hi}
 					}, false)
 					t.Cleanup(unsub)
 					c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-						if blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+						if _, blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 							t.Errorf("blocked on %v", blocked)
 						}
 					})
@@ -636,7 +636,7 @@ data:
 					})
 					tasks.Go(t.Context(), "render", func(ctx context.Context) {
 						defer close(rendered)
-						if blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+						if _, blocked := c.ReconcileNode(ctx, id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 							t.Errorf("blocked on %v", blocked)
 						}
 					})

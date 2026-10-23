@@ -10,7 +10,7 @@ import (
 )
 
 func BenchmarkClassify_Dependency(b *testing.B) {
-	for _, state := range []string{"absent CRD", "present CRD", "ready ConfigMap", "pending Kustomization"} {
+	for _, state := range []string{"absent CRD", "present CRD", "ready ConfigMap", "pending Kustomization", "ready Kustomization", "CEL dep only", "CEL same identity", "CEL distinct self"} {
 		b.Run(state, func(b *testing.B) {
 			s := store.New()
 			id := manifest.NamedResource{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
@@ -27,9 +27,27 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 				id.Kind = manifest.KindKustomization
 				id.Namespace = "ns"
 				s.UpdateStatus(id, store.StatusPending, "", "")
+			case "ready Kustomization", "CEL dep only", "CEL same identity", "CEL distinct self":
+				id = manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "dependency", Namespace: "ns"}
+				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+				s.UpdateStatus(id, store.StatusReady, "", "")
 			}
 			w := &Waiter{Store: s}
 			dep := manifest.DependencyRef{NamedResource: id}
+			switch state {
+			case "CEL dep only", "CEL same identity", "CEL distinct self":
+				dep.ReadyExpr = `dep.metadata.name == "dependency" && dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
+				if state != "CEL dep only" {
+					w.Parent = id
+					if state == "CEL distinct self" {
+						w.Parent.Name = "self"
+						s.AddObject(&manifest.Kustomization{Name: w.Parent.Name, Namespace: id.Namespace})
+						s.UpdateStatus(w.Parent, store.StatusReady, "", "")
+					}
+					dep.ReadyExpr += ` && self.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`
+				}
+				w.classify(dep, manifest.DrainCascade, w.Existence)
+			}
 			for b.Loop() {
 				w.classify(dep, manifest.DrainCascade, w.Existence)
 			}

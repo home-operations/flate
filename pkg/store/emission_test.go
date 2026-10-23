@@ -218,7 +218,8 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 				if got := s.GetObject(id); got == nil || got.Named() != id {
 					t.Fatal("reverse position lost object")
 				}
-				if obj, _ := s.Snapshot(id); obj == nil || obj.Named() != id {
+				obj := s.Snapshot(&id, true, nil)
+				if obj == nil || obj.Named() != id {
 					t.Fatal("reverse position changed snapshot identity")
 				}
 				if got := s.Productions(id, nil); len(got) != 2 || got[0].Owner != p || got[1].Owner != q {
@@ -408,7 +409,11 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						if _, ok := s.GetStatus(id); ok {
 							t.Fatal("hidden Ready leaked")
 						}
-						if obj, conditions := s.Snapshot(id); obj != nil || len(conditions) != 0 {
+						var observation Observation
+						obj := s.Snapshot(&id, true, &observation)
+						info := observation.StatusInfo
+						conditions := observation.Conditions
+						if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
 							t.Fatal("hidden snapshot leaked")
 						}
 						if obj, attempt := s.GetEmission(id); obj != nil {
@@ -1153,7 +1158,11 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		if _, ok := s.GetStatus(id); ok {
 			t.Fatal("absent producer leaked terminal state")
 		}
-		if obj, conditions := s.Snapshot(id); obj != nil || len(conditions) != 0 {
+		var observation Observation
+		obj := s.Snapshot(&id, true, &observation)
+		info := observation.StatusInfo
+		conditions := observation.Conditions
+		if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
 			t.Fatal("absent producer leaked snapshot")
 		}
 		if obj, attempt := s.GetEmission(id); obj != nil || len(attempt.Children) != 0 || len(attempt.Manifests) != 0 {
@@ -1461,8 +1470,14 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 					t.Helper()
 					assert.Equal(t, s.EmissionOwner(id), owner)
 					assert.Equal(t, s.GetObject(id), child.Obj)
-					obj, _ := s.Snapshot(id)
+					var observation Observation
+					obj := s.Snapshot(&id, true, &observation)
+					info := observation.StatusInfo
+					conditions := observation.Conditions
 					assert.Equal(t, obj, child.Obj)
+					want, _ := s.GetStatus(id)
+					assert.Equal(t, info, want)
+					assert.Equal(t, conditions == nil, true)
 					replayed := false
 					s.AddListener(EventObjectAdded, func(got manifest.NamedResource, data any) {
 						if got == id {

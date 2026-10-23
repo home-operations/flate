@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -39,7 +40,11 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
 			}
 			ran := false
-			blocked := c.DispatchNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt) error {
+			facts := schedule.Outcome{Noop: true, Rerun: true}
+			blocked, blockedWait := c.DispatchNode(t.Context(), id, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
+				if gated {
+					return schedule.Outcome{}, nil
+				}
 				ran = true
 				info, _ := st.GetStatus(id)
 				if got := info.BlockedBy(); len(got) != 0 {
@@ -47,15 +52,15 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 				}
 				switch mode {
 				case "primary error":
-					return errors.New("render failed")
+					return facts, errors.New("render failed")
 				case "primary status":
 					st.UpdateStatus(id, store.StatusFailed, "", "render failed")
 				case "blocked":
-					return &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
+					return facts, &depwait.ErrBlocked{Deps: []manifest.NamedResource{fresh}}
 				case "new dependency failure":
-					return &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
+					return facts, &manifest.DependencyFailedError{Failed: []manifest.NamedResource{fresh}}
 				}
-				return nil
+				return facts, nil
 			})
 			wantStatus := store.StatusReady
 			wantRan := true
@@ -81,10 +86,23 @@ func TestDispatchNode_ReplacesDerivedFailureProvenance(t *testing.T) {
 			if got := info.BlockedBy(); !slices.Equal(got, wantBlockers) {
 				t.Fatalf("blockers=%v, want %v", got, wantBlockers)
 			}
-			if mode == "blocked" && !slices.Equal(blocked.Deps, []manifest.NamedResource{fresh}) {
+			if mode == "blocked" && !slices.Equal(blockedWait.Deps, []manifest.NamedResource{fresh}) {
 				t.Fatalf("parked dependencies=%v", blocked)
 			}
-			if mode != "blocked" && !blocked.Empty() {
+			kind := schedule.Terminal
+			if mode == "blocked" {
+				kind = schedule.Blocked
+			}
+			if mode == "new dependency failure" {
+				kind = schedule.DependencyFailed
+			}
+			if blocked.Kind != kind || blocked.Noop != (mode == "recovered") || blocked.Rerun != wantRan {
+				t.Fatalf("returned facts=%+v, want kind=%v noop=%v rerun=%v", blocked, kind, mode == "recovered", wantRan)
+			}
+			if mode == "new dependency failure" && (blocked.Kind != schedule.DependencyFailed || !slices.Equal(blockedWait.Deps, []manifest.NamedResource{fresh})) {
+				t.Fatalf("missing returned dependency failure: %+v", blocked)
+			}
+			if mode != "blocked" && mode != "new dependency failure" && !blockedWait.Empty() {
 				t.Fatalf("terminal result had parked dependencies: %v", blocked)
 			}
 			if wantStatus == store.StatusReady {

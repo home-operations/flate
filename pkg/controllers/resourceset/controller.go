@@ -13,6 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -37,16 +38,20 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	}
 }
 
-// ReconcileNode runs one ResourceSet invocation and returns any remaining typed wait.
-func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) manifest.ReconcileWait {
+// ReconcileNode runs one ResourceSet invocation and returns owner scheduling facts.
+func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	return c.DispatchNode(ctx, id, attempt, c.reconcile)
 }
 
-func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, invocation manifest.ReconcileAttempt) error {
+func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, invocation manifest.ReconcileAttempt, gated bool) (schedule.Outcome, error) {
+	out := schedule.Outcome{Rerun: selectorIntent(rs)}
+	if gated {
+		return out, nil
+	}
 	level := invocation.Drain
 	id := rs.Named()
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return out, err
 	}
 	// SetPendingUnlessReady (not a raw UpdateStatus): a no-op re-reconcile of
 	// an already-Ready RS (re-emitted by its structural parent / a drain-rerun
@@ -64,15 +69,16 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 		// controller (#102).
 		fresh, ok, err := c.RequireRefresh[*manifest.ResourceSet](
 			ctx, id, deps, level)
-		if err != nil {
-			return err
-		}
 		if ok {
 			rs = fresh
+			out.Rerun = selectorIntent(rs)
+		}
+		if err != nil {
+			return out, err
 		}
 	}
 	if err := c.PreflightError(id); err != nil {
-		return err
+		return out, err
 	}
 
 	var attempt *store.Emission
@@ -83,8 +89,8 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 	}()
 	handled := false
 	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(c.Store), func(content any) (bool, error) {
-		fp, hit, err := c.FingerprintDedup(id, content)
-		handled = hit
+		fp, hit, noop, err := c.FingerprintDedup(id, content)
+		handled, out.Noop = hit, noop && err == nil
 		if hit || err != nil {
 			return hit, err
 		}
@@ -98,10 +104,10 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 	}
 	if err != nil {
 		c.Store.UpdateStatus(id, store.StatusFailed, "", err.Error())
-		return err
+		return out, err
 	}
 	if handled {
-		return nil
+		return out, nil
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	for i, child := range attempt.Children {
@@ -111,7 +117,7 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 	}
 	attempt.Complete = true
 	c.Emit(id, attempt)
-	return nil
+	return out, nil
 }
 
 // collectDeps gates explicit dependencies, named inputs and the structural parent.
@@ -120,6 +126,11 @@ func (c *Controller) reconcile(ctx context.Context, rs *manifest.ResourceSet, in
 func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
 	parents := c.Store.Productions(rs.Named(), nil)
 	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
+	for _, p := range parents {
+		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
+			capacity++
+		}
+	}
 	deps := make([]manifest.DependencyRef, capacity)
 	n := 0
 	for ref := range manifest.References(rs) {
@@ -137,16 +148,8 @@ func (c *Controller) collectDeps(rs *manifest.ResourceSet) []manifest.Dependency
 	return deps
 }
 
-// WantsDrainRerun reports whether the ResourceSet id has a selector-only
-// inputsFrom (ref.Name == "") — the case where its matching RSIPs may be
-// emitted by an unknown producer, so it has no nameable dependency to
-// park on. Such a RS asks the scheduler to re-run it at the structural
-// fixpoint (the orchestrator's dispatcher returns this as the dispatch rerun
-// intent) so it re-expands against the now-complete RSIP set. Returns false
-// when id is not a RS in the store.
-func (c *Controller) WantsDrainRerun(id manifest.NamedResource) bool {
-	rs, ok := c.Store.Get[*manifest.ResourceSet](id)
-	if !ok || rs.Suspend {
+func selectorIntent(rs *manifest.ResourceSet) bool {
+	if rs.Suspend {
 		return false
 	}
 	for ref := range manifest.References(rs) {

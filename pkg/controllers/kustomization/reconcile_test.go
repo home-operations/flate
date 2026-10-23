@@ -280,7 +280,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			for i, ks := range consumers {
 				c.Tasks.Go(t.Context(), ks.Named().String(), func(ctx context.Context) {
 					<-start
-					if deps := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
+					if _, deps := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
 						t.Errorf("blocked dependencies = %v", deps)
 					}
 					if i == 0 {
@@ -301,7 +301,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 				close(start)
 			} else {
 				c.Tasks.Go(t.Context(), "metadata replay", func(ctx context.Context) {
-					if deps := c.ReconcileNode(ctx, first, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
+					if _, deps := c.ReconcileNode(ctx, first, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !deps.Empty() {
 						t.Errorf("replay blocked dependencies = %v", deps)
 					}
 				})
@@ -652,7 +652,7 @@ data: {greeting: hi}
 			}, false)
 			t.Cleanup(unsub)
 			c.Tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-				if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: level}); !blocked.Empty() {
+				if _, blocked := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: level}); !blocked.Empty() {
 					t.Errorf("blocked on %v", blocked)
 				}
 			})
@@ -797,7 +797,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			} else {
 				s.SetArtifact(sourceID, &next)
 			}
-			if err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); err != nil {
+			if _, err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
 				t.Fatal(err)
 			}
 			if got := s.GetObject(exclusive) != nil; got == swapDuringRender {
@@ -808,7 +808,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			}
 			if !swapDuringRender {
 				s.SetArtifact(sourceID, &initial)
-				if err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); err != nil {
+				if _, err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
 					t.Fatal(err)
 				}
 				if s.GetObject(exclusive) != nil {
@@ -835,7 +835,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 				t.Log("raw render persistence unavailable for this build identity")
 			}
 			before := guard.opened.Load()
-			if err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); err != nil {
+			if _, err := c.reconcile(t.Context(), ks, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
 				t.Fatalf("raw cache hit: %v", err)
 			}
 			if persistent && guard.opened.Load() != before {
@@ -846,7 +846,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			fresh.NamePrefix = "arbitrary-second-"
 
 			s.AddObject(fresh)
-			if err := c.reconcile(t.Context(), fresh, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); err != nil {
+			if _, err := c.reconcile(t.Context(), fresh, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err != nil {
 				t.Fatal(err)
 			}
 			old := shared
@@ -861,7 +861,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			failed.FS = &guardedSourceFS{FS: input.FS}
 			failed.FS.(*guardedSourceFS).deny.Store(true)
 			s.SetArtifact(sourceID, &failed)
-			if err := c.reconcile(t.Context(), fresh, manifest.ReconcileAttempt{Drain: manifest.DrainNone}); err == nil || s.GetObject(newID) == nil {
+			if _, err := c.reconcile(t.Context(), fresh, manifest.ReconcileAttempt{Drain: manifest.DrainNone}, false); err == nil || s.GetObject(newID) == nil {
 				t.Fatal("failed successor withdrew completed output")
 			}
 			_, empty = s.GetEmission(ks.Named())

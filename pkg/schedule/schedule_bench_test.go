@@ -16,8 +16,8 @@ func BenchmarkScheduler_Run(b *testing.B) {
 	for i := range ids {
 		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("node-%02d", i))
 	}
-	d := dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
-		return OutcomeTerminal, nil, false
+	d := dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
+		return Outcome{}, manifest.ReconcileWait{}
 	})
 	b.ReportAllocs()
 	for b.Loop() {
@@ -35,12 +35,12 @@ func BenchmarkScheduler_ContentRedispatch(b *testing.B) {
 	for b.Loop() {
 		var s *Scheduler
 		runs := 0
-		s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
+		s = New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 			runs++
 			if runs <= maxRedispatches {
 				s.OnArrival(nid, true)
 			}
-			return OutcomeTerminal, nil, false
+			return Outcome{}, manifest.ReconcileWait{}
 		}))
 		s.Seed([]NodeID{nid})
 		if err := s.Run(b.Context()); err != nil {
@@ -184,8 +184,8 @@ func BenchmarkComplete_Failed(b *testing.B) {
 			}
 			b.Run(fmt.Sprintf("FanIn=%d/%s", fanIn, name), func(b *testing.B) {
 				next := blocked
-				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
-					return OutcomeDependencyFailed, next, false
+				s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
+					return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: next}
 				}))
 				nid := testutil.KustomizationID("ns", "consumer")
 				n := &node{id: nid}
@@ -194,13 +194,13 @@ func BenchmarkComplete_Failed(b *testing.B) {
 					s.failedIdx[dep] = map[NodeID]struct{}{testutil.KustomizationID("ns", "other"): {}}
 				}
 				s.inFlight = 1
-				s.complete(n, OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: previous}, false)
+				s.complete(n, Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: previous})
 				b.ReportAllocs()
 				for b.Loop() {
 					n.state = stateRunning
 					s.inFlight = 1
-					out, failed, _ := s.disp.Dispatch(b.Context(), nid, manifest.ReconcileAttempt{})
-					s.complete(n, out, &failed, false)
+					out, outWait := s.disp.Dispatch(b.Context(), nid, manifest.ReconcileAttempt{})
+					s.complete(n, Outcome{Kind: out.Kind, Noop: out.Noop, Rerun: false}, &outWait)
 					if mode == "Replaced" {
 						if &next[0] == &blocked[0] {
 							next = previous

@@ -59,7 +59,8 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					}
 					attempt := make(chan []manifest.NamedResource, 1)
 					o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-						_, blocked, _ := d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+						_, outWait := d.Dispatch(ctx, consumer, manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+						blocked := outWait
 						attempt <- blocked.Deps
 					})
 					var blocked []manifest.NamedResource

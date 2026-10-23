@@ -24,6 +24,65 @@ func newCM(name, ns string) *manifest.ConfigMap {
 	return &manifest.ConfigMap{Name: name, Namespace: ns}
 }
 
+func TestStore_Snapshot(t *testing.T) {
+	t.Parallel()
+	id := testutil.HelmReleaseID("apps", "reader")
+	resourceSet := &manifest.ResourceSet{Name: id.Name, Namespace: id.Namespace}
+	for _, tc := range []struct {
+		name   string
+		obj    manifest.BaseManifest
+		id     manifest.NamedResource
+		status Status
+	}{
+		{"typed", &manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace}, id, StatusReady},
+		{"raw canonical identity", &manifest.RawObject{APIVersion: manifest.HelmReleaseDomain + "/v2", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace}, id, StatusReady},
+		{"statusless", newCM(id.Name, id.Namespace), newCM(id.Name, id.Namespace).Named(), StatusReady},
+		{"ResourceSet pending", resourceSet, resourceSet.Named(), StatusPending},
+		{"status only canonical", nil, id, StatusReady},
+		{"status only foreign", nil, manifest.NamedResource{Kind: id.Kind, Group: "example.test", Name: id.Name}, StatusReady},
+		{"absent", nil, id, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			if tc.obj != nil {
+				st.AddObject(tc.obj)
+			}
+			if tc.status != "" {
+				st.UpdateStatus(tc.id, tc.status, "", "observed")
+			}
+			statusful := tc.obj != nil && manifest.KindOf(tc.obj).Status || tc.obj == nil && tc.id.KindInfo().Status
+			for _, requested := range []bool{false, true} {
+				t.Run(fmt.Sprint(requested), func(t *testing.T) {
+					t.Parallel()
+					var observation Observation
+					obj := st.Snapshot(&tc.id, requested, &observation)
+					assert.Equal(t, obj, tc.obj)
+					assert.Equal(t, st.Snapshot(&tc.id, requested, nil), tc.obj)
+					assert.Equal(t, observation.Statusful, statusful)
+					want, _ := st.GetStatus(tc.id)
+					if tc.obj != nil && !statusful && !requested {
+						want = StatusInfo{}
+					}
+					assert.Equal(t, observation.StatusInfo, want)
+					var conditions []Condition
+					if requested && tc.status != "" {
+						conditions = []Condition{readyCondition(tc.status, "", "observed")}
+					}
+					assert.Diff(t, observation.Conditions, conditions)
+					if len(observation.Conditions) != 0 {
+						observation.Conditions[0].Message = "mutated"
+						var fresh Observation
+						st.Snapshot(&tc.id, true, &fresh)
+						assert.Diff(t, fresh.Conditions, conditions)
+						assert.Equal(t, fresh.StatusInfo, want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestStore_AddObject_ContentDedup(t *testing.T) {
 	t.Parallel()
 	for _, insert := range []struct {
@@ -412,7 +471,9 @@ func TestStore_SetCondition_NonReadyFiresStatusEvent(t *testing.T) {
 	}, false)
 	s.SetCondition(id, Condition{Type: ConditionHealthy, Status: metav1.ConditionTrue, Reason: "Healthy"})
 	assert.Equal(t, statusEvents, 1)
-	_, conds := s.Snapshot(id)
+	var observation Observation
+	s.Snapshot(&id, true, &observation)
+	conds := observation.Conditions
 	if got := len(conds); got != 2 {
 		t.Fatalf("expected 2 conditions, got %d", got)
 	}
@@ -428,7 +489,9 @@ func TestStore_SetCondition_ReadyFiresStatusEvent(t *testing.T) {
 	}, false)
 	cond := Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: string(ReasonSkipped), Message: "ok"}
 	s.SetCondition(id, cond)
-	_, snapshot := s.Snapshot(id)
+	var observation Observation
+	s.Snapshot(&id, true, &observation)
+	snapshot := observation.Conditions
 	cond.Reason = "Custom"
 	s.SetCondition(id, cond)
 	s.SetCondition(id, cond)
@@ -949,7 +1012,7 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := newCM("a", "ns").Named()
+	id := (&manifest.Kustomization{Name: "a", Namespace: "ns"}).Named()
 
 	for i := range 100 {
 		// Alternate status/message so every call is non-equal — the
@@ -962,14 +1025,16 @@ func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {
 		s.UpdateStatus(id, status, "", fmt.Sprintf("iter-%d", i))
 	}
 
-	_, conds := s.Snapshot(id)
+	var observation Observation
+	s.Snapshot(&id, true, &observation)
+	conds := observation.Conditions
 	assert.Equal(t, len(conds), 1)
 }
 
 func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	t.Parallel()
 	s := New()
-	id := newCM("a", "ns").Named()
+	id := (&manifest.Kustomization{Name: "a", Namespace: "ns"}).Named()
 
 	s.UpdateStatus(id, StatusReady, "", "ok")
 	healthy := Condition{
@@ -980,7 +1045,9 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	}
 	s.SetCondition(id, healthy)
 
-	_, conds := s.Snapshot(id)
+	var before Observation
+	s.Snapshot(&id, true, &before)
+	conds := before.Conditions
 	if got := len(conds); got != 2 {
 		t.Fatalf("conditions length = %d, want 2 (Ready + Healthy)", got)
 	}
@@ -993,7 +1060,9 @@ func TestStore_SetConditionLocked_AppendsDistinctTypes(t *testing.T) {
 	s.UpdateStatus(id, StatusFailed, "", "boom")
 	assert.Diff(t, conds, want)
 	conds[0].Message = "caller mutation"
-	_, conds = s.Snapshot(id)
+	var after Observation
+	s.Snapshot(&id, true, &after)
+	conds = after.Conditions
 	if got := len(conds); got != 2 {
 		t.Errorf("conditions length = %d after Ready transition, want 2", got)
 	}
@@ -1069,7 +1138,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						s.RecordEmitted(parent, &Emission{Complete: true})
 						s.DeleteObject(parent)
 						assert.Equal(t, s.GetObject(removed), nil)
-						_, conds := s.Snapshot(removed)
+						var removedObservation Observation
+						s.Snapshot(&removed, true, &removedObservation)
+						conds := removedObservation.Conditions
 						assert.Equal(t, len(conds), 0)
 						assert.Equal(t, s.GetArtifact(removed), nil)
 						id := objects[1].Named()
@@ -1078,7 +1149,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						assert.Equal(t, ok, true)
 						assert.Equal(t, status.Message, id.Group)
 						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
-						_, conds = s.Snapshot(id)
+						var observation Observation
+						s.Snapshot(&id, true, &observation)
+						conds = observation.Conditions
 						assert.Diff(t, conds, []Condition{readyCondition(StatusReady, "", id.Group)})
 						parent = id
 						parent.Name = "parent-" + id.Name

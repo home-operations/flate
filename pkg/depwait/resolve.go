@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -27,10 +28,10 @@ func (r *Resolution) park() *ErrBlocked {
 
 func (r *Resolution) add(parent, id manifest.NamedResource, cl classification) {
 	switch cl.Kind {
-	case classBlocked:
+	case schedule.Blocked:
 		wait := r.park()
 		wait.Deps = append(wait.Deps, id)
-	case classFailed:
+	case schedule.DependencyFailed:
 		if failed, ok := errors.AsType[*manifest.DependencyFailedError](r.err); ok {
 			i, _ := slices.BinarySearchFunc(failed.Failed, id, manifest.NamedResource.Compare)
 			failed.Failed = slices.Compact(slices.Insert(failed.Failed, i, id))
@@ -47,7 +48,7 @@ func (r *Resolution) Err() error { return r.err }
 // Classify resolves prerequisites and content uses into a zero-valued caller-owned result.
 func (w *Waiter) Classify(attempt manifest.ReconcileAttempt, r *Resolution) {
 	for _, dep := range w.Dependencies {
-		if cl := w.classify(dep, attempt.Drain, w.Existence); cl.Kind != classReady {
+		if cl := w.classify(dep, attempt.Drain, w.Existence); cl.Kind != schedule.Terminal {
 			r.add(w.Parent, dep.NamedResource, cl)
 		}
 	}

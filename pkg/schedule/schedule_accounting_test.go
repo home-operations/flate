@@ -35,7 +35,7 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 				ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("stage-%02d", i))
 				indexes[ids[i]] = i
 			}
-			s = New(tasks, dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+			s = New(tasks, dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 				i := indexes[nid]
 				mu.Lock()
 				round, gate := wave, barrier
@@ -59,12 +59,13 @@ func TestRedispatch_SelectorChain(t *testing.T) {
 				if round == i {
 					emitted[i] = true
 					s.OnArrival(testutil.KustomizationID("ns", fmt.Sprintf("provider-%02d", i)), false)
-					return OutcomeTerminal, nil, true
+					return Outcome{Rerun: true}, manifest.ReconcileWait{}
 				}
 				if round == 0 {
-					return OutcomeTerminal, nil, true // fresh empty artifact
+					return Outcome{Rerun: true}, manifest. // fresh empty artifact
+										ReconcileWait{}
 				}
-				return OutcomeTerminalNoop, nil, true
+				return Outcome{Noop: true, Rerun: true}, manifest.ReconcileWait{}
 			}))
 			s.Seed(ids)
 			if err := s.Run(ctx); err != nil {
@@ -93,10 +94,10 @@ func TestRedispatch_QueueCauses(t *testing.T) {
 				switch transition {
 				case "immediate":
 					n.rerunRequested = true
-					s.complete(s.nodes[nid], OutcomeBlocked, &manifest.ReconcileWait{Deps: []NodeID{dep}}, true)
+					s.complete(s.nodes[nid], Outcome{Kind: Blocked, Rerun: true}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 				case "recheck":
 					s.nodes[dep] = &node{id: dep, state: stateTerminal}
-					s.complete(s.nodes[nid], OutcomeBlocked, &manifest.ReconcileWait{Deps: []NodeID{dep}}, true)
+					s.complete(s.nodes[nid], Outcome{Kind: Blocked, Rerun: true}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 				case "parked", "cascade", "force":
 					n.state, n.blockedOn = stateParked, []NodeID{dep}
 					s.parkedIdx[dep] = map[NodeID]struct{}{nid: {}}
@@ -127,7 +128,7 @@ func TestRedispatch_QueueCauses(t *testing.T) {
 				}
 				n.state, n.queuedCharged = stateRunning, false
 				s.inFlight = 1
-				s.complete(s.nodes[nid], OutcomeTerminalNoop, &manifest.ReconcileWait{Deps: nil}, true)
+				s.complete(s.nodes[nid], Outcome{Noop: true, Rerun: true}, &manifest.ReconcileWait{Deps: nil})
 				s.runq = nil
 				s.requeueRerunLocked()
 				if n.redispatches != 1 || n.productive || n.queuedCharged {
@@ -147,12 +148,12 @@ func TestRedispatch_BlockedDependencyRetries(t *testing.T) {
 			victim, producer, dep := testutil.KustomizationID("ns", "a-consumer"), testutil.KustomizationID("ns", "z-producer"), testutil.KustomizationID("ns", "data")
 			var runs atomic.Int64
 			started := make(chan struct{})
-			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+			s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 				if nid == producer {
 					select {
 					case <-started:
 					case <-ctx.Done():
-						return OutcomeTerminal, nil, false
+						return Outcome{}, manifest.ReconcileWait{}
 					}
 					for range maxRedispatches + 8 {
 						waitUntil(t, func() bool {
@@ -166,15 +167,15 @@ func TestRedispatch_BlockedDependencyRetries(t *testing.T) {
 							s.OnArrival(dep, false)
 						}
 					}
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}
 				if runs.Add(1) == 1 {
 					close(started)
 				}
 				if runs.Load() > maxRedispatches+8 {
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}
-				return OutcomeBlocked, []NodeID{dep}, false
+				return Outcome{Kind: Blocked}, manifest.ReconcileWait{Deps: []NodeID{dep}}
 			}))
 			s.Seed([]NodeID{victim, producer})
 			if err := s.Run(ctx); err != nil {
@@ -205,9 +206,9 @@ func TestRedispatch_SlotWaitPreservesContent(t *testing.T) {
 	}
 	victim := testutil.KustomizationID("ns", "waiting")
 	var runs atomic.Int64
-	s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, []NodeID, bool) {
+	s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 		runs.Add(1)
-		return OutcomeTerminalNoop, nil, false
+		return Outcome{Noop: true}, manifest.ReconcileWait{}
 	}))
 	s.Seed([]NodeID{victim})
 	done := make(chan error, 1)
@@ -236,9 +237,9 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 	gate := make(chan struct{})
 	x, y := testutil.KustomizationID("ns", "x"), testutil.KustomizationID("ns", "y")
 	data := func(nid NodeID) NodeID { return NodeID{Kind: "ConfigMap", Name: nid.Name} }
-	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 		if ctx.Err() != nil {
-			return OutcomeBlocked, nil, false
+			return Outcome{Kind: Blocked}, manifest.ReconcileWait{}
 		}
 		active.Add(1)
 		defer active.Add(-1)
@@ -255,12 +256,12 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 			other = y
 		}
 		if count <= 2 && nid == x {
-			return OutcomeBlocked, []NodeID{data(other)}, false
+			return Outcome{Kind: Blocked}, manifest.ReconcileWait{Deps: []NodeID{data(other)}}
 		}
 		if count >= 81 {
 			held <- struct{}{}
 			<-ctx.Done()
-			return OutcomeBlocked, []NodeID{data(other)}, false
+			return Outcome{Kind: Blocked}, manifest.ReconcileWait{Deps: []NodeID{data(other)}}
 		}
 		for ctx.Err() == nil {
 			s.mu.Lock()
@@ -278,7 +279,7 @@ func TestRedispatch_EmitBeforeBlockCancellation(t *testing.T) {
 			held <- struct{}{}
 			<-ctx.Done()
 		}
-		return OutcomeBlocked, []NodeID{data(other)}, false
+		return Outcome{Kind: Blocked}, manifest.ReconcileWait{Deps: []NodeID{data(other)}}
 	}))
 	s.Seed([]NodeID{x, y})
 	done := make(chan error, 1)
@@ -321,7 +322,7 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 	started := make(chan struct{}, 2)
 	gate := make(chan struct{})
 	x, y := testutil.KustomizationID("ns", "x"), testutil.KustomizationID("ns", "y")
-	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+	s = New(task.NewBounded(2), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 		active.Add(1)
 		defer active.Add(-1)
 		mu.Lock()
@@ -340,10 +341,10 @@ func TestRedispatch_TerminalEmissionFeedback(t *testing.T) {
 			other = y
 		}
 		if nid == x && run%2 == 0 {
-			return OutcomeBlocked, []NodeID{other}, true
+			return Outcome{Kind: Blocked, Rerun: true}, manifest.ReconcileWait{Deps: []NodeID{other}}
 		}
 		s.OnArrival(NodeID{Kind: "ConfigMap", Name: nid.Name}, false)
-		return OutcomeTerminal, nil, true
+		return Outcome{Rerun: true}, manifest.ReconcileWait{}
 	}))
 	s.Seed([]NodeID{x, y})
 	done := make(chan error, 1)
@@ -394,10 +395,12 @@ func TestRedispatch_RunnableUpgradeAtCap(t *testing.T) {
 	}
 }
 
-func TestOutcome_Compatibility(t *testing.T) {
+func TestClassification_ZeroTerminal(t *testing.T) {
 	t.Parallel()
-	if OutcomeTerminal != 0 || OutcomeBlocked != 1 || OutcomeDependencyFailed != 2 || OutcomeTerminalNoop != 3 {
-		t.Fatal("Outcome values must retain public numeric compatibility")
+	var out Outcome
+	var outWait manifest.ReconcileWait
+	if out.Kind != Terminal || !outWait.Empty() || out.Noop || out.Rerun {
+		t.Fatal("zero result must terminalize panic completion")
 	}
 }
 
@@ -429,7 +432,7 @@ func TestRedispatch_ContentAndStatusCoalesce(t *testing.T) {
 				if state == stateRunning {
 					s.unparkSelfLocked(n)
 					s.inFlight = 1
-					s.complete(s.nodes[nid], OutcomeBlocked, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
+					s.complete(s.nodes[nid], Outcome{Kind: Blocked, Rerun: false}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 				}
 				if n.state != stateRunnable || n.redispatches != 1 || n.contentRequested || n.rerunRequested || len(s.runq) != 1 {
 					t.Fatalf("content/status causes did not coalesce: node=%+v queue=%v", n, s.runq)
@@ -450,7 +453,7 @@ func TestProgress_RunnableUpgrade(t *testing.T) {
 				n := &node{id: nid, state: stateRunning}
 				s.nodes[nid], s.inFlight = n, 1
 				s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-				s.complete(s.nodes[nid], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
+				s.complete(s.nodes[nid], Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 				assert.Equal(t, n.conservativeUsed, true)
 				assert.Equal(t, n.redispatches, 0)
 				assert.Equal(t, n.state, stateRunnable)
@@ -489,11 +492,11 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 			requested, applied := make(chan struct{}), make(chan struct{})
 			var runs, active atomic.Int64
 			var s *Scheduler
-			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+			s = New(task.NewBounded(workers), dispatchFunc(func(ctx context.Context, nid NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 				if nid == producer {
 					for round := range 4 {
 						if !awaitSignal(ctx, requested) {
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 						if round == 1 {
 							s.OnStatusWake(dep, true, false)
@@ -503,10 +506,10 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 						select {
 						case applied <- struct{}{}:
 						case <-ctx.Done():
-							return OutcomeTerminal, nil, false
+							return Outcome{}, manifest.ReconcileWait{}
 						}
 					}
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}
 				assert.Equal(t, active.Add(1), int64(1))
 				defer active.Add(-1)
@@ -514,10 +517,10 @@ func TestProgress_ChargedEpisodeRearms(t *testing.T) {
 				select {
 				case requested <- struct{}{}:
 				case <-ctx.Done():
-					return OutcomeTerminal, nil, false
+					return Outcome{}, manifest.ReconcileWait{}
 				}
 				awaitSignal(ctx, applied)
-				return OutcomeDependencyFailed, []NodeID{dep}, false
+				return Outcome{Kind: DependencyFailed}, manifest.ReconcileWait{Deps: []NodeID{dep}}
 			}))
 			s.Seed([]NodeID{consumer, producer})
 			if err := s.Run(ctx); err != nil {
@@ -539,17 +542,17 @@ func TestProgress_RunnableUpgradeExecution(t *testing.T) {
 			upgraded, entered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			dep, consumer := testutil.KustomizationID("ns", "dependency"), testutil.KustomizationID("ns", "consumer")
 			var active, runs atomic.Int64
-			s := New(tasks, dispatchFunc(func(ctx context.Context, _ NodeID, _ manifest.DrainLevel) (Outcome, []NodeID, bool) {
+			s := New(tasks, dispatchFunc(func(ctx context.Context, _ NodeID, _ manifest.DrainLevel) (Outcome, manifest.ReconcileWait) {
 				assert.Equal(t, active.Load(), int64(1))
 				runs.Add(1)
 				close(entered)
 				awaitSignal(ctx, release)
-				return OutcomeTerminal, nil, false
+				return Outcome{}, manifest.ReconcileWait{}
 			}))
 			n := &node{id: consumer, state: stateRunning}
 			s.nodes[consumer], s.inFlight = n, 1
 			s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-			s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
+			s.complete(s.nodes[consumer], Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 			tasks.Go(ctx, "producer", func(ctx context.Context) {
 				active.Add(1)
 				defer active.Add(-1)
@@ -582,13 +585,13 @@ func TestProgress_ContentPreservesConservativeRetry(t *testing.T) {
 	s.nodes[consumer], s.inFlight = n, 1
 	s.OnArrival(consumer, true)
 	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
+	s.complete(s.nodes[consumer], Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 	assert.Equal(t, n.conservativeUsed, false)
 	assert.Equal(t, n.redispatches, 1)
 	n.state, n.startedAt, n.queuedCharged = stateRunning, s.generation, false
 	s.inFlight = 1
 	s.OnArrival(testutil.KustomizationID("ns", "unrelated"), false)
-	s.complete(s.nodes[consumer], OutcomeDependencyFailed, &manifest.ReconcileWait{Deps: []NodeID{dep}}, false)
+	s.complete(s.nodes[consumer], Outcome{Kind: DependencyFailed, Rerun: false}, &manifest.ReconcileWait{Deps: []NodeID{dep}})
 	assert.Equal(t, n.conservativeUsed, true)
 	assert.Equal(t, n.redispatches, 1)
 }

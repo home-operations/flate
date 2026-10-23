@@ -9,6 +9,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -37,13 +38,13 @@ func TestClassify_MissingCRDs(t *testing.T) {
 					t.Parallel()
 					s := store.New()
 					ref := manifest.DependencyRef{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}
-					want := classBlocked
+					want := schedule.Blocked
 					msg := ""
 					if drain >= manifest.DrainCascade {
-						want = classFailed
+						want = schedule.DependencyFailed
 						msg = "dependency not found"
 						if enabled {
-							want = classReady
+							want = schedule.Terminal
 							msg = ""
 						}
 					}
@@ -55,7 +56,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						ref.Namespace = "explicit"
 					case "object", "present invalid expression":
 						s.AddObject(&manifest.RawObject{APIVersion: ref.Group + "/v1", Kind: ref.Kind, Name: ref.Name})
-						want = classReady
+						want = schedule.Terminal
 						msg = ""
 						if state == "present invalid expression" {
 							ref.ReadyExpr = "dep.(("
@@ -69,26 +70,26 @@ func TestClassify_MissingCRDs(t *testing.T) {
 							status = store.StatusFailed
 						}
 						s.UpdateStatus(ref.NamedResource, status, "", "state")
-						want = classReady
+						want = schedule.Terminal
 						msg = ""
 					case "promoted", "promotion miss":
 						e = &crdPromotion{store: s, materialize: state == "promoted"}
 						if e.materialize {
-							want = classReady
+							want = schedule.Terminal
 							msg = ""
 						}
 					case "ConfigMap", "Secret", "Widget", "Kustomization", "HelmRelease", "CustomResourceDefinitionList":
 						ref.Kind = state
 						ref.Namespace = "apps"
-						want = classBlocked
+						want = schedule.Blocked
 						msg = ""
 						if drain >= manifest.DrainCascade {
-							want = classFailed
+							want = schedule.DependencyFailed
 							msg = "dependency not found"
 						}
 					case "invalid expression":
 						ref.ReadyExpr = "dep.(("
-						want = classFailed
+						want = schedule.DependencyFailed
 					}
 					w := &Waiter{Store: s, AllowMissingCRDs: enabled}
 					if e != nil {

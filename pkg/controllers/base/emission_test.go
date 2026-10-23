@@ -347,7 +347,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	}
 	publish("first", "app")
 	_, next := s.GetEmission(childID)
-	fingerprint, _, _ := c.FingerprintDedup(childID, "effective-owner-input")
+	fingerprint, _, _, _ := c.FingerprintDedup(childID, "effective-owner-input")
 	next.Fingerprint, next.Complete = fingerprint, true
 	s.RecordEmitted(childID, &next)
 	next.Finish()
@@ -359,7 +359,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	defer stopObjects()
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
-	if _, handled, err := c.FingerprintDedup(childID, "effective-owner-input"); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
+	if _, handled, _, err := c.FingerprintDedup(childID, "effective-owner-input"); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
 		t.Fatalf("metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d", handled, err, arrivals, statuses)
 	}
 	publish("third", "different")

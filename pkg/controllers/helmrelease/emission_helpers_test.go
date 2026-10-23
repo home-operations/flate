@@ -2,12 +2,12 @@ package helmrelease
 
 import (
 	"context"
-	"github.com/home-operations/flate/pkg/schedule"
 	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -77,14 +77,10 @@ type valuesFixtureDispatcher struct {
 	reader manifest.NamedResource
 }
 
-func (d valuesFixtureDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait, bool) {
+func (d valuesFixtureDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, attempt manifest.ReconcileAttempt) (schedule.Outcome, manifest.ReconcileWait) {
 	if id != d.reader {
 		d.c.Store.UpdateStatus(id, store.StatusReady, "", "")
-		return schedule.OutcomeTerminal, manifest.ReconcileWait{}, false
+		return schedule.Outcome{}, manifest.ReconcileWait{}
 	}
-	wait := d.c.ReconcileNode(ctx, id, attempt)
-	if !wait.Empty() {
-		return schedule.OutcomeBlocked, wait, false
-	}
-	return schedule.OutcomeTerminal, wait, false
+	return d.c.ReconcileNode(ctx, id, attempt)
 }

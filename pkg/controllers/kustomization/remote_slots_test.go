@@ -46,7 +46,7 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 		c.Tasks.Go(t.Context(), name, func(ctx context.Context) {
 			ready <- struct{}{}
 			<-begin
-			if blocked := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+			if _, blocked := c.ReconcileNode(ctx, ks.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 				t.Errorf("unexpected blocked dependencies: %v", blocked)
 			}
 		})

@@ -65,8 +65,8 @@ type ExistenceLookup interface {
 //   - ready=false,failMsg="" → a clean false OR a transient runtime eval error
 //     (typically a missing attribute because the dep's status isn't populated
 //     yet) — the dep is not yet satisfied but may still become so.
-func (w *Waiter) tryReadyExpr(expr string, id manifest.NamedResource) (ready bool, failMsg string) {
-	ok, err := evaluateReadyExpr(expr, w.Store, w.Parent, id)
+func (w *Waiter) tryReadyExpr(dep manifest.DependencyRef, obj manifest.BaseManifest, conds []store.Condition) (ready bool, failMsg string) {
+	ok, err := w.evaluateReadyExpr(dep.ReadyExpr, dep.NamedResource, obj, conds)
 	if err != nil {
 		if _, isCompile := errors.AsType[*celCompileErr](err); isCompile {
 			return false, "readyExpr: " + err.Error()

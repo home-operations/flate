@@ -77,8 +77,8 @@ spec:
 		t.Run(kind, func(t *testing.T) {
 			foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: kind, Name: "apps", Namespace: "flux-system"}
 			o.store.AddObject(foreign)
-			_, blocked, rerun := (dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
-			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || !blocked.Empty() || rerun {
+			out, outWait := (dagDispatcher{o}).Dispatch(t.Context(), foreign.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+			if _, hasStatus := o.store.GetStatus(foreign.Named()); hasStatus || !outWait.Empty() || out.Rerun {
 				t.Fatalf("foreign %s entered a Flux controller", kind)
 			}
 			o.store.UpdateStatus(foreign.Named(), store.StatusPending, "", "foreign status")

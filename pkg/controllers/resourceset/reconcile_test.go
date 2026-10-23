@@ -89,7 +89,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				defer close(rendered)
 				var attempt store.Emission
 				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(st), func(content any) (bool, error) {
-					fp, hit, err := c.FingerprintDedup(id, content)
+					fp, hit, _, err := c.FingerprintDedup(id, content)
 					if hit || err != nil {
 						return hit, err
 					}

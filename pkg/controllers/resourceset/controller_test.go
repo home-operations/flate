@@ -90,10 +90,9 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 `,
 	}
 	s.AddObject(rs)
-
-	// First dispatch (no RSIP yet): the named dep is absent, so the node
-	// blocks rather than terminalizing.
-	blocked := c.ReconcileNode(context.Background(), rs.Named(), manifest.ReconcileAttempt{Drain: 0})
+	_, // First dispatch (no RSIP yet): the named dep is absent, so the node
+		// blocks rather than terminalizing.
+		blocked := c.ReconcileNode(context.Background(), rs.Named(), manifest.ReconcileAttempt{Drain: 0})
 	if len(blocked.Deps) != 1 {
 		t.Fatalf("first dispatch blocked = %v, want [rsip] (parked on the named RSIP)", blocked)
 	}
@@ -130,7 +129,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	s.AddObject(rs)
 	dynamic := &manifest.ResourceSetInputProvider{Name: "dynamic", Namespace: rs.Namespace, Type: fluxopv1.InputProviderGitHubBranch, Labels: map[string]string{"color": "blue"}}
 	s.AddObject(dynamic)
-	if !c.WantsDrainRerun(rs.Named()) || len(c.collectDeps(rs)) != 0 {
+	if out, _ := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{}); !out.Rerun || len(c.collectDeps(rs)) != 0 {
 		t.Fatal("selector-only input must request a rerun without an ID gate")
 	}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
@@ -154,7 +153,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 		tasks.Go(t.Context(), "selector", func(ctx context.Context) {
 			close(started)
 			tasks.YieldSlot(func() { <-written })
-			blocked = c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+			_, blocked = c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 		})
 		tasks.BlockTillDone()
 		art, _ := s.GetArtifact(rs.Named()).(*store.Emission)
@@ -336,10 +335,10 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 	}
 }
 
-// TestWantsDrainRerun_NamedOnly pins that an RS whose inputsFrom are all
+// TestReconcileNode_Rerun_NamedOnly pins that an RS whose inputsFrom are all
 // NAMED (no selector) does NOT ask for a drain rerun — it parks on the
 // named RSIP instead.
-func TestWantsDrainRerun_NamedOnly(t *testing.T) {
+func TestReconcileNode_Rerun_NamedOnly(t *testing.T) {
 	t.Parallel()
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
@@ -349,12 +348,12 @@ func TestWantsDrainRerun_NamedOnly(t *testing.T) {
 		},
 	}
 	s.AddObject(rs)
-	if c.WantsDrainRerun(rs.Named()) {
-		t.Error("WantsDrainRerun = true for a named-only inputsFrom RS, want false")
+	if out, _ := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{}); out.Rerun {
+		t.Error("ReconcileNode_Rerun = true for a named-only inputsFrom RS, want false")
 	}
 	// Unknown id → false.
-	if c.WantsDrainRerun(manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"}) {
-		t.Error("WantsDrainRerun = true for an absent RS, want false")
+	if out, _ := c.ReconcileNode(t.Context(), manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"}, manifest.ReconcileAttempt{}); out.Rerun {
+		t.Error("ReconcileNode_Rerun = true for an absent RS, want false")
 	}
 }
 
@@ -400,7 +399,7 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.AddObject(obj)
-			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+			_, blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 			if !blocked.Empty() {
 				t.Fatalf("disabled ResourceSet blocked on %v", blocked)
 			}
@@ -472,7 +471,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			}, false)
 			t.Cleanup(unsub)
 			tasks.Go(t.Context(), "refresh", func(ctx context.Context) {
-				if blocked := c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
+				if _, blocked := c.ReconcileNode(ctx, rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); !blocked.Empty() {
 					t.Errorf("blocked on %v", blocked)
 				}
 			})
@@ -531,7 +530,7 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	if len(deps) != 1 || deps[0].NamedResource != want {
 		t.Fatalf("input dependencies = %+v, want edge to %s", deps, want)
 	}
-	if blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); len(blocked.Deps) != 1 || blocked.Deps[0] != want {
+	if _, blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}); len(blocked.Deps) != 1 || blocked.Deps[0] != want {
 		t.Fatalf("blocked = %v, want [%s]", blocked, want)
 	}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {

@@ -101,7 +101,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if diff := cmp.Diff(childDoc, accepted.Children[1].Doc); diff != "" {
 				t.Fatalf("child document changed (-want +got):\n%s", diff)
 			}
-			if _, handled, err := c.FingerprintDedup(parent.Named(), "inputs"); !handled || err != nil {
+			if _, handled, _, err := c.FingerprintDedup(parent.Named(), "inputs"); !handled || err != nil {
 				t.Fatalf("normalized replay: handled=%v err=%v", handled, err)
 			}
 			replayed, _ := st.Get[*manifest.Kustomization](child.Named())

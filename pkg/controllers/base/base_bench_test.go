@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -17,7 +18,9 @@ func BenchmarkDispatchNodeReady(b *testing.B) {
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusReady, "", "")
 	c := base.New(st, nil, "benchmark")
-	reconcile := func(context.Context, *manifest.HelmRelease, manifest.ReconcileAttempt) error { return nil }
+	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.ReconcileAttempt, _ bool) (schedule.Outcome, error) {
+		return schedule.Outcome{}, nil
+	}
 	b.ReportAllocs()
 	for b.Loop() {
 		c.DispatchNode(b.Context(), obj.Named(), manifest.ReconcileAttempt{Drain: manifest.DrainNone}, reconcile)

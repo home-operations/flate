@@ -75,13 +75,14 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					o.store.UpdateStatus(child, store.StatusPending, "", "queued")
 					o.configureControllers()
 					var outcome schedule.Outcome
-					var blocked manifest.ReconcileWait
+					var outcomeWait manifest.ReconcileWait
+
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
-						outcome, blocked, _ = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
+						outcome, outcomeWait = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.ReconcileAttempt{Drain: manifest.DrainNone})
 					})
 					o.tasks.BlockTillDone()
-					if outcome != schedule.OutcomeBlocked || !slices.Contains(blocked.Deps, child) {
-						t.Fatalf("dependent must first wait on child: outcome=%v blocked=%v", outcome, blocked)
+					if outcome.Kind != schedule.Blocked || !slices.Contains(outcomeWait.Deps, child) {
+						t.Fatalf("dependent must first wait on child: outcome=%v blocked=%v", outcome, outcomeWait)
 					}
 					retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: child.Namespace, Name: "retained"}
 					var artifact *store.Emission

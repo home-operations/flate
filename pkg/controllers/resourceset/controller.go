@@ -1,6 +1,6 @@
 // Package resourceset reconciles flux-operator ResourceSets as
-// first-class DAG nodes: wait on dependsOn / inputsFrom RSIPs / the
-// structural parent KS, render the RS via the resourceset package, and
+// first-class DAG nodes: wait on dependsOn / inputsFrom RSIPs,
+// render the RS via the resourceset package, and
 // emit every child through the shared emission transaction.
 package resourceset
 
@@ -109,16 +109,10 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 	return nil
 }
 
-// collectDeps gates explicit dependencies, named inputs and the structural parent.
+// collectDeps gates explicit dependencies and named inputs.
 // Authored dependsOn Ready=false still requests readiness here.
 func (c *execution) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyRef {
-	parents := c.run.Reads.Productions(rs.Named(), nil)
 	capacity := len(rs.DependsOn) + len(rs.InputsFrom)
-	for _, p := range parents {
-		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
-			capacity++
-		}
-	}
 	deps := make([]manifest.DependencyRef, capacity)
 	n := 0
 	for ref := range manifest.References(rs) {
@@ -128,10 +122,5 @@ func (c *execution) collectDeps(rs *manifest.ResourceSet) []manifest.DependencyR
 		}
 	}
 	deps = deps[:n]
-	for _, p := range parents {
-		if p.Owner != (manifest.NamedResource{}) && p.Owner != rs.Named() {
-			deps = append(deps, manifest.DependencyRef{NamedResource: p.Owner})
-		}
-	}
 	return deps
 }

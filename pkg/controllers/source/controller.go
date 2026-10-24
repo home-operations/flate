@@ -105,6 +105,9 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 
 func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
+	if err := c.run.PreflightError(id); err != nil {
+		return err
+	}
 	facts := obj.(sourceFacts)
 	if facts.ExistenceOnly() {
 		return nil
@@ -140,6 +143,9 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	}
 
 	c.SetPendingUnlessReady(id, "fetching")
+	if err := c.run.PreflightError(id); err != nil {
+		return err
+	}
 
 	// Release the worker slot during network I/O so other nodes can progress.
 	var artifact *store.SourceArtifact

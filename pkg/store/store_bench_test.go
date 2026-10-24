@@ -139,3 +139,25 @@ func BenchmarkGetObject_LongNames(b *testing.B) {
 		s.GetObject(id)
 	}
 }
+
+func BenchmarkRecordEmitted_Replacement1000(b *testing.B) {
+	s := New()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "ns"}
+	s.AddObject(parent)
+	var versions [2][]Child
+	for side := range versions {
+		for i := range 1000 {
+			versions[side] = append(versions[side], Child{Obj: &manifest.ConfigMap{Name: fmt.Sprintf("child-%d-%04d", side, i), Namespace: "ns", Data: map[string]any{"key": "value"}}})
+		}
+	}
+	i := 0
+	b.ReportAllocs()
+	for b.Loop() {
+		_, next := s.GetEmission(parent.Named())
+		next.Children = versions[i%2]
+		next.Complete = true
+		s.RecordEmitted(parent.Named(), &next)
+		next.Finish()
+		i++
+	}
+}

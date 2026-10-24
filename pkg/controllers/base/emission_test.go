@@ -9,7 +9,6 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
-
 	"github.com/home-operations/flate/internal/assert"
 	_ "github.com/home-operations/flate/internal/kustomize" // Standalone controller tests MUST install the process scope owner before parsing.
 	"github.com/home-operations/flate/internal/testutil"
@@ -776,5 +775,38 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 			runtime.KeepAlive(st)
 			runtime.KeepAlive(current)
 		})
+	}
+}
+
+func TestEmit_InputReplacementSelection(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	c := New(s, nil, "test")
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "A"}
+	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "A"}
+	s.AddObject(parent)
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
+	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+	c.Configure(Options{Filter: filter, Index: index})
+	run := newExecution(c, parent.Named())
+	_, captured := run.Reads.GetEmission(parent.Named())
+	next := &captured
+	next.Children, next.Complete = []store.Child{{Obj: child}}, true
+	replacement := parent.Clone()
+	replacement.Path = "B"
+	s.AddObject(replacement)
+	run.Emit(parent.Named(), next)
+	if run.Reads.Valid() {
+		t.Fatal("stale input succeeded")
+	}
+	if filter.ShouldReconcile(child.Named()) || s.GetObject(child.Named()) != nil {
+		t.Fatal("stale input extended selection")
+	}
+	accepted := child.Clone()
+	accepted.Path = "B"
+	fresh := captureEmission(s, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}, Complete: true})
+	newExecution(c, parent.Named()).Emit(parent.Named(), fresh)
+	if !filter.ShouldReconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted {
+		t.Fatal("ordinary replacement did not publish and extend selection")
 	}
 }

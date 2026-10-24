@@ -171,7 +171,10 @@ func TestDerivedCapture_UnselectedContributorReplacement(t *testing.T) {
 				}
 			}()
 			child := emissionChild("shared", "first")
-			s.RecordEmitted(a, &Emission{Reads: &previous, Children: []Child{child}, Complete: true})
+			_, initial := previous.GetEmission(a)
+			initial.Children, initial.Complete = []Child{child}, true
+			s.RecordEmitted(a, &initial)
+			initial.Finish()
 			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true})
 			assert.Equal(t, content.GetObject(child.Obj.Named()), child.Obj)
 			assert.Diff(t, contributors.Productions(child.Obj.Named(), nil), []manifest.Production{{Owner: a}, {Owner: z}})
@@ -722,12 +725,12 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 			var reads ReadSet
 			reads.Init(s, ownerID("reader"), nil)
 			defer reads.Retire()
-			var want []manifest.DependencyRef
+			var want []Gate
 			for _, expr := range expressions {
 				ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: expr}
 				reads.Require(ref)
-				if !slices.Contains(want, ref) {
-					want = append(want, ref)
+				if !slices.Contains(want, Gate{DependencyRef: ref}) {
+					want = append(want, Gate{DependencyRef: ref})
 				}
 			}
 			assert.Diff(t, slices.Collect(reads.Gates()), want)
@@ -775,5 +778,57 @@ func TestRequire_ReleasesPredicates(t *testing.T) {
 	assert.Equal(t, len(slices.Collect(reads.Gates())), 0)
 	if reads.local.gates != nil || inputs[0].gates != nil {
 		t.Fatal("reset retained overflow predicates")
+	}
+}
+
+func TestReadSet_DeclarationAuthority(t *testing.T) {
+	t.Parallel()
+	s := New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+	supplier := &manifest.Kustomization{Name: "supplier", Namespace: "apps"}
+	raw := &manifest.OCIRepository{Name: "covered", Namespace: "apps", URL: "oci://same.example"}
+	s.AddObjects([]manifest.BaseManifest{owner, supplier, raw})
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}}}})
+	var pending ReadSet
+	pending.Init(s, ownerID("waiting"), nil)
+	defer pending.Retire()
+	if pending.GetDeclaration(raw.Named()) != nil || pending.GetObject(raw.Named()) != raw {
+		t.Fatal("raw visibility supplied authority")
+	}
+	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true})
+	invalidated := slices.Collect(s.Sweep())
+	if !slices.Contains(invalidated, pending.ID()) || pending.GetDeclaration(raw.Named()) != nil {
+		t.Fatal("arrival failed to wake or changed the first captured view")
+	}
+	var accepted ReadSet
+	accepted.Init(s, ownerID("accepted"), nil)
+	defer accepted.Retire()
+	if accepted.GetDeclaration(raw.Named()) != raw || accepted.Matches(&pending) {
+		t.Fatal("same bytes concealed authority arrival")
+	}
+	s.RecordEmitted(supplier.Named(), &Emission{Complete: true})
+	if accepted.Valid() || s.GetObject(raw.Named()) != raw || s.GetDeclaration(raw.Named()) != nil {
+		t.Fatal("withdrawal lost raw identity or retained authority")
+	}
+	var withdrawn ReadSet
+	withdrawn.Init(s, ownerID("withdrawn"), nil)
+	defer withdrawn.Retire()
+	if withdrawn.Matches(&accepted) || pending.Valid() {
+		t.Fatal("same bytes concealed withdrawal or reused authority after ABA")
+	}
+	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true})
+	var supplied ReadSet
+	supplied.Init(s, ownerID("supplied"), nil)
+	defer supplied.Retire()
+	supplied.GetDeclaration(raw.Named())
+	s.AddObject(raw)
+	if supplied.Valid() {
+		t.Fatal("rooting failed to invalidate the supplier capture")
+	}
+	var rooted ReadSet
+	rooted.Init(s, ownerID("rooted"), nil)
+	defer rooted.Retire()
+	if !rooted.Matches(&supplied) || rooted.GetDeclaration(raw.Named()) != raw {
+		t.Fatal("equal effective content could not rebind rooted authority")
 	}
 }

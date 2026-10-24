@@ -82,9 +82,7 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 						{Path: "file.yaml"},
 					}}}, Complete: true})
 				}
-				first, last := parent, parent
-				first.Name, last.Name = "a-parent", "z-parent"
-				want = append(want, manifest.DependencyRef{NamedResource: first}, manifest.DependencyRef{NamedResource: parent}, manifest.DependencyRef{NamedResource: last})
+
 			}
 			deps := c.newExecution(rs.Named()).collectDeps(rs)
 			assert.Diff(t, deps, want)

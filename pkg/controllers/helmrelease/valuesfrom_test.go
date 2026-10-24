@@ -4,14 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
-
-	"github.com/home-operations/flate/pkg/depwait"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -169,5 +170,45 @@ func TestController_ValuesFromMixedProductionPrecedence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestController_PrepareRequiresDeclaration(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"failed", "withdrawn", "suspended"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			c, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			input := &manifest.HelmRelease{Name: "input", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: "absent"}}}
+			st.AddObjects([]manifest.BaseManifest{parent, input})
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}}}})
+			switch state {
+			case "failed":
+				st.UpdateStatus(parent.Named(), store.StatusFailed, "", "materializer failed")
+			case "withdrawn":
+				st.DeleteObject(input.Named())
+			case "suspended":
+				accepted := input.Clone()
+				accepted.Suspend = true
+				st.RecordEmitted(parent.Named(), captureEmission(st, parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}))
+			}
+			run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
+
+			info, _ := st.GetStatus(input.Named())
+			if state == "suspended" && run.Outcome() == schedule.Blocked || st.GetArtifact(input.Named()) != nil || len(st.Warnings()) != 0 {
+				t.Fatalf("declaration loss reached preparation: wait=%+v status=%+v", run.Blocked, info)
+			}
+			if state != "suspended" && !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) && !slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) {
+				t.Fatalf("withdrawn declaration did not park: %+v", run.Blocked)
+			}
+			if state == "failed" && !info.IsDependencyFailure() {
+				t.Fatalf("materializer failure lost provenance: %+v", info)
+			}
+			if state == "suspended" && info.Outcome() != store.OutcomeSuspended {
+				t.Fatalf("effective suspension lost: %+v", info)
+			}
+
+		})
 	}
 }

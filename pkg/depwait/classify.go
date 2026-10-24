@@ -20,9 +20,9 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 	reads, _ := w.Store.(*store.ReadSet)
 	id := dep.NamedResource
 	for {
-		obj, info := w.Store.Snapshot(id, dep.ReadyExpr != "")
+		obj, info := w.Store.Snapshot(id, dep.ReadyExpr != "" || w.Materializer)
 		present := obj != nil || info.Status != ""
-		if present && !info.Statusful {
+		if !w.Materializer && present && !info.Statusful {
 			return Classification{Kind: schedule.Terminal}
 		}
 		if dep.ReadyExpr != "" {
@@ -51,6 +51,9 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 			return Classification{Kind: schedule.Terminal}
 		}
 		if info.Status == store.StatusFailed {
+			if w.Materializer && info.IsDependencyFailure() {
+				return Classification{Kind: schedule.DependencyFailed, Message: "declaration not emitted"}
+			}
 			return Classification{Kind: schedule.DependencyFailed, Message: info.Message}
 		}
 		if dep.ReadyExpr != "" && level >= manifest.DrainCascade {

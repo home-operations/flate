@@ -573,7 +573,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			} else if err := os.RemoveAll(filepath.Join(root, "chart/templates/arrived")); err != nil {
 				t.Fatal(err)
 			}
-			out, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources(st)})
+			out, _, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Options: helm.Options{}, Sources: helm.NewSources(st)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -627,12 +627,12 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		assert.Equal(t, artifact.Key, "")
 		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Source: ks.SourceID()}}
 		cli := helm.NewClient(cachetest.New(t, "", sourcecache.New))
-		first, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
+		first, _, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
 		assert.NoError(t, err)
 		assert.Equal(t, len(first), len(oracle.Templates))
 		name, _ := manifest.DocMetadata(first[0])
 		assert.Equal(t, name, "rendered")
-		second, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
+		second, _, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
 		assert.NoError(t, err)
 		assert.Diff(t, second, first)
 		assert.Equal(t, st.GetArtifact(ks.SourceID()), store.Artifact(artifact))

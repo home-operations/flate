@@ -55,8 +55,11 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			}
 			next := &store.Emission{Children: children, Manifests: docs, Complete: true}
 			c.Emit(parent.Named(), next, nil)
-			next.Children[0] = store.Child{}
-			next.Manifests[0] = nil
+			children[0] = store.Child{}
+			docs[0] = nil
+			if next.Footprint() == nil || next.Children[0].Obj == nil || next.Manifests[0] == nil {
+				t.Fatal("accepted caller handoff lost immutable inventory")
+			}
 			_, _, accepted := s.GetEmission(parent.Named())
 			if len(accepted.Children) != 2 || accepted.Children[0].Obj == nil || accepted.Manifests[0] == nil {
 				t.Fatal("caller slice headers mutate accepted inventory")
@@ -150,7 +153,7 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	attempt.Children, attempt.Complete, attempt.Fingerprint = children, true, manifest.Fingerprint("inputs")
 	c.Emit(parent.Named(), &attempt, nil)
 	checkPayload()
-	if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "inputs"); !handled || err != nil {
+	if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "inputs", &store.Emission{}); !handled || err != nil {
 		t.Fatalf("borrowed replay handled=%t err=%v", handled, err)
 	}
 	checkPayload()
@@ -421,7 +424,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	}
 	publish("first", "app")
 	_, _, next := s.GetEmission(childID)
-	fingerprint, _, _ := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input")
+	fingerprint, _, _ := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input", &store.Emission{})
 	next.Fingerprint, next.Complete = fingerprint, true
 	s.RecordEmitted(childID, &next, nil)
 	next.Finish()
@@ -433,7 +436,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	defer stopObjects()
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
-	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input"); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
+	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
 		t.Fatalf("metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d", handled, err, arrivals, statuses)
 	}
 	publish("third", "different")
@@ -478,7 +481,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			}
 			assert.Equal(t, first.Valid(), !invalidate)
 			second := newExecution(c, obj.Named())
-			if _, handled, err := second.FingerprintDedup(obj.Named(), "equal projection"); !handled || err != nil {
+			if _, handled, err := second.FingerprintDedup(obj.Named(), "equal projection", &store.Emission{}); !handled || err != nil {
 				t.Fatalf("projection replay: handled=%t error=%v", handled, err)
 			}
 			second.Reads.Accept()
@@ -759,7 +762,7 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	}
 	second := newExecution(c, parent.Named())
 	defer second.Close()
-	if _, handled, err := second.FingerprintDedup(parent.Named(), "rendered input"); handled || err != nil {
+	if _, handled, err := second.FingerprintDedup(parent.Named(), "rendered input", &store.Emission{}); handled || err != nil {
 		t.Fatalf("old render input reused changed bytes: handled=%t error=%v", handled, err)
 	}
 }
@@ -918,5 +921,112 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	newExecution(c, parent.Named()).Emit(parent.Named(), fresh, nil)
 	if !filter.ShouldReconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted {
 		t.Fatal("ordinary replacement did not publish and extend selection")
+	}
+}
+
+func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
+	t.Parallel()
+	for _, branch := range []string{"current", "borrowed"} {
+		for _, receipt := range []string{"previous", "current", "invalid_input", "aba_input", "retired_input"} {
+			t.Run(branch+"/"+receipt, func(t *testing.T) {
+				t.Parallel()
+				st := store.New()
+				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+				dependency := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "first"}}
+				st.AddObjects([]manifest.BaseManifest{owner, dependency})
+				controller := New(st, nil)
+				first := newExecution(controller, owner.Named())
+				defer first.Retire()
+				first.Reads.GetObject(dependency.Named())
+				doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "output", "namespace": "apps"}}
+				children, docs := controller.ParseChildren(owner, []map[string]any{doc}, manifest.ParseDocOptions{})
+				next := store.Emission{Children: children, Manifests: docs, Fingerprint: manifest.Fingerprint("content"), Complete: true, Render: manifest.NewRenderReceipt("previous", func(a, b any) bool { return a == b })}
+				first.Emit(owner.Named(), &next, nil)
+				if branch == "borrowed" {
+					progress := newExecution(controller, owner.Named())
+					defer progress.Retire()
+					partial := store.Emission{}
+					progress.Emit(owner.Named(), &partial, nil)
+					if st.GetArtifact(owner.Named()).(*store.Emission).Complete {
+						t.Fatal("fixture did not preserve a borrowed complete predecessor")
+					}
+				}
+				if receipt == "retired_input" {
+					first.Reads.Retire()
+					for range st.Sweep() {
+					}
+				}
+				if receipt == "invalid_input" || receipt == "aba_input" || receipt == "retired_input" {
+					st.AddObject(&manifest.ConfigMap{Name: dependency.Name, Namespace: dependency.Namespace, Data: map[string]any{"value": "changed"}})
+				}
+				if receipt == "aba_input" {
+					st.AddObject(dependency)
+				}
+				if receipt == "retired_input" && !first.Reads.Valid() {
+					t.Fatal("fixture did not retain an immutable projection without active subscriptions")
+				}
+				second := newExecution(controller, owner.Named())
+				defer second.Retire()
+				attempt := store.Emission{}
+				want := "previous"
+				switch receipt {
+				case "current":
+					attempt.Render = manifest.NewRenderReceipt("current", func(a, b any) bool { return a == b })
+					want = "current"
+				case "invalid_input", "aba_input", "retired_input":
+					want = ""
+				}
+				_, handled, err := second.FingerprintDedup(owner.Named(), "content", &attempt)
+				assert.NoError(t, err)
+				assert.Equal(t, handled, true)
+				var expected *manifest.RenderReceipt
+				if want != "" {
+					expected = manifest.NewRenderReceipt(want, func(a, b any) bool { return a == b })
+				}
+				assert.Diff(t, attempt.Render, expected)
+				assert.Equal(t, attempt.Reads, &second.Reads)
+				assert.Diff(t, st.GetArtifact(owner.Named()).(*store.Emission).Render, expected)
+				if attempt.Footprint() == nil || !attempt.Complete {
+					t.Fatal("replay did not hand back exact complete acceptance")
+				}
+				ids := []manifest.NamedResource{}
+				for id := range attempt.Footprint() {
+					ids = append(ids, id)
+				}
+				assert.Diff(t, ids, []manifest.NamedResource{children[0].Obj.Named()})
+			})
+		}
+	}
+}
+
+func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
+	t.Parallel()
+	for _, caller := range []string{"store", "controller"} {
+		t.Run(caller, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			dependency := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"value": "first"}}
+			st.AddObjects([]manifest.BaseManifest{owner, dependency})
+			controller := New(st, nil)
+			run := newExecution(controller, owner.Named())
+			defer run.Retire()
+			run.Reads.GetObject(dependency.Named())
+			next := store.Emission{Complete: true, Render: manifest.NewRenderReceipt("accepted", func(a, b any) bool { return a == b })}
+			run.Emit(owner.Named(), &next, nil)
+			if next.Footprint() == nil {
+				t.Fatal("fixture did not accept complete-empty output")
+			}
+			before := st.GetArtifact(owner.Named())
+			st.AddObject(&manifest.ConfigMap{Name: dependency.Name, Namespace: dependency.Namespace, Data: map[string]any{"value": "changed"}})
+			if caller == "store" {
+				st.RecordEmitted(owner.Named(), &next, nil)
+			} else {
+				controller.Emit(owner.Named(), &next, nil)
+			}
+			if next.Footprint() != nil || st.GetArtifact(owner.Named()) != before {
+				t.Fatal("early rejection retained caller acceptance or replaced inventory")
+			}
+		})
 	}
 }

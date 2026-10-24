@@ -144,7 +144,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				e.(*entry).touched = info.ModTime()
+				e.(*entry).touched.Store(info.ModTime().UnixNano())
 				var warm sync.WaitGroup
 				for range 8 {
 					warm.Go(func() {
@@ -162,7 +162,7 @@ func TestAcquire_GenerationsAndFreshness(t *testing.T) {
 				if err := os.Chtimes(p, stale, stale); err != nil {
 					t.Fatal(err)
 				}
-				e.(*entry).touched = stale
+				e.(*entry).touched.Store(stale.UnixNano())
 				if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, unexpected); err != nil {
 					t.Fatal(err)
 				}
@@ -1220,13 +1220,17 @@ func TestAcquire_CancelAfterArchiveWorkers(t *testing.T) {
 				want := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, Annotations: map[string]string{"flate.revision": "original"}}
 				keys := []ArchiveKey{{Content: "completion-one"}, {Content: "completion-two"}}
 				ids, pins := make([]string, len(keys)), make([]string, len(keys))
-				previous := make([]entry, len(keys))
+				previous := make([]struct {
+					resolved time.Time
+					stored   ocispec.Descriptor
+				}, len(keys))
 				for i, key := range keys {
 					input, _, id, err := c.Acquire(t.Context(), key, Policy{}, producer(data, want))
 					assert.NoError(t, err)
 					ids[i], pins[i] = id, AcquisitionIdentity(input)
 					v, _ := c.entries.Load(id)
-					previous[i] = *v.(*entry)
+					e := v.(*entry)
+					previous[i].resolved, previous[i].stored = e.resolved, e.stored
 				}
 				synctest.Test(t, func(t *testing.T) {
 					ctx, cancel := context.WithCancel(t.Context())
@@ -1769,7 +1773,7 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				if err := os.Remove(blob); err != nil {
 					t.Fatal(err)
 				}
-				v.(*entry).touched = stale
+				v.(*entry).touched.Store(stale.UnixNano())
 				if _, _, err := c.Git(t.Context(), key, Policy{MaxAge: Forever}, produce); !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("touch failure: %v", err)
 				}

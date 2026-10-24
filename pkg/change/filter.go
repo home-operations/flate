@@ -154,15 +154,17 @@ func (f *Filter) selectWork(emitter manifest.NamedResource, child store.Child, o
 				}
 				owners, ancestors := index.OwnersOfFile(file)
 				for _, id := range owners {
-					ref := s.source(id)
-					if ref != (manifest.NamedResource{}) && s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
-						s.add(id, primary)
+					for ref := range s.sources(id) {
+						if s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
+							s.add(id, primary)
+						}
 					}
 				}
 				for _, id := range ancestors {
-					ref := s.source(id)
-					if ref != (manifest.NamedResource{}) && s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
-						s.add(id, kept)
+					for ref := range s.sources(id) {
+						if s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
+							s.add(id, kept)
+						}
 					}
 				}
 			}
@@ -243,10 +245,12 @@ func (s *selection) productions(id manifest.NamedResource) []manifest.Production
 // Both branches MUST share one iterator closure to avoid per-reference allocations.
 func (s *selection) deps(obj manifest.BaseManifest, id manifest.NamedResource, reverse bool) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
-		if obj != nil {
+		r, known := s.filter.index.Lookup(id)
+		if known && r.Refs != nil && (s.child.Obj == nil || s.child.Obj.Named() != id) && (r.ContentRoots != nil || r.File == "" && len(r.Productions) == 0) {
+			slices.Values(r.Refs)(yield)
+		} else if obj != nil {
 			manifest.ContentInputs(obj, reverse)(yield)
 		} else {
-			r, _ := s.filter.index.Lookup(id)
 			slices.Values(r.Refs)(yield)
 		}
 	}
@@ -254,6 +258,9 @@ func (s *selection) deps(obj manifest.BaseManifest, id manifest.NamedResource, r
 
 func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) bool {
 	record, known := s.filter.index.Lookup(id)
+	if len(record.ContentRoots) != 0 && s.affectedRoot(id) {
+		s.add(id, primary)
+	}
 	if s.filter.hasInputs && s.changedInput(id, id) {
 		s.add(id, primary)
 	}
@@ -309,7 +316,7 @@ func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) b
 func (s *selection) admit() role {
 	id := s.child.Obj.Named()
 	r := s.read(id)
-	if r == primary || s.read(s.emitter) == primary || s.affectedRoot(s.child.Obj) || s.filter.hasInputs && s.changedInput(id, id) {
+	if r == primary || s.read(s.emitter) == primary || s.affectedRoot(id) || s.filter.hasInputs && s.changedInput(id, id) {
 		return primary
 	}
 	for dep := range s.deps(s.child.Obj, id, true) {
@@ -426,17 +433,15 @@ func (s *selection) changedInput(consumer, dep manifest.NamedResource) bool {
 			if !evidence.input(s, ref, inputs[1]) {
 				continue
 			}
-			consumerSource := s.source(consumer)
-			if consumerSource == (manifest.NamedResource{}) {
-				continue
-			}
-			if consumerSource == ref {
-				return true
-			}
-			if ref == manifest.BootstrapSourceID {
-				local := s.evidence(consumerSource)
-				if !local.paired && local.input(s, consumerSource, inputs[1]) {
+			for consumerSource := range s.sources(consumer) {
+				if consumerSource == ref {
 					return true
+				}
+				if ref == manifest.BootstrapSourceID {
+					local := s.evidence(consumerSource)
+					if !local.paired && local.input(s, consumerSource, inputs[1]) {
+						return true
+					}
 				}
 			}
 		}
@@ -486,17 +491,31 @@ func (s *selection) changedProduction(p manifest.Production, relative, indexed s
 	return evidence.changes.Contains(indexed)
 }
 
-func (s *selection) source(id manifest.NamedResource) manifest.NamedResource {
-	obj := s.object(id)
-	if obj == nil {
-		return manifest.NamedResource{}
-	}
-	for r := range manifest.References(obj, manifest.ReferenceRelations) {
-		if r.Use == "source" {
-			return r.NamedResource
+func (s *selection) sources(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		record, _ := s.filter.index.Lookup(id)
+		if len(record.ContentRoots) != 0 && (s.child.Obj == nil || s.child.Obj.Named() != id) {
+			for ref := range record.ContentRoots {
+				if !yield(ref) {
+					return
+				}
+			}
+			return
 		}
+		for r := range manifest.References(s.object(id), manifest.ReferenceRelations) {
+			if r.Use == "source" {
+				yield(r.NamedResource)
+				return
+			}
+		}
+		for _, ref := range record.Refs {
+			if ref.KindInfo().SourceArtifact {
+				yield(ref)
+				return
+			}
+		}
+		yield(manifest.BootstrapSourceID)
 	}
-	return manifest.BootstrapSourceID
 }
 
 func (s *selection) files() iter.Seq[string] {
@@ -549,6 +568,12 @@ func (s *selection) changedClaim(reader manifest.FileReader, file string) bool {
 		return err == nil && evidence.changes.Contains(filepath.ToSlash(relative))
 	}
 	record, _ := s.filter.index.Lookup(reader.Reader)
+	if record.ContentRoots != nil && s.objects != nil {
+		_, pinned, external := loader.SourceView(s.objects, reader.Source, s.filter.root)
+		if pinned || external {
+			return false
+		}
+	}
 	return !record.Pinned && evidence.changes.Contains(file)
 }
 
@@ -605,12 +630,25 @@ func (s *selection) walk() {
 	}
 }
 
-func (s *selection) affectedRoot(obj manifest.BaseManifest) bool {
+func (s *selection) affectedRoot(id manifest.NamedResource) bool {
+	for ref := range s.sources(id) {
+		if s.affectedSourceRoot(id, ref) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *selection) affectedSourceRoot(id, ref manifest.NamedResource) bool {
 	if s.objects == nil {
 		return false
 	}
-	for base := range manifest.RenderRoots(obj) {
-		ref := s.source(obj.Named())
+	obj := s.object(id)
+	roots := manifest.RenderRoots(obj)
+	if record, known := s.filter.index.Lookup(id); known && len(record.ContentRoots) != 0 && (s.child.Obj == nil || s.child.Obj.Named() != id) {
+		roots = slices.Values(record.ContentRoots[ref])
+	}
+	for base := range roots {
 		evidence := s.evidence(ref)
 		if evidence.changes == nil {
 			continue
@@ -625,17 +663,21 @@ func (s *selection) affectedRoot(obj manifest.BaseManifest) bool {
 		}
 		if strings.Contains(base, "/../") || strings.HasSuffix(base, "/..") {
 			// Frozen readers resolve known symlink roots; unknown footprints remain conservative.
-			if record, known := s.filter.index.Lookup(obj.Named()); known && record.Path != "" {
+			if record, known := s.filter.index.Lookup(id); known && record.Path != "" {
 				for file := range s.sourceFiles(ref) {
 					for reader := range s.filter.index.ReadersOfFile(file) {
-						if reader.Reader == obj.Named() && s.changedClaim(reader, file) {
+						if reader.Reader == id && s.changedClaim(reader, file) {
 							return true
 						}
 					}
 				}
 				continue
 			}
-			base = ""
+			if resolved, ok := s.filter.resolveRoot(ref, base); ok {
+				base = resolved
+			} else {
+				base = ""
+			}
 		}
 		physical := loader.OriginPath(art, filepath.Join(root, filepath.FromSlash(base)))
 		rel, err := filepath.Rel(s.filter.root, physical)
@@ -648,16 +690,16 @@ func (s *selection) affectedRoot(obj manifest.BaseManifest) bool {
 		}
 		for file := range s.sourceFiles(ref) {
 			if file == prefix || strings.HasPrefix(file, prefix+"/") || prefix == "" && !path.IsAbs(file) {
-				if !s.changedClaim(manifest.FileReader{Reader: obj.Named(), Source: ref}, file) {
+				if !s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
 					continue
 				}
 				claim := prefix + "/"
 				if prefix == "" {
 					claim = ""
 				}
-				if s.filter.index != nil && slices.Contains(s.filter.index.Claims[claim], obj.Named()) {
+				if s.filter.index != nil && slices.Contains(s.filter.index.Claims[claim], id) {
 					owners, _ := s.filter.index.OwnersOfFile(file)
-					if !slices.Contains(owners, obj.Named()) {
+					if !slices.Contains(owners, id) {
 						continue
 					}
 				}

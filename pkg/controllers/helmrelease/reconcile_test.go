@@ -22,6 +22,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
@@ -967,5 +968,47 @@ items:
 	}
 	if slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool { return w.Category == manifest.WarnUnresolvedSubstitution }) {
 		t.Fatal("failed retry reported successful best-effort rescue")
+	}
+}
+
+func TestReconcile_RescuePublishesSuccessfulReceipt(t *testing.T) {
+	t.Parallel()
+	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	c, st := newTestController(t, nil)
+	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rescued, namespace: apps}\ndata:\n  value: {{ required \"missing required value\" .Values.required | quote }}\n")
+	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+	hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()}, Values: map[string]any{"required": ""}}
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}}
+	st.AddObject(parent)
+	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Name: "unreadable", Namespace: "apps"}}}, nil)
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+	assert.Equal(t, info.Status, store.StatusReady)
+	emission, ok := st.GetArtifact(hr.Named()).(*store.Emission)
+	if !ok || emission.Render == nil || !emission.Complete {
+		t.Fatal("successful rescue did not retain its accepted receipt")
+	}
+	filled, paths := manifest.FillEmptyValueLeaves(hr.Values)
+	assert.Equal(t, len(paths), 1)
+	assert.Equal(t, renderedConfigMapValue(emission.Manifests, "value"), filled["required"].(string))
+	previous, complete := c.Helm.PreviousRender(t.Context(), hr, filled, helm.RenderOptions{Sources: helm.NewSources(st)})
+	if !complete || previous == nil {
+		t.Fatal("successful second render did not publish durable history")
+	}
+	var children []manifest.NamedResource
+	for child := range previous {
+		children = append(children, child)
+	}
+	assert.Diff(t, children, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "rescued", Namespace: "apps"}})
+	if _, complete := c.Helm.PreviousRender(t.Context(), hr, hr.Values, helm.RenderOptions{Sources: helm.NewSources(st)}); complete {
+		t.Fatal("failed first render borrowed rescued history")
 	}
 }

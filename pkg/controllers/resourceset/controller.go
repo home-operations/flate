@@ -45,6 +45,11 @@ func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
 	}
 }
 
+// Owns reports whether id belongs to the ResourceSet controller.
+func (*Controller) Owns(id manifest.NamedResource) bool {
+	return id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet
+}
+
 // ReconcileNode captures one ResourceSet execution for the scheduler.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 	ex := c.newExecution(id)
@@ -60,21 +65,16 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 		return err
 	}
 
-	var attempt *store.Emission
-	defer func() {
-		if attempt != nil {
-			attempt.Finish()
-		}
-	}()
+	var attempt store.Emission
+	defer attempt.Finish()
 	handled := false
 	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&c.run.Reads), func(content any) (bool, error) {
-		fp, hit, err := c.run.FingerprintDedup(id, content)
+		fp, hit, err := c.run.FingerprintDedup(id, content, &attempt)
 		handled = hit
 		if hit || err != nil {
 			return hit, err
 		}
-		_, _, bound := c.run.Reads.GetEmission(id)
-		attempt = &bound
+		_, _, attempt = c.run.Reads.GetEmission(id)
 		attempt.Fingerprint = fp
 		return false, nil
 	})
@@ -90,5 +90,5 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 	base.Stamp(rs.EmissionPolicy(), docs)
 	attempt.Children, attempt.Manifests = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Complete = true
-	return c.run.Emit(id, attempt, nil)
+	return c.run.Emit(id, &attempt, nil)
 }

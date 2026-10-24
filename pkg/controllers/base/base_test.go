@@ -609,24 +609,24 @@ func TestFingerprintDedup(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	docs := []map[string]any{{"kind": "ConfigMap"}}
-	fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"})
+	fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
 	if fp == "" || handled || err != nil {
 		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
 	}
 	s.SetArtifact(id, &store.Emission{Manifests: docs, Fingerprint: fp, Complete: true})
-	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, "other"); handled || err != nil {
+	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, "other", &store.Emission{}); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
 	foreign := id
 	foreign.Group = "other.example"
-	if _, handled, err := controllertest.NewExecution(c, foreign).FingerprintDedup(foreign, []string{"one"}); handled || err != nil {
+	if _, handled, err := controllertest.NewExecution(c, foreign).FingerprintDedup(foreign, []string{"one"}, &store.Emission{}); handled || err != nil {
 		t.Fatalf("foreign group: handled=%v err=%v; want false,nil", handled, err)
 	}
-	if got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}); !handled || err != nil || got != fp {
+	if got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{}); !handled || err != nil || got != fp {
 		t.Errorf("match: key=%q handled=%v err=%v; want %q,true,nil", got, handled, err, fp)
 	}
 	none := testutil.KustomizationID("ns", "none")
-	if _, handled, _ := controllertest.NewExecution(c, none).FingerprintDedup(none, []string{"one"}); handled {
+	if _, handled, _ := controllertest.NewExecution(c, none).FingerprintDedup(none, []string{"one"}, &store.Emission{}); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}
 	for _, tc := range []struct {
@@ -636,17 +636,19 @@ func TestFingerprintDedup(t *testing.T) {
 		{"nil content", nil}, {"unmarshalable content", []any{make(chan int)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, tc.content)
+			got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, tc.content, &store.Emission{})
 			if got != "" || handled || err != nil {
 				t.Fatalf("invalid content key=%q, handled=%v, err=%v", got, handled, err)
 			}
 		})
 	}
-	s.SetArtifact(id, &store.Emission{Manifests: docs})
-	if _, handled, _ := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}); handled {
+	emptyStore := store.New()
+	emptyStore.AddObject(ks)
+	emptyStore.SetArtifact(id, &store.Emission{Manifests: docs})
+	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).FingerprintDedup(id, []string{"one"}, &store.Emission{}); handled {
 		t.Error("empty stored fingerprint replayed")
 	}
-	if fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []any{make(chan int)}); fp != "" || handled || err != nil {
+	if fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []any{make(chan int)}, &store.Emission{}); fp != "" || handled || err != nil {
 		t.Fatalf("invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
 	}
 }
@@ -658,10 +660,10 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
-	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"})
+	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
 	s.SetArtifact(id, &store.Emission{Fingerprint: fp, Complete: true})
 	c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }})
-	_, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"})
+	_, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
 	if !handled || err == nil {
 		t.Errorf("preflight error: handled=%v err=%v; want true, non-nil", handled, err)
 	}
@@ -838,7 +840,9 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 				tasks := task.NewBounded(2)
 				entered, replaced := make(chan struct{}), make(chan struct{})
 				content = blockedFingerprintContent{tasks: tasks, entered: entered, replaced: replaced}
-				tasks.Go(t.Context(), "dedup", func(context.Context) { fp, handled, err = run.FingerprintDedup(input.Named(), content) })
+				tasks.Go(t.Context(), "dedup", func(context.Context) {
+					fp, handled, err = run.FingerprintDedup(input.Named(), content, &store.Emission{})
+				})
 				tasks.Go(t.Context(), "replace", func(context.Context) {
 					tasks.YieldSlot(func() { <-entered })
 					st.AddObject(replacement)
@@ -849,13 +853,13 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 					t.Fatal("fingerprint task panicked")
 				}
 			} else {
-				fp, handled, err = run.FingerprintDedup(input.Named(), content)
+				fp, handled, err = run.FingerprintDedup(input.Named(), content, &store.Emission{})
 			}
 			if fp != "" || !handled || err == nil || st.GetArtifact(input.Named()) != before {
 				t.Fatalf("stale A accepted: key=%q handled=%t err=%v", fp, handled, err)
 			}
 			if path != "absent" && path != "suspended" {
-				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).FingerprintDedup(replacement.Named(), "B")
+				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).FingerprintDedup(replacement.Named(), "B", &store.Emission{})
 				if fp != manifest.Fingerprint("B") || handled || err != nil {
 					t.Fatalf("replacement B cannot prepare: %q %t %v", fp, handled, err)
 				}
@@ -958,7 +962,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				if filter.ShouldReconcile(child.Named()) {
 					t.Fatal("fixture child already selected before replay")
 				}
-				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "same")
+				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "same", &store.Emission{})
 				if fp != fingerprint || handled != complete || err != nil {
 					t.Fatalf("replay key=%q handled=%t err=%v, want %q,%t,nil", fp, handled, err, fingerprint, complete)
 				}

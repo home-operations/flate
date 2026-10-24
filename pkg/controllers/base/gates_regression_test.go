@@ -31,7 +31,7 @@ func TestFingerprintDedup_ChangedWorkBecomesPending(t *testing.T) {
 	s.AddObject(hr)
 	s.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "completed"})
 	c := gateExecution(New(s, task.NewBounded(2)), hr.Named())
-	_, handled, err := c.FingerprintDedup(hr.Named(), "changed")
+	_, handled, err := c.FingerprintDedup(hr.Named(), "changed", &store.Emission{})
 	info, _ := s.GetStatus(hr.Named())
 	if err != nil || handled || info.Status != store.StatusPending {
 		t.Fatalf("admission=%t/%v, status=%+v", handled, err, info)
@@ -231,7 +231,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			c := New(s, task.NewBounded(2))
 			c.Configure(Options{Filter: filter, Index: index, PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() }})
 			execution := gateExecution(c, parent.Named())
-			_, handled, err := execution.FingerprintDedup(parent.Named(), "new content")
+			_, handled, err := execution.FingerprintDedup(parent.Named(), "new content", &store.Emission{})
 			if handled || err != nil {
 				t.Fatalf("admission=%t/%v", handled, err)
 			}

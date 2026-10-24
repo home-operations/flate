@@ -166,7 +166,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							var fp string
 							docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 								var err error
-								fp, _, err = execution.run.FingerprintDedup(rs.Named(), content)
+								fp, _, err = execution.run.FingerprintDedup(rs.Named(), content, &store.Emission{})
 								return false, err
 							})
 							renders.Add(1)

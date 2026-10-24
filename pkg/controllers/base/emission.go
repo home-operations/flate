@@ -28,7 +28,7 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []map[stri
 	retained := false
 	var visible []map[string]any
 	for i, doc := range docs {
-		output, child := policy.SelectDocument(doc, c.skipKinds)
+		output, child := policy.SelectDocument(doc, c.SkipKinds)
 		if !output {
 			if visible == nil {
 				visible = make([]map[string]any, i, len(docs))
@@ -68,30 +68,31 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []map[stri
 
 // Emit extends changed-only selection before the single coherent publication.
 func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
-	if !next.Reads.Valid() {
-		return
-	}
 	original := next
-	for i, child := range next.Children {
-		if child.Obj == nil || child.Obj.Named() == id {
-			continue
-		}
-		obj := manifest.MapDependsOn(child.Obj, c.dependencySubstitutions.Resolve, nil)
-		if obj != child.Obj {
-			if next == original {
-				cloned := *next
-				cloned.Children = slices.Clone(next.Children)
-				next = &cloned
+	if next.Reads.Valid() {
+		for i, child := range next.Children {
+			if child.Obj == nil || child.Obj.Named() == id {
+				continue
 			}
-			next.Children[i].Obj = obj
+			obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
+			if obj != child.Obj {
+				if next == original {
+					cloned := *next
+					cloned.Children = slices.Clone(next.Children)
+					next = &cloned
+				}
+				next.Children[i].Obj = obj
+			}
+			c.KeepEmitted(id, next.Children[i], next.Reads)
 		}
-		c.KeepEmitted(id, next.Children[i], next.Reads)
 	}
 	c.Store.RecordEmitted(id, next, payloads)
 	if next != original {
 		children := original.Children
 		*original = *next
-		original.Children = children
+		if !next.Complete {
+			original.Children = children
+		}
 	}
 	if next.Complete {
 		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {

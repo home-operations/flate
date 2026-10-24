@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"iter"
 	"maps"
 	"slices"
 	"sync/atomic"
@@ -37,6 +38,10 @@ type Emission struct {
 	Complete    bool
 	// Borrowed inventory MUST remain immutable during publication preparation.
 	entriesOwned bool
+	accepted     bool
+	origin       manifest.NamedResource
+	// Render retains immutable pre-admission renderer metadata and output.
+	Render *manifest.RenderReceipt
 
 	input     manifest.BaseManifest
 	inputDoc  map[string]any
@@ -56,6 +61,8 @@ type Emission struct {
 // RenderedOutput retains keyed render content without assessment registrations.
 // Its objects, documents and warning details MUST remain immutable.
 type RenderedOutput struct {
+	// Render retains immutable pre-admission renderer metadata and output.
+	Render      *manifest.RenderReceipt
 	Children    []Child
 	Manifests   []map[string]any
 	Fingerprint string
@@ -93,7 +100,72 @@ func (e *Emission) renderedOutput() RenderedOutput {
 	}
 	return RenderedOutput{
 		Children: e.Children, Manifests: e.Manifests, Fingerprint: e.Fingerprint,
-		Unreadable: e.Unreadable, warnings: warnings,
+		Unreadable: e.Unreadable, Render: e.Render, warnings: warnings,
+	}
+}
+
+// Footprint projects the exact complete inventory accepted by this invocation.
+// A nil iterator denotes an unaccepted or incomplete attempt.
+func (e *Emission) Footprint() iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
+	if e == nil || !e.accepted || !e.Complete {
+		return nil
+	}
+	entries, origin := e.entries, e.origin
+	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+		records := make(map[manifest.NamedResource]manifest.DiscoveryRecord, len(entries))
+		for _, entry := range entries {
+			id := entry.child.Obj.Named()
+			record := records[id]
+			if !slices.ContainsFunc(entry.child.Productions, func(p manifest.Production) bool { return p.Owner == origin }) {
+				record.Productions = append(record.Productions, manifest.Production{Owner: origin, Source: entry.binding.source})
+			}
+			record.Productions = append(record.Productions, entry.child.Productions...)
+			source := manifest.BootstrapSourceID
+			for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
+				if ref.Name != "" {
+					record.Refs = append(record.Refs, ref.NamedResource)
+					if ref.Use == "source" {
+						source = ref.NamedResource
+					}
+				}
+			}
+			for root := range manifest.RenderRoots(entry.child.Obj) {
+				if root == "" {
+					root = "."
+				}
+				if record.ContentRoots == nil {
+					record.ContentRoots = map[manifest.NamedResource][]string{}
+				}
+				record.ContentRoots[source] = append(record.ContentRoots[source], root)
+			}
+			var authored manifest.Production
+			for _, p := range entry.child.Productions {
+				if p.Path != "" && p.Source == entry.binding.source && manifest.Resolve(p.Authored, id.Namespace, "") == id && (authored.Path == "" || compareProduction(p, authored) < 0) {
+					authored = p
+				}
+			}
+			record.Authored, record.Path, record.File = authored.Authored, authored.Path, authored.File
+			records[id] = record
+			for _, target := range entry.targets {
+				record := records[target.NamedResource]
+				record.Productions = append(record.Productions, manifest.Production{Owner: origin, Declaration: id, Source: entry.binding.source})
+				records[target.NamedResource] = record
+			}
+		}
+		for _, id := range slices.SortedFunc(maps.Keys(records), manifest.NamedResource.Compare) {
+			record := records[id]
+			slices.SortFunc(record.Productions, compareProduction)
+			record.Productions = slices.Compact(record.Productions)
+			slices.SortFunc(record.Refs, manifest.NamedResource.Compare)
+			record.Refs = slices.Compact(record.Refs)
+			for source, roots := range record.ContentRoots {
+				slices.Sort(roots)
+				record.ContentRoots[source] = slices.Compact(roots)
+			}
+			if !yield(id, record) {
+				return
+			}
+		}
 	}
 }
 
@@ -583,6 +655,7 @@ func bootstrapSeed(productions []manifest.Production) bool {
 // RecordEmitted atomically accepts completed work, replacing complete inventories and
 // merging incomplete progress. The greatest producer identity supplies shared content.
 func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payloads map[manifest.NamedResource]*SourceArtifact) {
+	next.accepted = false
 	if len(payloads) != 0 && next.Reads == nil {
 		reads := new(ReadSet)
 		reads.Init(s, id, nil)
@@ -605,6 +678,7 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 		}
 		ps.mu.RUnlock()
 		candidate := *next
+		candidate.origin = id
 		candidate.family = s.index.Load()
 		for i, child := range candidate.Children {
 			if child.Obj == nil {
@@ -682,8 +756,9 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 		}
 		unchanged = unchanged && prev.Complete == proposal.Complete
 		if unchanged {
-			if next.Reads != nil && (prev.Reads != next.Reads || prev.OutputReads != candidate.OutputReads) {
+			if next.Reads != nil && (prev.Reads != next.Reads || prev.OutputReads != candidate.OutputReads) || !prev.Render.Equal(candidate.Render) {
 				rebound := *prev
+				rebound.Render = candidate.Render
 				rebound.Reads = next.Reads
 				rebound.input, rebound.inputDoc, rebound.inputHead = next.input, next.inputDoc, next.inputHead
 				rebound.OutputReads = candidate.OutputReads
@@ -715,6 +790,14 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 			continue
 		case publicationRejected:
 			return
+		}
+		if next.Complete && proposal.Complete {
+			accepted := *proposal
+			accepted.Reads = next.Reads
+			accepted.input, accepted.inputDoc, accepted.inputHead = next.input, next.inputDoc, next.inputHead
+			accepted.binding, accepted.previous = next.binding, next.previous
+			accepted.accepted = true
+			*next = accepted
 		}
 		if prev != nil {
 			if !proposal.Retains(prev.OutputReads) {

@@ -174,7 +174,7 @@ func TestRender_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	_, _, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -341,7 +341,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			original := http.DefaultTransport
 			http.DefaultTransport = srv.Client().Transport
 			t.Cleanup(func() { http.DefaultTransport = original })
-			out, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+			out, _, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil || !hasRenderField(out, "name", "remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
@@ -464,7 +464,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				spec.Components = []string{"../component"}
 			}
 			before := manifest.Fingerprint(spec)
-			out, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{})
+			out, _, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error=%v, want %q", err, tc.wantErr)
@@ -493,7 +493,8 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				if err := preflightRemoteResources(t.Context(), cache, view, root); err != nil {
 					t.Fatal(err)
 				}
-				snap, _, err := decodeFrame(testRenderFrame(t, rec.snapshot(), testRenderEncoding(t, out)))
+				snapFrame, err := decodeFrame(testRenderFrame(t, rec.snapshot(), testRenderEncoding(t, out)))
+				snap := snapFrame.header.Reads
 				if err != nil || len(snap.Remotes) != 1 || snap.Remotes[0].Input.Operation != remoteHTTP {
 					t.Fatalf("admitted file operation: %+v, %v", snap, err)
 				}
@@ -559,11 +560,12 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 		if diff := cmp.Diff(wantParents, snap.Remotes[0].Parents); diff != "" || len(snap.Remotes[1].Parents) != 0 {
 			t.Fatalf("root sighting erased nested parents (-want +got):\n%s; Git parents=%+v", diff, snap.Remotes[1].Parents)
 		}
-		frame, err := encodeFrame(snap, nil)
+		frame, err := encodeFrame(renderHeader{Reads: snap}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		decoded, _, err := decodeFrame(frame)
+		decodedFrame, err := decodeFrame(frame)
+		decoded := decodedFrame.header.Reads
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -687,11 +689,12 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 				}
 			}
 			mu.Unlock()
-			frame, err := encodeFrame(snap, nil)
+			frame, err := encodeFrame(renderHeader{Reads: snap}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			snap, _, err = decodeFrame(frame)
+			snapFrame, decodeErr := decodeFrame(frame)
+			snap, err = snapFrame.header.Reads, decodeErr
 			if err != nil {
 				t.Fatal(err)
 			}

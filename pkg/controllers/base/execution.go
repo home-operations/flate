@@ -334,7 +334,7 @@ func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
 
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
-func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (string, bool, error) {
+func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, attempt *store.Emission) (string, bool, error) {
 	if err := e.checkpoint(); err != nil {
 		return "", true, err
 	}
@@ -350,12 +350,11 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	}
 	current, _ := e.Store.GetArtifact(id).(*store.Emission)
 	output, matched := current.Replay(fp)
-	var attempt store.Emission
-	bound := false
+	receipt := attempt.Render
+	_, _, *attempt = e.Reads.GetEmission(id)
+	attempt.Render = receipt
+	defer attempt.Finish()
 	if !matched {
-		_, _, attempt = e.Reads.GetEmission(id)
-		defer attempt.Finish()
-		bound = true
 		output, matched = attempt.Replay(fp)
 	}
 	if !matched {
@@ -368,24 +367,25 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	if slices.Equal(output.Unreadable, e.Unreadable) {
 		e.Reads.CarryWarnings(output)
 	}
-	if !bound && current.Complete && current.Fingerprint == fp && current.OutputReads.Valid() && slices.Equal(output.Unreadable, e.Unreadable) {
-		attempt.Children = output.Children
-		e.Reads.Bind(&attempt)
-		for _, child := range output.Children {
-			e.KeepEmitted(id, child, &e.Reads)
-		}
-		return fp, true, nil
-	}
-	if !bound {
-		_, _, attempt = e.Reads.GetEmission(id)
-		defer attempt.Finish()
+	if attempt.Render == nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) {
+		attempt.Render = output.Render
 	}
 	attempt.Children = output.Children
 	attempt.Manifests = output.Manifests
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	return fp, true, e.Emit(id, &attempt, nil)
+	for _, child := range output.Children {
+		e.KeepEmitted(id, child, &e.Reads)
+	}
+	if current != nil && current.Complete && current.Fingerprint == fp && current.OutputReads.Valid() && slices.Equal(output.Unreadable, e.Unreadable) {
+		attempt.Reads = current.OutputReads
+		e.Store.RecordEmitted(id, attempt, nil)
+		attempt.Reads = &e.Reads
+	} else {
+		return fp, true, e.Emit(id, attempt, nil)
+	}
+	return fp, true, nil
 }
 
 // Outcome returns the retained readiness decision without reading the store.

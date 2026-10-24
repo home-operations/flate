@@ -242,7 +242,7 @@ func TestAcquire_GeneratedReadFailure(t *testing.T) {
 			value, _ := c.entries.Load(id)
 			e := value.(*entry)
 			if warm {
-				e.touched = time.Now()
+				e.touched.Store(time.Now().UnixNano())
 			} else {
 				e.unloaded, e.fs = true, nil
 			}

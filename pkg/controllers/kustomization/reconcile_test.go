@@ -959,7 +959,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		valid := execution.run.Reads.Valid()
 		err := execution.render(ctx, ks, source, applyIgnore)
 		opens := guard.opened.Load() - before
-		_, handled, dedupErr := execution.run.FingerprintDedup(ks.Named(), nil)
+		_, handled, dedupErr := execution.run.FingerprintDedup(ks.Named(), nil, &store.Emission{})
 		result <- observation{valid: valid, opens: opens, err: err, handled: handled, dedupErr: dedupErr}
 	})
 	c.Tasks.Go(t.Context(), "replace", func(context.Context) {
@@ -1011,7 +1011,7 @@ func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
 	st.AddObject(declaration)
 	sourceContent := struct{ Path, Key, Revision, Digest string }{counted.LocalPath, counted.Key, counted.Revision, counted.Digest}
 	probe := c.newExecution(ks.Named())
-	fp, handled, want := probe.run.FingerprintDedup(ks.Named(), ks.Content(sourceContent))
+	fp, handled, want := probe.run.FingerprintDedup(ks.Named(), ks.Content(sourceContent), &store.Emission{})
 	probe.run.Close()
 	if fp == "" || handled || want == nil || declaration.checks != 3 {
 		t.Fatalf("admission contract: fingerprint=%q handled=%t err=%v checkpoints=%d", fp, handled, want, declaration.checks)
@@ -1120,14 +1120,12 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			if s.GetObject(shared) == nil {
 				t.Fatal("coverage retired Q support")
 			}
-			if !swapDuringRender {
-				s.SetArtifact(sourceID, &initial)
-				if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
-					t.Fatal(err)
-				}
-				if s.GetObject(exclusive) != nil {
-					t.Fatal("matching source view did not retire its whole prediction")
-				}
+			s.SetArtifact(sourceID, &initial)
+			if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
+				t.Fatal(err)
+			}
+			if s.GetObject(exclusive) != nil {
+				t.Fatal("matching source view did not retire its whole prediction")
 			}
 			_, _, empty := s.GetEmission(ks.Named())
 			empty.Children, empty.Manifests, empty.Fingerprint, empty.Complete = nil, nil, "", true
@@ -1152,7 +1150,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			before := guard.opened.Load()
 			prepared, err := kustomize.Prepare(ks, nil, nil)
 			assert.NoError(t, err)
-			rendered, err := kustomize.Render(t.Context(), trees, kustomize.RenderRequest{Source: &initial, SubPath: ks.Path, Spec: prepared}, sourcecache.RetryConfig{})
+			rendered, _, err := kustomize.Render(t.Context(), trees, kustomize.RenderRequest{Source: &initial, SubPath: ks.Path, Spec: prepared}, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			for _, doc := range rendered {
 				metadata := doc["metadata"].(map[string]any)

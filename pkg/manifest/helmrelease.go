@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/fluxcd/pkg/apis/kustomize"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -282,6 +283,49 @@ func (h *HelmRelease) ChartSource() NamedResource {
 		}
 	}
 	return source
+}
+
+// HelmReleaseHistoryPolicy binds declaration inputs outside the raw render key to accepted history.
+type HelmReleaseHistoryPolicy struct {
+	DeclaredChart      NamedResource
+	Suspend            bool
+	PostRenderStrategy helmv2.PostRenderStrategy
+	DependsOn          []helmv2.DependencyReference
+	ValuesFrom         []helmv2.ValuesReference
+	HealthCheckExprs   []kustomize.CustomHealthCheck
+	Annotations        map[string]string
+}
+
+// HistoryPolicy returns a frozen projection of emitted-child admission inputs.
+func (h *HelmRelease) HistoryPolicy() HelmReleaseHistoryPolicy {
+	policy := HelmReleaseHistoryPolicy{Suspend: h.Suspend, PostRenderStrategy: h.PostRenderStrategy}
+	declared := h.Chart.Source
+	if ref := h.ChartRef; ref != nil {
+		declared = NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}
+	} else if template := h.HelmReleaseSpec.Chart; template != nil {
+		ref := template.Spec.SourceRef
+		kind := cmp.Or(ref.Kind, KindHelmRepository)
+		declared = NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Namespace: ref.Namespace, Name: ref.Name}
+	}
+	policy.DeclaredChart = Resolve(declared, "", h.Namespace)
+	if len(h.DependsOn) > 0 {
+		policy.DependsOn = slices.Clone(h.DependsOn)
+	}
+	if len(h.ValuesFrom) > 0 {
+		policy.ValuesFrom = slices.Clone(h.ValuesFrom)
+	}
+	if len(h.HealthCheckExprs) > 0 {
+		policy.HealthCheckExprs = slices.Clone(h.HealthCheckExprs)
+	}
+	if h.CommonMetadata != nil && len(h.CommonMetadata.Annotations) > 0 {
+		policy.Annotations = maps.Clone(h.CommonMetadata.Annotations)
+	}
+	return policy
+}
+
+// Equal reports whether two frozen policies admit the same accepted history.
+func (p HelmReleaseHistoryPolicy) Equal(other HelmReleaseHistoryPolicy) bool {
+	return p.DeclaredChart == other.DeclaredChart && p.Suspend == other.Suspend && p.PostRenderStrategy == other.PostRenderStrategy && slices.Equal(p.DependsOn, other.DependsOn) && slices.Equal(p.ValuesFrom, other.ValuesFrom) && slices.Equal(p.HealthCheckExprs, other.HealthCheckExprs) && maps.Equal(p.Annotations, other.Annotations)
 }
 
 // HelmChartLookup returns the HelmChartSource at the full identity, or nil when absent.

@@ -66,15 +66,15 @@ func TestReadSet_Snapshot(t *testing.T) {
 	rs := record([]string{"z", "a"})
 	snap := rs.snapshot()
 	want := readSetSnapshot{
-		Files: []fileEntry{
+		Files: []localEntry{
 			{Path: "a.yaml", Hash: manifest.SHA256Hex([]byte("a"))},
 			{Path: "z.yaml", Hash: manifest.SHA256Hex([]byte("z"))},
 		},
-		Dirs: []fileEntry{
+		Dirs: []localEntry{
 			{Path: "a-dir", Hash: hashEntries([]string{"child"})},
 			{Path: "z-dir", Hash: hashEntries([]string{"child"})},
 		},
-		Nodes: []nodeEntry{{Path: "a-node", Kind: kindAbsent}, {Path: "z-node", Kind: kindAbsent}},
+		Nodes: []localEntry{{Path: "a-node", Kind: kindAbsent}, {Path: "z-node", Kind: kindAbsent}},
 	}
 	if diff := cmp.Diff(want, snap); diff != "" {
 		t.Fatalf("snapshot (-want +got):\n%s", diff)
@@ -94,7 +94,7 @@ func TestReadSet_Snapshot(t *testing.T) {
 	if !bytes.Equal(frame, testRenderFrame(t, snap, []byte("output"))) {
 		t.Fatal("frozen snapshot frame changed after recording")
 	}
-	empty := readSetSnapshot{Files: []fileEntry{}, Dirs: []fileEntry{}, Nodes: []nodeEntry{}}
+	empty := readSetSnapshot{Files: []localEntry{}, Dirs: []localEntry{}, Nodes: []localEntry{}}
 	if diff := cmp.Diff(empty, newReadSet(root).snapshot()); diff != "" {
 		t.Fatalf("empty snapshot (-want +got):\n%s", diff)
 	}
@@ -128,32 +128,32 @@ func TestReadSet_SnapshotConcurrentRecording(t *testing.T) {
 	close(start)
 	snap := <-read
 	<-written
-	for _, entries := range [][]fileEntry{snap.Files, snap.Dirs} {
-		if !slices.IsSortedFunc(entries, func(a, b fileEntry) int { return strings.Compare(a.Path, b.Path) }) {
+	for _, entries := range [][]localEntry{snap.Files, snap.Dirs} {
+		if !slices.IsSortedFunc(entries, func(a, b localEntry) int { return strings.Compare(a.Path, b.Path) }) {
 			t.Fatalf("unsorted snapshot entries: %+v", entries)
 		}
 	}
-	if !slices.IsSortedFunc(snap.Nodes, func(a, b nodeEntry) int { return strings.Compare(a.Path, b.Path) }) {
+	if !slices.IsSortedFunc(snap.Nodes, func(a, b localEntry) int { return strings.Compare(a.Path, b.Path) }) {
 		t.Fatalf("unsorted snapshot nodes: %+v", snap.Nodes)
 	}
 	for _, node := range snap.Nodes {
-		matches := func(entry fileEntry) bool { return entry.Path == node.Path }
+		matches := func(entry localEntry) bool { return entry.Path == node.Path }
 		if slices.ContainsFunc(snap.Files, matches) || slices.ContainsFunc(snap.Dirs, matches) {
 			t.Errorf("redundant node in snapshot: %+v", node)
 		}
 	}
 	want := readSetSnapshot{
-		Files: []fileEntry{
+		Files: []localEntry{
 			{Path: "a.yaml", Hash: manifest.SHA256Hex([]byte("a"))},
 			{Path: "b.yaml", Hash: manifest.SHA256Hex([]byte("b"))},
 			{Path: "z.yaml", Hash: manifest.SHA256Hex([]byte("z"))},
 		},
-		Dirs: []fileEntry{
+		Dirs: []localEntry{
 			{Path: "a-dir", Hash: hashEntries([]string{"child"})},
 			{Path: "b-dir", Hash: hashEntries([]string{"child"})},
 			{Path: "z-dir", Hash: hashEntries([]string{"child"})},
 		},
-		Nodes: []nodeEntry{
+		Nodes: []localEntry{
 			{Path: "a-node", Kind: kindAbsent},
 			{Path: "b-node", Kind: kindAbsent},
 			{Path: "z-node", Kind: kindAbsent},
@@ -295,11 +295,12 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 			if diff := cmp.Diff(want, snap.Remotes); diff != "" {
 				t.Fatalf("observations (-want +got):\n%s", diff)
 			}
-			frame, err := encodeFrame(snap, []byte("output"))
+			frame, err := encodeFrame(renderHeader{Reads: snap}, []byte("output"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			decoded, _, err := decodeFrame(frame)
+			decodedFrame, err := decodeFrame(frame)
+			decoded := decodedFrame.header.Reads
 			if err != nil || !cmp.Equal(decoded.Remotes, snap.Remotes) {
 				t.Fatalf("roundtrip=%+v error=%v", decoded.Remotes, err)
 			}
@@ -412,11 +413,12 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 					rec.recordRemote(descriptor, identity, parents)
 				}
 			}
-			frame, err := encodeFrame(rec.snapshot(), nil)
+			frame, err := encodeFrame(renderHeader{Reads: rec.snapshot()}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			snap, _, err := decodeFrame(frame)
+			snapFrame, err := decodeFrame(frame)
+			snap := snapFrame.header.Reads
 			if err != nil {
 				t.Fatal(err)
 			}

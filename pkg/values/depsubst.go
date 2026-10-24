@@ -1,6 +1,10 @@
 package values
 
 import (
+	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"maps"
 	"strings"
 
 	"github.com/fluxcd/pkg/envsubst"
@@ -49,4 +53,17 @@ func (d DependencySubstitutions) Resolve(text string) string {
 		return text
 	}
 	return out
+}
+
+// MarshalJSONTo encodes immutable substitution content for renderer policy identity.
+func (d DependencySubstitutions) MarshalJSONTo(encoder *jsontext.Encoder) error {
+	if len(d.values) == 0 {
+		return encoder.WriteToken(jsontext.Null)
+	}
+	return jsonv2.MarshalEncode(encoder, d.values, json.DefaultOptionsV1())
+}
+
+// Equal compares immutable substitution content.
+func (d DependencySubstitutions) Equal(other DependencySubstitutions) bool {
+	return maps.Equal(d.values, other.values)
 }

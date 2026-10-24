@@ -140,7 +140,7 @@ func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
 	captured, _, err := captureChart(t.Context(), os.DirFS(root), ch.Name(), false)
 	assert.NoError(t, err)
 	fingerprint := captured.fingerprint()
-	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
+	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}
 }
 
 func TestSourceResolver_SharedClientDeclarations(t *testing.T) {

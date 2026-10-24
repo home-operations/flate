@@ -153,23 +153,17 @@ func compareRemoteInputs(a, b remoteInput) int {
 	return -1
 }
 
-// fileEntry / nodeEntry are the serialized, sorted snapshot the disk cache
-// stores beside a render's output. Slices (not maps) so the encoding is
-// deterministic.
-type fileEntry struct {
-	Path string `json:"p"`
-	Hash string `json:"h"`
-}
-type nodeEntry struct {
+type localEntry struct {
 	Path string   `json:"p"`
-	Kind nodeKind `json:"k"`
+	Hash string   `json:"h,omitempty"`
+	Kind nodeKind `json:"k,omitempty"`
 }
 
 // readSetSnapshot is the deterministic read set persisted beside the output.
 type readSetSnapshot struct {
-	Files   []fileEntry   `json:"files"`
-	Dirs    []fileEntry   `json:"dirs"`
-	Nodes   []nodeEntry   `json:"nodes"`
+	Files   []localEntry  `json:"files"`
+	Dirs    []localEntry  `json:"dirs"`
+	Nodes   []localEntry  `json:"nodes"`
 	Remotes []remoteEntry `json:"remotes,omitempty"`
 }
 
@@ -185,17 +179,19 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	}
 	slices.SortFunc(remotes, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
 	rs.mu.Lock()
+	filesEnd, dirsEnd := len(rs.files), len(rs.files)+len(rs.dirs)
+	entries := make([]localEntry, dirsEnd+len(rs.nodes))
 	snap := readSetSnapshot{
 		Remotes: remotes,
-		Files:   make([]fileEntry, 0, len(rs.files)),
-		Dirs:    make([]fileEntry, 0, len(rs.dirs)),
-		Nodes:   make([]nodeEntry, 0, len(rs.nodes)),
+		Files:   entries[:0:filesEnd],
+		Dirs:    entries[filesEnd:filesEnd:dirsEnd],
+		Nodes:   entries[dirsEnd:dirsEnd],
 	}
 	for p, h := range rs.files {
-		snap.Files = append(snap.Files, fileEntry{Path: p, Hash: h})
+		snap.Files = append(snap.Files, localEntry{Path: p, Hash: h})
 	}
 	for p, h := range rs.dirs {
-		snap.Dirs = append(snap.Dirs, fileEntry{Path: p, Hash: h})
+		snap.Dirs = append(snap.Dirs, localEntry{Path: p, Hash: h})
 	}
 	for p, k := range rs.nodes {
 		// A bare node bit is redundant when the same path was recorded as a read
@@ -206,21 +202,28 @@ func (rs *readSet) snapshot() readSetSnapshot {
 		if _, isDir := rs.dirs[p]; isDir {
 			continue
 		}
-		snap.Nodes = append(snap.Nodes, nodeEntry{Path: p, Kind: k})
+		snap.Nodes = append(snap.Nodes, localEntry{Path: p, Kind: k})
 	}
 	rs.mu.Unlock()
-	slices.SortFunc(snap.Files, func(a, b fileEntry) int { return cmp.Compare(a.Path, b.Path) })
-	slices.SortFunc(snap.Dirs, func(a, b fileEntry) int { return cmp.Compare(a.Path, b.Path) })
-	slices.SortFunc(snap.Nodes, func(a, b nodeEntry) int { return cmp.Compare(a.Path, b.Path) })
+	slices.SortFunc(snap.Files, func(a, b localEntry) int { return cmp.Compare(a.Path, b.Path) })
+	slices.SortFunc(snap.Dirs, func(a, b localEntry) int { return cmp.Compare(a.Path, b.Path) })
+	slices.SortFunc(snap.Nodes, func(a, b localEntry) int { return cmp.Compare(a.Path, b.Path) })
 	return snap
 }
 
 func (rs readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, input *treeFS, immutable bool) (bool, error) {
+	valid, err := rs.localsValid(ctx, input.lower, immutable)
+	if !valid || err != nil {
+		return valid, err
+	}
+	return rs.validateRemotes(ctx, cache, input)
+}
+
+func (rs readSetSnapshot) localsValid(ctx context.Context, lower fs.FS, immutable bool) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if !immutable {
-		lower := input.lower
 		for _, f := range rs.Files {
 			b, err := fs.ReadFile(lower, f.Path)
 			if (err != nil) != (f.Hash == "") {
@@ -246,7 +249,7 @@ func (rs readSetSnapshot) stillValid(ctx context.Context, cache *TreeCache, inpu
 			}
 		}
 	}
-	return rs.validateRemotes(ctx, cache, input)
+	return ctx.Err() == nil, ctx.Err()
 }
 
 func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {

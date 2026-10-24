@@ -10,9 +10,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +64,18 @@ type blobRoot struct {
 	err  error
 }
 
+func (r *blobRoot) current(owner *os.Root) (*os.Root, bool, error) {
+	info, err := owner.Stat(r.path)
+	if err != nil {
+		return nil, false, err
+	}
+	if os.SameFile(info, r.info) {
+		return r.Root, false, nil
+	}
+	current, err := owner.OpenRoot(r.path)
+	return current, true, err
+}
+
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
 type Cache struct {
 	root        *os.Root
@@ -73,11 +87,13 @@ type Cache struct {
 }
 
 type entry struct {
+	// Descriptor fields MUST remain immutable after ready publishes them.
+	ready      atomic.Bool
 	fs         fs.FS
 	descriptor ocispec.Descriptor
 	stored     ocispec.Descriptor
 	resolved   time.Time
-	touched    time.Time
+	touched    atomic.Int64
 	git        *GitGeneration
 	outcome    *outcome
 	unloaded   bool
@@ -140,14 +156,12 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, prod
 // Its acquisition identity is empty on failure.
 func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce func(context.Context, ProducerInput) (ProducerResult, error)) (io.ReadCloser, ocispec.Descriptor, string, error) {
 	if key.PersistOnly {
-		id, ok := key.Content.(string)
-		if !ok || id == "" {
-			return nil, ocispec.Descriptor{}, "", &CacheError{fmt.Errorf("%w: render blob content must be a nonempty identity", manifest.ErrInput)}
+		id, _ := key.Content.(string)
+		enabled, err := c.renderEnabled(ctx, id)
+		if err != nil {
+			return nil, ocispec.Descriptor{}, "", err
 		}
-		if !c.persistBlob {
-			if err := ctx.Err(); err != nil {
-				return nil, ocispec.Descriptor{}, "", &CacheError{err}
-			}
+		if !enabled {
 			if produce == nil {
 				return nil, ocispec.Descriptor{}, "", &CacheError{errdef.ErrNotFound}
 			}
@@ -166,6 +180,69 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 		return nil, ocispec.Descriptor{}, "", &CacheError{err}
 	}
 	return &blobHandle{ReadCloser: r, input: input}, e.descriptor, id, nil
+}
+
+// RenderMetadata returns the current descriptor and generation without opening the payload.
+// The boolean reports whether this owner can persist renders. A nonempty lookup
+// MUST be the identity returned by Blob for this content; an empty lookup derives it.
+func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (ocispec.Descriptor, string, bool, error) {
+	enabled, err := c.renderEnabled(ctx, content)
+	if err != nil || !enabled {
+		return ocispec.Descriptor{}, "", enabled, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ocispec.Descriptor{}, "", true, &CacheError{err}
+	}
+	var e *entry
+	if lookup != "" {
+		if current, ok := c.entries.Load(lookup); ok && current.(*entry).ready.Load() && time.Now().UnixNano()-current.(*entry).touched.Load() < int64(accessInterval) {
+			e = current.(*entry)
+		}
+	}
+	if e == nil {
+		key := BlobKey{Content: content, PersistOnly: true}
+		request := acquireKey{producer: blobProducer{key: key}, lookupOnly: true}
+		if lookup == "" {
+			e, _, err = c.acquire(ctx, request, Policy{MaxAge: Forever})
+		} else {
+			request.id = lookup
+			e, err = c.acquireOnce(ctx, request, Policy{MaxAge: Forever})
+		}
+		if err == nil && !e.ready.Load() {
+			e.ready.Store(true)
+		}
+		if err != nil {
+			return ocispec.Descriptor{}, "", true, err
+		}
+	}
+	root := &c.blobRoots[slices.Index(blobAlgorithms[:], e.stored.Digest.Algorithm())]
+	current, temporary, err := root.current(c.root)
+	if err != nil {
+		return ocispec.Descriptor{}, "", true, &CacheError{err}
+	}
+	if temporary {
+		defer func() { _ = current.Close() }()
+	}
+	info, err := current.Stat(e.stored.Digest.Encoded())
+	if err != nil {
+		return ocispec.Descriptor{}, "", true, &CacheError{err}
+	}
+	if !info.Mode().IsRegular() {
+		return ocispec.Descriptor{}, "", true, &CacheError{fmt.Errorf("%w: render blob is not a regular file", fs.ErrInvalid)}
+	}
+	return e.descriptor, e.stored.Digest.String(), true, nil
+}
+
+func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
+	if content == "" {
+		return false, &CacheError{fmt.Errorf("%w: render blob content must be a nonempty identity", manifest.ErrInput)}
+	}
+	if !c.persistBlob {
+		if err := ctx.Err(); err != nil {
+			return false, &CacheError{err}
+		}
+	}
+	return c.persistBlob, nil
 }
 
 func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, policy Policy) (*entry, error) {
@@ -324,22 +401,24 @@ func (c *Cache) loadEntry(ctx context.Context, key acquireKey, maxAge time.Durat
 
 func (c *Cache) touch(e *entry) error {
 	if c.store != nil {
-		if e.touched.IsZero() {
+		touched := e.touched.Load()
+		if touched == 0 {
 			info, err := c.root.Stat(blobPath(e.stored.Digest))
 			if err != nil {
 				return &CacheError{err}
 			}
-			e.touched = info.ModTime()
+			touched = info.ModTime().UnixNano()
+			e.touched.Store(touched)
 		}
 		now := time.Now()
 		// Sweep allows the same interval so coalescing never retires a recent access early.
-		if now.Sub(e.touched) < accessInterval {
+		if now.UnixNano()-touched < int64(accessInterval) {
 			return nil
 		}
 		if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
 			return &CacheError{err}
 		}
-		e.touched = now
+		e.touched.Store(now.UnixNano())
 	}
 	return nil
 }

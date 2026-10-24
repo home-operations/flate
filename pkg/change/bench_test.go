@@ -183,7 +183,7 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 				}
 				setup := selection{filter: filter, objects: st, child: children[0]}
 				input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name, Namespace: "apps"}
-				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) || filter.ShouldReconcile(children[0].Obj.Named()) || setup.affectedRoot(children[0].Obj) {
+				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) || filter.ShouldReconcile(children[0].Obj.Named()) || setup.affectedRoot(children[0].Obj.Named()) {
 					b.Fatal("supplier scan would be bypassed")
 				}
 				for _, production := range st.IncomingProductions(children[0], index) {

@@ -21,7 +21,7 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 
 			rs := &manifest.ResourceSet{Name: "bench", Namespace: "ns"}
 			s.AddObject(rs)
-			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
+			d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 			d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
 			b.ReportAllocs()
 			for b.Loop() {

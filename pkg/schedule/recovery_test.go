@@ -142,7 +142,7 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 					e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: fmt.Sprintf("feedback %d", count)})
 					return nil
 				}
-				fp, reused, err := e.FingerprintDedup(id, "unchanged output")
+				fp, reused, err := e.FingerprintDedup(id, "unchanged output", &store.Emission{})
 				if reused || err != nil {
 					return err
 				}

@@ -182,7 +182,10 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 		g.Go(func() error {
 			o := orchestrators[i]
 			o.cfg.ExternalChanges = changes
-			o.completeBootstrap(prepared[i], o.cfg.ExternalChanges)
+			if e := o.completeBootstrap(gctx, prepared[i], o.cfg.ExternalChanges); e != nil {
+				sides[i].Err = e
+				return e
+			}
 			res, e := o.Render(gctx)
 			*sides[i] = Rendered{Result: res, Err: e}
 			if res == nil {

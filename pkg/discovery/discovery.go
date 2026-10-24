@@ -262,7 +262,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 
 func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) error {
 	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
-	docs, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: root}, d.cfg.RemoteRetry)
+	docs, _, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: root}, d.cfg.RemoteRetry)
 	if err != nil {
 		return fmt.Errorf("discovery package %q build: %w", root, err)
 	}

@@ -155,7 +155,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	out, err := Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	out, _, err := Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -185,7 +185,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	if _, err := Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	if _, _, err := Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
@@ -390,7 +390,8 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				return Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}}}, sourcecache.RetryConfig{})
+				docs, _, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}}}, sourcecache.RetryConfig{})
+				return docs, err
 			}
 			update := func(name, body string) {
 				t.Helper()
@@ -487,7 +488,7 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 						}
 						retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 						input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": {Data: []byte("resources:\n  - https://example.invalid/owner/repo?ref=main\n")}}}
-						body, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}}}, retry)
+						body, _, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}}}, retry)
 						done <- result{attempts, body, err}
 					}()
 				}
@@ -615,7 +616,7 @@ func TestPreflightGitBase_ErrorPrecedence(t *testing.T) {
 				return nil, errors.New("directory failed")
 			})
 			input := &store.SourceArtifact{FS: memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + srv.URL + tc.path + "']\n"})}
-			_, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{})
+			_, _, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err == nil {
 				t.Fatal("invalid input rendered")
 			}

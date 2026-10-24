@@ -67,6 +67,9 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy) (*en
 		remaining.Retry.Attempts -= attempt - 1
 		e, err := c.acquireOnce(ctx, key, remaining)
 		if err == nil {
+			if !e.ready.Load() {
+				e.ready.Store(true)
+			}
 			return e, key.id, nil
 		}
 		if _, ok := errors.AsType[*TerminalError](err); ok {

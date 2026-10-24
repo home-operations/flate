@@ -33,15 +33,16 @@ func (p Production) Materializer(target NamedResource) NamedResource {
 // Path is empty for generated or projected objects that have no raw resource file.
 // Slices are borrowed and MUST remain immutable after discovery publishes the index.
 type DiscoveryRecord struct {
-	Authored    NamedResource   // Proven raw identity; zero for generated records.
-	Path        string          // Absolute raw resource path; empty for generated or projected records.
-	File        string          // Diff coordinate; generator records use the declaration file.
-	Builder     string          // Authoritative package coordinate; empty for file-seeded objects.
-	Inputs      []string        // Additional declaration inputs; these do not establish render ownership.
-	Refs        []NamedResource // Authored chart/source references under the discovery identity.
-	Parent      NamedResource   // Strict structural parent, excluding peers with the same claimed path.
-	Productions []Production    // Immutable source-qualified contributor evidence.
-	Pinned      bool            // The Kustomization reads a committed local source artifact.
+	Authored     NamedResource              // Proven raw identity; zero for generated records.
+	Path         string                     // Absolute raw resource path; empty for generated or projected records.
+	File         string                     // Diff coordinate; generator records use the declaration file.
+	Builder      string                     // Authoritative package coordinate; empty for file-seeded objects.
+	Inputs       []string                   // Additional declaration inputs; these do not establish render ownership.
+	Refs         []NamedResource            // Authored chart/source references under the discovery identity.
+	Parent       NamedResource              // Strict structural parent, excluding peers with the same claimed path.
+	Productions  []Production               // Immutable source-qualified contributor evidence.
+	Pinned       bool                       // The Kustomization reads a committed local source artifact.
+	ContentRoots map[NamedResource][]string `json:"-"` // Source-qualified render locations; no authored-file authority.
 }
 
 // FileReader identifies a consumer and the source supplying its file input.

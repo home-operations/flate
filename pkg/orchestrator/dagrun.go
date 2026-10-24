@@ -5,7 +5,6 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -26,20 +25,7 @@ func (d dagDispatcher) BlockTillDone() {
 }
 
 func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-	o := d.o
-	var execution *base.Execution
-	switch {
-	case id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization:
-		execution = o.ksc.ReconcileNode(ctx, id, level)
-	case id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease:
-		execution = o.hrc.ReconcileNode(ctx, id, level)
-	case id.Group == manifest.FluxOperatorDomain && id.Kind == manifest.KindResourceSet:
-		execution = o.rsc.ReconcileNode(ctx, id, level)
-	case id.Group == "source.extensions.fluxcd.io" && id.Kind == "ArtifactGenerator":
-		execution = o.agc.ReconcileNode(ctx, id, level)
-	case o.src.Owns(id):
-		execution = o.src.ReconcileNode(ctx, id, level)
-	}
+	execution := d.o.controllers.ReconcileNode(ctx, id, level)
 	if execution == nil {
 		return schedule.Result{}
 	}

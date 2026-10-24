@@ -96,7 +96,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 							}, nil, nil)
 							assert.NoError(t, err)
 						}
-						first, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
+						first, _, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
 						if !ignore && (tc.name == "missing" || tc.name == "no chart fallback") {
 							if !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) {
 								t.Fatalf("missing source values: %v", err)
@@ -109,7 +109,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 						if !hasRenderField(first, "marker", tc.want) || !hasRenderField(first, "kept", "default") {
 							t.Fatal(first)
 						}
-						second, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
+						second, _, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
 						assert.NoError(t, err)
 						assert.Diff(t, second, first)
 					})
@@ -163,7 +163,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 					t.Parallel()
 					selected := hr.Clone()
 					selected.ChartValuesFiles = tc.files
-					out, err := cli.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					out, _, err := cli.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
 					if !hasRenderField(out, "marker", tc.want) {
 						t.Fatal(out)
@@ -547,7 +547,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, merged["marker"], any(marker))
 		}
-		first, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		first, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		want := marker
 		if want == "" {

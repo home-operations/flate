@@ -47,7 +47,7 @@ func TestAddEmitted_CrossSourceOptionalInputEvidence(t *testing.T) {
 			assert.Equal(t, changes.Len(), 0)
 			assert.Equal(t, len(changes.inputs), 0)
 			setup := selection{filter: filter, objects: st, child: child}
-			assert.Equal(t, setup.affectedRoot(child.Obj), false)
+			assert.Equal(t, setup.affectedRoot(child.Obj.Named()), false)
 			for _, production := range st.IncomingProductions(child, index) {
 				relative, indexed := setup.coordinates(production)
 				assert.Equal(t, setup.changedProduction(production, relative, indexed), false)
@@ -121,7 +121,7 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 
 func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"bootstrap", "alias", "pinned", "paired_pinned", "paired_alias", "external", "parent_segments"} {
+	for _, mode := range []string{"bootstrap", "alias", "pinned", "paired_pinned", "paired_alias", "external", "parent_segments", "resolved_component", "changed_component"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -153,6 +153,17 @@ func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 				st.SetArtifact(source, art)
 			}
 			child := &manifest.Kustomization{Name: "late", Namespace: "apps", Path: path, SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace}}
+			if mode == "resolved_component" || mode == "changed_component" {
+				child.Path = "apps/app"
+				child.Components = []string{"../../components/common"}
+				changed = "other/config.yaml"
+				if mode == "changed_component" {
+					changed = "components/common/config.yaml"
+				}
+				testutil.WriteFile(t, root, "apps/app/kustomization.yaml", "resources: []\n")
+				testutil.WriteFile(t, root, "components/common/kustomization.yaml", "kind: Component\n")
+				st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
+			}
 			changes := NewSet([]string{changed})
 			if mode == "paired_pinned" || mode == "paired_alias" {
 				current := *st.GetArtifact(source).(*store.SourceArtifact)
@@ -170,9 +181,10 @@ func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 			}
 			f := NewFilter(changes, nil, st, root)
 			f.AddEmitted(testutil.KustomizationID("apps", "dependency"), store.Child{Obj: child}, f.objs)
-			assert.Equal(t, f.ShouldReconcile(child.Named()), mode == "bootstrap" || mode == "alias" || mode == "parent_segments" || mode == "paired_pinned" || mode == "paired_alias")
+			assert.Equal(t, f.ShouldReconcile(child.Named()), mode == "bootstrap" || mode == "alias" || mode == "parent_segments" || mode == "paired_pinned" || mode == "paired_alias" || mode == "changed_component")
 			sibling := *child
 			sibling.Name, sibling.Path = "unrelated", "elsewhere"
+			sibling.Components = nil
 			f.AddEmitted(testutil.KustomizationID("apps", "dependency"), store.Child{Obj: &sibling}, f.objs)
 			assert.Equal(t, f.ShouldReconcile(sibling.Named()), false)
 		})

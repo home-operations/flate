@@ -9,12 +9,16 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestController_OmittedValuesAfterWait(t *testing.T) {
@@ -212,4 +216,56 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 
 		})
 	}
+}
+
+func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
+	t.Parallel()
+	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	c, st := newTestController(t, nil)
+	var err error
+	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
+	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+	hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "optional", Optional: true}}}
+	st.AddObject(hr)
+	seed, omitted, err := helm.Prepare(hr, helm.NewSources(st).HelmChart, values.NewStoreProvider(st, false, nil), c.Helm.ValuesCache())
+	assert.NoError(t, err)
+	assert.Equal(t, len(omitted), 0)
+	_, receipt, err := c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)})
+	assert.NoError(t, err)
+	assert.NoError(t, c.Helm.RecordRender(t.Context(), hr.Named(), receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
+	probe := func() bool {
+		t.Helper()
+		reads := &store.ReadSet{}
+		reads.Init(st, hr.Named(), nil)
+		defer func() {
+			reads.Retire()
+			for range st.Sweep() {
+			}
+		}()
+		records, narrow := c.PreviousRender(t.Context(), reads)
+		if records != nil {
+			assert.Equal(t, narrow, true)
+		}
+		return records != nil
+	}
+	assert.Equal(t, probe(), true)
+	publishRawFixture(t, c, &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "declaration", Namespace: "apps", Spec: map[string]any{"target": map[string]any{"name": "optional"}}})
+	producer := testutil.KustomizationID("apps", "producer-root")
+	st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusPending, Message: "waiting for input"})
+	status, _ := st.GetStatus(producer)
+	if probe() {
+		t.Fatal("optional expected input supplied complete history")
+	}
+	after, _ := st.GetStatus(producer)
+	assert.Equal(t, after, status)
+	assert.Equal(t, len(st.Warnings()), 0)
+	assert.Equal(t, st.GetArtifact(hr.Named()) == nil, true)
 }

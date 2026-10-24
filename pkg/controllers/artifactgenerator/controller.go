@@ -33,6 +33,11 @@ type execution struct {
 	run base.Execution
 }
 
+// Owns reports whether id belongs to the ArtifactGenerator controller.
+func (*Controller) Owns(id manifest.NamedResource) bool {
+	return id.Group == "source.extensions.fluxcd.io" && id.Kind == "ArtifactGenerator"
+}
+
 // ReconcileNode returns the captured assessment of ArtifactGenerator evaluation.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 	ex := &execution{Controller: c}
@@ -121,7 +126,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if evaluation.maxAge == 0 {
 		replayContent = nil
 	}
-	fingerprint, handled, err := c.run.FingerprintDedup(id, replayContent)
+	fingerprint, handled, err := c.run.FingerprintDedup(id, replayContent, &store.Emission{})
 	if handled || err != nil {
 		return err
 	}

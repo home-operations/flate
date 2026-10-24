@@ -136,7 +136,7 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("spec.path excluded", func(t *testing.T) {
 		t.Parallel()
-		_, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "bundles/common", Spec: parsedKS(t, spec("./bundles/common"))}, sourcecache.RetryConfig{})
+		_, _, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "bundles/common", Spec: parsedKS(t, spec("./bundles/common"))}, sourcecache.RetryConfig{})
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not a directory") {
 			t.Fatalf("expected the excluded spec.path to be reported missing, got %v", err)
 		}
@@ -144,7 +144,7 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("kustomization base excluded", func(t *testing.T) {
 		t.Parallel()
-		_, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/app", Spec: parsedKS(t, spec("./clusters/dev/app"))}, sourcecache.RetryConfig{})
+		_, _, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/app", Spec: parsedKS(t, spec("./clusters/dev/app"))}, sourcecache.RetryConfig{})
 		if err == nil || !strings.Contains(err.Error(), "bundles/common") {
 			t.Fatalf("expected the build to fail resolving the excluded base, got %v", err)
 		}
@@ -152,7 +152,7 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("allowlisted path renders", func(t *testing.T) {
 		t.Parallel()
-		out, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/ok", Spec: parsedKS(t, spec("./clusters/dev/ok"))}, sourcecache.RetryConfig{})
+		out, _, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: "clusters/dev/ok", Spec: parsedKS(t, spec("./clusters/dev/ok"))}, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -163,7 +163,7 @@ func TestRender_SourceignoreAllowlist(t *testing.T) {
 
 	t.Run("fetched artifact not refiltered", func(t *testing.T) {
 		t.Parallel()
-		out, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "bundles/common", Spec: parsedKS(t, spec("./bundles/common"))}, sourcecache.RetryConfig{})
+		out, _, err := Render(ctx, newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "bundles/common", Spec: parsedKS(t, spec("./bundles/common"))}, sourcecache.RetryConfig{})
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -210,9 +210,12 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			cache := newTestTreeCache(t, t.TempDir())
 			ctx := context.Background()
 
-			out1, err := Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+			out1, receipt, err := Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatalf("first render: %v", err)
+			}
+			if err := cache.RecordRender(ctx, demoSpec.Named(), receipt, emptyRenderInventory); err != nil {
+				t.Fatal(err)
 			}
 			if hasRenderField(out1, "name", "b") {
 				t.Fatalf("b.yaml should be excluded; got %s", out1)
@@ -231,7 +234,7 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			if eligible {
 				publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
 			}
-			out2, err := Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+			out2, _, err := Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatalf("second render: %v", err)
 			}
@@ -286,7 +289,7 @@ configMapGenerator:
 				}
 				artifact.FS = input
 			}
-			out, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: artifact, Label: root, ApplyIgnore: true, SubPath: "app", Spec: parsedKS(t, ksDoc(map[string]any{"path": "./app"}))}, sourcecache.RetryConfig{})
+			out, _, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: artifact, Label: root, ApplyIgnore: true, SubPath: "app", Spec: parsedKS(t, ksDoc(map[string]any{"path": "./app"}))}, sourcecache.RetryConfig{})
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "logo.png") {
 					t.Fatalf("expected excluded image to fail the build, got %v", err)

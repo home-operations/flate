@@ -35,6 +35,58 @@ func ownerID(name string) manifest.NamedResource {
 	return testutil.KustomizationID("apps", name)
 }
 
+func checkEffectiveObject(t *testing.T, s *Store, id manifest.NamedResource, want Child) {
+	t.Helper()
+	assert.Equal(t, s.GetObject(id), want.Obj)
+	obj, _ := s.Snapshot(id, false)
+	assert.Equal(t, obj, want.Obj)
+	obj, attempt := s.GetEmission(id)
+	defer attempt.Finish()
+	assert.Equal(t, obj, want.Obj)
+	if s.EmissionOwner(id) != (manifest.NamedResource{}) {
+		assert.Diff(t, attempt.inputDoc, want.Doc)
+	}
+	for _, objects := range [][]manifest.BaseManifest{
+		s.ListObjects(id.Group, id.Kind), s.ListObjects(id.Group, id.Kind),
+		s.ListObjects("", ""), s.ListObjects("", ""),
+	} {
+		var found manifest.BaseManifest
+		for i, object := range objects {
+			if object.Named() == id {
+				found = object
+			}
+			if i > 0 && objects[i-1].Named().Compare(object.Named()) >= 0 {
+				t.Fatal("effective inventory is not sorted and unique")
+			}
+		}
+		assert.Equal(t, found, want.Obj)
+	}
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	record, present := sh.conditions[id]
+	record.conditions = slices.Clone(record.conditions)
+	sh.mu.RUnlock()
+	defer func() {
+		sh.mu.Lock()
+		if present {
+			sh.conditions[id] = record
+		} else {
+			delete(sh.conditions, id)
+		}
+		sh.mu.Unlock()
+	}()
+	s.UpdateFailure(id, fmt.Errorf("%w: projection", manifest.ErrInput))
+	_, failed := s.FailedResources()[id]
+	assert.Equal(t, failed, want.Obj != nil)
+	var replayed manifest.BaseManifest
+	s.AddListener(EventObjectAdded, func(got manifest.NamedResource, data any) {
+		if got == id {
+			replayed = data.(manifest.BaseManifest)
+		}
+	}, true)()
+	assert.Equal(t, replayed, want.Obj)
+}
+
 func TestRecordEmitted_Replacement(t *testing.T) {
 	t.Parallel()
 
@@ -210,6 +262,41 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 					accept(t, s, p, next)
 				})
 			}
+			capturedID := accepted.Children[0].Obj.Named()
+			captured := s.Productions(capturedID, nil)
+			marker := emissionChild("reader-anchor", "value")
+			wg.Go(func() {
+				<-start
+				var observed []manifest.Production
+				for _, proof := range captured {
+					observed = append(observed, proof)
+					s.AddObject(marker.Obj)
+				}
+				if !slices.Equal(observed, []manifest.Production{{Owner: p}, {Owner: q}}) {
+					t.Errorf("concurrent captured productions=%v", observed)
+				}
+				for _, child := range accepted.Children {
+					id := child.Obj.Named()
+					parent, ok := s.RenderedParent(id, nil)
+					if !ok || parent != p {
+						t.Errorf("concurrent parent=%v/%t, want %v/true", parent, ok, p)
+					}
+					if got := s.Productions(id, nil); !slices.Equal(got, []manifest.Production{{Owner: p}, {Owner: q}}) {
+						t.Errorf("concurrent productions=%v", got)
+					}
+					if obj := s.GetObject(id); obj == nil || obj.Named() != id {
+						t.Error("concurrent object lost identity")
+					}
+					obj, next := s.GetEmission(id)
+					next.Finish()
+					if obj == nil || obj.Named() != id || s.EmissionOwner(id) != q {
+						t.Error("concurrent rich read lost representative")
+					}
+					if !slices.ContainsFunc(s.ListObjects(id.Group, id.Kind), func(obj manifest.BaseManifest) bool { return obj.Named() == id }) {
+						t.Error("concurrent listing lost child")
+					}
+				}
+			})
 			close(start)
 			wg.Wait()
 			for _, child := range accepted.Children {
@@ -225,10 +312,15 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 					t.Fatalf("reverse position changed production: %v", got)
 				}
 			}
+			assert.Diff(t, captured, []manifest.Production{{Owner: p}, {Owner: q}})
 			s.SetArtifact(covered.Obj.Named(), &SourceArtifact{Key: "covered"})
 			s.UpdateStatus(covered.Obj.Named(), StatusReady, "", "")
 			accept(t, s, p, &Emission{Complete: true})
 			for _, child := range accepted.Children {
+				parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+				if !ok || parent != q {
+					t.Fatalf("withdrawal parent=%v/%t, want %v/true", parent, ok, q)
+				}
 				if got := s.Productions(child.Obj.Named(), nil); len(got) != 1 || got[0].Owner != q {
 					t.Fatalf("withdrawal changed surviving contributor: %v", got)
 				}
@@ -324,7 +416,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					t.Parallel()
 
 					s := New()
-					p, k, l, q := ownerID("p"), ownerID("k"), ownerID("l"), ownerID("q")
+					p, k, l, q := ownerID("p"), ownerID("k"), ownerID("l"), ownerID("a")
 					s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 					child := Child{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}
 					cycle := Child{Obj: &manifest.Kustomization{Name: l.Name, Namespace: l.Namespace}}
@@ -333,9 +425,10 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					accept(t, s, p, &Emission{Children: []Child{child}, Complete: true})
 					accept(t, s, k, &Emission{Children: []Child{cycle, data}, Manifests: []map[string]any{data.Doc}, Complete: true})
 					accept(t, s, l, &Emission{Children: []Child{child}, Complete: true})
+					independent := emissionChild("shared", "independent")
 					if shared {
 						s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
-						accept(t, s, q, &Emission{Children: []Child{data}, Manifests: []map[string]any{data.Doc}, Complete: true})
+						accept(t, s, q, &Emission{Children: []Child{independent}, Manifests: []map[string]any{independent.Doc}, Complete: true})
 					}
 					for _, id := range []manifest.NamedResource{k, l, data.Obj.Named()} {
 						s.UpdateStatus(id, StatusReady, "", "")
@@ -392,8 +485,9 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					hidden := []manifest.NamedResource{k, l, late.Obj.Named()}
 					if !shared {
 						hidden = append(hidden, data.Obj.Named())
-					} else if s.GetObject(data.Obj.Named()) == nil {
-						t.Fatal("independent Q support lost")
+					} else {
+						checkEffectiveObject(t, s, data.Obj.Named(), independent)
+						assert.Equal(t, s.EmissionOwner(data.Obj.Named()), q)
 					}
 					for _, id := range hidden {
 						s.UpdateFailure(id, fmt.Errorf("%w: hidden successor", manifest.ErrInput))
@@ -429,9 +523,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						if _, ok := s.GetStatus(id); ok {
 							t.Fatal("hidden late Ready leaked")
 						}
-						if slices.ContainsFunc(s.ListObjects("", ""), func(obj manifest.BaseManifest) bool { return obj.Named() == id }) {
-							t.Fatal("hidden inventory leaked")
-						}
+						checkEffectiveObject(t, s, id, Child{})
 					}
 					if len(s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)) != workers-1+boolInt(shared) {
 						t.Fatal("typed listing leaked hidden cycle")
@@ -448,6 +540,13 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						t.Fatal("external anchor did not restore supported descendants")
 					}
 					for _, id := range hidden {
+						obj := s.GetObject(id)
+						if snapshot, _ := s.Snapshot(id, false); snapshot != obj {
+							t.Error("reanchored snapshot differs from effective object")
+						}
+						rich, attempt := s.GetEmission(id)
+						assert.Equal(t, rich, obj)
+						attempt.Finish()
 						if s.GetArtifact(id) != nil {
 							t.Error("reanchoring restored retained artifact")
 						}
@@ -787,6 +886,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			s.RecordEmitted(p, &attempt)
 			unsub()
 			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
+			checkEffectiveObject(t, s, seed.Obj.Named(), actual)
 			if independent {
 				if s.GetObject(seed.Obj.Named()) != actual.Obj {
 					t.Fatal("accepted output did not replace independent static content")
@@ -797,6 +897,7 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				accept(t, s, p, &empty)
 				empty.Finish()
 				assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), manifest.NamedResource{})
+				checkEffectiveObject(t, s, seed.Obj.Named(), seed)
 				if got := s.Productions(seed.Obj.Named(), nil); s.GetObject(seed.Obj.Named()) != seed.Obj || len(got) != 1 || got[0] != productions[len(productions)-1] {
 					t.Fatalf("complete empty retired independent source/input anchor: %v", got)
 				}
@@ -818,12 +919,42 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 			if s.GetObject(seed.Obj.Named()) != nil || len(s.Productions(seed.Obj.Named(), nil)) != 0 {
 				t.Fatal("complete empty resurrected covered prediction")
 			}
+			checkEffectiveObject(t, s, seed.Obj.Named(), Child{})
 			s.AddObject(seed.Obj)
+			checkEffectiveObject(t, s, seed.Obj.Named(), seed)
 			if s.GetObject(seed.Obj.Named()) == nil {
 				t.Fatal("explicit external anchor could not restore covered identity")
 			}
 		})
 	}
+	t.Run("anchoring_read_order", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		p := ownerID("p")
+		s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+		child := emissionChild("anchored", "value")
+		id := child.Obj.Named()
+		s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
+		s.RecordEmitted(p, &Emission{Complete: true})
+		s.lockAll()
+		defer s.unlockAll()
+		sh := s.shardFor(id)
+		cell := sh.cells[id]
+		assert.Equal(t, cell.hidden, true)
+		cell.rooted, cell.static = true, child.Obj
+		sh.cells[id] = cell
+		assert.Equal(t, sh.objectLocked(id), nil)
+		var view capture
+		assert.Equal(t, sh.captureLocked(id, cell, &view), nil)
+		assert.Equal(t, view.child.Obj, nil)
+		assert.Equal(t, view.owner, (*producerSlot)(nil))
+		cell.hidden = false
+		sh.cells[id] = cell
+		assert.Equal(t, sh.objectLocked(id), child.Obj)
+		assert.Equal(t, sh.captureLocked(id, cell, &view), child.Obj)
+		assert.Equal(t, view.child.Obj, child.Obj)
+		assert.Equal(t, view.accepted, true)
+	})
 	for _, mode := range []string{"rooted_representative", "deleted_static"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -851,15 +982,14 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 				assert.Equal(t, warnings[0].Count, 1)
 				assert.Equal(t, warnings[0].Message, "conflicting producers; using static object")
 				assert.Diff(t, warnings[0].Detail, []string{p.String(), q.String()})
-				if s.GetObject(seed.Obj.Named()) != seed.Obj {
-					t.Fatal("rooted read lost static authority")
-				}
+				checkEffectiveObject(t, s, seed.Obj.Named(), seed)
 				return
 			}
 			if !s.DeleteObject(seed.Obj.Named()) || s.GetObject(seed.Obj.Named()) != child.Obj {
 				t.Fatal("static deletion lost live emitted support")
 			}
 			assert.Equal(t, s.EmissionOwner(seed.Obj.Named()), p)
+			checkEffectiveObject(t, s, seed.Obj.Named(), child)
 		})
 	}
 	t.Run("never_emitted_static", func(t *testing.T) {
@@ -1089,44 +1219,246 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 	t.Parallel()
 
+	t.Run("empty_direct_needs_accepted_root", func(t *testing.T) {
+		t.Parallel()
+
+		s := New()
+		a, b := ownerID("a"), ownerID("b")
+		source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+		target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+		bare := target
+		bare.Namespace = ""
+		first := manifest.Production{Owner: a, Source: source, Path: "a.yaml", File: "a.yaml"}
+		second := manifest.Production{Owner: b, Source: source, Path: "b.yaml", File: "b.yaml"}
+		index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			bare: {Productions: []manifest.Production{first, second}},
+		}}
+		s.SetDiscoveryIndex(index)
+		s.coverage[a].binding.key = "a"
+		s.coverage[b].binding.key = "b"
+		assert.Diff(t, s.Productions(target, index), []manifest.Production{first})
+	})
+
+	a, b := ownerID("a"), ownerID("b")
+	source := manifest.BootstrapSourceID
+	other := source
+	other.Name = "other"
+	first := manifest.Production{Owner: a, Source: source, Path: "f.yaml", File: "f.yaml"}
+	for _, tc := range []struct {
+		name               string
+		direct, bare, want []manifest.Production
+	}{
+		{
+			name: "unrelated_source_chain", direct: []manifest.Production{{Source: source}},
+			bare: []manifest.Production{{Source: other, Path: "e.yaml"}, {Owner: b, Source: other, Path: "p.yaml"}},
+			want: []manifest.Production{{Source: source}},
+		},
+		{
+			name: "foreign_source_chain",
+			bare: []manifest.Production{first, {Source: other, Path: "e.yaml"}, {Owner: b, Source: other, Path: "p.yaml"}},
+			want: []manifest.Production{first},
+		},
+		{
+			name: "mixed_source_chain",
+			bare: []manifest.Production{first, {Source: other, Path: "e.yaml"}, {Owner: b, Source: source, Path: "p.yaml"}},
+			want: []manifest.Production{first},
+		},
+		{
+			name: "direct_mixed_source_chain", direct: []manifest.Production{{Source: source}},
+			bare: []manifest.Production{{Source: source, Path: "e.yaml"}, {Owner: b, Source: other, Path: "p.yaml"}},
+			want: []manifest.Production{{Source: source}, {Source: source, Path: "e.yaml"}},
+		},
+		{
+			name: "later_bridge_chain", direct: []manifest.Production{{Owner: a, Source: source}},
+			bare: []manifest.Production{{Owner: b, Source: source, Path: "p.yaml"}, {Source: source, Path: "e.yaml"}},
+			want: []manifest.Production{{Source: source, Path: "e.yaml"}, {Owner: a, Source: source}},
+		},
+		{
+			name: "pathless_chain",
+			bare: []manifest.Production{first, {Source: source}, {Owner: b, Source: source, Path: "p.yaml"}},
+			want: []manifest.Production{first},
+		},
+		{
+			name: "authored_namespace_chain",
+			bare: []manifest.Production{first, {Source: source, Path: "e.yaml", Authored: manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "other", Name: "input"}}, {Owner: b, Source: source, Path: "p.yaml"}},
+			want: []manifest.Production{first},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			target := emissionChild("input", "value").Obj.Named()
+			bare := target
+			bare.Namespace = ""
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				target: {Productions: tc.direct}, bare: {Productions: tc.bare},
+			}}
+			s.SetDiscoveryIndex(index)
+			for _, id := range []manifest.NamedResource{a, b} {
+				if c := s.coverage[id]; c != nil {
+					c.binding.key = id.Name
+				}
+			}
+			assert.Diff(t, s.Productions(target, nil), tc.want)
+			assert.Diff(t, s.ReferenceFacts(target, nil).Productions, tc.want)
+		})
+	}
+
+	t.Run("hidden_bare_only_after_withdrawal", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		p, q := ownerID("emitter"), ownerID("discovered")
+		for _, id := range []manifest.NamedResource{p, q} {
+			s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+		}
+		child := emissionChild("withdrawn-bare-only", "value")
+		target := child.Obj.Named()
+		bare := target
+		bare.Namespace = ""
+		index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			bare: {Productions: []manifest.Production{{Owner: q, Source: manifest.BootstrapSourceID, Path: "input.yaml"}}},
+		}}
+		s.SetDiscoveryIndex(index)
+		s.RecordEmitted(p, &Emission{Children: []Child{child}, Complete: true})
+		s.RecordEmitted(p, &Emission{Complete: true})
+		sh := s.shardFor(target)
+		sh.mu.RLock()
+		hidden, members := sh.cells[target].hidden, len(sh.members[target])
+		sh.mu.RUnlock()
+		if !hidden || members != 0 || len(index.Records[target].Productions) != 0 {
+			t.Fatalf("invalid withdrawal fixture: hidden=%t members=%d direct=%v", hidden, members, index.Records[target].Productions)
+		}
+		assert.Equal(t, len(s.Productions(target, nil)), 0)
+		assert.Diff(t, s.ReferenceFacts(target, nil), ReferenceFacts{})
+		parent, ok := s.RenderedParent(target, nil)
+		assert.Equal(t, parent, manifest.NamedResource{})
+		assert.Equal(t, ok, false)
+	})
+
 	for _, differentSource := range []bool{false, true} {
 		for _, explicitNamespace := range []bool{false, true} {
-			t.Run(fmt.Sprintf("differentSource=%t/explicitNamespace=%t", differentSource, explicitNamespace), func(t *testing.T) {
-				t.Parallel()
+			for _, differentBinding := range []bool{false, true} {
+				t.Run(fmt.Sprintf("differentSource=%t/explicitNamespace=%t/differentBinding=%t", differentSource, explicitNamespace, differentBinding), func(t *testing.T) {
+					t.Parallel()
 
-				s := New()
-				renderer, fileOwner := ownerID("renderer"), ownerID("file-owner")
-				for _, id := range []manifest.NamedResource{renderer, fileOwner} {
-					s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-				}
-				source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
-				other := source
-				if differentSource {
-					other.Name = "other"
-				}
-				target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-				authored := target
-				authored.Namespace = ""
-				if explicitNamespace {
-					authored.Namespace = "other"
-				}
-				bare := target
-				bare.Namespace = ""
-				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: renderer, Source: source}}}, bare: {Productions: []manifest.Production{{Owner: fileOwner, Source: other, Authored: authored, Path: "source/input.yaml", File: "input.yaml"}}}}}
-				s.SetDiscoveryIndex(index)
-				result := s.Productions(target, index)
-				facts := s.ReferenceFacts(target, index)
-				assert.Diff(t, facts.Productions, result)
-				want := !differentSource && !explicitNamespace
-				if got := slices.ContainsFunc(result, func(p manifest.Production) bool { return p.Owner == fileOwner && p.Path != "" }); got != want {
-					t.Fatalf("scoped bridge=%t want %t: %v", got, want, result)
-				}
-				if _, ok := index.Lookup(manifest.NamedResource{Kind: target.Kind, Namespace: "unrelated", Name: target.Name}); ok {
-					t.Fatal("exact index lookup gained wildcard semantics")
-				}
-			})
+					s := New()
+					renderer, fileOwner := ownerID("renderer"), ownerID("file-owner")
+					for _, id := range []manifest.NamedResource{renderer, fileOwner} {
+						s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+					}
+					source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+					other := source
+					if differentSource {
+						other.Name = "other"
+					}
+					target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+					authored := target
+					authored.Namespace = ""
+					if explicitNamespace {
+						authored.Namespace = "other"
+					}
+					bare := target
+					bare.Namespace = ""
+					index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: renderer, Source: source}}}, bare: {Productions: []manifest.Production{{Owner: fileOwner, Source: other, Authored: authored, Path: "source/input.yaml", File: "input.yaml"}}}}}
+					s.SetDiscoveryIndex(index)
+					if differentBinding {
+						s.coverage[fileOwner].binding.key = "other"
+					}
+					result := s.Productions(target, index)
+					facts := s.ReferenceFacts(target, index)
+					assert.Diff(t, facts.Productions, result)
+					parent, ok := s.RenderedParent(target, nil)
+					if !ok || parent != renderer {
+						t.Fatalf("rendered parent=%v/%t, want %v/true", parent, ok, renderer)
+					}
+					want := !differentSource && !explicitNamespace && !differentBinding
+					if got := slices.ContainsFunc(result, func(p manifest.Production) bool { return p.Owner == fileOwner && p.Path != "" }); got != want {
+						t.Fatalf("scoped bridge=%t want %t: %v", got, want, result)
+					}
+					proofs := []manifest.Production{{Owner: renderer, Source: source}}
+					if want {
+						proofs = append(proofs, index.Records[bare].Productions[0])
+					}
+					slices.SortFunc(proofs, compareProduction)
+					assert.Diff(t, result, proofs)
+					if _, ok := index.Lookup(manifest.NamedResource{Kind: target.Kind, Namespace: "unrelated", Name: target.Name}); ok {
+						t.Fatal("exact index lookup gained wildcard semantics")
+					}
+				})
+			}
 		}
 	}
+	for _, tc := range []struct {
+		name, path  string
+		otherSource bool
+	}{
+		{name: "unowned_direct_source", otherSource: true},
+		{name: "direct_path", path: "direct.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			target := emissionChild("input", "value").Obj.Named()
+			bare := target
+			bare.Namespace = ""
+			source := manifest.BootstrapSourceID
+			other := source
+			if tc.otherSource {
+				other.Name = "other"
+			}
+			proof := manifest.Production{Source: source, Path: tc.path, File: tc.path}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				target: {Productions: []manifest.Production{proof}},
+				bare:   {Productions: []manifest.Production{{Owner: ownerID("parent"), Source: other, Path: "bare.yaml", File: "bare.yaml"}}},
+			}}
+			s.SetDiscoveryIndex(index)
+			assert.Diff(t, s.Productions(target, nil), []manifest.Production{proof})
+			if parent, ok := s.RenderedParent(target, nil); ok || parent != (manifest.NamedResource{}) {
+				t.Fatalf("suppressed bridge parent=%v/%t", parent, ok)
+			}
+		})
+	}
+
+	for _, shadowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ordered_empty_direct/shadowed=%t", shadowed), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			p, q, r := ownerID("p"), ownerID("q"), ownerID("r")
+			for _, owner := range []manifest.NamedResource{p, q, r} {
+				s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+			}
+			target := emissionChild("bridged", "value").Obj.Named()
+			bare := target
+			bare.Namespace = ""
+			source := manifest.BootstrapSourceID
+			other := source
+			other.Name = "other"
+			proofs := []manifest.Production{
+				{Owner: r, Source: other},
+				{Owner: p, Source: source, Authored: bare, Path: "first.yaml"},
+				{Owner: r, Source: other, Path: "other.yaml"},
+				{Owner: q, Source: source, Path: "matching.yaml"},
+				{Source: source, Path: "unbound.yaml"},
+				{Owner: r, Source: source, Path: "later.yaml"},
+			}
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{bare: {Productions: proofs}}})
+			want := []manifest.Production{proofs[1]}
+			if shadowed {
+				_, next := s.GetEmission(p)
+				next.Complete = true
+				s.RecordEmitted(p, &next)
+				next.Finish()
+				want = nil
+			}
+			slices.SortFunc(want, compareProduction)
+			assert.Diff(t, s.Productions(target, nil), want)
+			parent, ok := s.RenderedParent(target, nil)
+			if ok || parent != (manifest.NamedResource{}) {
+				t.Fatalf("authored bridge parent=%v/%t", parent, ok)
+			}
+		})
+	}
+
 }
 
 func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
@@ -1251,6 +1583,69 @@ func TestStore_AddListener_ReplayWithdrawnDeclaredSecret(t *testing.T) {
 	unsub()
 }
 
+func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
+	t.Parallel()
+
+	for _, namespace := range []string{"apps", ""} {
+		t.Run("authored_namespace="+namespace, func(t *testing.T) {
+			t.Parallel()
+
+			s := New()
+			owner := ownerID("owner")
+			s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+			secret := &manifest.Secret{Name: "input", Namespace: "apps", StringData: map[string]any{"VALUE": "visible"}}
+			target := secret.Named()
+			authored := target
+			authored.Namespace = namespace
+			proof := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID, Authored: authored, Path: "input.yaml", File: "input.yaml"}
+			records := map[manifest.NamedResource]manifest.DiscoveryRecord{authored: {Productions: []manifest.Production{proof}}}
+			proofs := []manifest.Production{proof}
+			if namespace == "" {
+				scoped := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID}
+				records[target] = manifest.DiscoveryRecord{Productions: []manifest.Production{scoped}}
+				proofs = append([]manifest.Production{scoped}, proof)
+			}
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: records})
+			s.AddObject(secret)
+			before := s.ReferenceFacts(target, nil)
+			if before.Data != secret || before.Accepted {
+				t.Fatalf("file-backed facts=%+v", before)
+			}
+			assert.Diff(t, before.Productions, proofs)
+
+			external := &manifest.RawObject{
+				Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: target.Namespace,
+				Spec: map[string]any{"target": map[string]any{"name": target.Name}, "data": []any{map[string]any{"secretKey": "VALUE"}}},
+			}
+			_, next := s.GetEmission(owner)
+			defer next.Finish()
+			next.Children, next.Complete = []Child{{Obj: external}}, true
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				<-start
+				s.ReferenceFacts(target, nil)
+			})
+			wg.Go(func() {
+				<-start
+				s.RecordEmitted(owner, &next)
+			})
+			close(start)
+			wg.Wait()
+
+			want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
+			assert.Diff(t, s.ReferenceFacts(target, nil), ReferenceFacts{Productions: want})
+			assert.Diff(t, s.Productions(target, nil), want)
+			if s.GetObject(target) != nil || s.GetObject(external.Named()) != external {
+				t.Fatal("replacement did not leave only the declaration")
+			}
+			parent, ok := s.RenderedParent(target, nil)
+			assert.Equal(t, parent, manifest.NamedResource{})
+			assert.Equal(t, ok, false)
+		})
+	}
+}
+
 func TestStore_ProductionsQueryAllocations(t *testing.T) {
 	s := New()
 	id := ownerID("known")
@@ -1263,6 +1658,11 @@ func TestStore_ProductionsQueryAllocations(t *testing.T) {
 				s.Productions(target, nil)
 			}); got != 0 {
 				t.Fatalf("production query allocations=%v, want 0", got)
+			}
+			if got := testing.AllocsPerRun(10, func() {
+				s.ReferenceFacts(target, nil)
+			}); got != 0 {
+				t.Fatalf("reference facts allocations=%v, want 0", got)
 			}
 		})
 	}
@@ -1285,6 +1685,48 @@ func TestStore_ProductionsQueryAllocations(t *testing.T) {
 	if got := measure(true); got != baseline {
 		t.Fatalf("empty captured production query allocations=%v, capture alone=%v", got, baseline)
 	}
+}
+
+func TestStore_RenderedParentAllocations(t *testing.T) {
+	for _, name := range []string{"thin", "frozen", "bridge", "missing"} {
+		t.Run(name, func(t *testing.T) {
+			s := New()
+			owner := ownerID("parent")
+			s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+			child := emissionChild("child", "value")
+			id := child.Obj.Named()
+			switch name {
+			case "thin":
+				s.RecordEmitted(owner, &Emission{Children: []Child{child}, Complete: true})
+			case "frozen", "bridge":
+				key := id
+				proof := manifest.Production{Owner: owner}
+				if name == "bridge" {
+					key.Namespace = ""
+					proof.Path = "child.yaml"
+				}
+				s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{key: {Productions: []manifest.Production{proof}}}})
+			}
+			var parent manifest.NamedResource
+			var ok bool
+			allocs := testing.AllocsPerRun(10, func() { parent, ok = s.RenderedParent(id, nil) })
+			if allocs != 0 || ok != (name != "missing") || (ok && parent != owner) {
+				t.Fatalf("parent=%v/%t allocations=%v", parent, ok, allocs)
+			}
+			if name == "thin" {
+				var obj manifest.BaseManifest
+				allocs = testing.AllocsPerRun(10, func() { obj = s.GetObject(id) })
+				if allocs != 0 || obj != child.Obj {
+					t.Fatalf("effective object=%v allocations=%v", obj, allocs)
+				}
+				allocs = testing.AllocsPerRun(10, func() { parent = s.EmissionOwner(id) })
+				if allocs != 0 || parent != owner {
+					t.Fatalf("content owner=%v allocations=%v", parent, allocs)
+				}
+			}
+		})
+	}
+
 }
 
 func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
@@ -1320,9 +1762,21 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			t.Fatalf("frozen/runtime snapshot changed: got %v, want %v", got, want)
 		}
 		assert.Diff(t, facts.Productions, want)
+		parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+		if !ok || parent != p {
+			t.Fatalf("frozen surviving parent=%v/%t, want %v/true", parent, ok, p)
+		}
 		if !slices.Equal(backing, original) {
 			t.Fatalf("query mutated borrowed discovery evidence: got %v, want %v", backing, original)
 		}
+		owned := child
+		owned.Productions = []manifest.Production{proof}
+		s.RecordEmitted(p, &Emission{Children: []Child{owned}})
+		borrowed := s.Productions(child.Obj.Named(), nil)
+		if len(borrowed) != 1 || &borrowed[0] != &backing[0] {
+			t.Fatal("duplicate accepted evidence copied frozen backing")
+		}
+
 		for _, evidence := range [][]manifest.Production{
 			{{Owner: q}, proof, proof},
 			{proof, proof, {Owner: q}},
@@ -1339,6 +1793,26 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			}
 		}
 	})
+	t.Run("hidden_owner_rooted_child", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		p := ownerID("absent")
+		child := emissionChild("rooted", "value")
+		s.AddObject(child.Obj)
+		s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+			child.Obj.Named(): {Productions: []manifest.Production{{Owner: p, Source: manifest.BootstrapSourceID}}},
+		}})
+		s.RecordEmitted(p, &Emission{Children: []Child{child}})
+		s.AddObject(child.Obj)
+		if s.GetObject(child.Obj.Named()) != child.Obj || s.GetObject(p) != nil {
+			t.Fatal("fixture needs an independently rooted child and hidden owner")
+		}
+		assert.Equal(t, len(s.Productions(child.Obj.Named(), nil)), 0)
+		if parent, ok := s.RenderedParent(child.Obj.Named(), nil); ok || parent != (manifest.NamedResource{}) {
+			t.Fatalf("hidden owner parent=%v/%t", parent, ok)
+		}
+	})
+
 	for _, filtered := range []int{0, 1} {
 		t.Run(fmt.Sprintf("filtered_frozen_%d", filtered), func(t *testing.T) {
 			t.Parallel()
@@ -1361,6 +1835,14 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			accept(t, s, owners[filtered], &attempt)
 			attempt.Finish()
 			snapshot := s.Productions(child.Obj.Named(), nil)
+			parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+			wantParent := p
+			if filtered == 0 {
+				wantParent = q
+			}
+			if !ok || parent != wantParent {
+				t.Fatalf("filtered parent=%v/%t, want %v/true", parent, ok, wantParent)
+			}
 			if !slices.Equal(proofs, original) {
 				t.Fatalf("filter mutated borrowed discovery evidence: got %v, want %v", proofs, original)
 			}
@@ -1440,10 +1922,22 @@ func TestStore_ProductionsRetainsAcceptedOwner(t *testing.T) {
 			if len(got) != want || !slices.Contains(got, proof) || !slices.ContainsFunc(got, func(v manifest.Production) bool { return v.Owner == p }) {
 				t.Fatalf("accepted owner lost or redundant thin evidence added: %v", got)
 			}
+			parent, ok := s.RenderedParent(child.Obj.Named(), nil)
+			if ok == ownEvidence || (!ownEvidence && parent != p) {
+				t.Fatalf("authored parent=%v/%t, own evidence=%t", parent, ok, ownEvidence)
+			}
 			accept(t, s, p, &Emission{Complete: true})
 			if got := s.Productions(child.Obj.Named(), nil); len(got) != 0 || s.GetObject(child.Obj.Named()) != nil {
 				t.Fatalf("withdrawal retained accepted evidence: %v", got)
 			}
+			withdrawn := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child.Obj.Named(): {Productions: []manifest.Production{{Owner: q}}},
+			}}
+			assert.Equal(t, len(s.Productions(child.Obj.Named(), withdrawn)), 0)
+			if parent, ok := s.RenderedParent(child.Obj.Named(), withdrawn); ok || parent != (manifest.NamedResource{}) {
+				t.Fatalf("hidden explicit-index parent=%v/%t", parent, ok)
+			}
+
 		})
 	}
 }
@@ -1486,7 +1980,6 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 				check := func(child Child, owner manifest.NamedResource) {
 					t.Helper()
 					assert.Equal(t, s.EmissionOwner(id), owner)
-					assert.Equal(t, s.GetObject(id), child.Obj)
 					var observation Observation
 					obj, observation := s.Snapshot(id, true)
 					info := observation.StatusInfo
@@ -1495,14 +1988,7 @@ func TestRecordEmitted_ConflictingProducers(t *testing.T) {
 					want, _ := s.GetStatus(id)
 					assert.Equal(t, info, want)
 					assert.Equal(t, conditions == nil, true)
-					replayed := false
-					s.AddListener(EventObjectAdded, func(got manifest.NamedResource, data any) {
-						if got == id {
-							replayed = true
-							assert.Equal(t, data.(manifest.BaseManifest), child.Obj)
-						}
-					}, true)()
-					assert.Equal(t, replayed, true)
+					checkEffectiveObject(t, s, id, child)
 				}
 				check(winner, owners[workers-1])
 				warnings := s.Warnings()

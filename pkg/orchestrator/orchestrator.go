@@ -395,12 +395,7 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 	if record, _ := o.index.Lookup(id); record.Parent != (manifest.NamedResource{}) {
 		return record.Parent, true
 	}
-	for _, p := range o.store.Productions(id, o.index) {
-		if p.Owner != (manifest.NamedResource{}) && p.Owner != id && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) {
-			return p.Owner, true
-		}
-	}
-	return manifest.NamedResource{}, false
+	return o.store.RenderedParent(id, o.index)
 }
 
 // childrenByParent returns structural and rendered ownership, including children

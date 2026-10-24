@@ -580,7 +580,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 				orig := selectedRun(&Result{Manifests: map[manifest.NamedResource][]map[string]any{child: {{"kind": "Deployment"}}}})
 				current := selectedRun(&Result{})
 				orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
-				setParentsForTest(orig.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child: parent})
+				publishFixture(t, orig.store, parent, []manifest.NamedResource{child})
 				current.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 				current.store.UpdateStatus(parent, disposition.Status, disposition.Reason, disposition.Message)
 				if disposition.Status == store.StatusFailed {
@@ -797,7 +797,8 @@ func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 	for _, run := range []Rendered{orig, current} {
 		run.store.AddObject(&manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
 		run.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
-		setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child: parent, parent: child})
+		publishFixture(t, run.store, parent, []manifest.NamedResource{child})
+		publishFixture(t, run.store, child, []manifest.NamedResource{parent})
 	}
 	current.store.UpdateStatus(child, store.StatusReady, store.ReasonSkipped, "own skip")
 	current.store.UpdateStatus(parent, store.StatusFailed, "", "ancestor failed")
@@ -926,8 +927,10 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	}
 	current.store.AddObject(&manifest.Kustomization{Name: present.Name, Namespace: present.Namespace})
 	current.store.UpdateStatus(oldRoot, store.StatusFailed, "", "old ancestor failed")
-	setParentsForTest(orig.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{present: middle, absent: middle, middle: oldRoot})
-	setParentsForTest(current.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{present: middle, middle: newRoot})
+	publishFixture(t, orig.store, oldRoot, []manifest.NamedResource{middle})
+	publishFixture(t, orig.store, middle, []manifest.NamedResource{present, absent})
+	publishFixture(t, current.store, newRoot, []manifest.NamedResource{middle})
+	publishFixture(t, current.store, middle, []manifest.NamedResource{present})
 	selected, err, _ := Select([]Rendered{orig, current}, nil, []manifest.NamedResource{{Group: present.Group, Kind: present.Kind}}, nil)
 	if err != nil {
 		t.Fatal(err)

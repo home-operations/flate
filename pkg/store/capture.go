@@ -269,7 +269,9 @@ func (r *ReadSet) Productions(id manifest.NamedResource, index *manifest.Discove
 
 func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []manifest.Production {
 	if input.productions == nil {
-		input.productions = r.store.productions(r, input.Ref.NamedResource, index, true)
+		result := productionResult{reads: r, captureTarget: true}
+		r.store.visitProductions(input.Ref.NamedResource, index, &result)
+		input.productions = result.out
 		if input.productions == nil {
 			input.productions = []manifest.Production{}
 		}
@@ -488,7 +490,9 @@ func (r *ReadSet) Admit(obj manifest.BaseManifest, source, owner manifest.NamedR
 // Promotions captures source-family evidence before conditional raw-file admission.
 // The target itself is a mutation precondition until admission has completed.
 func (r *ReadSet) Promotions(id manifest.NamedResource, index *manifest.DiscoveryIndex) []manifest.Production {
-	return r.store.productions(r, id, index, false)
+	result := productionResult{reads: r}
+	r.store.visitProductions(id, index, &result)
+	return result.out
 }
 
 // Bind attaches consumed provenance and retains prospective children before publication.

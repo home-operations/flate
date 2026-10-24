@@ -48,6 +48,69 @@ func TestOrchestrator_ParentOf(t *testing.T) {
 			}
 		})
 	}
+	t.Run("minimum_accepted_owner", func(t *testing.T) {
+		t.Parallel()
+		o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
+		a, z := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "z")
+		for _, owner := range []manifest.NamedResource{z, a} {
+			publishFixture(t, o.store, owner, []manifest.NamedResource{id})
+		}
+		parent, ok := o.parentOf(id)
+		if !ok || parent != a || o.store.EmissionOwner(id) != z {
+			t.Fatalf("parent=%v/%t content owner=%v, want %v/true and %v", parent, ok, o.store.EmissionOwner(id), a, z)
+		}
+		assert.Diff(t, o.store.Productions(id, nil), []manifest.Production{{Owner: a}, {Owner: z}})
+		o.store.RecordEmitted(a, &store.Emission{Complete: true})
+		parent, ok = o.parentOf(id)
+		if !ok || parent != z {
+			t.Fatalf("withdrawn parent=%v/%t, want %v/true", parent, ok, z)
+		}
+	})
+	t.Run("empty_does_not_erase_owner", func(t *testing.T) {
+		t.Parallel()
+		o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
+		o.index.Records[id] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: rendered}, {}}}
+		parent, ok := o.parentOf(id)
+		if !ok || parent != rendered {
+			t.Fatalf("parent=%v/%t, want %v/true", parent, ok, rendered)
+		}
+		assert.Diff(t, o.store.Productions(id, o.index), []manifest.Production{{}, {Owner: rendered}})
+	})
+
+	for _, proof := range []struct {
+		name       string
+		production manifest.Production
+	}{
+		{"empty", manifest.Production{}},
+		{"self", manifest.Production{Owner: id}},
+		{"authored", manifest.Production{Owner: rendered, Authored: id}},
+		{"declaration", manifest.Production{Owner: rendered, Declaration: id}},
+	} {
+		t.Run(proof.name, func(t *testing.T) {
+			t.Parallel()
+			o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
+			o.index.Records[id] = manifest.DiscoveryRecord{Productions: []manifest.Production{proof.production}}
+			parent, ok := o.parentOf(id)
+			if ok || parent != (manifest.NamedResource{}) {
+				t.Fatalf("ineligible parent=%v/%t", parent, ok)
+			}
+			assert.Diff(t, o.store.Productions(id, o.index), []manifest.Production{proof.production})
+		})
+	}
+
+}
+
+func TestOrchestrator_ParentOfAllocations(t *testing.T) {
+	o := &Orchestrator{store: store.New(), index: indexForTest(nil)}
+	owner := testutil.KustomizationID("apps", "parent")
+	child := testutil.HelmReleaseID("apps", "child")
+	publishFixture(t, o.store, owner, []manifest.NamedResource{child})
+	var parent manifest.NamedResource
+	var ok bool
+	allocs := testing.AllocsPerRun(10, func() { parent, ok = o.parentOf(child) })
+	if allocs != 0 || !ok || parent != owner {
+		t.Fatalf("parent=%v/%t allocations=%v", parent, ok, allocs)
+	}
 }
 
 func TestOrchestrator_ChildrenByParent(t *testing.T) {

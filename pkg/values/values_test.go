@@ -1046,7 +1046,9 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input", Namespace: "apps"}
 	raw := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": "visible"}}
 	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "owner", Namespace: "apps"}
-	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{{Owner: owner}}}}})
+	st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+	proof := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID, Authored: id, Path: "input.yaml", File: "input.yaml"}
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{proof}}}})
 	st.AddObject(raw)
 	facts := st.ReferenceFacts(id, nil)
 	if facts.Data != raw || facts.Accepted {
@@ -1054,6 +1056,12 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	}
 	if NewStoreProvider(st, true, nil).Data(id) != raw {
 		t.Fatal("data-only provider rejected visible prediction")
+	}
+	var previous store.ReadSet
+	previous.Init(st, owner, nil)
+	defer previous.Retire()
+	if NewStoreProvider(&previous, true, nil).Data(id) != raw {
+		t.Fatal("captured provider rejected visible prediction")
 	}
 	first, second := facts.Productions, facts.Productions
 	assert.Diff(t, second, first)
@@ -1064,4 +1072,29 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 		break
 	}
 	assert.Equal(t, visits, 1)
+
+	external := &manifest.RawObject{
+		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1", Name: "external", Namespace: id.Namespace,
+		Spec: map[string]any{"target": map[string]any{"name": id.Name}, "data": []any{map[string]any{"secretKey": "VALUE"}}},
+	}
+	_, next := st.GetEmission(owner)
+	defer next.Finish()
+	next.Children, next.Complete = []store.Child{{Obj: external}}, true
+	st.RecordEmitted(owner, &next)
+	if previous.Valid() {
+		t.Fatal("replacement retained captured file authority")
+	}
+	var current store.ReadSet
+	current.Init(st, owner, nil)
+	defer current.Retire()
+	want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
+	for _, reader := range []dataReader{st, &current} {
+		assert.Diff(t, reader.ReferenceFacts(id, nil), store.ReferenceFacts{Productions: want})
+		assert.Diff(t, NewStoreProvider(reader, true, nil).Data(id), &manifest.Secret{
+			Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": manifest.ValuePlaceholder("VALUE")},
+		})
+		if NewStoreProvider(reader, false, nil).Data(id) != nil {
+			t.Fatal("provider supplied declared placeholders with wiping disabled")
+		}
+	}
 }

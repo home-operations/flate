@@ -174,7 +174,7 @@ func TestDerivedCapture_UnselectedContributorReplacement(t *testing.T) {
 			s.RecordEmitted(a, &Emission{Reads: &previous, Children: []Child{child}, Complete: true})
 			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true})
 			assert.Equal(t, content.GetObject(child.Obj.Named()), child.Obj)
-			_ = contributors.Productions(child.Obj.Named(), nil)
+			assert.Diff(t, contributors.Productions(child.Obj.Named(), nil), []manifest.Production{{Owner: a}, {Owner: z}})
 			before := headsForTest(s, child.Obj.Named())
 			if invalidated {
 				s.AddObject(emissionChild("input", "new").Obj)
@@ -622,6 +622,7 @@ func TestProductions_ProjectedRawFamily(t *testing.T) {
 				want = []manifest.Production{selected}
 			}
 			assert.Diff(t, got, want)
+			assert.Diff(t, st.Productions(target, index), want)
 		})
 	}
 }

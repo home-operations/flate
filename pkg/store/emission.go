@@ -229,134 +229,192 @@ type ReferenceFacts struct {
 	Productions []manifest.Production
 }
 
-// ReferenceFacts selects visible data and source-qualified production evidence.
-func (s *Store) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
-	sh := s.shardFor(id)
-	sh.mu.RLock()
-	var view capture
-	sh.captureLocked(id, sh.cells[id], &view)
-	sh.mu.RUnlock()
-	data, _ := view.child.Obj.(manifest.Data)
-	return ReferenceFacts{Data: data, Accepted: view.accepted || view.owner != nil, Productions: s.Productions(id, index)}
-}
-
 // Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
 func (s *Store) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) []manifest.Production {
-	return s.productions(nil, id, index, false)
+	var result productionResult
+	s.visitProductions(id, index, &result)
+	return result.out
 }
 
-func (s *Store) productions(reads *ReadSet, id manifest.NamedResource, index *manifest.DiscoveryIndex, captureTarget bool) []manifest.Production {
-	if reads != nil && captureTarget {
+// ReferenceFacts selects visible data and source-qualified production evidence.
+func (s *Store) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
+	result := productionResult{facts: true}
+	s.visitProductions(id, index, &result)
+	return ReferenceFacts{Data: result.data, Accepted: result.accepted, Productions: result.out}
+}
+
+// RenderedParent returns the smallest eligible accepted or discovered rendered owner.
+// A nil index uses the installed discovery index.
+func (s *Store) RenderedParent(id manifest.NamedResource, index *manifest.DiscoveryIndex) (manifest.NamedResource, bool) {
+	result := productionResult{id: id, parentOnly: true}
+	s.visitProductions(id, index, &result)
+	return result.parent, result.parent != (manifest.NamedResource{})
+}
+
+type productionResult struct {
+	data          manifest.Data
+	out           []manifest.Production
+	id            manifest.NamedResource
+	parent        manifest.NamedResource
+	matched       int
+	facts         bool
+	accepted      bool
+	owned         bool
+	parentOnly    bool
+	reads         *ReadSet
+	captureTarget bool
+}
+
+func (r *productionResult) reset(evidence []manifest.Production) {
+	r.out, r.matched, r.owned, r.parent = evidence, 0, false, manifest.NamedResource{}
+}
+
+func (r *productionResult) add(p *manifest.Production) {
+	if r.parentOnly {
+		if p.Owner != (manifest.NamedResource{}) && p.Owner != r.id && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
+			(r.parent == (manifest.NamedResource{}) || p.Owner.Compare(r.parent) < 0) {
+			r.parent = p.Owner
+		}
+		return
+	}
+	if !r.owned && r.matched < len(r.out) && (&r.out[r.matched] == p || r.out[r.matched] == *p) {
+		r.matched++
+		return
+	}
+	if !r.owned {
+		if slices.Contains(r.out[:r.matched], *p) {
+			return
+		}
+		r.out = slices.Clone(r.out[:r.matched])
+		r.owned = true
+	}
+	r.out = append(r.out, *p)
+}
+
+// result MUST be fresh for each traversal.
+func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.DiscoveryIndex, result *productionResult) {
+	reads := result.reads
+	if reads != nil && result.captureTarget {
 		reads.GetObject(id)
 	}
 	if index == nil {
 		index = s.index.Load()
 	}
-	record, _ := index.Lookup(id)
-	provisional := bootstrapSeed(record)
-	evidence := record.Productions
-	if id.Namespace != "" {
-		bare := id
-		bare.Namespace = ""
-		raw, _ := index.Lookup(bare)
-		if reads != nil && captureTarget && len(raw.Productions) != 0 {
-			reads.GetObject(bare)
-		}
-		for _, p := range raw.Productions {
-			if p.Path == "" || p.Authored.Namespace != "" {
-				continue
-			}
-			if len(evidence) == 0 || slices.ContainsFunc(evidence, func(e manifest.Production) bool {
-				return e.Source == p.Source && (e.Path == "" || e.File == p.File && e.Authored == p.Authored) && sameProductionContext(s.coverage, e, p)
-			}) {
-				evidence = append(slices.Clone(evidence), p)
+	var evidence, bare []manifest.Production
+	provisional := false
+	if index != nil {
+		evidence = index.Records[id].Productions
+		provisional = bootstrapSeed(evidence)
+		if id.Namespace != "" {
+			key := id
+			key.Namespace = ""
+			bare = index.Records[key].Productions
+			if reads != nil && result.captureTarget && len(bare) != 0 {
+				reads.GetObject(key)
 			}
 		}
 	}
-	out := evidence
-	owned := false
-	add := func(p manifest.Production) {
-		if !slices.Contains(out, p) {
-			if !owned {
-				out = slices.Clone(out)
-				owned = true
-			}
-			out = append(out, p)
-		}
-	}
+	result.out = evidence
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	members := sh.members[id]
-	if len(evidence) == 0 && len(members) == 0 {
-		sh.mu.RUnlock()
-		return nil
-	}
-	if !sh.cells[id].hidden {
-		if sh.cells[id].static != nil && sh.cells[id].retired && provisional {
-			evidence, out = nil, nil
-		}
-		for i, p := range evidence {
-			if c := s.coverage[p.Owner]; c != nil {
-				accepted := c.slot.current.Load()
-				if reads != nil {
-					reads.sample(c.slot, accepted)
-				}
-				if c.slot.hidden.Load() || accepted.shadows(c.binding) {
-					if !owned {
-						out = slices.Clone(evidence[:i])
-						owned = true
-					}
-					continue
-				}
-			}
-			if owned {
-				add(p)
-			}
-		}
-		for _, m := range members {
+	visible := func(p *manifest.Production) {
+		if c := s.coverage[p.Owner]; c != nil {
+			accepted := c.slot.current.Load()
 			if reads != nil {
-				reads.sample(m.slot, m.slot.current.Load())
+				reads.sample(c.slot, accepted)
 			}
-			if !m.slot.visible.Load() {
-				continue
+			if c.slot.hidden.Load() || accepted.shadows(c.binding) {
+				return
 			}
+		}
+		result.add(p)
+	}
+	for i := range evidence {
+		visible(&evidence[i])
+	}
+	sameFamily := func(a, b manifest.Production) bool {
+		return a.Source == b.Source && (a.Path == "" || a.File == b.File && a.Authored == b.Authored)
+	}
+	var first *manifest.Production
+	for i, p := range bare {
+		if p.Path == "" || p.Authored.Namespace != "" {
+			continue
+		}
+		matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
+			return sameFamily(e, p) && sameProductionContext(s.coverage, e, p)
+		})
+		if len(evidence) == 0 {
+			matches = first == nil || sameFamily(*first, p) && sameProductionContext(s.coverage, *first, p)
+		}
+		if !matches {
+			matches = slices.ContainsFunc(bare[:i], func(e manifest.Production) bool {
+				return e.Path != "" && e.Authored.Namespace == "" && sameFamily(e, p) && s.coverage[e.Owner] == nil &&
+					(len(evidence) == 0 && sameFamily(*first, e) || slices.ContainsFunc(evidence, func(d manifest.Production) bool {
+						return sameFamily(d, e)
+					}))
+			})
+		}
+		if matches {
+			if first == nil {
+				first = &bare[i]
+			}
+			visible(&bare[i])
+		}
+	}
+	if result.facts {
+		var view capture
+		sh.captureLocked(id, sh.cells[id], &view)
+		result.data, _ = view.child.Obj.(manifest.Data)
+		result.accepted = view.accepted || view.owner != nil
+	}
+	cell := sh.cells[id]
+	if cell.hidden {
+		result.reset(nil)
+	} else {
+		if cell.static != nil && cell.retired && provisional {
+			result.reset(nil)
+		}
+		for _, m := range sh.members[id] {
 			e := m.slot.current.Load()
 			if reads != nil {
 				reads.sample(m.slot, e)
 			}
-			entry := e.entries[m.position]
+			if !m.slot.visible.Load() {
+				continue
+			}
+			entry := &e.entries[m.position]
 			if m.declaration {
-				add(manifest.Production{Owner: m.slot.id, Declaration: entry.child.Obj.Named(), Source: entry.binding.source})
+				p := manifest.Production{Owner: m.slot.id, Declaration: entry.child.Obj.Named(), Source: entry.binding.source}
+				result.add(&p)
 				continue
 			}
 			if !slices.ContainsFunc(entry.child.Productions, func(p manifest.Production) bool { return p.Owner == m.slot.id }) {
-				add(manifest.Production{Owner: m.slot.id, Source: entry.binding.source})
+				p := manifest.Production{Owner: m.slot.id, Source: entry.binding.source}
+				result.add(&p)
 			}
-			for _, p := range entry.child.Productions {
-				add(p)
+			for i := range entry.child.Productions {
+				result.add(&entry.child.Productions[i])
 			}
 		}
-	} else {
-		out = nil
 	}
 	sh.mu.RUnlock()
 	if reads != nil {
 		reads.activateProducers()
 	}
-	if !owned {
-		for i := 1; i < len(out); i++ {
-			if compareProduction(out[i-1], out[i]) >= 0 {
-				out = slices.Clone(out)
-				owned = true
+	if !result.owned {
+		result.out = result.out[:result.matched]
+		for i := 1; i < len(result.out); i++ {
+			if compareProduction(result.out[i-1], result.out[i]) >= 0 {
+				result.out = slices.Clone(result.out)
+				result.owned = true
 				break
 			}
 		}
 	}
-	if owned {
-		slices.SortFunc(out, compareProduction)
-		out = slices.Compact(out)
+	if result.owned {
+		slices.SortFunc(result.out, compareProduction)
+		result.out = slices.Compact(result.out)
 	}
-	return out
 }
 
 func sameProductionContext(coverage map[manifest.NamedResource]*contributor, a, b manifest.Production) bool {
@@ -431,8 +489,8 @@ func (s *Store) contributionBinding(id manifest.NamedResource) sourceBinding {
 }
 
 // Bootstrap promotion alone supplies no independent authority against accepted output.
-func bootstrapSeed(r manifest.DiscoveryRecord) bool {
-	return len(r.Productions) > 0 && !slices.ContainsFunc(r.Productions, func(p manifest.Production) bool {
+func bootstrapSeed(productions []manifest.Production) bool {
+	return len(productions) > 0 && !slices.ContainsFunc(productions, func(p manifest.Production) bool {
 		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) || p.Source != manifest.BootstrapSourceID
 	})
 }
@@ -738,7 +796,7 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 		r, _ := s.index.Load().Lookup(target)
 		sh := s.shardFor(target)
 		cell := sh.cells[target]
-		if bootstrapSeed(r) && cell.static != nil && !cell.rooted && !cell.retired {
+		if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
 			cell.retired = true
 			sh.cells[target] = cell
 			position, _ := region.position(target)
@@ -1116,9 +1174,9 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view 
 		}
 		if chosen != nil {
 			record := chosen.slot.current.Load()
-			child := record.entries[chosen.position].child
+			child := &record.entries[chosen.position].child
 			if view != nil {
-				view.owner, view.record, view.child = chosen.slot, record, child
+				view.owner, view.record, view.child = chosen.slot, record, *child
 			}
 			return child.Obj
 		}
@@ -1293,7 +1351,7 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if !ok {
 		return true
 	}
-	if cell.retired && bootstrapSeed(r) {
+	if cell.retired && bootstrapSeed(r.Productions) {
 		return false
 	}
 	for _, p := range r.Productions {

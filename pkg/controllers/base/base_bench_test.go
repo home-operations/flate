@@ -17,11 +17,11 @@ func BenchmarkDispatchNodeReady(b *testing.B) {
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	c := base.New(st, nil)
-	reconcile := func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil }
+	reconcile := func(struct{}, context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil }
 	b.ReportAllocs()
 	for b.Loop() {
 		execution := controllertest.NewExecution(c, obj.Named())
-		execution.Dispatch(b.Context(), manifest.DrainNone, reconcile)
+		execution.Dispatch(b.Context(), manifest.DrainNone, struct{}{}, reconcile)
 		execution.Close()
 		for range st.Sweep() {
 		}

@@ -194,6 +194,67 @@ func TestDerivedCapture_UnselectedContributorReplacement(t *testing.T) {
 
 func TestCapture_StableSegmentLifetime(t *testing.T) {
 	t.Parallel()
+	t.Run("named collection and readiness", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		target := ownerID("provider-00")
+		for i := range 64 {
+			obj := &manifest.Kustomization{Name: fmt.Sprintf("provider-%02d", i), Namespace: target.Namespace}
+			s.AddObject(obj)
+		}
+		s.UpdateStatus(target, StatusInfo{Status: StatusReady, Reason: "", Message: "initial"})
+		var reads ReadSet
+		reads.Init(s, ownerID("collection-reader"), nil)
+		defer reads.Close()
+		first := reads.GetObject(target)
+		captured := reads.input(target)
+		objectCell := captured.cell(objectFacet)
+		objects := reads.ListObjects(target.Group, target.Kind)
+		if len(objects) != 64 || reads.GetObject(target) != first || reads.input(target) != captured || captured.cell(objectFacet) != objectCell {
+			t.Fatal("collection replaced the named capture or its registration")
+		}
+		_, observed := reads.Snapshot(target, true)
+		if observed.Status != StatusReady || len(observed.Conditions) != 1 {
+			t.Fatalf("readiness after collection: %+v", observed)
+		}
+		conditionCell := captured.cell(conditionFacet)
+		generation := conditionCell.generation.Load()
+		bulkID := ownerID("provider-01")
+		bulk := reads.input(bulkID)
+		_, bulkBefore := reads.Snapshot(bulkID, true)
+		bulkCell := bulk.cell(conditionFacet)
+		for i := range 65 {
+			reads.GetObject(ownerID(fmt.Sprintf("absent-%02d", i)))
+		}
+		occurrences := 0
+		for input := reads.inputs; input != nil; input = input.next {
+			if input.Ref.NamedResource == target {
+				occurrences++
+			}
+		}
+		if occurrences != 1 || reads.input(target) != captured || captured.cell(conditionFacet) != conditionCell || !reads.Valid() {
+			t.Fatal("growth duplicated or moved the captured identity or sparse facet")
+		}
+		if reads.input(bulkID) != bulk || bulk.cell(conditionFacet) != bulkCell {
+			t.Fatal("growth moved the bulk capture's sparse facet")
+		}
+		s.UpdateStatus(bulkID, StatusInfo{Status: StatusReady, Reason: "", Message: "admitted"})
+		if bulkCell.current() {
+			t.Fatal("bulk readiness admission left its consumed absence valid")
+		}
+		_, bulkAgain := reads.Snapshot(bulkID, true)
+		assert.Equal(t, bulkAgain.Status, bulkBefore.Status)
+		assert.Diff(t, bulkAgain.Conditions, bulkBefore.Conditions)
+		s.UpdateStatus(target, StatusInfo{Status: StatusFailed, Reason: "", Message: "replacement"})
+		_, again := reads.Snapshot(target, true)
+		if again.Status != StatusReady || conditionCell.generation.Load() != generation {
+			t.Fatal("repeated readiness lost its first stamp or invalidation")
+		}
+		assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.id})
+		if reads.Valid() {
+			t.Fatal("readiness replacement did not invalidate the captured input")
+		}
+	})
 	s := New()
 	var reads ReadSet
 	reads.Init(s, ownerID("reader"), nil)
@@ -224,8 +285,8 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 	var successor ReadSet
 	successor.Init(s, ownerID("successor"), nil)
 	successor.GetObject(target)
-	old := reads.input(target).cells[objectFacet-1].head
-	current := successor.input(target).cells[objectFacet-1].head
+	old := reads.input(target).object.head
+	current := successor.input(target).object.head
 	if old != &s.shardFor(target).absence || current != s.shardFor(target).cells[target].links {
 		t.Fatal("successor did not capture the admitted authority")
 	}
@@ -349,6 +410,36 @@ func TestReadRegistration_ActivationUnderReadLock(t *testing.T) {
 
 func TestReadRegistration_RepeatedFacetPreservesFirstStamp(t *testing.T) {
 	t.Parallel()
+	for _, conditions := range []bool{false, true} {
+		t.Run(fmt.Sprintf("snapshot/conditions=%t", conditions), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			obj := &manifest.Kustomization{Name: "input", Namespace: "apps"}
+			s.AddObject(obj)
+			s.UpdateStatus(obj.Named(), StatusInfo{Status: StatusPending, Reason: "", Message: "waiting"})
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			captured, first := reads.Snapshot(obj.Named(), conditions)
+			assert.Equal(t, captured, manifest.BaseManifest(obj))
+			assert.Equal(t, first.Statusful, true)
+			status, exists := reads.GetStatus(obj.Named())
+			assert.Equal(t, exists, true)
+			assert.Equal(t, status, first.StatusInfo)
+			s.UpdateStatus(obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: "ready"})
+			captured, again := reads.Snapshot(obj.Named(), conditions)
+			assert.Equal(t, captured, manifest.BaseManifest(obj))
+			assert.Equal(t, again.Statusful, first.Statusful)
+			assert.Equal(t, again.StatusInfo, first.StatusInfo)
+			assert.Diff(t, again.Conditions, first.Conditions)
+			status, exists = reads.GetStatus(obj.Named())
+			assert.Equal(t, exists, true)
+			assert.Equal(t, status, first.StatusInfo)
+			if reads.Valid() {
+				t.Fatal("readiness replacement left the captured snapshot valid")
+			}
+		})
+	}
 	s := New()
 	var reads ReadSet
 	id := ownerID("input")
@@ -819,7 +910,7 @@ func TestRequire_ReleasesPredicates(t *testing.T) {
 		if retirement {
 			reads.Retire()
 			for input := reads.inputs; input != nil; input = input.next {
-				if input.gates != nil {
+				if details := input.details.Load(); details != nil && details.gates != nil {
 					t.Fatal("retirement retained overflow predicates")
 				}
 			}
@@ -827,7 +918,7 @@ func TestRequire_ReleasesPredicates(t *testing.T) {
 	}
 	reads.Init(s, ownerID("reader"), inputs)
 	assert.Equal(t, len(slices.Collect(reads.Gates())), 0)
-	if reads.local.gates != nil || inputs[0].gates != nil {
+	if reads.localDetails.gates != nil || inputs[0].details.Load() != nil {
 		t.Fatal("reset retained overflow predicates")
 	}
 }

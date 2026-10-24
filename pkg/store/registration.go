@@ -56,7 +56,7 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
 	head.generation.Store(generation)
 	for _, chain := range [2]*registration{first, head.watch} {
 		for cell := chain; cell != nil; cell = cell.next.Load() {
-			if cell.absent.Ref.NamedResource == id && cell == &cell.absent.cells[kind-1] && cell.generation.Load() == 0 {
+			if cell.absent.Ref.NamedResource == id && cell == cell.absent.cell(kind) && cell.generation.Load() == 0 {
 				cell.generation.Store(generation)
 				sh.queue(head)
 			}
@@ -125,7 +125,10 @@ func (e *Emission) publication() uint64 {
 }
 
 func (r *ReadSet) activate(input *Input, kind facet, generation uint64) {
-	cell := &input.cells[kind-1]
+	if kind != objectFacet {
+		r.details(input)
+	}
+	cell := input.cell(kind)
 	cell.generation.Store(generation)
 	cell.owner = r
 	key := headKey{input.Ref.NamedResource, kind}
@@ -166,26 +169,33 @@ func (c *registration) link() {
 	}
 }
 
+func (c *registration) current() bool {
+	if c == nil || c.head == nil {
+		return true
+	}
+	if c.absent != nil {
+		return c.generation.Load() == 0
+	}
+	return c.head.generation.Load() == c.generation.Load()
+}
+
 func (input *Input) current() bool {
-	for i := range input.cells {
-		cell := &input.cells[i]
-		if cell.head == nil {
-			continue
-		}
-		if cell.absent != nil {
-			if cell.generation.Load() != 0 {
+	if !input.object.current() {
+		return false
+	}
+	if details := input.details.Load(); details != nil {
+		for i := range details.cells {
+			if !details.cells[i].current() {
 				return false
 			}
-		} else if cell.head.generation.Load() != cell.generation.Load() {
-			return false
 		}
 	}
 	return true
 }
 
 func (input *Input) productionCurrent() bool {
-	cell := &input.cells[producerFacet-1]
-	return cell.head == nil || cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
+	cell := input.cell(producerFacet)
+	return cell == nil || cell.head == nil || cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
 }
 
 // Valid reports whether every consumed authority still has its original stamp.
@@ -211,10 +221,12 @@ func (r *ReadSet) Retire() {
 		return
 	}
 	for input := r.inputs; input != nil; input = input.next {
-		input.gates = nil
-		for i := range input.cells {
-			cell := &input.cells[i]
-			if cell.head == nil {
+		if details := input.details.Load(); details != nil {
+			details.gates = nil
+		}
+		for kind := objectFacet; kind <= bucketFacet; kind++ {
+			cell := input.cell(kind)
+			if cell == nil || cell.head == nil {
 				continue
 			}
 			sh := cell.head.shard

@@ -396,7 +396,7 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 						if id == consumer {
 							execution := controllertest.NewExecution(base.New(s, tasks), id)
-							execution.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+							execution.Dispatch(ctx, level, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 								if calls.Add(1) == 1 {
 									close(consumerStarted)
 									return execution.Require(ctx, []manifest.DependencyRef{{NamedResource: k}}, level)
@@ -764,7 +764,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 			return result
 		}
 		run := controllertest.NewExecution(o.ksc.Controller, id)
-		run.Dispatch(ctx, level, func(_ context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+		run.Dispatch(ctx, level, run, func(run *base.Execution, _ context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 			if level == manifest.DrainNone {
 				return &depwait.ErrBlocked{Deps: []manifest.NamedResource{consumer}}
 			}

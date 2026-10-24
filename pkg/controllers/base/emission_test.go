@@ -399,35 +399,48 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 
 func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 	t.Parallel()
-	s := store.New()
-	c := New(s, nil)
-	obj := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
-	s.AddObject(obj)
-	first := newExecution(c, obj.Named())
-	first.Reads.GetObject(obj.Named())
-	warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
-	first.Reads.AddWarning(obj.Named(), warning)
-	_, next := first.Reads.GetEmission(obj.Named())
-	next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true
-	first.Emit(obj.Named(), &next)
-	next.Finish()
-	first.Reads.Accept()
-	defer first.Close()
-	changed := obj.Clone()
-	changed.Labels = map[string]string{"kustomize.toolkit.fluxcd.io/name": "parent"}
-	s.AddObject(changed)
-	if first.Valid() {
-		t.Fatal("metadata publication did not invalidate the old assessment")
+	for _, invalidate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalidate=%t", invalidate), func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			c := New(s, task.NewBounded(2))
+			obj := &manifest.Kustomization{Name: "reader", Namespace: "apps"}
+			child := &manifest.ConfigMap{Name: "output", Namespace: "apps"}
+			s.AddObject(obj)
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "reader.yaml"}}}
+			c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, s), Index: index})
+			first := newExecution(c, obj.Named())
+			first.Reads.GetObject(obj.Named())
+			warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
+			first.Reads.AddWarning(obj.Named(), warning)
+			_, next := first.Reads.GetEmission(obj.Named())
+			next.Children = []store.Child{{Obj: child}}
+			next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true
+			assert.NoError(t, first.Emit(obj.Named(), &next))
+			next.Finish()
+			first.Reads.Accept()
+			defer first.Close()
+			if invalidate {
+				changed := obj.Clone()
+				changed.Labels = map[string]string{"kustomize.toolkit.fluxcd.io/name": "parent"}
+				s.AddObject(changed)
+			}
+			assert.Equal(t, first.Valid(), !invalidate)
+			second := newExecution(c, obj.Named())
+			if _, handled, err := second.FingerprintDedup(obj.Named(), "equal projection"); !handled || err != nil {
+				t.Fatalf("projection replay: handled=%t error=%v", handled, err)
+			}
+			second.Reads.Accept()
+			defer second.Close()
+			warning.Count = 1
+			assert.Diff(t, s.Warnings(), []manifest.Warning{warning})
+			assert.Equal(t, second.Valid(), true)
+			s.SetIncluded(child.Named(), false)
+			if !second.Valid() {
+				t.Fatal("replayed output became a consumed input of its own producer")
+			}
+		})
 	}
-	second := newExecution(c, obj.Named())
-	if _, handled, err := second.FingerprintDedup(obj.Named(), "equal projection"); !handled || err != nil {
-		t.Fatalf("projection replay: handled=%t error=%v", handled, err)
-	}
-	second.Reads.Accept()
-	defer second.Close()
-	warning.Count = 1
-	assert.Diff(t, s.Warnings(), []manifest.Warning{warning})
-	assert.Equal(t, second.Valid(), true)
 }
 
 func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {

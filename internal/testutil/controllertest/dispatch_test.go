@@ -58,7 +58,7 @@ func TestReconcile_TaskFailures(t *testing.T) {
 					execution := NewExecution(base.New(store.New(), tasks), testutil.HelmReleaseID("media", "sonarr"))
 					object := &manifest.HelmRelease{Name: "sonarr", Namespace: "media"}
 					execution.Store.AddObject(object)
-					execution.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+					execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 						if len(tc.dependencies) != 0 {
 							return &depwait.ErrBlocked{Deps: tc.dependencies}
 						}
@@ -111,7 +111,7 @@ func TestDispatchToFixpoint_SettlesRetainedAssessment(t *testing.T) {
 		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 			dispatches++
 			execution := NewExecution(base.New(st, tasks), id)
-			execution.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
+			execution.Dispatch(ctx, level, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
 				return execution.Require(ctx, []manifest.DependencyRef{dependency}, level)
 			})
 			return execution

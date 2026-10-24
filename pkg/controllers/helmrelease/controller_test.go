@@ -197,18 +197,17 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							st.UpdateStatus(id, store.StatusInfo{Status: tc.status, Reason: "", Message: "source finished"})
 							return schedule.Result{}
 						}
-						execution := c.newExecution(id)
-						execution.run.Dispatch(ctx, level, func(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
-
-							hr, _, materializeErr := execution.materializeHelmChartSource(id, hr.Clone())
+						ex := c.newExecution(id)
+						ex.run.Dispatch(ctx, level, ex, func(ex *execution, ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+							hr, _, materializeErr := ex.materializeHelmChartSource(id, hr.Clone())
 							assert.NoError(t, materializeErr)
-							_, err := execution.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
+							_, err := ex.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
 							if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 								parked <- id
 							}
 							return err
 						})
-						return schedule.Result{Assessment: &execution.run}
+						return schedule.Result{Assessment: &ex.run}
 					}}
 
 					s := schedule.New(tasks, dispatch)
@@ -1011,7 +1010,7 @@ func TestMaterializeHelmChartSource_RequiresCapturedInput(t *testing.T) {
 				st.AddObject(replacement)
 			}
 			var entered bool
-			run.run.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, hr *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			run.run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, hr *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				entered = true
 				run.materializeHelmChartSource(hr.Named(), hr.Clone())
 				return nil

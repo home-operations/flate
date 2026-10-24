@@ -587,11 +587,11 @@ type Observation struct {
 func (s *Store) Snapshot(id manifest.NamedResource, conditions bool) (manifest.BaseManifest, Observation) {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
-	obj := sh.objectLocked(id)
-	hidden := sh.cells[id].hidden
+	cell := sh.cells[id]
+	obj := sh.captureLocked(id, cell, nil)
 	var observed Observation
 	var record conditionRecord
-	if !hidden {
+	if !cell.hidden {
 		observed.Statusful = obj != nil && manifest.KindOf(obj).Status || obj == nil && id.KindInfo().Status
 		if observed.Statusful || obj == nil || conditions {
 			record = sh.conditions[id]

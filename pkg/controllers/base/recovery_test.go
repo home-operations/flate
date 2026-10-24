@@ -43,7 +43,7 @@ func TestExecution_ReplacesDerivedFailureProvenance(t *testing.T) {
 			}
 			ran := false
 			execution := controllertest.NewExecution(c, id)
-			execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				ran = true
 
 				switch mode {
@@ -136,7 +136,7 @@ func TestDispatchNode_CanonicalRead(t *testing.T) {
 				}
 				called := false
 				execution := controllertest.NewExecution(c, id)
-				execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+				execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 					if stage == "retry" {
 						s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
 						if execution.Reads.Valid() {
@@ -153,7 +153,7 @@ func TestDispatchNode_CanonicalRead(t *testing.T) {
 				if stage == "retry" {
 					execution.Retire()
 					execution = controllertest.NewExecution(c, id)
-					execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 						called = true
 						if obj != fresh {
 							t.Fatal("fresh attempt retained replaced declaration")

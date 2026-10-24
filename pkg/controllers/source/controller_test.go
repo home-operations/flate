@@ -114,38 +114,43 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 
 func TestSource_DeclarationContributorsReuse(t *testing.T) {
 	t.Parallel()
-	f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
-	c, st := newController(t, map[string]src.Fetcher{manifest.KindHelmChart: f})
-	chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
-	first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
-	second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{first, second})
-	publish := func(value string) {
-		c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: true})
+	for _, complete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("complete=%t", complete), func(t *testing.T) {
+			t.Parallel()
+			f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
+			c, st := newController(t, map[string]src.Fetcher{manifest.KindHelmChart: f})
+			chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
+			first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
+			second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
+			st.AddObjects([]manifest.BaseManifest{first, second})
+			publish := func(value string) {
+				c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete})
+			}
+			publish("first")
+			var accepted *base.Execution
+			c.Tasks.Go(t.Context(), "initial", func(ctx context.Context) {
+				accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+			})
+			c.Tasks.BlockTillDone()
+			defer accepted.Close()
+			if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != 1 {
+				t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
+			}
+			c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete})
+			publish("changed")
+			if accepted.Valid() {
+				t.Fatal("producer publication did not invalidate the captured availability assessment")
+			}
+			c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
+				next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+				defer next.Close()
+				if next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != 1 {
+					t.Errorf("successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused", next.Valid(), next.Outcome() == schedule.Blocked, f.calls)
+				}
+			})
+			c.Tasks.BlockTillDone()
+		})
 	}
-	publish("first")
-	var accepted *base.Execution
-	c.Tasks.Go(t.Context(), "initial", func(ctx context.Context) {
-		accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
-	})
-	c.Tasks.BlockTillDone()
-	defer accepted.Close()
-	if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != 1 {
-		t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
-	}
-	c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: true})
-	publish("changed")
-	if accepted.Valid() {
-		t.Fatal("producer publication did not invalidate the captured availability assessment")
-	}
-	c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
-		next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
-		defer next.Close()
-		if next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != 1 {
-			t.Errorf("successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused", next.Valid(), next.Outcome() == schedule.Blocked, f.calls)
-		}
-	})
-	c.Tasks.BlockTillDone()
 }
 
 func TestSource_DeclarationSettlement(t *testing.T) {
@@ -216,7 +221,7 @@ func TestSource_DeclarationProgress(t *testing.T) {
 					return c.ReconcileNode(ctx, id, level)
 				}
 				run := controllertest.NewExecution(c.Controller, id)
-				run.Dispatch(ctx, level, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+				run.Dispatch(ctx, level, run, func(run *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 					if name == "failed producer" {
 						return fmt.Errorf("%w: failed producer", manifest.ErrInput)
 					}

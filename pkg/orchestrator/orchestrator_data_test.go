@@ -211,7 +211,8 @@ func TestSelection_SkippedHasNoConsumedPrerequisites(t *testing.T) {
 	obj.ValuesFrom = []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "unconsumed"}}
 	st.AddObject(obj)
 	e := controllertest.NewExecution(base.New(st, tasks), obj.Named())
-	e.Dispatch[*manifest.HelmRelease](t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	e.Dispatch[*manifest.HelmRelease](t.Context(), manifest.DrainNone, t, func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+		t.Helper()
 		t.Fatal("suspended declaration reconciled")
 		return nil
 	})

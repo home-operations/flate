@@ -179,6 +179,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							b.Fatal(errs[i])
 						}
 						id := sets[i].Named()
+						base.Stamp(sets[i].EmissionPolicy(), artifacts[i].Manifests)
 						_, next := s.GetEmission(id)
 						next.Children, next.Manifests = c.ParseChildren(c.Store.GetObject(id), artifacts[i].Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true

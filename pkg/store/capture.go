@@ -11,39 +11,52 @@ import (
 // ReadSet retains the immutable inputs consumed by one execution.
 // Its storage MUST remain owned by that execution until retirement is swept.
 type ReadSet struct {
-	warnings []manifest.Warning
-	produced []Child
-	invalid  atomic.Bool
-	retired  atomic.Bool
-	store    *Store
-	id       manifest.NamedResource
-	inputs   *Input
-	local    Input
-	spare    []Input
-	capacity int
+	warnings     []manifest.Warning
+	produced     []Child
+	invalid      atomic.Bool
+	retired      atomic.Bool
+	store        *Store
+	id           manifest.NamedResource
+	inputs       *Input
+	local        Input
+	spare        *Input
+	capacity     int
+	localDetails inputDetails
+	spareDetails []inputDetails
+	byID         *[]*Input
 }
 
 // Input co-owns a captured dependency and its authority registrations.
 // Its reference MUST remain immutable until retirement is swept.
 type Input struct {
 	Ref          manifest.DependencyRef
-	gates        *readinessGate
 	next         *Input
-	cells        [5]registration
+	object       registration
 	view         capture
+	details      atomic.Pointer[inputDetails]
 	producer     uint64
 	settled      bool
 	gate         bool
 	materializer bool
 	declaration  bool
 	required     bool
-	productions  []manifest.Production
-	objects      []manifest.BaseManifest
-	artifact     Artifact
-	conditions   []Condition
-	status       StatusInfo
 	hasStatus    bool
 	derived      uint8
+}
+
+type inputDetails struct {
+	cells       [4]registration
+	gates       *readinessGate
+	productions []manifest.Production
+	objects     []manifest.BaseManifest
+	artifact    Artifact
+	conditions  []Condition
+	status      StatusInfo
+}
+
+type inputBlock struct {
+	input   Input
+	details inputDetails
 }
 
 type readinessGate struct {
@@ -64,38 +77,116 @@ type Gate struct {
 func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.invalid.Store(false)
 	r.retired.Store(false)
-	if r.local.derived != 0 {
-		r.local = Input{}
-	}
+	r.local = Input{}
+	r.localDetails = inputDetails{}
+	r.local.details.Store(&r.localDetails)
 	clear(inputs)
-	r.store, r.id, r.spare, r.capacity = s, id, inputs, len(inputs)
-	r.inputs, r.warnings, r.produced = nil, nil, nil
+	r.store, r.id, r.capacity = s, id, len(inputs)
+	r.inputs, r.spare, r.warnings, r.produced = nil, nil, nil, nil
+	r.spareDetails, r.byID = nil, nil
+	for i := range inputs {
+		inputs[i].next, r.spare = r.spare, &inputs[i]
+	}
 }
 
 func (r *ReadSet) input(id manifest.NamedResource) *Input {
-	for input := r.inputs; input != nil; input = input.next {
-		if input.Ref.NamedResource == id {
-			return input
+	index := 0
+	if r.byID != nil {
+		var found bool
+		index, found = slices.BinarySearchFunc(*r.byID, id, func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) })
+		if found {
+			return (*r.byID)[index]
+		}
+	} else {
+		for input := r.inputs; input != nil; input = input.next {
+			if input.Ref.NamedResource == id {
+				return input
+			}
 		}
 	}
+	var input *Input
 	if r.local.derived == 0 {
-		r.local.Ref.NamedResource, r.local.derived, r.local.next = id, 32, r.inputs
-		r.inputs = &r.local
-		return &r.local
+		input = &r.local
+	} else {
+		if r.spare == nil {
+			r.capacity = max(1, 2*r.capacity)
+			block := make([]inputBlock, r.capacity)
+			for i := range block {
+				block[i].input.details.Store(&block[i].details)
+				block[i].input.next, r.spare = r.spare, &block[i].input
+			}
+		}
+		input, r.spare = r.spare, r.spare.next
 	}
-	if len(r.spare) == 0 {
-		r.capacity = max(1, 2*r.capacity)
-		r.spare = make([]Input, r.capacity)
-	}
-	input := &r.spare[0]
-	r.spare = r.spare[1:]
 	input.Ref.NamedResource, input.next, input.derived = id, r.inputs, 32
 	r.inputs = input
+	if r.byID != nil {
+		*r.byID = slices.Insert(*r.byID, index, input)
+	}
 	return input
 }
 
+func (r *ReadSet) details(input *Input) *inputDetails {
+	if details := input.details.Load(); details != nil {
+		return details
+	}
+	if len(r.spareDetails) == 0 {
+		r.spareDetails = make([]inputDetails, max(1, 2*cap(r.spareDetails)))
+	}
+	i := len(r.spareDetails) - 1
+	details := &r.spareDetails[i]
+	r.spareDetails = r.spareDetails[:i]
+	input.details.Store(details)
+	return details
+}
+
+func (input *Input) cell(kind facet) *registration {
+	if kind == objectFacet {
+		return &input.object
+	}
+	if details := input.details.Load(); details != nil {
+		return &details.cells[kind-conditionFacet]
+	}
+	return nil
+}
+
+func (r *ReadSet) reserve(count int) {
+	for spare := r.spare; spare != nil && count > 0; spare = spare.next {
+		count--
+	}
+	remaining, capacity, allocations := count, r.capacity, 0
+	for remaining > 0 {
+		capacity = max(1, 2*capacity)
+		remaining -= capacity
+		allocations++
+	}
+	if allocations <= 1 {
+		return
+	}
+	inputs := make([]Input, count)
+	for i := range inputs {
+		inputs[i].next, r.spare = r.spare, &inputs[i]
+	}
+	if r.byID == nil && allocations > 2 {
+		length := 0
+		for input := r.inputs; input != nil; input = input.next {
+			length++
+		}
+		index := make([]*Input, 0, length+count)
+		for input := r.inputs; input != nil; input = input.next {
+			index = append(index, input)
+		}
+		slices.SortStableFunc(index, func(a, b *Input) int { return a.Ref.Compare(b.Ref.NamedResource) })
+		index = slices.CompactFunc(index, func(a, b *Input) bool { return a.Ref.NamedResource == b.Ref.NamedResource })
+		r.byID = &index
+	}
+}
+
 func (r *ReadSet) observe(input *Input, kind facet, generation uint64) {
-	cell := &input.cells[kind-1]
+	if kind != objectFacet {
+		r.details(input)
+	}
+	cell := input.cell(kind)
 	if cell.head != nil {
 		if kind != producerFacet && cell.generation.Load() != generation {
 			r.invalid.Store(true)
@@ -120,7 +211,7 @@ func (r *ReadSet) sample(slot *producerSlot, record *Emission) {
 
 func (r *ReadSet) activateProducers() {
 	for input := r.inputs; input != nil; input = input.next {
-		if input.derived&8 != 0 && input.cells[producerFacet-1].head == nil {
+		if input.derived&8 != 0 && (input.cell(producerFacet) == nil || input.cell(producerFacet).head == nil) {
 			r.observe(input, producerFacet, 0)
 		}
 	}
@@ -144,6 +235,14 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	if input.derived&32 == 0 {
 		input.next, r.inputs = r.inputs, input
 		input.derived |= 32
+		if r.byID != nil {
+			index, found := slices.BinarySearchFunc(*r.byID, input.Ref.NamedResource, func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) })
+			if found {
+				(*r.byID)[index] = input
+			} else {
+				*r.byID = slices.Insert(*r.byID, index, input)
+			}
+		}
 	}
 	id := input.Ref.NamedResource
 	if input.derived&1 == 0 {
@@ -162,7 +261,7 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	var view capture
 	cell, present := sh.cells[id]
 	sh.captureLocked(id, cell, &view)
-	registration := &input.cells[objectFacet-1]
+	registration := &input.object
 	registration.generation.Store(view.generation)
 	registration.owner = r
 	if !present {
@@ -211,28 +310,29 @@ func (r *ReadSet) Get[T manifest.BaseManifest](id manifest.NamedResource) (T, bo
 
 // Snapshot captures the declaration and requested readiness facts.
 func (r *ReadSet) Snapshot(id manifest.NamedResource, conditions bool) (manifest.BaseManifest, Observation) {
-	obj := r.GetObject(id)
+	input := r.input(id)
+	obj := r.Capture(input)
 	var observed Observation
 	observed.Statusful = obj != nil && manifest.KindOf(obj).Status || obj == nil && id.KindInfo().Status
 	if observed.Statusful || obj == nil || conditions {
-		input := r.input(id)
+		details := r.details(input)
 		if conditions && input.derived&2 == 0 {
 			sh := r.store.shardFor(id)
 			sh.mu.RLock()
 			record := sh.conditions[id]
 			generation := record.stamp().generation
 			if !sh.cells[id].hidden {
-				input.conditions = slices.Clone(record.conditions)
-				input.status, input.hasStatus = record.statusInfo()
+				details.conditions = slices.Clone(record.conditions)
+				details.status, input.hasStatus = record.statusInfo()
 			}
 			sh.mu.RUnlock()
-			record.project(input.conditions)
+			record.project(details.conditions)
 			input.derived |= 2 | 16
 			r.observe(input, conditionFacet, generation)
 		}
-		observed.StatusInfo, _ = r.GetStatus(id)
+		observed.StatusInfo, _ = r.status(input)
 		if conditions {
-			observed.Conditions = input.conditions
+			observed.Conditions = details.conditions
 		}
 	}
 	return obj, observed
@@ -240,43 +340,49 @@ func (r *ReadSet) Snapshot(id manifest.NamedResource, conditions bool) (manifest
 
 // GetStatus captures the readiness condition used by an assessment.
 func (r *ReadSet) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
-	input := r.input(id)
+	return r.status(r.input(id))
+}
+
+func (r *ReadSet) status(input *Input) (StatusInfo, bool) {
+	details := r.details(input)
 	if input.derived&16 == 0 {
-		r.GetObject(id)
+		r.Capture(input)
+		id := input.Ref.NamedResource
 		sh := r.store.shardFor(id)
 		sh.mu.RLock()
 		record := sh.conditions[id]
 		generation := record.stamp().generation
 		if !sh.cells[id].hidden {
-			input.status, input.hasStatus = record.statusInfo()
+			details.status, input.hasStatus = record.statusInfo()
 		}
 		sh.mu.RUnlock()
 		input.derived |= 16
 		r.observe(input, conditionFacet, generation)
 	}
-	return input.status, input.hasStatus
+	return details.status, input.hasStatus
 }
 
 // GetArtifact captures fetched content or accepted output for a dependency.
 func (r *ReadSet) GetArtifact(id manifest.NamedResource) Artifact {
 	input := r.input(id)
+	details := r.details(input)
 	if input.derived&4 != 0 {
-		return input.artifact
+		return details.artifact
 	}
 	obj := r.GetObject(id)
 	sh := r.store.shardFor(id)
 	sh.mu.RLock()
 	record := sh.artifacts[id]
 	if !sh.cells[id].hidden {
-		input.artifact = record.value
+		details.artifact = record.value
 	}
 	sh.mu.RUnlock()
 	input.derived |= 4
 	r.observe(input, artifactFacet, record.generation)
-	if e, ok := input.artifact.(*Emission); ok && !emissionCurrent(e, Child{Obj: obj, Doc: input.view.child.Doc}) {
-		input.artifact = nil
+	if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, Child{Obj: obj, Doc: input.view.child.Doc}) {
+		details.artifact = nil
 	}
-	return input.artifact
+	return details.artifact
 }
 
 // Productions captures all contributors and discovery evidence for a named input.
@@ -287,15 +393,16 @@ func (r *ReadSet) Productions(id manifest.NamedResource, index *manifest.Discove
 }
 
 func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []manifest.Production {
-	if input.productions == nil {
+	details := r.details(input)
+	if details.productions == nil {
 		result := productionResult{reads: r, captureTarget: true}
 		r.store.visitProductions(input.Ref.NamedResource, index, &result)
-		input.productions = result.out
-		if input.productions == nil {
-			input.productions = []manifest.Production{}
+		details.productions = result.out
+		if details.productions == nil {
+			details.productions = []manifest.Production{}
 		}
 	}
-	return input.productions
+	return details.productions
 }
 
 // ReferenceFacts captures visible data and its accepted source-qualified authority.
@@ -305,11 +412,16 @@ func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.Disc
 	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: r.Productions(id, index)}
 }
 
-// UnsettledProducers captures declaration contributors that can still supply settled bytes.
+// UnsettledProducers captures contributors needed to supply an unpublished declaration.
 // Availability MUST NOT become a content projection for artifact reuse.
 func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.NamedResource {
+	input := r.input(id)
+	productions := r.productions(input, nil)
+	if r.store.declaration(id, input.view) != nil {
+		return nil
+	}
 	var pending []manifest.NamedResource
-	for _, production := range r.productions(r.input(id), nil) {
+	for _, production := range productions {
 		owner := production.Owner
 		if owner != (manifest.NamedResource{}) && owner != id && !r.input(owner).settled && !slices.Contains(pending, owner) {
 			pending = append(pending, owner)
@@ -322,8 +434,9 @@ func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.Named
 func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 	key := manifest.NamedResource{Group: group, Kind: kind}
 	input := r.input(key)
+	details := r.details(input)
 	if input.derived&128 != 0 {
-		return input.objects
+		return details.objects
 	}
 	sh := r.store.shardFor(key)
 	sh.mu.RLock()
@@ -336,13 +449,20 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 	sh.mu.RUnlock()
 	r.observe(input, bucketFacet, generation)
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	missing := len(ids)
+	for captured := r.inputs; captured != nil; captured = captured.next {
+		if _, found := slices.BinarySearchFunc(ids, captured.Ref.NamedResource, manifest.NamedResource.Compare); found {
+			missing--
+		}
+	}
+	r.reserve(max(0, missing))
 	out := make([]manifest.BaseManifest, 0, len(ids))
 	for _, id := range ids {
 		if obj := r.GetObject(id); obj != nil {
 			out = append(out, obj)
 		}
 	}
-	input.objects, input.derived = out, input.derived|128
+	details.objects, input.derived = out, input.derived|128
 	return out
 }
 
@@ -376,7 +496,7 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	if sameReadinessGate(input.Ref, ref) && input.materializer == materializer {
 		return
 	}
-	for gate := &input.gates; ; gate = &(*gate).next {
+	for gate := &r.details(input).gates; ; gate = &(*gate).next {
 		if *gate == nil {
 			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource, materializer: materializer}
 			return
@@ -397,7 +517,11 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 			if !yield(Gate{DependencyRef: input.Ref, Materializer: input.materializer}) {
 				return
 			}
-			for gate := input.gates; gate != nil; gate = gate.next {
+			details := input.details.Load()
+			if details == nil {
+				continue
+			}
+			for gate := details.gates; gate != nil; gate = gate.next {
 				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
 					return
 				}
@@ -437,7 +561,7 @@ func (r *ReadSet) Accept() {
 		return
 	}
 	input := r.input(r.id)
-	if head := input.cells[objectFacet-1].head; head != nil && input.cells[objectFacet-1].absent == nil {
+	if head := input.object.head; head != nil && input.object.absent == nil {
 		head.assessment.Store(r)
 	}
 }
@@ -445,7 +569,7 @@ func (r *ReadSet) Accept() {
 // ReplacesInvalid reports whether this attempt supersedes a stale accepted assessment.
 func (r *ReadSet) ReplacesInvalid() bool {
 	r.GetObject(r.id)
-	head := r.input(r.id).cells[objectFacet-1].head
+	head := r.input(r.id).object.head
 	if head == nil {
 		return false
 	}
@@ -544,6 +668,7 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 	}
 	for input := previous.inputs; input != nil; input = input.next {
 		id := input.Ref.NamedResource
+		details := input.details.Load()
 		if input.derived&1 != 0 && !semanticEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
 			return false
 		}
@@ -554,22 +679,22 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 			var observed Observation
 			_, observed = r.Snapshot(id, true)
 			conditions := observed.Conditions
-			if !slices.EqualFunc(conditions, input.conditions, conditionEqual) {
+			if !slices.EqualFunc(conditions, details.conditions, conditionEqual) {
 				return false
 			}
 		} else if input.derived&16 != 0 {
 			status, ok := r.GetStatus(id)
-			if ok != input.hasStatus || status.Status != input.status.Status || status.Reason != input.status.Reason || !sameMessage(status.Message, status.applyingObjects, input.status.Message, input.status.applyingObjects) || !slices.Equal(status.BlockedBy(), input.status.BlockedBy()) {
+			if ok != input.hasStatus || status.Status != details.status.Status || status.Reason != details.status.Reason || !sameMessage(status.Message, status.applyingObjects, details.status.Message, details.status.applyingObjects) || !slices.Equal(status.BlockedBy(), details.status.BlockedBy()) {
 				return false
 			}
 		}
-		if input.derived&4 != 0 && !sameArtifact(input.artifact, r.GetArtifact(id)) {
+		if input.derived&4 != 0 && !sameArtifact(details.artifact, r.GetArtifact(id)) {
 			return false
 		}
-		if input.derived&64 != 0 && !slices.Equal(input.productions, r.Productions(id, nil)) {
+		if input.derived&64 != 0 && !slices.Equal(details.productions, r.Productions(id, nil)) {
 			return false
 		}
-		if input.derived&128 != 0 && !slices.EqualFunc(input.objects, r.ListObjects(id.Group, id.Kind), objectEqual) {
+		if input.derived&128 != 0 && !slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), objectEqual) {
 			return false
 		}
 	}

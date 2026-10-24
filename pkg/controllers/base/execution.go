@@ -164,6 +164,9 @@ func (e *Execution) finish(err error) {
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 		e.Blocked = blocked.Deps
 		e.kind = schedule.Blocked
+	} else {
+		e.pending = nil
+		e.resume = nil
 	}
 	if !e.Reads.Valid() {
 		return
@@ -208,7 +211,7 @@ func (e *Execution) finish(err error) {
 }
 
 // Dispatch runs a captured declaration through the common acceptance path.
-func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level manifest.DrainLevel, reconcile func(context.Context, T, manifest.DrainLevel) error) {
+func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context, level manifest.DrainLevel, state S, reconcile func(S, context.Context, T, manifest.DrainLevel) error) {
 	id := e.Reads.ID()
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -258,7 +261,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		if err := e.requireDeclaration(ctx, level); err != nil {
 			return err
 		}
-		return reconcile(ctx, obj, level)
+		return reconcile(state, ctx, obj, level)
 	}
 	err := run(ctx, level)
 	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
@@ -348,6 +351,8 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 		e.Reads.CarryWarnings(output)
 	}
 	if !bound && current.Complete && current.Fingerprint == fp && current.OutputReads.Valid() && slices.Equal(output.Unreadable, e.Unreadable) {
+		attempt.Children = output.Children
+		e.Reads.Bind(&attempt)
 		for _, child := range output.Children {
 			e.KeepEmitted(id, child.Obj, &e.Reads)
 		}
@@ -362,9 +367,6 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	for _, child := range output.Children {
-		e.KeepEmitted(id, child.Obj, &e.Reads)
-	}
 	return fp, true, e.Emit(id, &attempt)
 }
 

@@ -97,10 +97,10 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 
 // ReconcileNode returns the captured assessment of a source acquisition.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-	execution := &execution{Controller: c}
-	execution.run.Init(c.Controller, id)
-	execution.run.Dispatch(ctx, level, execution.reconcile)
-	return &execution.run
+	ex := &execution{Controller: c}
+	ex.run.Init(c.Controller, id)
+	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
+	return &ex.run
 }
 
 func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {

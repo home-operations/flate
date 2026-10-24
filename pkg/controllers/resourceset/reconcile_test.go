@@ -97,7 +97,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				runState = c.newExecution(id)
 				defer runState.run.Close()
 				if boundary == "capture" {
-					runState.run.Dispatch(t.Context(), manifest.DrainNone, runState.reconcile)
+					runState.run.Dispatch(t.Context(), manifest.DrainNone, runState, (*execution).reconcile)
 					return
 				}
 				_, attempt := runState.run.Reads.GetEmission(id)

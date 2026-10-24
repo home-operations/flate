@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"weak"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -101,12 +103,39 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 	}
 	second := controllertest.NewExecution(c, obj.Named())
 	defer second.Close()
-	second.Dispatch(t.Context(), manifest.DrainNone, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
-		return second.Require(ctx, []manifest.DependencyRef{{NamedResource: gate}}, level)
-	})
+	type state struct {
+		run *base.Execution
+		obj *manifest.Kustomization
+	}
+	calls := 0
+	retained := func() weak.Pointer[state] {
+		s := &state{run: second, obj: obj}
+		ref := weak.Make(s)
+		second.Dispatch(t.Context(), manifest.DrainNone, s, func(s *state, ctx context.Context, got *manifest.Kustomization, level manifest.DrainLevel) error {
+			if got != s.obj {
+				t.Fatal("resumption lost the captured declaration")
+			}
+			calls++
+			return s.run.Require(ctx, []manifest.DependencyRef{{NamedResource: gate}}, level)
+		})
+		return ref
+	}()
+	runtime.GC()
+	if retained.Value() == nil {
+		t.Fatal("blocked successor released its state")
+	}
 	if second.Outcome() != schedule.Blocked || !second.Valid() {
 		t.Fatal("current blocked assessment was invalidated by stale predecessor output")
 	}
+	second.Settle(t.Context(), manifest.DrainForce)
+	if calls != 2 || second.Outcome() != schedule.DependencyFailed || !second.Valid() {
+		t.Fatal("successor did not settle with its captured state")
+	}
+	runtime.GC()
+	if retained.Value() != nil {
+		t.Fatal("terminal failure retained successor state")
+	}
+	runtime.KeepAlive(second)
 	st.UpdateStatus(gate, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	if second.Valid() {
 		t.Fatal("changed readiness did not invalidate the blocked assessment")
@@ -126,7 +155,7 @@ func TestRecordEmitted_PhantomSupersession(t *testing.T) {
 			c := base.New(st, nil)
 			first := controllertest.NewExecution(c, obj.Named())
 			defer first.Close()
-			first.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+			first.Dispatch(t.Context(), manifest.DrainNone, first, func(first *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 				first.Reads.GetObject(input.Named())
 				_, output := first.Reads.GetEmission(obj.Named())
 				output.Children, output.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, true
@@ -142,7 +171,7 @@ func TestRecordEmitted_PhantomSupersession(t *testing.T) {
 			}
 			second := controllertest.NewExecution(c, obj.Named())
 			defer second.Close()
-			second.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+			second.Dispatch(t.Context(), manifest.DrainNone, second, func(_ *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 				return errors.New("successor failed")
 			})
 			if !second.Valid() || (st.GetObject(child.Named()) == nil) != invalidated {
@@ -175,7 +204,7 @@ func TestExecution_CanonicalManifest(t *testing.T) {
 				t.Fatalf("captured = %v, %v; want canonical %v, original=%v", got, ok, want, obj.Values)
 			}
 			called := false
-			execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, got *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, got *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				called = true
 				if got != want {
 					t.Fatalf("dispatched declaration = %v, want captured %v", got, want)
@@ -304,7 +333,7 @@ func TestExecution_SettleInvalidReads(t *testing.T) {
 			execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())
 			t.Cleanup(execution.Close)
 			pending := &countingSettler{error: &depwait.ErrBlocked{Deps: []manifest.NamedResource{input.Named()}}}
-			execution.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+			execution.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 				execution.Reads.GetObject(input.Named())
 				return pending
 			})
@@ -346,7 +375,7 @@ func TestExecution_ResumedPredicates(t *testing.T) {
 	execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())
 	defer execution.Close()
 	deps := []manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: new("false")}, {NamedResource: dependency.Named()}}
-	execution.Dispatch(t.Context(), manifest.DrainNone, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+	execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 		return execution.Require(ctx, deps, level)
 	})
 	if execution.Outcome() != schedule.Blocked || !slices.Equal(execution.Blocked, []manifest.NamedResource{dependency.Named()}) {
@@ -387,7 +416,7 @@ func TestRequire_RetainsArtifactFactsThroughSettlement(t *testing.T) {
 				slices.Reverse(deps)
 			}
 			rendered := false
-			execution.Dispatch(t.Context(), manifest.DrainNone, func(ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
+			execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.HelmRelease, level manifest.DrainLevel) error {
 				err := execution.Require(ctx, deps, level)
 				if !tc.dataWait {
 					return err
@@ -433,7 +462,7 @@ func TestDispatch_ExactMaterializers(t *testing.T) {
 				other: {Productions: []manifest.Production{{Owner: unrelated.Named(), Source: a}}},
 			}})
 			run := controllertest.NewExecution(base.New(st, nil), id)
-			run.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+			run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				t.Error("missing declaration reached body")
 				return nil
 			})
@@ -482,7 +511,10 @@ func TestDispatch_ArrivalDuringClassification(t *testing.T) {
 			var bodies atomic.Int64
 			tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
 				run = controllertest.NewExecution(c, child.Named())
-				run.Dispatch(ctx, manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { bodies.Add(1); return nil })
+				run.Dispatch(ctx, manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					bodies.Add(1)
+					return nil
+				})
 			})
 			tasks.Go(t.Context(), "publish", func(context.Context) {
 				tasks.YieldSlot(func() { <-entered })
@@ -499,7 +531,10 @@ func TestDispatch_ArrivalDuringClassification(t *testing.T) {
 			}
 			run.Close()
 			fresh := controllertest.NewExecution(c, child.Named())
-			fresh.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { bodies.Add(1); return nil })
+			fresh.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+				bodies.Add(1)
+				return nil
+			})
 			info, _ := st.GetStatus(child.Named())
 			if suspended && (bodies.Load() != 0 || info.Outcome() != store.OutcomeSuspended) || !suspended && bodies.Load() != 1 {
 				t.Fatalf("fresh declaration gate: bodies=%d status=%+v", bodies.Load(), info)
@@ -534,7 +569,7 @@ func TestRequire_MaterializerPurpose(t *testing.T) {
 				run.Reads.Require(dep)
 			}
 			run.Reads.RequireMaterializer(owner.Named())
-			run.Dispatch(t.Context(), manifest.DrainNone, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+			run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(_ struct{}, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 				return run.Require(ctx, deps, level)
 			})
 			if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{owner.Named()}) || len(slices.Collect(run.Reads.Gates())) != 3 {

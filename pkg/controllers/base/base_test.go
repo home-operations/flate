@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"weak"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -18,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestExecution_Success(t *testing.T) {
@@ -27,8 +30,9 @@ func TestExecution_Success(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-		func(_ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+		func(t *testing.T, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			t.Helper()
 			if obj.Name != "app" {
 				t.Errorf("re-read got %q, want app", obj.Name)
 			}
@@ -52,7 +56,7 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
-		execution.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+		execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 			_, next := execution.Reads.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}
@@ -101,7 +105,7 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 				attempts.Add(1)
 				execution := controllertest.NewExecution(c, id)
 				latest = execution
-				execution.Dispatch(ctx, level, func(_ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+				execution.Dispatch(ctx, level, execution, func(execution *base.Execution, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
 					renders.Add(1)
 					if source {
 						st.SetArtifact(id, &store.SourceArtifact{Reads: &execution.Reads, Key: "content", LocalPath: "source"})
@@ -163,8 +167,8 @@ func TestExecution_Failure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-		func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+		func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			return errors.New("render failed")
 		},
 	)
@@ -191,8 +195,8 @@ func TestExecution_Panic(t *testing.T) {
 	var rec any
 	func() {
 		defer func() { rec = recover() }()
-		controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-			func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+		controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+			func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 				panic("kaboom")
 			},
 		)
@@ -214,8 +218,8 @@ func TestExecution_MissingObject(t *testing.T) {
 	s := store.New()
 	id := testutil.HelmReleaseID("ns", "ghost")
 	called := false
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-		func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+		func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			called = true
 			return nil
 		},
@@ -227,8 +231,9 @@ func TestExecution_MissingObject(t *testing.T) {
 		t.Error("missing object should not get a status entry")
 	}
 	s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "re-fetching"})
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-		func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+		func(t *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+			t.Helper()
 			t.Error("missing object reconciled")
 			return nil
 		})
@@ -259,8 +264,10 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
 			before, _ := s.GetStatus(id)
-			controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-				func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error { return nil })
+			controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					return nil
+				})
 			got, _ := s.GetStatus(id)
 			if got != before {
 				t.Fatalf("Ready snapshot changed: %+v, want %+v", got, before)
@@ -288,8 +295,8 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			s.SetArtifact(src.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
 			s.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
 			execution := controllertest.NewExecution(c, hr.Named())
-			execution.Dispatch(t.Context(), manifest.DrainNone,
-				func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+			execution.Dispatch(t.Context(), manifest.DrainNone, execution,
+				func(execution *base.Execution, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 					return execution.Require(t.Context(), []manifest.DependencyRef{{NamedResource: src.Named(), Artifact: true}}, manifest.DrainNone)
 				})
 			got, _ := s.GetStatus(hr.Named())
@@ -308,8 +315,8 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			s := store.New()
 			hr := &manifest.HelmRelease{Name: "app"}
 			s.AddObject(hr)
-			controllertest.NewExecution(base.New(s, nil), hr.Named()).Dispatch(t.Context(), manifest.DrainNone,
-				func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+			controllertest.NewExecution(base.New(s, nil), hr.Named()).Dispatch(t.Context(), manifest.DrainNone, t,
+				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 					return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, message)
 				})
 			got, _ := s.GetStatus(hr.Named())
@@ -327,8 +334,8 @@ func TestExecution_PreservesExternalFailure(t *testing.T) {
 	s.AddObject(hr)
 	id := hr.Named()
 
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone,
-		func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+		func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "dependency cycle detected"})
 			return nil
 		},
@@ -354,12 +361,14 @@ func TestExecution_Dispatch(t *testing.T) {
 	t.Cleanup(func() { ts.BlockTillDone() })
 
 	var ran atomic.Int64
-	reconcile := func(_ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error { ran.Add(1); return nil }
+	reconcile := func(ran *atomic.Int64, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+		ran.Add(1)
+		return nil
+	}
 	dispatch := func(id manifest.NamedResource) {
-		controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, reconcile)
+		controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, &ran, reconcile)
 	}
 
-	// Suspended → preGate bails to Ready/"suspended", no reconcile.
 	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns", Suspend: true}
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
@@ -367,7 +376,6 @@ func TestExecution_Dispatch(t *testing.T) {
 		t.Errorf("suspended HR status = %+v; want Ready/suspended via preGate", info)
 	}
 
-	// Preflight-failed → Failed, no reconcile.
 	pfHR := &manifest.HelmRelease{Name: "preflightfail", Namespace: "ns"}
 	s.AddObject(pfHR)
 	dispatch(pfHR.Named())
@@ -375,7 +383,6 @@ func TestExecution_Dispatch(t *testing.T) {
 		t.Errorf("preflight-failed HR status = %+v; want Failed", info)
 	}
 
-	// Clean → reconcile runs → Ready.
 	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	dispatch(hr.Named())
@@ -428,7 +435,7 @@ func TestExecution_Dispatch(t *testing.T) {
 			}
 			c.StartLifecycle()
 			ran := false
-			controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+			controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, t, func(_ *testing.T, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
 				ran = true
 				return nil
 			})
@@ -438,6 +445,88 @@ func TestExecution_Dispatch(t *testing.T) {
 			}
 		})
 	}
+	for _, pendingData := range []bool{false, true} {
+		for _, failure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("lifetime/data=%t/failure=%t", pendingData, failure), func(t *testing.T) {
+				t.Parallel()
+				st := store.New()
+				obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+				gate := testutil.KustomizationID("apps", "gate")
+				st.AddObject(obj)
+				st.UpdateStatus(gate, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
+				run := controllertest.NewExecution(base.New(st, nil), obj.Named())
+				defer run.Close()
+				type state struct {
+					run           *base.Execution
+					obj           *manifest.HelmRelease
+					data, failure bool
+				}
+				var calls, reconciles atomic.Int64
+				finish := func(s *state, got *manifest.HelmRelease) error {
+					if got != s.obj {
+						t.Fatal("resumed with a different captured declaration")
+					}
+					calls.Add(1)
+					_, output := s.run.Reads.GetEmission(got.Named())
+					defer output.Finish()
+					output.Complete = true
+					s.run.Emit(got.Named(), &output)
+					if s.failure {
+						return fmt.Errorf("%w: synthetic failure", manifest.ErrInput)
+					}
+					return nil
+				}
+				retained := func() weak.Pointer[state] {
+					s := &state{run: run, obj: obj, data: pendingData, failure: failure}
+					ref := weak.Make(s)
+					run.Dispatch(t.Context(), manifest.DrainNone, s, func(s *state, ctx context.Context, got *manifest.HelmRelease, level manifest.DrainLevel) error {
+						reconciles.Add(1)
+						if s.data {
+							return s.run.AwaitData(ctx, base.DataWait{
+								Inputs: []depwait.DataDependency{{
+									Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values",
+									Input:    values.Input{Materializers: []manifest.NamedResource{gate}},
+									Optional: true,
+								}},
+								Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return finish(s, got) },
+							}, level)
+						}
+						if level == manifest.DrainNone {
+							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{gate}}
+						}
+						return finish(s, got)
+					})
+					return ref
+				}()
+				runtime.GC()
+				if retained.Value() == nil || run.Outcome() != schedule.Blocked || !run.Valid() || calls.Load() != 0 {
+					t.Fatal("blocked execution lost its retained state or assessment")
+				}
+				run.Settle(t.Context(), manifest.DrainForce)
+				wantReconciles := int64(2)
+				if pendingData {
+					wantReconciles = 1
+				}
+				if reconciles.Load() != wantReconciles {
+					t.Fatalf("reconciles=%d, want %d", reconciles.Load(), wantReconciles)
+				}
+				info, _ := st.GetStatus(obj.Named())
+				if calls.Load() != 1 || run.Outcome() != schedule.Terminal || !run.Valid() || (info.Status == store.StatusFailed) != failure {
+					t.Fatalf("settled execution calls=%d outcome=%v status=%+v", calls.Load(), run.Outcome(), info)
+				}
+				runtime.GC()
+				if retained.Value() != nil {
+					t.Fatal("terminal execution retained reconcile state")
+				}
+				if output, ok := st.GetArtifact(obj.Named()).(*store.Emission); !ok || output.OutputReads != &run.Reads || !output.OutputReads.Valid() {
+					t.Fatal("terminal cleanup released accepted output reads")
+				}
+				runtime.KeepAlive(st)
+				runtime.KeepAlive(run)
+			})
+		}
+	}
+
 }
 
 func TestFingerprintDedup(t *testing.T) {
@@ -575,7 +664,7 @@ func TestExecution_GateReplacement(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	first.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	first.Dispatch(t.Context(), manifest.DrainNone, first, func(first *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 		if obj.Chart.Name != "before" {
 			t.Fatalf("predecessor changed: %+v", obj)
 		}
@@ -589,7 +678,7 @@ func TestExecution_GateReplacement(t *testing.T) {
 	second := controllertest.NewExecution(c, hr.Named())
 	defer second.Close()
 	called := false
-	second.Dispatch(t.Context(), manifest.DrainNone, func(_ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	second.Dispatch(t.Context(), manifest.DrainNone, second, func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 		called = true
 		if obj.Chart.Name != "after" {
 			t.Fatalf("successor retained stale declaration: %+v", obj)
@@ -620,7 +709,9 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 			st.AddObject(object)
 			execution := controllertest.NewExecution(base.New(st, nil), object.Named())
 			defer execution.Close()
-			execution.Dispatch(t.Context(), manifest.DrainNone, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error { return tc.err })
+			execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(_ *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+				return tc.err
+			})
 			if execution.Outcome() != tc.want {
 				t.Fatalf("outcome=%v, want %v", execution.Outcome(), tc.want)
 			}
@@ -728,7 +819,7 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	var bodies atomic.Int64
 	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
 		run := controllertest.NewExecution(c, input.Named())
-		run.Dispatch(ctx, manifest.DrainNone, func(context.Context, *manifest.HelmRelease, manifest.DrainLevel) error {
+		run.Dispatch(ctx, manifest.DrainNone, struct{}{}, func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			bodies.Add(1)
 			return nil
 		})

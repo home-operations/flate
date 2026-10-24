@@ -8,6 +8,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // bigPlatformValuesYAML builds a large nested values document resembling a
@@ -227,5 +228,38 @@ spec:
 		if len(ks.PostBuild.Substitute) != len(data) || ks.PostBuild.Substitute["VAR_49"] != "value-49" {
 			b.Fatal("shared ConfigMap substitutions were not expanded")
 		}
+	}
+}
+
+func BenchmarkStoreProvider_Lookup(b *testing.B) {
+	for _, count := range []int{1, 4, 16, 32} {
+		b.Run(fmt.Sprintf("inputs=%d", count), func(b *testing.B) {
+			st := store.New()
+			objects := make([]*manifest.ConfigMap, count)
+			ids := make([]manifest.NamedResource, count)
+			for i := range objects {
+				objects[i] = &manifest.ConfigMap{Name: fmt.Sprintf("values-%02d", i), Namespace: "apps"}
+				ids[i] = objects[i].Named()
+				st.AddObject(objects[i])
+			}
+			var reads store.ReadSet
+			reads.Init(st, manifest.NamedResource{}, nil)
+			defer reads.Close()
+			provider := NewStoreProvider(&reads, false, nil)
+			for _, id := range ids {
+				provider.Lookup(id)
+			}
+			i := 0
+			b.ReportAllocs()
+			for b.Loop() {
+				if provider.Data(ids[i]) != objects[i] {
+					b.Fatal("lookup returned another input")
+				}
+				i++
+				if i == count {
+					i = 0
+				}
+			}
+		})
 	}
 }

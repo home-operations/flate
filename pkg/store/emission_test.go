@@ -509,7 +509,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						obj, observation := s.Snapshot(id, true)
 						info := observation.StatusInfo
 						conditions := observation.Conditions
-						if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 {
+						if obj != nil || info != (StatusInfo{}) || len(conditions) != 0 || observation.Statusful {
 							t.Fatal("hidden snapshot leaked")
 						}
 						if obj, attempt := s.GetEmission(id); obj != nil {
@@ -2793,6 +2793,9 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 				declaration = &manifest.GitRepository{Name: "consumer", Namespace: "apps"}
 			}
 			s.AddObject(parent)
+			for i := range 64 {
+				s.AddObject(&manifest.ConfigMap{Name: fmt.Sprintf("input-%d", i), Namespace: parent.Namespace})
+			}
 			s.UpdateStatus(parent.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 			publish := func(children ...Child) {
 				s.RecordEmitted(parent.Named(), &Emission{Children: children, Complete: true})
@@ -2804,6 +2807,7 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			first.GetObject(declaration.Named())
 			first.GetStatus(parent.Named())
 			first.RequireData(parent.Named())
+			first.ListObjects("", manifest.KindConfigMap)
 			if scenario == "source_hidden" {
 				s.SetArtifact(declaration.Named(), &SourceArtifact{Reads: &first, Key: "content"})
 			} else {
@@ -2833,9 +2837,9 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			}
 			registrations := 0
 			for input := first.inputs; input != nil; input = input.next {
-				for i := range input.cells {
-					cell := &input.cells[i]
-					if cell.head == nil {
+				for kind := objectFacet; kind <= bucketFacet; kind++ {
+					cell := input.cell(kind)
+					if cell == nil || cell.head == nil {
 						continue
 					}
 					for current := cell.head.first.Load(); current != nil; current = current.next.Load() {

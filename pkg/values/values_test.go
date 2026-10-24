@@ -1012,22 +1012,57 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	first := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
 	s.AddObject(first)
 	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
-	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{first.Named(): {Productions: []manifest.Production{{Owner: owner, Path: "settings.yaml", Authored: first.Named()}}}}})
+	generatedID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "generated"}
+	materializer := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "materializer"}
+	declaration := manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "apps", Name: "declared"}
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		first.Named(): {Productions: []manifest.Production{{Owner: owner, Path: "settings.yaml", Authored: first.Named()}}},
+		generatedID:   {Productions: []manifest.Production{{Owner: materializer, Declaration: declaration}}},
+	}})
 	s.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: first}}, Complete: true})
 	var reads store.ReadSet
 	reader := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}
 	reads.Init(s, reader, nil)
+	defer reads.Close()
 	counted := &countedDataReader{ReadSet: &reads}
 	provider := NewStoreProvider(counted, true, nil)
 	input := provider.Lookup(first.Named())
 	if input.Data != first || !input.Offline || len(input.Materializers) != 0 {
 		t.Fatalf("captured input=%+v", input)
 	}
+	absent := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: first.Namespace, Name: first.Name}
+	other := &manifest.ConfigMap{Name: first.Name, Namespace: "other", Data: map[string]any{"VALUE": "other"}}
+	supplied := &manifest.Secret{Name: "supplied", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
+	s.AddObject(other)
+	provider.supplied = map[manifest.NamedResource]manifest.BaseManifest{supplied.Named(): supplied}
+	missing := provider.Lookup(absent)
+	if missing.Data != nil || missing.Generated || missing.Offline || missing.Private || len(missing.Materializers) != 0 {
+		t.Fatalf("missing input=%+v", missing)
+	}
+	generated := provider.Lookup(generatedID)
+	if generated.Data != nil || !generated.Generated || generated.Offline || generated.Private || len(generated.Materializers) != 1 || generated.Materializers[0] != materializer {
+		t.Fatalf("generated input=%+v", generated)
+	}
+	otherInput := provider.Lookup(other.Named())
+	private := provider.Lookup(supplied.Named())
+	if otherInput.Data != other || private.Data != supplied || !private.Private {
+		t.Fatalf("distinct inputs=%+v %+v", otherInput, private)
+	}
+	s.AddObject(&manifest.Secret{Name: absent.Name, Namespace: absent.Namespace, StringData: map[string]any{"VALUE": "inserted"}})
+	for _, captured := range []struct {
+		id    manifest.NamedResource
+		input Input
+	}{{first.Named(), input}, {absent, missing}, {other.Named(), otherInput}, {supplied.Named(), private}, {generatedID, generated}} {
+		assert.Diff(t, captured.input, provider.Lookup(captured.id))
+		if provider.Data(captured.id) != captured.input.Data {
+			t.Fatal("cached data differs from the captured input")
+		}
+	}
 	next := *first
 	next.Data = map[string]any{"VALUE": "next"}
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true})
-	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 1 || counted.productions != 1 {
+	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 4 || counted.productions != 4 {
 		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
 	}
 	if reads.Valid() {
@@ -1035,8 +1070,12 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	}
 	var fresh store.ReadSet
 	fresh.Init(s, reader, nil)
+	defer fresh.Close()
 	if got := NewStoreProvider(&fresh, true, nil).Data(first.Named()); got != &next {
 		t.Fatalf("next execution retained preceding value: %v", got)
+	}
+	if got := NewStoreProvider(&fresh, true, nil).Data(absent); got == nil {
+		t.Fatal("fresh execution retained frozen absence")
 	}
 }
 

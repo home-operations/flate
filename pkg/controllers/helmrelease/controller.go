@@ -58,9 +58,9 @@ func New(controller *base.Controller, h *helm.Client, opts helm.Options, wipeSec
 // dependency set (nil = terminalized). The
 // orchestrator's scheduler Dispatcher calls this for HelmRelease nodes.
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-	execution := c.newExecution(id)
-	execution.run.Dispatch(ctx, level, execution.reconcile)
-	return &execution.run
+	ex := c.newExecution(id)
+	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
+	return &ex.run
 }
 
 func (c *execution) reconcile(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {

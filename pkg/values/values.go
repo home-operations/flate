@@ -7,6 +7,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -62,7 +63,12 @@ type StoreProvider struct {
 	wipeSecrets bool
 	owner       manifest.NamedResource
 	supplied    map[manifest.NamedResource]manifest.BaseManifest
-	inputs      map[manifest.NamedResource]Input
+	inputs      []capturedInput
+}
+
+type capturedInput struct {
+	id    manifest.NamedResource
+	input Input
 }
 
 // Data returns the captured data for id.
@@ -70,8 +76,12 @@ func (p *StoreProvider) Data(id manifest.NamedResource) manifest.Data { return p
 
 // Lookup captures a values object and its materializers once for expansion and diagnostics.
 func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
-	if input, ok := p.inputs[id]; ok {
-		return input
+	i := sort.Search(len(p.inputs), func(i int) bool { return p.inputs[i].id.Name >= id.Name })
+	for i < len(p.inputs) && p.inputs[i].id.Name == id.Name {
+		if p.inputs[i].id == id {
+			return p.inputs[i].input
+		}
+		i++
 	}
 	data, supplied := p.supplied[id].(manifest.Data)
 	input := Input{Data: data, Private: supplied}
@@ -128,10 +138,7 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 			input.Materializers = nil
 		}
 	}
-	if p.inputs == nil {
-		p.inputs = make(map[manifest.NamedResource]Input)
-	}
-	p.inputs[id] = input
+	p.inputs = slices.Insert(p.inputs, i, capturedInput{id: id, input: input})
 	return input
 }
 

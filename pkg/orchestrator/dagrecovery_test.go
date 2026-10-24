@@ -75,7 +75,7 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 					o.store.AddObject(obj)
 				case consumer:
 					execution := controllertest.NewExecution(base.New(o.store, o.tasks), id)
-					execution.Dispatch(ctx, level, func(context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+					execution.Dispatch(ctx, level, execution, func(execution *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
 						if execution.Reads.GetObject(obj.Named()) == nil {
 							close(attempted)
 							return &depwait.ErrBlocked{Deps: []manifest.NamedResource{obj.Named()}}

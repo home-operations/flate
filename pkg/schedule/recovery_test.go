@@ -27,7 +27,7 @@ type registeredDispatcher struct {
 
 func (d *registeredDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 	e := controllertest.NewExecution(d.controller, id)
-	e.Dispatch[*manifest.Kustomization](ctx, level, func(ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
+	e.Dispatch[*manifest.Kustomization](ctx, level, e, func(e *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
 		return d.reconcile(ctx, e, obj.Named(), level)
 	})
 	return schedule.Result{Assessment: e}
